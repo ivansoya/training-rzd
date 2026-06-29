@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python \"C:/Users/1/AppData/Local/Temp/claude/c--Users-1-Documents-WebStorm-training-rzd/76865e1a-eb79-47b0-9d33-99a0032c2d7a/scratchpad/test_backend.py\")",
+      "Bash(curl -s -o /tmp/resp.txt -w \"HTTP %{http_code}  time %{time_total}s\\\\n\" -F \"name=bigds\" -F \"file=@C:/Users/1/AppData/Local/Temp/claude/c--Users-1-Documents-WebStorm-training-rzd/76865e1a-eb79-47b0-9d33-99a0032c2d7a/scratchpad/big.zip\" http://localhost:8080/api/datasets)",
+      "Read(//tmp/**)",
+      "Bash(curl -s -X DELETE http://localhost:8080/api/datasets/augmented/JobAug)",
+      "Bash(curl -s -X DELETE http://localhost:8080/api/datasets/uploaded/jobds)",
+      "Bash(curl -s -X DELETE http://localhost:8080/api/datasets/uploaded/jobds2)",
+      "Bash(docker compose *)",
+      "Bash(npm run *)"
+    ]
+  }
+}

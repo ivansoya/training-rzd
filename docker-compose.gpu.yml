@@ -1,0 +1,22 @@
+# GPU override. Use together with the base compose file:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
+#
+# Requirements on the host:
+#   * NVIDIA GPU + recent driver
+#   * NVIDIA Container Toolkit (so Docker can expose the GPU)
+#
+# This builds the backend with CUDA-enabled torch and reserves all GPUs for the
+# container. Training started with device != "cpu" then runs on the GPU.
+services:
+  backend:
+    build:
+      args:
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

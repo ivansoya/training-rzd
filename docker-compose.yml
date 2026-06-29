@@ -1,0 +1,35 @@
+services:
+  backend:
+    build:
+      context: ./backend
+      args:
+        # CPU torch by default; the GPU override switches this to a CUDA wheel.
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+    container_name: yolo-backend
+    restart: unless-stopped
+    # PyTorch DataLoader workers exchange batches through /dev/shm. Docker's
+    # default 64 MB causes "bus error ... insufficient shared memory" during
+    # training; give it room. Raise further for big batch/imgsz if needed.
+    shm_size: "2gb"
+    volumes:
+      # Datasets, configs, training runs and metadata live in a named Docker
+      # volume (ext4 inside the VM) instead of a host bind mount. On Docker
+      # Desktop / Windows a bind mount goes through a slow file-sharing layer
+      # that starves the training DataLoader (GPU sits idle waiting for images);
+      # a named volume gives near-native I/O. Data still survives image rebuilds
+      # and `docker compose down` — only `docker compose down -v` wipes it.
+      - yolo-data:/app/data
+    expose:
+      - "5000"
+
+  frontend:
+    build: ./frontend
+    container_name: yolo-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+volumes:
+  yolo-data:
