@@ -202,6 +202,8 @@ export interface InferenceStats {
 
 export interface StorageInfo {
   uploaded_bytes: number;
+  augmented_bytes?: number;
+  data_bytes?: number;
   disk_total: number;
   disk_free: number;
   disk_used: number;

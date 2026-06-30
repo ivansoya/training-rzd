@@ -330,9 +330,15 @@ def generate(source_dir, dest_dir, passes, scope="all", progress=None):
         (i, build_compose(p.get("transforms", []), with_bbox=True))
         for i, p in enumerate(passes)
     ]
-    images = _list_images(source_dir)
+    all_images = _list_images(source_dir)
     if scope == "train":
-        images = [r for r in images if _split_of(r) == "train"]
+        # Only the train split is augmented; val/test are carried over untouched
+        # so the augmented dataset keeps clean validation data from the source.
+        images = [r for r in all_images if _split_of(r) == "train"]
+        clean = [r for r in all_images if _split_of(r) != "train"]
+    else:
+        images = all_images
+        clean = []
     total = len(images) * max(1, len(composes))
 
     yaml_path = _find_yaml(source_dir)
@@ -343,6 +349,23 @@ def generate(source_dir, dest_dir, passes, scope="all", progress=None):
         shutil.copy2(yaml_path, dst)
 
     written = 0
+
+    # Copy the non-augmented splits (val/test) verbatim — same paths, same
+    # filenames, no suffix — so they remain identical to the original dataset.
+    for rel in clean:
+        src_img = os.path.join(source_dir, rel)
+        dst_img = os.path.join(dest_dir, rel)
+        os.makedirs(os.path.dirname(dst_img), exist_ok=True)
+        shutil.copy2(src_img, dst_img)
+        lbl_rel = _label_path_for_image(rel)
+        src_lbl = os.path.join(source_dir, lbl_rel)
+        if os.path.isfile(src_lbl):
+            dst_lbl = os.path.join(dest_dir, lbl_rel)
+            os.makedirs(os.path.dirname(dst_lbl), exist_ok=True)
+            shutil.copy2(src_lbl, dst_lbl)
+        written += 1
+
+    aug_done = 0
     for rel in images:
         rgb = _imread_rgb(os.path.join(source_dir, rel))
         if rgb is None:
@@ -364,6 +387,7 @@ def generate(source_dir, dest_dir, passes, scope="all", progress=None):
                 for (cx, cy, bw, bh), cls in zip(result["bboxes"], result["class_labels"]):
                     fh.write(f"{int(cls)} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
             written += 1
+            aug_done += 1
             if progress:
-                progress(written, total)
+                progress(aug_done, total)
     return written

@@ -100,6 +100,7 @@ export default function InferenceView({ available }: Props) {
       );
       setShowAdd(false);
       await reloadVideos();
+      window.dispatchEvent(new Event("storage-changed"));
       if (uploaded[0]) setSelectedVideoId(uploaded[0].id);
     } catch (e) {
       setError((e as Error).message);
@@ -118,6 +119,7 @@ export default function InferenceView({ available }: Props) {
       await deleteVideo(id);
       if (selectedVideoId === id) setSelectedVideoId(null);
       await reloadVideos();
+      window.dispatchEvent(new Event("storage-changed"));
     } catch (e) {
       setError((e as Error).message);
     }

@@ -150,6 +150,7 @@ export default function App() {
           setUpPct(job.total ? job.processed / job.total : null);
         });
         await refresh();
+        window.dispatchEvent(new Event("storage-changed"));
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -176,6 +177,7 @@ export default function App() {
         setStats(null);
       }
       await refresh();
+      window.dispatchEvent(new Event("storage-changed"));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -204,6 +206,7 @@ export default function App() {
       );
       setAugmentSource(null);
       await refresh();
+      window.dispatchEvent(new Event("storage-changed"));
       await selectDataset("augmented", stats.name);
     } catch (e) {
       setError((e as Error).message);

@@ -261,7 +261,7 @@ def _dir_size(path):
 def storage():
     now = time.time()
     cached = _storage_cache["data"]
-    if cached and now - _storage_cache["t"] < 10:
+    if cached and now - _storage_cache["t"] < 3:
         return jsonify(cached)
     # Stat the real host drive when a bind-mount is provided, otherwise fall
     # back to the (virtual) container filesystem.
@@ -269,8 +269,15 @@ def storage():
     if HOST_STAT_PATH and os.path.isdir(HOST_STAT_PATH):
         stat_path = HOST_STAT_PATH
     du = shutil.disk_usage(stat_path)
+    uploaded = _dir_size(UPLOADED_DIR)
+    augmented = _dir_size(AUGMENTED_DIR)
     data = {
-        "uploaded_bytes": _dir_size(UPLOADED_DIR),  # only the uploaded datasets
+        "uploaded_bytes": uploaded,
+        "augmented_bytes": augmented,
+        # Everything the app stores on the shared volume (datasets, augmented,
+        # videos, models, trainings, inference). This is the figure that drops
+        # when anything is deleted, regardless of the host's vhdx not shrinking.
+        "data_bytes": _dir_size(DATA_DIR),
         "disk_total": du.total,
         "disk_free": du.free,
         "disk_used": du.used,

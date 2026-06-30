@@ -934,6 +934,11 @@ input[type="checkbox"]:focus-visible {
 
 .storage-free { color: var(--muted); }
 
+.storage-sub {
+  margin-top: -2px;
+  font-size: 11px;
+}
+
 /* low space → yellow, nearly out → red */
 .storage-meter.warn .storage-fill { background: #eab308; }
 .storage-meter.crit .storage-fill { background: var(--danger); }

@@ -19,9 +19,14 @@ export default function StorageMeter() {
     };
     tick();
     const h = setInterval(tick, 20000);
+    // Refresh promptly after the app adds/removes data (upload, delete, augment)
+    // so the figures reflect the change without waiting for the next poll.
+    const onChange = () => tick();
+    window.addEventListener("storage-changed", onChange);
     return () => {
       active = false;
       clearInterval(h);
+      window.removeEventListener("storage-changed", onChange);
     };
   }, []);
 
@@ -30,13 +35,24 @@ export default function StorageMeter() {
   const freeRatio = info.disk_total ? info.disk_free / info.disk_total : 1;
   const level = freeRatio < 0.07 ? "crit" : freeRatio < 0.15 ? "warn" : "ok";
   const usedRatio = info.disk_total ? info.disk_used / info.disk_total : 0;
+  // Total data the app actually occupies (datasets + augmented + videos +
+  // models + runs). Falls back to uploaded-only for older backends.
+  const appBytes = info.data_bytes ?? info.uploaded_bytes;
 
   return (
     <div className={`storage-meter ${level}`}>
       <div className="storage-row">
-        <span>Загруженные данные</span>
-        <span className="mono">{human(info.uploaded_bytes)}</span>
+        <span>Данные приложения</span>
+        <span className="mono">{human(appBytes)}</span>
       </div>
+      {info.augmented_bytes !== undefined && (
+        <div className="storage-row storage-sub">
+          <span className="subtle">
+            загружено {human(info.uploaded_bytes)} · аугм.{" "}
+            {human(info.augmented_bytes)}
+          </span>
+        </div>
+      )}
       <div className="storage-bar">
         <div
           className="storage-fill"
