@@ -36,10 +36,12 @@ export default function DatasetStatsView({
       </button>
       <div className="stats-head">
         <div>
-          <h2 className="stats-title">{stats.meta?.display_name || stats.name}</h2>
+          <h2 className="stats-title">
+            {stats.display_name || stats.meta?.display_name || stats.name}
+          </h2>
           {kind === "augmented" && stats.meta && (
             <p className="subtle">
-              из «{stats.meta.source}» ·{" "}
+              из «{stats.meta.source_name || stats.meta.source}» ·{" "}
               {stats.meta.configs.length}{" "}
               {stats.meta.configs.length === 1 ? "проход" : "прохода/проходов"}
               {stats.meta.scope === "train" ? " · только train" : " · все изображения"}

@@ -13,6 +13,8 @@ import yaml
 from flask import Blueprint, Response, jsonify, request, send_file
 
 from common.config import (
+    AUG_META_FILE,
+    DATASETS_META_FILE,
     INFERENCE_DIR,
     MODELS_DIR,
     MODELS_FILE,
@@ -22,6 +24,12 @@ from common.config import (
     kind_dir,
 )
 from common.storage import load_json, safe_name, save_json
+
+
+def _dataset_label(kind, ds_id):
+    """Pretty dataset name for display, resolved from the shared meta files."""
+    meta_file = AUG_META_FILE if kind == "augmented" else DATASETS_META_FILE
+    return load_json(meta_file, {}).get(ds_id, {}).get("display_name") or ds_id
 from training_svc import infer, trainer
 
 bp = Blueprint("training", __name__)
@@ -58,7 +66,8 @@ def add_model():
     if not file.filename or not file.filename.lower().endswith((".pt", ".yaml", ".yml")):
         return jsonify({"error": "ожидается файл .pt или .yaml"}), 400
 
-    fname = safe_name(file.filename) + os.path.splitext(file.filename)[1].lower()
+    stem, ext = os.path.splitext(file.filename)
+    fname = safe_name(stem) + ext.lower()
     path = os.path.join(MODELS_DIR, fname)
     file.save(path)
 
@@ -153,6 +162,7 @@ def _run_summary(state):
         "status": state["status"],
         "model_name": state.get("model_name"),
         "dataset_name": state.get("dataset_name"),
+        "dataset_label": state.get("dataset_label") or state.get("dataset_name"),
         "dataset_kind": state.get("dataset_kind"),
         "device": state.get("device", "cpu"),
         "epochs": state.get("epochs"),
@@ -325,6 +335,7 @@ def start_training():
         "model_name": model["name"],
         "dataset_kind": kind,
         "dataset_name": name,
+        "dataset_label": _dataset_label(kind, name),
         "device": device,
         "params": params,
         "epochs": epochs,

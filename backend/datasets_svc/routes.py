@@ -12,6 +12,7 @@ from common.config import (
     AUG_META_FILE,
     AUGMENTED_DIR,
     DATA_DIR,
+    DATASETS_META_FILE,
     HOST_STAT_PATH,
     TMP_DIR,
     UPLOADED_DIR,
@@ -24,13 +25,22 @@ from common.datasets import (
     get_cached_stats,
     validate_archive,
 )
-from common.storage import load_json, safe_name, save_json
+from common.storage import load_json, make_id, safe_name, save_json
 
 bp = Blueprint("datasets", __name__)
 
 
 def load_aug_meta():
     return load_json(AUG_META_FILE, {})
+
+
+def load_ds_meta():
+    return load_json(DATASETS_META_FILE, {})
+
+
+def display_name_of(ds_id):
+    """Pretty name for an uploaded dataset id, falling back to the id itself."""
+    return load_ds_meta().get(ds_id, {}).get("display_name") or ds_id
 
 
 @bp.get("/api/health")
@@ -41,27 +51,31 @@ def health():
 @bp.get("/api/datasets")
 def list_datasets():
     meta = load_aug_meta()
+    ds_meta = load_ds_meta()
     items = []
-    for name in sorted(os.listdir(UPLOADED_DIR)):
-        full = os.path.join(UPLOADED_DIR, name)
+    for ds_id in sorted(os.listdir(UPLOADED_DIR)):
+        full = os.path.join(UPLOADED_DIR, ds_id)
         if os.path.isdir(full):
             items.append({
-                "name": name,
+                "name": ds_id,  # id is the canonical handle used by all requests
                 "kind": "uploaded",
                 "images": count_images(full),
                 "num_classes": cached_num_classes(full),
+                "display_name": ds_meta.get(ds_id, {}).get("display_name", ds_id),
             })
-    for name in sorted(os.listdir(AUGMENTED_DIR)):
-        full = os.path.join(AUGMENTED_DIR, name)
+    for ds_id in sorted(os.listdir(AUGMENTED_DIR)):
+        full = os.path.join(AUGMENTED_DIR, ds_id)
         if os.path.isdir(full):
-            m = meta.get(name, {})
+            m = meta.get(ds_id, {})
+            source = m.get("source")
             items.append({
-                "name": name,
+                "name": ds_id,
                 "kind": "augmented",
                 "images": count_images(full),
                 "num_classes": cached_num_classes(full),
-                "display_name": m.get("display_name", name),
-                "source": m.get("source"),
+                "display_name": m.get("display_name", ds_id),
+                "source": source,
+                "source_name": ds_meta.get(source, {}).get("display_name", source),
                 "config_names": [s.get("name") for s in m.get("configs", [])],
             })
     return jsonify(items)
@@ -78,12 +92,20 @@ def get_dataset(kind, name):
         return jsonify({"error": "dataset not found"}), 404
     stats = get_cached_stats(path)
     if kind == "augmented":
-        stats["meta"] = load_aug_meta().get(name)
+        meta = load_aug_meta().get(name)
+        if meta:
+            meta = dict(meta)
+            meta["source_name"] = display_name_of(meta.get("source"))
+            stats["display_name"] = meta.get("display_name")
+        stats["meta"] = meta
+    else:
+        stats["display_name"] = display_name_of(name)
     return jsonify(stats)
 
 
-def _run_upload_job(job_id, tmp_path, dest):
+def _run_upload_job(job_id, tmp_path, dest, display_name):
     """Validate and extract an uploaded archive, reporting progress."""
+    ds_id = os.path.basename(dest)
     try:
         jobs.update(job_id, message="Проверка архива")
         try:
@@ -113,6 +135,13 @@ def _run_upload_job(job_id, tmp_path, dest):
                     message="Подсчёт статистики", phase="stats")
         stats = compute_and_cache_stats(dest)
         stats["warnings"] = warnings
+
+        # Persist the user-facing name keyed by the stable id.
+        ds_meta = load_ds_meta()
+        ds_meta[ds_id] = {"display_name": display_name, "created_at": time.time()}
+        save_json(DATASETS_META_FILE, ds_meta)
+        stats["display_name"] = display_name
+
         jobs.update(job_id, status="done", result=stats)
     except Exception as exc:  # noqa: BLE001
         shutil.rmtree(dest, ignore_errors=True)
@@ -134,10 +163,15 @@ def upload_dataset():
     if not file.filename.lower().endswith(".zip"):
         return jsonify({"error": "only .zip archives are supported"}), 400
 
-    name = safe_name(request.form.get("name") or file.filename)
-    dest = os.path.join(UPLOADED_DIR, name)
-    if os.path.exists(dest):
-        return jsonify({"error": f"dataset '{name}' already exists"}), 409
+    # The display name is whatever the user typed (Cyrillic, dots, spaces…);
+    # the folder is addressed by a stable ASCII id derived from it.
+    display_name = (request.form.get("name") or "").strip()
+    if not display_name:
+        display_name = os.path.splitext(file.filename)[0]
+    os.makedirs(UPLOADED_DIR, exist_ok=True)
+    ds_id = make_id(display_name, UPLOADED_DIR)
+    dest = os.path.join(UPLOADED_DIR, ds_id)
+    os.makedirs(dest, exist_ok=True)  # reserve the id
 
     os.makedirs(TMP_DIR, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(suffix=".zip", dir=TMP_DIR)
@@ -146,7 +180,9 @@ def upload_dataset():
 
     job_id = jobs.create("upload", message="Подготовка")
     threading.Thread(
-        target=_run_upload_job, args=(job_id, tmp_path, dest), daemon=True
+        target=_run_upload_job,
+        args=(job_id, tmp_path, dest, display_name),
+        daemon=True,
     ).start()
     return jsonify({"job_id": job_id}), 202
 
@@ -166,6 +202,11 @@ def delete_dataset(kind, name):
         if name in meta:
             del meta[name]
             save_json(AUG_META_FILE, meta)
+    else:
+        ds_meta = load_ds_meta()
+        if name in ds_meta:
+            del ds_meta[name]
+            save_json(DATASETS_META_FILE, ds_meta)
     return jsonify({"ok": True})
 
 

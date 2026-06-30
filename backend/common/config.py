@@ -16,6 +16,8 @@ UPLOADED_DIR = os.path.join(DATA_DIR, "uploaded")
 AUGMENTED_DIR = os.path.join(DATA_DIR, "augmented")
 CONFIGS_FILE = os.path.join(DATA_DIR, "configs.json")
 AUG_META_FILE = os.path.join(DATA_DIR, "augmented.json")
+# Maps an uploaded dataset's ASCII folder id -> {display_name, created_at}.
+DATASETS_META_FILE = os.path.join(DATA_DIR, "datasets.json")
 TRAININGS_DIR = os.path.join(DATA_DIR, "trainings")
 MODELS_DIR = os.path.join(DATA_DIR, "models")
 MODELS_FILE = os.path.join(DATA_DIR, "models.json")

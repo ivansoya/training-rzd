@@ -1,12 +1,13 @@
 export type DatasetKind = "uploaded" | "augmented";
 
 export interface DatasetSummary {
-  name: string;
+  name: string; // stable ASCII id used for all requests
   kind: DatasetKind;
   images: number;
   num_classes?: number | null;
-  display_name?: string;
+  display_name?: string; // arbitrary user-facing name
   source?: string;
+  source_name?: string;
   config_names?: string[];
 }
 
@@ -34,6 +35,7 @@ export interface AppliedConfig {
 export interface AugMeta {
   display_name: string;
   source: string;
+  source_name?: string;
   configs: AppliedConfig[];
   scope?: "all" | "train";
   images?: number;
@@ -41,6 +43,7 @@ export interface AugMeta {
 
 export interface DatasetStats {
   name: string;
+  display_name?: string;
   nc: number;
   num_classes: number;
   total_images: number;
@@ -142,6 +145,7 @@ export interface TrainingSummary {
   status: "preparing" | "running" | "done" | "stopped" | "error";
   model_name: string;
   dataset_name: string;
+  dataset_label?: string;
   dataset_kind: DatasetKind;
   device: string;
   epochs: number;

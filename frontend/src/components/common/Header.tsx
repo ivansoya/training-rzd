@@ -36,7 +36,7 @@ export default function Header({ uploads, trainings, onOpenTraining }: Props) {
     ...trainings.map((t) => ({
       key: "t:" + t.id,
       title: `Обучение · ${t.model_name}`,
-      detail: `${t.dataset_name} · эпоха ${t.current_epoch}/${t.epochs}`,
+      detail: `${t.dataset_label || t.dataset_name} · эпоха ${t.current_epoch}/${t.epochs}`,
       pct: t.epochs ? Math.min(1, t.current_epoch / t.epochs) : null,
       onClick: () => onOpenTraining(t.id),
     })),

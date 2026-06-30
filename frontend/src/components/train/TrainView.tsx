@@ -256,8 +256,8 @@ export default function TrainView({ datasets, available, focusRunId }: Props) {
                     <StatusDot status={t.status} /> {t.model_name}
                   </span>
                   <span className="dataset-meta">
-                    {t.dataset_name} · {t.current_epoch}/{t.epochs} эп. ·{" "}
-                    {deviceLabel(t.device)}
+                    {t.dataset_label || t.dataset_name} · {t.current_epoch}/
+                    {t.epochs} эп. · {deviceLabel(t.device)}
                   </span>
                 </div>
                 <button
@@ -491,7 +491,7 @@ function RunDetail({
             <StatusDot status={run.status} /> {run.model_name}
           </h3>
           <p className="subtle">
-            {run.dataset_name} · {deviceLabel(run.device)} ·{" "}
+            {run.dataset_label || run.dataset_name} · {deviceLabel(run.device)} ·{" "}
             {statusLabel(run.status)}
             {run.message ? ` · ${run.message}` : ""}
           </p>

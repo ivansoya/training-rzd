@@ -87,7 +87,7 @@ function DatasetTile({
         {d.num_classes != null ? ` · ${d.num_classes} классов` : ""}
       </div>
       {d.kind === "augmented" && d.source && (
-        <div className="tile-sub">из «{d.source}»</div>
+        <div className="tile-sub">из «{d.source_name || d.source}»</div>
       )}
     </div>
   );

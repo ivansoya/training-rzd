@@ -12,10 +12,11 @@ from common.config import (
     AUGMENTED_DIR,
     BASE_CONFIG_ID,
     CONFIGS_FILE,
+    DATASETS_META_FILE,
     UPLOADED_DIR,
 )
 from common.datasets import compute_stats, stats_cache_path
-from common.storage import load_json, safe_name, save_json
+from common.storage import load_json, make_id, safe_name, save_json
 from augment_svc import engine
 
 bp = Blueprint("augmentation", __name__)
@@ -200,16 +201,13 @@ def create_augmented():
         })
 
     if not display_name:
+        source_label = load_json(DATASETS_META_FILE, {}).get(source, {}).get(
+            "display_name") or source
         names = ", ".join(s["name"] for s in snapshots)
-        display_name = f"{source} · {names}"
+        display_name = f"{source_label} · {names}"
 
-    folder = safe_name(display_name)
+    folder = make_id(display_name, AUGMENTED_DIR, fallback="aug")
     dest = os.path.join(AUGMENTED_DIR, folder)
-    suffix = 1
-    while os.path.exists(dest):
-        suffix += 1
-        folder = f"{safe_name(display_name)}_{suffix}"
-        dest = os.path.join(AUGMENTED_DIR, folder)
     os.makedirs(dest, exist_ok=True)
 
     job_id = jobs.create("augment", message="Подготовка")
