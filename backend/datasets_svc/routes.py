@@ -2,6 +2,7 @@ import os
 import shutil
 import tempfile
 import threading
+import time
 import zipfile
 
 from flask import Blueprint, jsonify, request
@@ -10,6 +11,8 @@ from common import jobs
 from common.config import (
     AUG_META_FILE,
     AUGMENTED_DIR,
+    DATA_DIR,
+    HOST_STAT_PATH,
     TMP_DIR,
     UPLOADED_DIR,
     kind_dir,
@@ -172,3 +175,41 @@ def get_job(job_id):
     if job is None:
         return jsonify({"error": "job not found"}), 404
     return jsonify(job)
+
+
+# Disk usage for the sidebar meter. Walking the (large) uploaded tree is a bit
+# costly, so the result is cached briefly.
+_storage_cache = {"t": 0.0, "data": None}
+
+
+def _dir_size(path):
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+@bp.get("/api/storage")
+def storage():
+    now = time.time()
+    cached = _storage_cache["data"]
+    if cached and now - _storage_cache["t"] < 10:
+        return jsonify(cached)
+    # Stat the real host drive when a bind-mount is provided, otherwise fall
+    # back to the (virtual) container filesystem.
+    stat_path = DATA_DIR
+    if HOST_STAT_PATH and os.path.isdir(HOST_STAT_PATH):
+        stat_path = HOST_STAT_PATH
+    du = shutil.disk_usage(stat_path)
+    data = {
+        "uploaded_bytes": _dir_size(UPLOADED_DIR),  # only the uploaded datasets
+        "disk_total": du.total,
+        "disk_free": du.free,
+        "disk_used": du.used,
+    }
+    _storage_cache.update(t=now, data=data)
+    return jsonify(data)

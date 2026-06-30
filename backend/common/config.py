@@ -5,6 +5,13 @@ import os
 
 DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 
+# Path used to report *real host* disk usage in the sidebar meter. Inside the
+# container, ``shutil.disk_usage(DATA_DIR)`` measures the Docker/WSL2 virtual
+# disk (a sparse vhdx that advertises ~1 TB), not the physical drive. The
+# compose file bind-mounts a host directory here so we can stat the actual
+# drive Docker stores its data on. Falls back to DATA_DIR when unset.
+HOST_STAT_PATH = os.environ.get("HOST_STAT_PATH")
+
 UPLOADED_DIR = os.path.join(DATA_DIR, "uploaded")
 AUGMENTED_DIR = os.path.join(DATA_DIR, "augmented")
 CONFIGS_FILE = os.path.join(DATA_DIR, "configs.json")

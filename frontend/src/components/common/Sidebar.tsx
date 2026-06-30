@@ -1,3 +1,5 @@
+import StorageMeter from "./StorageMeter";
+
 export type View = "datasets" | "augment" | "train" | "inference";
 
 interface Props {
@@ -45,6 +47,10 @@ export default function Sidebar({ collapsed, onToggle, view, onNavigate }: Props
           </button>
         ))}
       </nav>
+
+      <div className="sidebar-bottom">
+        <StorageMeter />
+      </div>
     </aside>
   );
 }

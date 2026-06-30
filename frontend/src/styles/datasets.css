@@ -1,6 +1,44 @@
 /* Datasets section: tile grid, dataset tiles, stats back-arrow,
    applied-config chips. */
 
+/* Class-share bar with hover percentage tooltip + highlight */
+.share-bar {
+  position: relative;
+}
+
+.share-bar .bar {
+  transition: filter 0.12s, background 0.12s;
+}
+
+.share-bar:hover .bar {
+  filter: brightness(1.3);
+  background: #6ea0ff;
+}
+
+.share-tip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%) translateY(4px);
+  background: #0b0d12;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  z-index: 5;
+}
+
+.share-bar:hover .share-tip {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
 /* Applied configs (augmented dataset details) */
 .applied-configs {
   margin-bottom: 8px;

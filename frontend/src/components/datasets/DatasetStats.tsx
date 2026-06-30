@@ -27,6 +27,7 @@ export default function DatasetStatsView({
   }
 
   const maxInstances = Math.max(1, ...stats.classes.map((c) => c.instances));
+  const totalInstances = Math.max(1, stats.total_instances);
 
   return (
     <section className="content">
@@ -143,11 +144,17 @@ export default function DatasetStatsView({
               <td>{c.instances}</td>
               <td>{c.images}</td>
               <td className="bar-cell">
-                <div className="bar-wrap">
-                  <div
-                    className="bar"
-                    style={{ width: `${(c.instances / maxInstances) * 100}%` }}
-                  />
+                <div className="share-bar">
+                  <div className="bar-wrap">
+                    <div
+                      className="bar"
+                      style={{ width: `${(c.instances / maxInstances) * 100}%` }}
+                    />
+                  </div>
+                  <span className="share-tip">
+                    {((c.instances / totalInstances) * 100).toFixed(1)}% от всех
+                    объектов
+                  </span>
                 </div>
               </td>
             </tr>

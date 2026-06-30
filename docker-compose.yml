@@ -7,8 +7,14 @@ services:
       dockerfile: datasets_svc/Dockerfile
     container_name: yolo-datasets
     restart: unless-stopped
+    environment:
+      # Report the *real* host drive in the disk meter (see common.config).
+      - HOST_STAT_PATH=/hoststat
     volumes:
       - yolo-data:/app/data
+      # Read-only bind of a host dir (lives on the same physical drive Docker
+      # stores its data on) purely so the service can stat real free space.
+      - ./:/hoststat:ro
     expose:
       - "5000"
 

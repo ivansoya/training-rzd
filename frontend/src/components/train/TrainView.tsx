@@ -23,6 +23,7 @@ import type {
 interface Props {
   datasets: DatasetSummary[];
   available: boolean;
+  focusRunId?: string;
 }
 
 // Hyperparameters exposed in the UI (key, label, default, step, hint).
@@ -70,7 +71,7 @@ const METRIC_COLUMNS: [string, string][] = [
 
 const RUNNING = new Set(["preparing", "running"]);
 
-export default function TrainView({ datasets, available }: Props) {
+export default function TrainView({ datasets, available, focusRunId }: Props) {
   const [models, setModels] = useState<ModelVersion[]>([]);
   const [trainings, setTrainings] = useState<TrainingSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -91,6 +92,11 @@ export default function TrainView({ datasets, available }: Props) {
   const [device, setDevice] = useState("cpu");
 
   const modelFileRef = useRef<HTMLInputElement>(null);
+
+  // open a specific run when requested from the header activity list
+  useEffect(() => {
+    if (focusRunId) setSelectedId(focusRunId);
+  }, [focusRunId]);
 
   async function reloadTrainings() {
     try {
@@ -473,6 +479,9 @@ function RunDetail({
   const pct = run.epochs ? Math.min(1, run.current_epoch / run.epochs) : 0;
   const maps = run.metrics.map((m) => m["metrics/mAP50(B)"] ?? 0);
   const maxMap = Math.max(0.0001, ...maps);
+  const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(
+    null
+  );
 
   return (
     <div className="aug-col">
@@ -573,21 +582,47 @@ function RunDetail({
           <div className="group-header" style={{ paddingLeft: 0 }}>
             mAP50 по эпохам
           </div>
-          <div className="bars">
-            {run.metrics.map((m) => (
-              <div
-                className="bars-col"
-                key={m.epoch}
-                title={`эпоха ${m.epoch}: ${fmt(m["metrics/mAP50(B)"])}`}
-              >
+          <div className="bars-wrap">
+            <div className="bars">
+              {run.metrics.map((m) => (
                 <div
-                  className="bars-bar"
-                  style={{
-                    height: `${((m["metrics/mAP50(B)"] ?? 0) / maxMap) * 100}%`,
+                  className="bars-col"
+                  key={m.epoch}
+                  onMouseMove={(e) => {
+                    const wrap = e.currentTarget.closest(
+                      ".bars-wrap"
+                    ) as HTMLElement | null;
+                    if (!wrap) return;
+                    const r = wrap.getBoundingClientRect();
+                    setTip({
+                      x: e.clientX - r.left,
+                      y: e.clientY - r.top,
+                      text: `эпоха ${m.epoch} · mAP50 ${fmt(
+                        m["metrics/mAP50(B)"]
+                      )}`,
+                    });
                   }}
-                />
+                  onMouseLeave={() => setTip(null)}
+                >
+                  <div
+                    className="bars-bar"
+                    style={{
+                      height: `${
+                        ((m["metrics/mAP50(B)"] ?? 0) / maxMap) * 100
+                      }%`,
+                    }}
+                  />
+                </div>
+              ))}
+            </div>
+            {tip && (
+              <div
+                className="bars-tip"
+                style={{ left: tip.x, top: tip.y }}
+              >
+                {tip.text}
               </div>
-            ))}
+            )}
           </div>
         </>
       )}

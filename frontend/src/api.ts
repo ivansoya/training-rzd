@@ -10,6 +10,7 @@ import type {
   Job,
   ModelVersion,
   PreviewResult,
+  StorageInfo,
   TrainedModel,
   TrainingRun,
   TrainingSummary,
@@ -51,6 +52,10 @@ export async function pollJob<R = unknown>(
 // --- datasets ---
 export async function listDatasets(): Promise<DatasetSummary[]> {
   return asJson(await fetch(`${BASE}/datasets`));
+}
+
+export async function getStorage(): Promise<StorageInfo> {
+  return asJson(await fetch(`${BASE}/storage`));
 }
 
 export async function getDataset(

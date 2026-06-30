@@ -112,6 +112,10 @@
   transform: translateX(-50%) translateY(0);
 }
 
+.bars-wrap {
+  position: relative;
+}
+
 .bars {
   display: flex;
   align-items: flex-end;
@@ -129,6 +133,7 @@
   height: 100%;
   display: flex;
   align-items: flex-end;
+  cursor: pointer;
 }
 
 .bars-bar {
@@ -136,4 +141,26 @@
   background: var(--accent);
   border-radius: 2px 2px 0 0;
   min-height: 2px;
+  transition: filter 0.12s, background 0.12s;
+}
+
+.bars-col:hover .bars-bar {
+  filter: brightness(1.4);
+  background: #6ea0ff;
+}
+
+/* floating tooltip for the mAP50 chart (sits outside the scroll clip) */
+.bars-tip {
+  position: absolute;
+  transform: translate(-50%, calc(-100% - 12px));
+  background: #0b0d12;
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  z-index: 5;
 }

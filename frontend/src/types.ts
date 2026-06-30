@@ -196,6 +196,13 @@ export interface InferenceStats {
   per_class: InferenceClassStat[];
 }
 
+export interface StorageInfo {
+  uploaded_bytes: number;
+  disk_total: number;
+  disk_free: number;
+  disk_used: number;
+}
+
 export interface VideoItem {
   id: string;
   name: string;

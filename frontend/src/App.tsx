@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import Sidebar from "./components/common/Sidebar";
 import type { View } from "./components/common/Sidebar";
+import Header from "./components/common/Header";
+import type { UploadActivity } from "./components/common/Header";
 import UploadModal from "./components/datasets/UploadModal";
 import CreateAugmentedModal from "./components/augment/CreateAugmentedModal";
 import DatasetStatsView from "./components/datasets/DatasetStats";
@@ -14,6 +16,7 @@ import {
   getDataset,
   listConfigs,
   listDatasets,
+  listTrainings,
   listTransforms,
   pollJob,
   uploadDataset,
@@ -26,6 +29,7 @@ import type {
   DatasetSummary,
   Job,
   Progress,
+  TrainingSummary,
   TransformSchema,
 } from "./types";
 
@@ -58,6 +62,11 @@ export default function App() {
   const [showUpload, setShowUpload] = useState(false);
   const [augmentSource, setAugmentSource] = useState<string | null>(null);
 
+  // header activity indicators
+  const [uploads, setUploads] = useState<UploadActivity[]>([]);
+  const [headerTrainings, setHeaderTrainings] = useState<TrainingSummary[]>([]);
+  const [focusTraining, setFocusTraining] = useState<string | undefined>();
+
   const [configs, setConfigs] = useState<AugConfig[]>([]);
   const [registry, setRegistry] = useState<TransformSchema[]>([]);
   const [augAvailable, setAugAvailable] = useState(true);
@@ -68,6 +77,25 @@ export default function App() {
     } catch (e) {
       setError((e as Error).message);
     }
+  }, []);
+
+  // Poll training summaries so the header can show active runs from any view.
+  useEffect(() => {
+    let active = true;
+    const tick = async () => {
+      try {
+        const list = await listTrainings();
+        if (active) setHeaderTrainings(list);
+      } catch {
+        /* ignore */
+      }
+    };
+    tick();
+    const h = setInterval(tick, 4000);
+    return () => {
+      active = false;
+      clearInterval(h);
+    };
   }, []);
 
   useEffect(() => {
@@ -106,20 +134,28 @@ export default function App() {
   ) {
     setBusy(true);
     setError(null);
+    // track this upload so the header shows it (and a list if several run)
+    const upId = Math.random().toString(36).slice(2);
+    const upLabel = name || file.name;
+    setUploads((u) => [...u, { id: upId, label: upLabel, pct: 0 }]);
+    const setUpPct = (pct: number | null) =>
+      setUploads((u) => u.map((x) => (x.id === upId ? { ...x, pct } : x)));
     try {
-      const { job_id } = await uploadDataset(file, name, (pct) =>
+      const { job_id } = await uploadDataset(file, name, (pct) => {
         // Once the browser has flushed all bytes (pct≈1) the data is still in
-        // flight to the server, so switch to an indeterminate "receiving" state
-        // instead of leaving the bar stuck at 100%.
+        // flight to the server, so switch to an indeterminate "receiving" state.
+        const receiving = pct >= 0.999;
         onProgress(
-          pct >= 0.999
+          receiving
             ? { label: "Передача архива на сервер…", pct: null }
             : { label: "Загрузка архива", pct }
-        )
-      );
-      const stats = await pollJob<DatasetStats>(job_id, (job) =>
-        onProgress(progressForJob(job, "Распаковка"))
-      );
+        );
+        setUpPct(receiving ? null : pct);
+      });
+      const stats = await pollJob<DatasetStats>(job_id, (job) => {
+        onProgress(progressForJob(job, "Распаковка"));
+        setUpPct(job.total ? job.processed / job.total : null);
+      });
       setShowUpload(false);
       await refresh();
       await selectDataset("uploaded", stats.name);
@@ -127,6 +163,7 @@ export default function App() {
       setError((e as Error).message);
       throw e;
     } finally {
+      setUploads((u) => u.filter((x) => x.id !== upId));
       setBusy(false);
     }
   }
@@ -197,6 +234,16 @@ export default function App() {
         <div className="brand">
           <span className="logo" /> YOLO Dataset Manager
         </div>
+        <Header
+          uploads={uploads}
+          trainings={headerTrainings.filter(
+            (t) => t.status === "preparing" || t.status === "running"
+          )}
+          onOpenTraining={(id) => {
+            setFocusTraining(id);
+            setView("train");
+          }}
+        />
       </header>
 
       {error && <div className="error-banner">{error}</div>}
@@ -238,7 +285,11 @@ export default function App() {
           />
         )}
         {view === "train" && (
-          <TrainView datasets={datasets} available={trainAvailable} />
+          <TrainView
+            datasets={datasets}
+            available={trainAvailable}
+            focusRunId={focusTraining}
+          />
         )}
         {view === "inference" && <InferenceView available={trainAvailable} />}
       </div>
