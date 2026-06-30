@@ -15,6 +15,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 from common.config import (
     AUG_META_FILE,
     DATASETS_META_FILE,
+    IMAGE_EXTENSIONS,
     INFERENCE_DIR,
     MODELS_DIR,
     MODELS_FILE,
@@ -173,8 +174,42 @@ def _run_summary(state):
     }
 
 
+def _image_dirs_by_split(dataset_dir):
+    """Discover, by scanning the dataset on disk, the relative path of the image
+    directory that actually holds each split's images.
+
+    This is authoritative over whatever the copied data.yaml claims: an augmented
+    dataset's yaml is inherited from the source and its train/val paths may not
+    match where images physically ended up (e.g. Roboflow's ``../train/images``,
+    or a split folder the augmentation laid out differently). Label dirs are
+    skipped naturally because they contain ``.txt``, not images.
+    """
+    found = {}
+    for root, _dirs, files in os.walk(dataset_dir):
+        if not any(os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS for f in files):
+            continue
+        rel = os.path.relpath(root, dataset_dir).replace("\\", "/")
+        seg = "/" + rel.lower() + "/"
+        if "/val/" in seg or "/valid/" in seg:
+            split = "val"
+        elif "/test/" in seg:
+            split = "test"
+        elif "/train/" in seg:
+            split = "train"
+        else:
+            continue
+        # Prefer the shallowest matching dir (the split root, not a nested dir).
+        if split not in found or rel.count("/") < found[split].count("/"):
+            found[split] = rel
+    return found
+
+
 def _build_training_yaml(dataset_dir, run_dir):
-    """Write a YOLO data.yaml with an absolute path for the given dataset."""
+    """Write a YOLO data.yaml with an absolute path for the given dataset.
+
+    train/val are taken from the directories that actually contain images, so a
+    dataset whose inherited data.yaml points at non-existent paths still trains.
+    """
     yaml_path = None
     for root, _dirs, files in os.walk(dataset_dir):
         for f in files:
@@ -197,13 +232,30 @@ def _build_training_yaml(dataset_dir, run_dir):
         names = {}
 
     abs_root = os.path.abspath(dataset_dir)
-    train = cfg.get("train") or "images/train"
-    val = cfg.get("val") or train
-    # Guard against a val split that doesn't physically exist (e.g. an older
-    # augmented dataset built from only the train split): fall back to train so
-    # validation still runs instead of YOLO crashing on a missing path.
-    if isinstance(val, str) and not os.path.exists(os.path.join(abs_root, val)):
+    detected = _image_dirs_by_split(dataset_dir)
+
+    def _exists(rel):
+        return isinstance(rel, str) and bool(rel) and os.path.isdir(
+            os.path.join(abs_root, rel))
+
+    def _pick(split, default):
+        # 1) a real image directory found on disk wins; 2) the yaml's value if it
+        # actually exists; 3) the conventional default if it exists.
+        if split in detected:
+            return detected[split]
+        if _exists(cfg.get(split)):
+            return cfg.get(split)
+        if _exists(default):
+            return default
+        return None
+
+    train = _pick("train", "images/train")
+    val = _pick("val", "images/val")
+    # YOLO requires a val set; reuse train when there's genuinely no val split.
+    if val is None:
         val = train
+    if train is None:
+        train = val
     out = {"path": abs_root, "train": train, "val": val,
            "names": names}
     out_path = os.path.join(run_dir, "data.yaml")
