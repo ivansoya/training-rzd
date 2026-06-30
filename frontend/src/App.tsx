@@ -127,45 +127,34 @@ export default function App() {
     }
   }, []);
 
-  async function handleUpload(
-    file: File,
-    name: string,
-    onProgress: (p: Progress) => void
-  ) {
-    setBusy(true);
+  // Non-blocking: close the modal at once and run the upload in the background,
+  // surfacing progress through the header activity indicator.
+  function handleUpload(file: File, name: string) {
+    setShowUpload(false);
     setError(null);
-    // track this upload so the header shows it (and a list if several run)
     const upId = Math.random().toString(36).slice(2);
     const upLabel = name || file.name;
     setUploads((u) => [...u, { id: upId, label: upLabel, pct: 0 }]);
     const setUpPct = (pct: number | null) =>
       setUploads((u) => u.map((x) => (x.id === upId ? { ...x, pct } : x)));
-    try {
-      const { job_id } = await uploadDataset(file, name, (pct) => {
-        // Once the browser has flushed all bytes (pct≈1) the data is still in
-        // flight to the server, so switch to an indeterminate "receiving" state.
-        const receiving = pct >= 0.999;
-        onProgress(
-          receiving
-            ? { label: "Передача архива на сервер…", pct: null }
-            : { label: "Загрузка архива", pct }
-        );
-        setUpPct(receiving ? null : pct);
-      });
-      const stats = await pollJob<DatasetStats>(job_id, (job) => {
-        onProgress(progressForJob(job, "Распаковка"));
-        setUpPct(job.total ? job.processed / job.total : null);
-      });
-      setShowUpload(false);
-      await refresh();
-      await selectDataset("uploaded", stats.name);
-    } catch (e) {
-      setError((e as Error).message);
-      throw e;
-    } finally {
-      setUploads((u) => u.filter((x) => x.id !== upId));
-      setBusy(false);
-    }
+
+    (async () => {
+      try {
+        const { job_id } = await uploadDataset(file, name, (pct) => {
+          // Once the browser has flushed all bytes (pct≈1) the data is still in
+          // flight to the server, so switch to an indeterminate state.
+          setUpPct(pct >= 0.999 ? null : pct);
+        });
+        await pollJob<DatasetStats>(job_id, (job) => {
+          setUpPct(job.total ? job.processed / job.total : null);
+        });
+        await refresh();
+      } catch (e) {
+        setError((e as Error).message);
+      } finally {
+        setUploads((u) => u.filter((x) => x.id !== upId));
+      }
+    })();
   }
 
   async function handleDelete(kind: DatasetKind, name: string) {

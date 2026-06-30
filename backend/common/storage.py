@@ -22,6 +22,10 @@ def save_json(path, data):
 
 
 def safe_name(name):
+    # Keep the basename, drop a trailing extension, then replace only characters
+    # that are unsafe in a path. ``\w`` is Unicode-aware in Python 3, so letters
+    # from any alphabet (e.g. Cyrillic) are preserved — a name like "Проект РЖД"
+    # becomes "Проект_РЖД" instead of being stripped to nothing.
     name = os.path.splitext(os.path.basename(name or ""))[0]
-    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name).strip("._")
+    name = re.sub(r"[^\w.-]+", "_", name, flags=re.UNICODE).strip("._")
     return name or "dataset"
