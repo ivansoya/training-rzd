@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { DatasetKind, DatasetStats } from "../../types";
 
 interface Props {
@@ -6,6 +7,7 @@ interface Props {
   loading: boolean;
   onAugment: () => void;
   onBack: () => void;
+  onRename: (displayName: string) => Promise<void> | void;
 }
 
 export default function DatasetStatsView({
@@ -14,7 +16,11 @@ export default function DatasetStatsView({
   loading,
   onAugment,
   onBack,
+  onRename,
 }: Props) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [renaming, setRenaming] = useState(false);
   if (loading) {
     return <section className="content empty-state">Загрузка статистики…</section>;
   }
@@ -28,17 +34,73 @@ export default function DatasetStatsView({
 
   const maxInstances = Math.max(1, ...stats.classes.map((c) => c.instances));
   const totalInstances = Math.max(1, stats.total_instances);
+  const display = stats.display_name || stats.meta?.display_name || stats.name;
+
+  async function commitRename() {
+    const v = draft.trim();
+    if (!v || v === display) {
+      setEditing(false);
+      return;
+    }
+    setRenaming(true);
+    try {
+      await onRename(v);
+      setEditing(false);
+    } finally {
+      setRenaming(false);
+    }
+  }
 
   return (
     <section className="content">
-      <button className="back-arrow" onClick={onBack} title="К списку датасетов">
-        ←
+      <button className="back-btn" onClick={onBack} title="К списку датасетов">
+        <span className="back-ico">←</span> Назад
       </button>
       <div className="stats-head">
         <div>
-          <h2 className="stats-title">
-            {stats.display_name || stats.meta?.display_name || stats.name}
-          </h2>
+          {editing ? (
+            <div className="rename-row">
+              <input
+                className="text-input stats-title-input"
+                autoFocus
+                value={draft}
+                disabled={renaming}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename();
+                  if (e.key === "Escape") setEditing(false);
+                }}
+              />
+              <button
+                className="btn btn-primary"
+                onClick={commitRename}
+                disabled={renaming || !draft.trim()}
+              >
+                {renaming ? "…" : "Сохранить"}
+              </button>
+              <button
+                className="btn"
+                onClick={() => setEditing(false)}
+                disabled={renaming}
+              >
+                Отмена
+              </button>
+            </div>
+          ) : (
+            <div className="title-row">
+              <h2 className="stats-title">{display}</h2>
+              <button
+                className="icon-btn rename-btn"
+                title="Переименовать"
+                onClick={() => {
+                  setDraft(display);
+                  setEditing(true);
+                }}
+              >
+                ✎
+              </button>
+            </div>
+          )}
           {kind === "augmented" && stats.meta && (
             <p className="subtle">
               из «{stats.meta.source_name || stats.meta.source}» ·{" "}

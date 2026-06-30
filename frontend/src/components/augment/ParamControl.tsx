@@ -1,9 +1,57 @@
+import { useEffect, useState } from "react";
 import type { ParamSchema } from "../../types";
 
 interface Props {
   schema: ParamSchema;
   value: unknown;
   onChange: (value: unknown) => void;
+}
+
+// A numeric field that keeps a local text buffer so floats can be typed by hand
+// ("0.", "0.5", "-", ",") without the value being normalised away mid-edit, and
+// that does NOT react to the mouse wheel (type="text" has no spinner). Commas are
+// accepted as decimal separators.
+function NumField({
+  value,
+  onChange,
+}: {
+  value: number | null | undefined;
+  onChange: (v: number | null) => void;
+}) {
+  const ext = value === undefined || value === null ? "" : String(value);
+  const [text, setText] = useState(ext);
+
+  // Re-sync when the value is changed from outside (e.g. switching configs)
+  // and no longer matches what is in the buffer.
+  useEffect(() => {
+    const buf = text.replace(",", ".");
+    const cur =
+      buf === "" || buf === "-" || buf === "." || buf === "-." ? null : Number(buf);
+    if (cur !== (value ?? null)) setText(ext);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value]);
+
+  return (
+    <input
+      className="text-input sm num-input"
+      type="text"
+      inputMode="decimal"
+      value={text}
+      onChange={(e) => {
+        const raw = e.target.value;
+        // allow only number-ish characters while typing
+        if (raw !== "" && !/^-?\d*[.,]?\d*$/.test(raw)) return;
+        setText(raw);
+        const norm = raw.replace(",", ".");
+        if (norm === "" || norm === "-" || norm === "." || norm === "-.") {
+          onChange(null);
+        } else {
+          const n = Number(norm);
+          if (!Number.isNaN(n)) onChange(n);
+        }
+      }}
+    />
+  );
 }
 
 export default function ParamControl({ schema, value, onChange }: Props) {
@@ -32,49 +80,27 @@ export default function ParamControl({ schema, value, onChange }: Props) {
       return (
         <label className="param">
           {label}
-          <input
-            className="text-input sm"
-            type="number"
-            step={schema.type === "int" ? 1 : 0.05}
-            value={value === undefined || value === null ? "" : String(value)}
-            onChange={(e) =>
-              onChange(e.target.value === "" ? null : Number(e.target.value))
-            }
+          <NumField
+            value={value as number | null | undefined}
+            onChange={(v) => onChange(v)}
           />
         </label>
       );
 
     case "range": {
       const arr = Array.isArray(value) ? (value as number[]) : [undefined, undefined];
-      const step = schema.int ? 1 : 0.05;
       return (
         <label className="param">
           {label}
           <span className="range-row">
-            <input
-              className="text-input sm"
-              type="number"
-              step={step}
-              value={arr[0] ?? ""}
-              onChange={(e) =>
-                onChange([
-                  e.target.value === "" ? null : Number(e.target.value),
-                  arr[1] ?? null,
-                ])
-              }
+            <NumField
+              value={arr[0] as number | null | undefined}
+              onChange={(v) => onChange([v, arr[1] ?? null])}
             />
             <span className="dash">—</span>
-            <input
-              className="text-input sm"
-              type="number"
-              step={step}
-              value={arr[1] ?? ""}
-              onChange={(e) =>
-                onChange([
-                  arr[0] ?? null,
-                  e.target.value === "" ? null : Number(e.target.value),
-                ])
-              }
+            <NumField
+              value={arr[1] as number | null | undefined}
+              onChange={(v) => onChange([arr[0] ?? null, v])}
             />
           </span>
         </label>

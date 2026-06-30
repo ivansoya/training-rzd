@@ -187,6 +187,29 @@ def upload_dataset():
     return jsonify({"job_id": job_id}), 202
 
 
+@bp.patch("/api/datasets/<kind>/<name>")
+def rename_dataset(kind, name):
+    """Change only the user-facing display name; the id/folder stays the same."""
+    root = kind_dir(kind)
+    if root is None:
+        return jsonify({"error": "unknown kind"}), 404
+    name = safe_name(name)
+    if not os.path.isdir(os.path.join(root, name)):
+        return jsonify({"error": "dataset not found"}), 404
+    body = request.get_json(silent=True) or {}
+    display_name = (body.get("display_name") or "").strip()
+    if not display_name:
+        return jsonify({"error": "название не может быть пустым"}), 400
+
+    meta_file = AUG_META_FILE if kind == "augmented" else DATASETS_META_FILE
+    meta = load_json(meta_file, {})
+    entry = meta.get(name) or {}
+    entry["display_name"] = display_name
+    meta[name] = entry
+    save_json(meta_file, meta)
+    return jsonify({"ok": True, "display_name": display_name})
+
+
 @bp.delete("/api/datasets/<kind>/<name>")
 def delete_dataset(kind, name):
     root = kind_dir(kind)

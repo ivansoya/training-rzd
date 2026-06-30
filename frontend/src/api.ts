@@ -107,6 +107,20 @@ export async function deleteDataset(kind: DatasetKind, name: string): Promise<vo
   );
 }
 
+export async function renameDataset(
+  kind: DatasetKind,
+  name: string,
+  displayName: string
+): Promise<void> {
+  await asJson(
+    await fetch(`${BASE}/datasets/${kind}/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_name: displayName }),
+    })
+  );
+}
+
 export async function createAugmented(
   source: string,
   configIds: string[],
@@ -172,13 +186,14 @@ export async function deleteConfig(id: string): Promise<void> {
 
 export async function previewConfig(
   source: string,
-  transforms: TransformInstance[]
+  transforms: TransformInstance[],
+  seed?: number
 ): Promise<PreviewResult> {
   return asJson(
     await fetch(`${BASE}/aug/preview`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ source, transforms }),
+      body: JSON.stringify({ source, transforms, seed }),
     })
   );
 }

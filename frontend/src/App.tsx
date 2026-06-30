@@ -15,6 +15,7 @@ import {
   deleteDataset,
   getDataset,
   listConfigs,
+  renameDataset,
   listDatasets,
   listTrainings,
   listTransforms,
@@ -157,6 +158,13 @@ export default function App() {
     })();
   }
 
+  async function handleRename(displayName: string) {
+    if (!selected) return;
+    await renameDataset(selected.kind, selected.name, displayName);
+    await refresh();
+    await selectDataset(selected.kind, selected.name);
+  }
+
   async function handleDelete(kind: DatasetKind, name: string) {
     if (!window.confirm(`Удалить датасет "${name}"?`)) return;
     setBusy(true);
@@ -252,6 +260,7 @@ export default function App() {
               kind={selected.kind}
               loading={loadingStats}
               onAugment={() => selected && setAugmentSource(selected.name)}
+              onRename={handleRename}
               onBack={() => {
                 setSelected(null);
                 setStats(null);

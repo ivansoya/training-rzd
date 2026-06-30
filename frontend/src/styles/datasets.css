@@ -1,5 +1,42 @@
-/* Datasets section: tile grid, dataset tiles, stats back-arrow,
+/* Datasets section: tile grid, dataset tiles, detail header,
    applied-config chips. */
+
+/* Inline rename in the dataset detail header */
+.title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rename-btn {
+  font-size: 15px;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.12s, color 0.12s;
+}
+
+.title-row:hover .rename-btn {
+  opacity: 1;
+}
+
+.rename-btn:hover {
+  color: var(--accent);
+  background: var(--panel-2);
+}
+
+.rename-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.stats-title-input {
+  margin-top: 0;
+  font-size: 18px;
+  font-weight: 600;
+  min-width: 280px;
+  width: auto;
+}
 
 /* Class-share bar with hover percentage tooltip + highlight */
 .share-bar {
@@ -218,18 +255,3 @@
   padding: 8px 12px;
 }
 
-/* bare back arrow (replaces verbose "back to datasets" buttons) */
-.back-arrow {
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  font-size: 22px;
-  line-height: 1;
-  cursor: pointer;
-  padding: 2px 8px 2px 0;
-  margin-bottom: 8px;
-}
-
-.back-arrow:hover {
-  color: var(--text);
-}

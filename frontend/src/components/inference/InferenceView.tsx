@@ -117,11 +117,11 @@ export default function InferenceView({ available }: Props) {
       {selectedVideo ? (
         <section className="content">
           <button
-            className="back-arrow"
+            className="back-btn"
             onClick={() => setSelectedVideoId(null)}
             title="К списку видео"
           >
-            ←
+            <span className="back-ico">←</span> Назад
           </button>
           <VideoDetail
             key={selectedVideo.id}

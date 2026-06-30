@@ -274,6 +274,36 @@ body {
   padding: 20px 24px;
 }
 
+/* "Back" button used in detail sub-views (datasets, inference) */
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 13px 6px 10px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-bottom: 16px;
+  transition: background 0.12s, border-color 0.12s, transform 0.08s;
+}
+
+.back-btn:hover {
+  background: var(--border);
+  border-color: var(--accent);
+}
+
+.back-btn:active {
+  transform: translateX(-2px);
+}
+
+.back-btn .back-ico {
+  font-size: 16px;
+  line-height: 1;
+}
+
 .empty-state {
   display: flex;
   align-items: center;

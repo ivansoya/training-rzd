@@ -44,6 +44,11 @@ export default function AugmentView({ registry, available, datasets }: Props) {
   const [preview, setPreview] = useState<PreviewResult | null>(null);
   const [previewErr, setPreviewErr] = useState<string | null>(null);
   const [previewBusy, setPreviewBusy] = useState(false);
+  // Seed fixes WHICH image is sampled, so tweaking params re-augments the same
+  // picture; "Другое изображение" just rolls a new seed. The slider position is
+  // kept across updates so the chosen side stays revealed.
+  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9));
+  const [sliderPos, setSliderPos] = useState(50);
 
   const registryByName = useMemo(
     () => Object.fromEntries(registry.map((t) => [t.name, t])),
@@ -162,29 +167,38 @@ export default function AugmentView({ registry, available, datasets }: Props) {
     }
   }
 
-  async function runPreview() {
-    if (!previewSource) {
-      setPreviewErr("Нет загруженных датасетов для превью");
-      return;
-    }
-    setPreviewBusy(true);
-    setPreviewErr(null);
-    try {
-      setPreview(
-        await previewConfig(
-          previewSource,
-          transforms.filter((t) => t.name)
-        )
-      );
-    } catch (e) {
-      setPreviewErr((e as Error).message);
-      setPreview(null);
-    } finally {
-      setPreviewBusy(false);
-    }
-  }
-
   const active = editId !== null || creating;
+
+  // Live preview: re-runs (debounced) whenever the augmentation set, the source
+  // dataset or the seed changes — no manual "Превью" button.
+  const completed = transforms.filter((t) => t.name);
+  const completedKey = JSON.stringify(completed);
+  useEffect(() => {
+    if (!available || !previewSource) return;
+    let cancelled = false;
+    const h = setTimeout(async () => {
+      setPreviewBusy(true);
+      setPreviewErr(null);
+      try {
+        const r = await previewConfig(previewSource, JSON.parse(completedKey), seed);
+        if (!cancelled) setPreview(r);
+      } catch (e) {
+        // Keep the last good preview on screen; just surface the error note so
+        // the images don't vanish on a transient/invalid-params failure.
+        if (!cancelled) setPreviewErr((e as Error).message);
+      } finally {
+        if (!cancelled) setPreviewBusy(false);
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(h);
+    };
+  }, [available, previewSource, seed, completedKey]);
+
+  function shuffleImage() {
+    setSeed(Math.floor(Math.random() * 1e9));
+  }
 
   return (
     <div className="augment-view">
@@ -197,33 +211,36 @@ export default function AugmentView({ registry, available, datasets }: Props) {
       {error && <div className="error-banner inline">{error}</div>}
 
       <div className="aug-layout">
-        {/* left: config list + add new */}
-        <div className="aug-col aug-configs">
-          <button className="btn btn-primary block" onClick={newConfig}>
-            + Новая конфигурация
-          </button>
-          <ul className="config-list">
-            {configs.map((c) => (
-              <li
-                key={c.id}
-                className={c.id === editId ? "config-item active" : "config-item"}
-                onClick={() => pickConfig(c)}
-              >
-                <span>{c.name}</span>
-                <span className="count">{c.transforms.length}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
+        {/* left: config list + "new" action (one block), then the editor below */}
+        <div className="aug-left">
+          <div className="aug-col aug-configs">
+            <ul className="config-list">
+              {configs.map((c) => (
+                <li
+                  key={c.id}
+                  className={c.id === editId ? "config-item active" : "config-item"}
+                  onClick={() => pickConfig(c)}
+                >
+                  <span>{c.name}</span>
+                  <span className="count">{c.transforms.length}</span>
+                </li>
+              ))}
+            </ul>
+            <button
+              className="btn btn-primary block aug-new-btn"
+              onClick={newConfig}
+            >
+              + Новая конфигурация
+            </button>
+          </div>
 
-        {/* right: editor + preview, or placeholder */}
-        <div className="aug-col aug-editor">
-          {!active ? (
-            <p className="subtle empty-hint">
-              Выберите конфигурацию из списка для просмотра или создайте новую.
-            </p>
-          ) : (
-            <>
+          <div className="aug-col aug-editor">
+            {!active ? (
+              <p className="subtle empty-hint">
+                Выберите конфигурацию из списка или создайте новую.
+              </p>
+            ) : (
+              <>
               <label className="modal-label">
                 Название конфигурации
                 <input
@@ -349,53 +366,82 @@ export default function AugmentView({ registry, available, datasets }: Props) {
                 )}
               </div>
 
-              {/* preview of the current augmentations */}
-              <div className="aug-preview-block">
-                <h4 className="section-title">Просмотр аугментаций</h4>
-                <div className="preview-controls">
-                  <select
-                    className="text-input"
-                    value={previewSource}
-                    onChange={(e) => setPreviewSource(e.target.value)}
-                  >
-                    {uploaded.length === 0 && <option value="">нет датасетов</option>}
-                    {uploaded.map((d) => (
-                      <option key={d.name} value={d.name}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                  <button
-                    className="btn btn-primary"
-                    onClick={runPreview}
-                    disabled={!available || previewBusy || !previewSource}
-                  >
-                    {previewBusy ? "…" : "Превью"}
-                  </button>
-                </div>
+              </>
+            )}
+          </div>
+        </div>
 
-                {previewErr && <div className="error-banner inline">{previewErr}</div>}
-                {preview && (
-                  <div className="preview-images">
-                    <figure>
-                      <figcaption>Оригинал</figcaption>
-                      <img src={preview.original} alt="original" />
-                    </figure>
-                    <figure>
-                      <figcaption>После аугментаций</figcaption>
-                      <img src={preview.augmented} alt="augmented" />
-                    </figure>
-                    <p className="subtle mono">{preview.image}</p>
-                  </div>
-                )}
-                {!preview && !previewErr && (
-                  <p className="subtle">
-                    Выберите датасет и нажмите «Превью» — случайное изображение
-                    пройдёт через текущие аугментации.
-                  </p>
-                )}
+        {/* right: live before/after preview with a draggable comparison slider */}
+        <div className="aug-col aug-preview-col">
+          <div className="preview-head">
+            <select
+              className="text-input"
+              value={previewSource}
+              onChange={(e) => setPreviewSource(e.target.value)}
+            >
+              {uploaded.length === 0 && <option value="">нет датасетов</option>}
+              {uploaded.map((d) => (
+                <option key={d.name} value={d.name}>
+                  {d.display_name || d.name}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn"
+              onClick={shuffleImage}
+              disabled={!available || previewBusy || !previewSource}
+              title="Показать другое изображение"
+            >
+              Другое изображение
+            </button>
+          </div>
+
+          {!available ? (
+            <p className="subtle empty-hint">Превью недоступно.</p>
+          ) : !previewSource ? (
+            <p className="subtle empty-hint">Нет загруженных датасетов для превью.</p>
+          ) : preview ? (
+            <>
+              {previewErr && (
+                <div className="error-banner inline">{previewErr}</div>
+              )}
+              <div className={previewBusy ? "ba-compare busy" : "ba-compare"}>
+                <img
+                  className="ba-img"
+                  src={preview.augmented}
+                  alt="augmented"
+                  draggable={false}
+                />
+                <img
+                  className="ba-img ba-top"
+                  src={preview.original}
+                  alt="original"
+                  draggable={false}
+                  style={{ clipPath: `inset(0 ${100 - sliderPos}% 0 0)` }}
+                />
+                <div className="ba-divider" style={{ left: `${sliderPos}%` }} />
+                <span className="ba-tag ba-tag-l">Оригинал</span>
+                <span className="ba-tag ba-tag-r">Аугментация</span>
+                <input
+                  className="ba-range"
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={sliderPos}
+                  onChange={(e) => setSliderPos(Number(e.target.value))}
+                  aria-label="Сравнение до и после"
+                />
               </div>
+              <p className="subtle mono">{preview.image}</p>
+              <p className="subtle">
+                Тяните ползунок: слева — оригинал, справа — после аугментаций.
+                Превью обновляется автоматически.
+              </p>
             </>
+          ) : previewErr ? (
+            <div className="error-banner inline">{previewErr}</div>
+          ) : (
+            <p className="subtle empty-hint">Загрузка превью…</p>
           )}
         </div>
       </div>
