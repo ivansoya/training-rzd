@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Sidebar from "./components/common/Sidebar";
 import type { View } from "./components/common/Sidebar";
 import Header from "./components/common/Header";
-import type { UploadActivity } from "./components/common/Header";
+import type { AugActivity, UploadActivity } from "./components/common/Header";
 import UploadModal from "./components/datasets/UploadModal";
 import CreateAugmentedModal from "./components/augment/CreateAugmentedModal";
 import DatasetStatsView from "./components/datasets/DatasetStats";
@@ -11,9 +11,12 @@ import AugmentView from "./components/augment/AugmentView";
 import TrainView from "./components/train/TrainView";
 import InferenceView from "./components/inference/InferenceView";
 import {
+  cancelAugment,
+  clearAugmented,
   createAugmented,
   deleteDataset,
   getDataset,
+  JobCancelledError,
   listConfigs,
   renameDataset,
   listDatasets,
@@ -28,25 +31,11 @@ import type {
   DatasetKind,
   DatasetStats,
   DatasetSummary,
-  Job,
-  Progress,
   TrainingSummary,
   TransformSchema,
 } from "./types";
 
 type Selected = { kind: DatasetKind; name: string };
-
-// Map a running job to a progress descriptor. The "stats" phase is a single
-// pass, so it is shown as a label-only spinner (no progress bar).
-function progressForJob(job: Job, fallbackLabel: string): Progress {
-  if (job.phase === "stats") {
-    return { label: "Подсчёт статистики…", pct: null, spinner: true };
-  }
-  return {
-    label: job.message || fallbackLabel,
-    pct: job.total ? job.processed / job.total : null,
-  };
-}
 
 export default function App() {
   const [view, setView] = useState<View>("datasets");
@@ -65,6 +54,9 @@ export default function App() {
 
   // header activity indicators
   const [uploads, setUploads] = useState<UploadActivity[]>([]);
+  const [augments, setAugments] = useState<AugActivity[]>([]);
+  const augJobs = useRef<Record<string, string>>({});
+  const augCancelPending = useRef<Set<string>>(new Set());
   const [headerTrainings, setHeaderTrainings] = useState<TrainingSummary[]>([]);
   const [focusTraining, setFocusTraining] = useState<string | undefined>();
 
@@ -185,32 +177,83 @@ export default function App() {
     }
   }
 
-  async function handleCreateAugmented(
+  // Non-blocking: close the modal at once and run generation in the background,
+  // surfacing progress (and a cancel control) through the header indicator.
+  function handleCreateAugmented(
     configIds: string[],
     displayName: string,
-    scope: AugScope,
-    onProgress: (p: Progress) => void
+    scope: AugScope
   ) {
     if (!augmentSource) return;
+    const source = augmentSource;
+    setAugmentSource(null);
+    setError(null);
+    const augId = Math.random().toString(36).slice(2);
+    setAugments((a) => [...a, { id: augId, label: displayName || source, pct: 0 }]);
+    const patch = (fields: Partial<AugActivity>) =>
+      setAugments((a) => a.map((x) => (x.id === augId ? { ...x, ...fields } : x)));
+
+    (async () => {
+      try {
+        const { job_id } = await createAugmented(
+          source,
+          configIds,
+          displayName,
+          scope
+        );
+        augJobs.current[augId] = job_id;
+        // If the user hit cancel before the job id came back, honour it now.
+        if (augCancelPending.current.has(augId)) {
+          augCancelPending.current.delete(augId);
+          cancelAugment(job_id).catch(() => {});
+        }
+        await pollJob<DatasetStats>(job_id, (job) => {
+          patch({ pct: job.total ? job.processed / job.total : null });
+        });
+        await refresh();
+        window.dispatchEvent(new Event("storage-changed"));
+      } catch (e) {
+        if (!(e instanceof JobCancelledError)) setError((e as Error).message);
+      } finally {
+        setAugments((a) => a.filter((x) => x.id !== augId));
+        delete augJobs.current[augId];
+        augCancelPending.current.delete(augId);
+      }
+    })();
+  }
+
+  function handleCancelAugment(augId: string) {
+    setAugments((a) =>
+      a.map((x) => (x.id === augId ? { ...x, cancelling: true } : x))
+    );
+    const jobId = augJobs.current[augId];
+    if (jobId) {
+      cancelAugment(jobId).catch(() => {});
+    } else {
+      // job id not assigned yet — cancel as soon as it is
+      augCancelPending.current.add(augId);
+    }
+  }
+
+  async function handleClearAugmented() {
+    if (
+      !window.confirm(
+        "Удалить все аугментированные датасеты? Действие необратимо."
+      )
+    )
+      return;
     setBusy(true);
     setError(null);
     try {
-      const { job_id } = await createAugmented(
-        augmentSource,
-        configIds,
-        displayName,
-        scope
-      );
-      const stats = await pollJob<DatasetStats>(job_id, (job) =>
-        onProgress(progressForJob(job, "Генерация аугментаций"))
-      );
-      setAugmentSource(null);
+      await clearAugmented();
+      if (selected?.kind === "augmented") {
+        setSelected(null);
+        setStats(null);
+      }
       await refresh();
       window.dispatchEvent(new Event("storage-changed"));
-      await selectDataset("augmented", stats.name);
     } catch (e) {
       setError((e as Error).message);
-      throw e;
     } finally {
       setBusy(false);
     }
@@ -236,6 +279,7 @@ export default function App() {
         </div>
         <Header
           uploads={uploads}
+          augments={augments}
           trainings={headerTrainings.filter(
             (t) => t.status === "preparing" || t.status === "running"
           )}
@@ -243,6 +287,7 @@ export default function App() {
             setFocusTraining(id);
             setView("train");
           }}
+          onCancelAugment={handleCancelAugment}
         />
       </header>
 
@@ -275,6 +320,7 @@ export default function App() {
               onUploadClick={() => setShowUpload(true)}
               onSelect={selectDataset}
               onDelete={handleDelete}
+              onClearAugmented={handleClearAugmented}
               busy={busy}
             />
           ))}

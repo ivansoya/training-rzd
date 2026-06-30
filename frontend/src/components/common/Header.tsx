@@ -7,10 +7,19 @@ export interface UploadActivity {
   pct: number | null; // null = indeterminate (server-side phase)
 }
 
+export interface AugActivity {
+  id: string;
+  label: string;
+  pct: number | null;
+  cancelling?: boolean;
+}
+
 interface Props {
   uploads: UploadActivity[];
+  augments: AugActivity[];
   trainings: TrainingSummary[]; // only the active ones
   onOpenTraining: (id: string) => void;
+  onCancelAugment: (id: string) => void;
 }
 
 interface Item {
@@ -19,11 +28,19 @@ interface Item {
   detail: string;
   pct: number | null;
   onClick?: () => void;
+  onCancel?: () => void;
+  cancelLabel?: string;
 }
 
 // Live activity indicator in the header. Renders nothing when idle; a single
 // pill when one task runs; a count pill that expands to a list when several do.
-export default function Header({ uploads, trainings, onOpenTraining }: Props) {
+export default function Header({
+  uploads,
+  augments,
+  trainings,
+  onOpenTraining,
+  onCancelAugment,
+}: Props) {
   const [open, setOpen] = useState(false);
 
   const items: Item[] = [
@@ -32,6 +49,14 @@ export default function Header({ uploads, trainings, onOpenTraining }: Props) {
       title: "Загрузка датасета",
       detail: u.label,
       pct: u.pct,
+    })),
+    ...augments.map((a) => ({
+      key: "a:" + a.id,
+      title: "Генерация аугментаций",
+      detail: a.cancelling ? `${a.label} · отмена…` : a.label,
+      pct: a.pct,
+      onCancel: a.cancelling ? undefined : () => onCancelAugment(a.id),
+      cancelLabel: "Отменить генерацию",
     })),
     ...trainings.map((t) => ({
       key: "t:" + t.id,
@@ -47,19 +72,30 @@ export default function Header({ uploads, trainings, onOpenTraining }: Props) {
   if (items.length === 1) {
     const it = items[0];
     return (
-      <button
-        className="hdr-status"
-        onClick={it.onClick}
-        disabled={!it.onClick}
-        title={it.onClick ? "Открыть" : undefined}
-      >
-        <span className="hdr-spinner" />
-        <span className="hdr-status-text">{it.title}</span>
-        <span className="hdr-status-detail">{it.detail}</span>
-        {it.pct != null && (
-          <span className="hdr-pct">{Math.round(it.pct * 100)}%</span>
+      <div className="hdr-status-wrap">
+        <button
+          className="hdr-status"
+          onClick={it.onClick}
+          disabled={!it.onClick}
+          title={it.onClick ? "Открыть" : undefined}
+        >
+          <span className="hdr-spinner" />
+          <span className="hdr-status-text">{it.title}</span>
+          <span className="hdr-status-detail">{it.detail}</span>
+          {it.pct != null && (
+            <span className="hdr-pct">{Math.round(it.pct * 100)}%</span>
+          )}
+        </button>
+        {it.onCancel && (
+          <button
+            className="hdr-cancel"
+            onClick={it.onCancel}
+            title={it.cancelLabel}
+          >
+            ✕
+          </button>
         )}
-      </button>
+      </div>
     );
   }
 
@@ -73,21 +109,31 @@ export default function Header({ uploads, trainings, onOpenTraining }: Props) {
       {open && (
         <div className="hdr-dropdown">
           {items.map((it) => (
-            <button
-              key={it.key}
-              className="hdr-drop-item"
-              onClick={() => {
-                it.onClick?.();
-                setOpen(false);
-              }}
-              disabled={!it.onClick}
-            >
-              <span className="hdr-drop-title">{it.title}</span>
-              <span className="hdr-drop-detail">
-                {it.detail}
-                {it.pct != null ? ` · ${Math.round(it.pct * 100)}%` : ""}
-              </span>
-            </button>
+            <div key={it.key} className="hdr-drop-row">
+              <button
+                className="hdr-drop-item"
+                onClick={() => {
+                  it.onClick?.();
+                  setOpen(false);
+                }}
+                disabled={!it.onClick}
+              >
+                <span className="hdr-drop-title">{it.title}</span>
+                <span className="hdr-drop-detail">
+                  {it.detail}
+                  {it.pct != null ? ` · ${Math.round(it.pct * 100)}%` : ""}
+                </span>
+              </button>
+              {it.onCancel && (
+                <button
+                  className="hdr-cancel"
+                  onClick={it.onCancel}
+                  title={it.cancelLabel}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
           ))}
         </div>
       )}

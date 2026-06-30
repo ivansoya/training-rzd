@@ -29,6 +29,15 @@ async function asJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
+// Thrown by pollJob when a job ends because the user cancelled it, so callers
+// can distinguish a deliberate stop from a real failure.
+export class JobCancelledError extends Error {
+  constructor() {
+    super("job cancelled");
+    this.name = "JobCancelledError";
+  }
+}
+
 // --- jobs ---
 export async function getJob<R = unknown>(id: string): Promise<Job<R>> {
   return asJson(await fetch(`${BASE}/jobs/${id}`));
@@ -44,6 +53,7 @@ export async function pollJob<R = unknown>(
     const job = await getJob<R>(id);
     onProgress(job);
     if (job.status === "done") return job.result as R;
+    if (job.status === "cancelled") throw new JobCancelledError();
     if (job.status === "error") throw new Error(job.error || "job failed");
     await new Promise((r) => setTimeout(r, intervalMs));
   }
@@ -139,6 +149,16 @@ export async function createAugmented(
       }),
     })
   );
+}
+
+export async function cancelAugment(jobId: string): Promise<void> {
+  await asJson(
+    await fetch(`${BASE}/aug/generate/${jobId}/cancel`, { method: "POST" })
+  );
+}
+
+export async function clearAugmented(): Promise<{ removed: number }> {
+  return asJson(await fetch(`${BASE}/aug/clear`, { method: "POST" }));
 }
 
 // --- augmentation configs ---

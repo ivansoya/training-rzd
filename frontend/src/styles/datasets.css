@@ -126,17 +126,33 @@
   margin-top: 18px;
 }
 
+/* section header row: collapsible title on the left, optional action on right */
+.tile-section-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.section-action {
+  flex-shrink: 0;
+}
+
+.btn.sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
 .tile-section-head {
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  flex: 1;
   background: transparent;
   border: none;
   color: var(--muted);
   cursor: pointer;
   padding: 6px 0;
-  margin-bottom: 10px;
   font-size: 12px;
   font-weight: 600;
   text-transform: uppercase;

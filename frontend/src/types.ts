@@ -102,7 +102,7 @@ export type AugScope = "all" | "train";
 export interface Job<R = unknown> {
   id: string;
   type: string;
-  status: "running" | "done" | "error";
+  status: "running" | "done" | "error" | "cancelled";
   processed: number;
   total: number;
   message: string;

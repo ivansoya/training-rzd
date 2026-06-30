@@ -196,9 +196,15 @@ def _build_training_yaml(dataset_dir, run_dir):
     else:
         names = {}
 
+    abs_root = os.path.abspath(dataset_dir)
     train = cfg.get("train") or "images/train"
     val = cfg.get("val") or train
-    out = {"path": os.path.abspath(dataset_dir), "train": train, "val": val,
+    # Guard against a val split that doesn't physically exist (e.g. an older
+    # augmented dataset built from only the train split): fall back to train so
+    # validation still runs instead of YOLO crashing on a missing path.
+    if isinstance(val, str) and not os.path.exists(os.path.join(abs_root, val)):
+        val = train
+    out = {"path": abs_root, "train": train, "val": val,
            "names": names}
     out_path = os.path.join(run_dir, "data.yaml")
     with open(out_path, "w", encoding="utf-8") as fh:

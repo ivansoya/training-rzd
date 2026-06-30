@@ -1,16 +1,10 @@
 import { useState } from "react";
-import ProgressBar from "../common/ProgressBar";
-import type { AugConfig, AugScope, Progress } from "../../types";
+import type { AugConfig, AugScope } from "../../types";
 
 interface Props {
   source: string;
   configs: AugConfig[];
-  onCreate: (
-    configIds: string[],
-    displayName: string,
-    scope: AugScope,
-    onProgress: (p: Progress) => void
-  ) => Promise<void>;
+  onCreate: (configIds: string[], displayName: string, scope: AugScope) => void;
   onClose: () => void;
 }
 
@@ -23,22 +17,18 @@ export default function CreateAugmentedModal({
   const [selected, setSelected] = useState<string[]>([]);
   const [displayName, setDisplayName] = useState("");
   const [scope, setScope] = useState<AugScope>("all");
-  const [progress, setProgress] = useState<Progress | null>(null);
 
-  const busy = progress !== null;
+  const busy = false;
 
   function toggle(id: string) {
     setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   }
 
-  async function confirm() {
+  function confirm() {
     if (selected.length === 0) return;
-    setProgress({ label: "Подготовка…", pct: null });
-    try {
-      await onCreate(selected, displayName.trim(), scope, setProgress);
-    } catch {
-      setProgress(null);
-    }
+    // Fire and forget: generation runs in the background; progress and a cancel
+    // control live in the header activity indicator. The modal closes at once.
+    onCreate(selected, displayName.trim(), scope);
   }
 
   const chosen = configs.filter((c) => selected.includes(c.id));
@@ -121,8 +111,6 @@ export default function CreateAugmentedModal({
             }
           />
         </label>
-
-        {progress && <ProgressBar label={progress.label} pct={progress.pct} />}
 
         <div className="modal-actions">
           <button className="btn" onClick={onClose} disabled={busy}>

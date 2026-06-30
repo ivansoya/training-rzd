@@ -13,6 +13,10 @@ os.environ.setdefault("NO_ALBUMENTATIONS_UPDATE", "1")
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 
+
+class Cancelled(Exception):
+    """Raised inside generate() when the job has been cancelled by the user."""
+
 # Curated whitelist of transforms exposed in the UI. All of them work with their
 # default parameters so a freshly added transform previews without extra input.
 PIXEL_TRANSFORMS = [
@@ -314,14 +318,21 @@ def count_images(source_dir, scope="all"):
     return len(images)
 
 
-def generate(source_dir, dest_dir, passes, scope="all", progress=None):
+def generate(source_dir, dest_dir, passes, scope="all", progress=None,
+             should_cancel=None):
     """Create an augmented copy of `source_dir` at `dest_dir`.
 
     `passes` is a list of {name, transforms}. Each pass is a full cycle over
     every image with its own transform set; outputs from different passes get a
     distinct filename suffix so they coexist in one dataset. Returns the number
     of written images.
+
+    `should_cancel`, if given, is polled between images; when it returns true the
+    generation aborts with `Cancelled` so the caller can clean up.
     """
+    def _cancelled():
+        return bool(should_cancel and should_cancel())
+
     import shutil
 
     import cv2
@@ -353,6 +364,8 @@ def generate(source_dir, dest_dir, passes, scope="all", progress=None):
     # Copy the non-augmented splits (val/test) verbatim — same paths, same
     # filenames, no suffix — so they remain identical to the original dataset.
     for rel in clean:
+        if _cancelled():
+            raise Cancelled()
         src_img = os.path.join(source_dir, rel)
         dst_img = os.path.join(dest_dir, rel)
         os.makedirs(os.path.dirname(dst_img), exist_ok=True)
@@ -367,6 +380,8 @@ def generate(source_dir, dest_dir, passes, scope="all", progress=None):
 
     aug_done = 0
     for rel in images:
+        if _cancelled():
+            raise Cancelled()
         rgb = _imread_rgb(os.path.join(source_dir, rel))
         if rgb is None:
             continue

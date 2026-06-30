@@ -6,6 +6,7 @@ interface Props {
   onUploadClick: () => void;
   onSelect: (kind: DatasetKind, name: string) => void;
   onDelete: (kind: DatasetKind, name: string) => void;
+  onClearAugmented: () => void;
   busy: boolean;
 }
 
@@ -14,6 +15,7 @@ export default function DatasetsGrid({
   onUploadClick,
   onSelect,
   onDelete,
+  onClearAugmented,
   busy,
 }: Props) {
   const uploaded = datasets.filter((d) => d.kind === "uploaded");
@@ -41,7 +43,22 @@ export default function DatasetsGrid({
         ))}
       </CollapsibleSection>
 
-      <CollapsibleSection title="Аугментированные" count={augmented.length}>
+      <CollapsibleSection
+        title="Аугментированные"
+        count={augmented.length}
+        action={
+          augmented.length > 0 ? (
+            <button
+              className="btn btn-danger sm section-action"
+              onClick={onClearAugmented}
+              disabled={busy}
+              title="Удалить все аугментированные датасеты"
+            >
+              Очистить директорию
+            </button>
+          ) : null
+        }
+      >
         {augmented.length === 0 && <div className="tile-empty">пусто</div>}
         {augmented.map((d) => (
           <DatasetTile

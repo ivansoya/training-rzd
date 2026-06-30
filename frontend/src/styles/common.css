@@ -806,7 +806,44 @@ input[type="checkbox"]:focus-visible {
 /* ===== Header activity indicator (uploads / trainings in progress) ===== */
 .topbar { justify-content: space-between; }
 
-.hdr-status-wrap { position: relative; }
+.hdr-status-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* round ✕ to cancel a header task (e.g. augmentation generation) */
+.hdr-cancel {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.hdr-cancel:hover {
+  background: rgba(239, 68, 68, 0.18);
+  border-color: var(--danger);
+  color: #fca5a5;
+}
+
+.hdr-drop-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.hdr-drop-row .hdr-drop-item {
+  flex: 1;
+  min-width: 0;
+}
 
 .hdr-status {
   display: inline-flex;

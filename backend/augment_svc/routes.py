@@ -21,6 +21,26 @@ from augment_svc import engine
 
 bp = Blueprint("augmentation", __name__)
 
+# Cancellation flags for in-flight generation jobs (same process as the worker
+# threads). The worker polls this between images and aborts when its id appears.
+_CANCELLED = set()
+_CANCEL_LOCK = threading.Lock()
+
+
+def _request_cancel(job_id):
+    with _CANCEL_LOCK:
+        _CANCELLED.add(job_id)
+
+
+def _is_cancelled(job_id):
+    with _CANCEL_LOCK:
+        return job_id in _CANCELLED
+
+
+def _clear_cancel(job_id):
+    with _CANCEL_LOCK:
+        _CANCELLED.discard(job_id)
+
 
 def load_configs():
     configs = load_json(CONFIGS_FILE, [])
@@ -141,7 +161,8 @@ def _run_augment_job(job_id, source_dir, dest, folder, source, display_name,
                     phase="generate")
 
         written = engine.generate(source_dir, dest, snapshots, scope=scope,
-                                  progress=progress)
+                                  progress=progress,
+                                  should_cancel=lambda: _is_cancelled(job_id))
 
         meta = load_aug_meta()
         meta[folder] = {
@@ -162,9 +183,14 @@ def _run_augment_job(job_id, source_dir, dest, folder, source, display_name,
         except OSError:
             pass
         jobs.update(job_id, status="done", result=stats)
+    except engine.Cancelled:
+        shutil.rmtree(dest, ignore_errors=True)
+        jobs.update(job_id, status="cancelled", message="Отменено")
     except Exception as exc:  # noqa: BLE001
         shutil.rmtree(dest, ignore_errors=True)
         jobs.update(job_id, status="error", error=f"augmentation failed: {exc}")
+    finally:
+        _clear_cancel(job_id)
 
 
 @bp.post("/api/aug/generate")
@@ -217,3 +243,27 @@ def create_augmented():
         daemon=True,
     ).start()
     return jsonify({"job_id": job_id}), 202
+
+
+@bp.post("/api/aug/generate/<job_id>/cancel")
+def cancel_augment(job_id):
+    """Ask an in-flight generation job to stop; the worker aborts and cleans up."""
+    _request_cancel(job_id)
+    job = jobs.get(job_id)
+    if job and job.get("status") == "running":
+        jobs.update(job_id, message="Отмена…")
+    return jsonify({"ok": True})
+
+
+@bp.post("/api/aug/clear")
+def clear_augmented():
+    """Delete every augmented dataset and reset the augmented meta."""
+    removed = 0
+    if os.path.isdir(AUGMENTED_DIR):
+        for name in os.listdir(AUGMENTED_DIR):
+            full = os.path.join(AUGMENTED_DIR, name)
+            if os.path.isdir(full):
+                shutil.rmtree(full, ignore_errors=True)
+                removed += 1
+    save_json(AUG_META_FILE, {})
+    return jsonify({"ok": True, "removed": removed})
