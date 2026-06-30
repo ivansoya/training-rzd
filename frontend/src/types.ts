@@ -4,6 +4,7 @@ export interface DatasetSummary {
   name: string;
   kind: DatasetKind;
   images: number;
+  num_classes?: number | null;
   display_name?: string;
   source?: string;
   config_names?: string[];
@@ -158,10 +159,13 @@ export interface TrainingRun extends TrainingSummary {
   message?: string;
   weights_path?: string;
   // live per-iteration progress within the current epoch
+  phase?: "train" | "val";
   current_batch?: number;
   total_batches?: number | null;
   batch_metrics?: Record<string, number>;
   batch_rate?: number;
+  val_batch?: number;
+  val_total?: number | null;
 }
 
 export interface TrainedModel {
@@ -192,9 +196,20 @@ export interface InferenceStats {
   per_class: InferenceClassStat[];
 }
 
+export interface VideoItem {
+  id: string;
+  name: string;
+  ext: string;
+  catalog: string;
+  size: number;
+  created_at: number;
+}
+
 export interface InferenceSummary {
   id: string;
   status: "processing" | "done" | "error";
+  video_id?: string;
+  catalog?: string;
   model_run_id: string;
   model_name: string;
   input_name: string;

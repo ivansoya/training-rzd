@@ -47,8 +47,11 @@ def main():
 
     state["status"] = "running"
     state["message"] = "Идёт обучение"
+    state["phase"] = "train"
     state["current_batch"] = 0
     state["total_batches"] = None
+    state["val_batch"] = 0
+    state["val_total"] = None
     state["batch_metrics"] = {}
     save()
 
@@ -84,6 +87,7 @@ def main():
                 state["total_batches"] = len(trainer.train_loader)
             except Exception:
                 state["total_batches"] = None
+            state["phase"] = "train"
             state["current_batch"] = 0
             state["batch_metrics"] = {}
             state["epoch_started_at"] = time.time()
@@ -103,6 +107,26 @@ def main():
                 last_write[0] = now
                 save_live()
 
+        # Validation runs after the training batches of each epoch. Surfacing its
+        # per-iteration progress makes the post-epoch pause explainable instead of
+        # the app seeming to hang. The validator shares the trainer's callbacks.
+        def _val_start(validator):
+            state["phase"] = "val"
+            state["val_batch"] = 0
+            try:
+                state["val_total"] = len(validator.dataloader)
+            except Exception:
+                state["val_total"] = None
+            state["message"] = "Валидация эпохи"
+            save_live()
+
+        def _val_batch_end(validator):
+            state["val_batch"] = int(state.get("val_batch", 0)) + 1
+            now = time.time()
+            if now - last_write[0] >= 0.3:
+                last_write[0] = now
+                save_live()
+
         def _cb(trainer):
             epoch = int(getattr(trainer, "epoch", 0)) + 1
             raw = getattr(trainer, "metrics", None) or {}
@@ -113,6 +137,7 @@ def main():
             state["current_epoch"] = epoch
             if state.get("total_batches"):
                 state["current_batch"] = state["total_batches"]
+            state["message"] = "Идёт обучение"
             if state["metrics"] and state["metrics"][-1]["epoch"] == epoch:
                 state["metrics"][-1] = row
             else:
@@ -121,6 +146,8 @@ def main():
 
         model.add_callback("on_train_epoch_start", _epoch_start)
         model.add_callback("on_train_batch_end", _batch_end)
+        model.add_callback("on_val_start", _val_start)
+        model.add_callback("on_val_batch_end", _val_batch_end)
         model.add_callback("on_fit_epoch_end", _cb)
 
         # Default number of DataLoader workers (used only if the user did not set

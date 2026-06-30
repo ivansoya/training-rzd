@@ -23,7 +23,6 @@ import type {
 interface Props {
   datasets: DatasetSummary[];
   available: boolean;
-  onBack: () => void;
 }
 
 // Hyperparameters exposed in the UI (key, label, default, step, hint).
@@ -71,7 +70,7 @@ const METRIC_COLUMNS: [string, string][] = [
 
 const RUNNING = new Set(["preparing", "running"]);
 
-export default function TrainView({ datasets, available, onBack }: Props) {
+export default function TrainView({ datasets, available }: Props) {
   const [models, setModels] = useState<ModelVersion[]>([]);
   const [trainings, setTrainings] = useState<TrainingSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -219,13 +218,6 @@ export default function TrainView({ datasets, available, onBack }: Props) {
 
   return (
     <div className="augment-view">
-      <div className="aug-bar">
-        <button className="btn" onClick={onBack}>
-          Назад к датасетам
-        </button>
-        <h2>Обучение YOLO-моделей</h2>
-      </div>
-
       {!available && (
         <div className="warn-banner">
           ⚠ ultralytics недоступна на сервере — обучение отключено.
@@ -461,6 +453,11 @@ function batchPct(run: TrainingRun): number {
   return Math.min(1, (run.current_batch ?? 0) / run.total_batches);
 }
 
+function valPct(run: TrainingRun): number {
+  if (!run.val_total) return 0;
+  return Math.min(1, (run.val_batch ?? 0) / run.val_total);
+}
+
 function RunDetail({
   run,
   onStop,
@@ -526,8 +523,26 @@ function RunDetail({
         </div>
       </div>
 
-      {/* live per-iteration progress inside the current epoch (like YOLO's bar) */}
-      {running && run.total_batches ? (
+      {/* live per-iteration progress inside the current epoch (like YOLO's bar).
+          During the post-epoch validation pass it switches to the val counter so
+          the wait is explainable instead of looking like a hang. */}
+      {running && run.phase === "val" ? (
+        <div className="progress">
+          <div className="progress-label">
+            <span>
+              Валидация {run.val_batch ?? 0}
+              {run.val_total ? ` / ${run.val_total}` : ""}
+            </span>
+            <span>{Math.round(valPct(run) * 100)}%</span>
+          </div>
+          <div className="progress-track">
+            <div
+              className="progress-fill val"
+              style={{ width: `${valPct(run) * 100}%` }}
+            />
+          </div>
+        </div>
+      ) : running && run.total_batches ? (
         <div className="progress">
           <div className="progress-label">
             <span>

@@ -38,8 +38,10 @@ TRAININGS_DIR = os.path.join(DATA_DIR, "trainings")
 MODELS_DIR = os.path.join(DATA_DIR, "models")
 MODELS_FILE = os.path.join(DATA_DIR, "models.json")
 INFERENCE_DIR = os.path.join(DATA_DIR, "inference")
+VIDEOS_DIR = os.path.join(DATA_DIR, "videos")
 
-for d in (UPLOADED_DIR, AUGMENTED_DIR, TRAININGS_DIR, MODELS_DIR, INFERENCE_DIR):
+for d in (UPLOADED_DIR, AUGMENTED_DIR, TRAININGS_DIR, MODELS_DIR, INFERENCE_DIR,
+          VIDEOS_DIR):
     os.makedirs(d, exist_ok=True)
 
 # Job state is transient and shared between workers. Keep it on the container's
@@ -316,6 +318,15 @@ def get_cached_stats(dataset_dir):
 # --------------------------------------------------------------------------- #
 # Dataset routes
 # --------------------------------------------------------------------------- #
+def _cached_num_classes(dataset_dir):
+    """Read class count from the cached stats only (never recompute — keeps the
+    list endpoint fast). Returns None if the dataset's stats aren't cached yet."""
+    cached = _load_json(_stats_cache_path(dataset_dir), None)
+    if isinstance(cached, dict):
+        return cached.get("num_classes") or cached.get("nc")
+    return None
+
+
 @app.get("/api/datasets")
 def list_datasets():
     meta = load_aug_meta()
@@ -323,7 +334,12 @@ def list_datasets():
     for name in sorted(os.listdir(UPLOADED_DIR)):
         full = os.path.join(UPLOADED_DIR, name)
         if os.path.isdir(full):
-            items.append({"name": name, "kind": "uploaded", "images": count_images(full)})
+            items.append({
+                "name": name,
+                "kind": "uploaded",
+                "images": count_images(full),
+                "num_classes": _cached_num_classes(full),
+            })
     for name in sorted(os.listdir(AUGMENTED_DIR)):
         full = os.path.join(AUGMENTED_DIR, name)
         if os.path.isdir(full):
@@ -332,6 +348,7 @@ def list_datasets():
                 "name": name,
                 "kind": "augmented",
                 "images": count_images(full),
+                "num_classes": _cached_num_classes(full),
                 "display_name": m.get("display_name", name),
                 "source": m.get("source"),
                 "config_names": [s.get("name") for s in m.get("configs", [])],
@@ -1088,6 +1105,8 @@ def _infer_summary(state):
     return {
         "id": state["id"],
         "status": state["status"],
+        "video_id": state.get("video_id"),
+        "catalog": state.get("catalog"),
         "model_run_id": state.get("model_run_id"),
         "model_name": state.get("model_name"),
         "input_name": state.get("input_name"),
@@ -1155,6 +1174,9 @@ def inference_models():
 @app.get("/api/inference")
 def list_inferences():
     runs = [_read_infer(i) or INFERENCES[i] for i in list(INFERENCES)]
+    video_id = request.args.get("video_id")
+    if video_id:
+        runs = [r for r in runs if r.get("video_id") == video_id]
     runs.sort(key=lambda s: s.get("created_at", 0), reverse=True)
     return jsonify([_infer_summary(s) for s in runs])
 
@@ -1169,17 +1191,20 @@ def get_inference(infer_id):
 
 @app.post("/api/inference")
 def start_inference():
+    """Run a trained model over a video already in the library (no upload here —
+    the video was uploaded separately via /api/videos)."""
     if not inference.is_available():
         return jsonify({"error": "ultralytics недоступна на сервере"}), 503
-    if "file" not in request.files:
-        return jsonify({"error": "no file part"}), 400
-    file = request.files["file"]
-    if not file.filename:
-        return jsonify({"error": "empty filename"}), 400
-    if os.path.splitext(file.filename)[1].lower() not in VIDEO_EXTENSIONS:
-        return jsonify({"error": "ожидается видеофайл"}), 400
+    body = request.get_json(silent=True) or {}
 
-    run_id = request.form.get("model_run_id")
+    video = VIDEOS.get(body.get("video_id"))
+    if video is None:
+        return jsonify({"error": "видео не найдено"}), 404
+    input_path = _video_file(video)
+    if not os.path.isfile(input_path):
+        return jsonify({"error": "файл видео не найден"}), 404
+
+    run_id = body.get("model_run_id")
     model = next((m for m in _trained_models() if m["run_id"] == run_id), None)
     if model is None:
         return jsonify({"error": "обученная модель не найдена"}), 404
@@ -1187,20 +1212,18 @@ def start_inference():
     infer_id = uuid.uuid4().hex[:12]
     d = _infer_dir(infer_id)
     os.makedirs(d, exist_ok=True)
-    ext = os.path.splitext(file.filename)[1].lower()
-    input_path = os.path.join(d, "input" + ext)
-    file.save(input_path)
     output_path = os.path.join(d, "output.mp4")
 
     state = {
         "id": infer_id,
         "status": "processing",
         "message": "Подготовка",
+        "video_id": video["id"],
+        "catalog": video.get("catalog"),
         "model_run_id": run_id,
         "model_name": model["model_name"],
         "dataset_name": model["dataset_name"],
-        "input_name": file.filename,
-        "input_ext": ext,
+        "input_name": video.get("name"),
         "total_frames": 0,
         "processed_frames": 0,
         "has_output": False,
@@ -1240,19 +1263,125 @@ def inference_video(infer_id):
     return send_file(path, mimetype="video/mp4", conditional=True)
 
 
-@app.get("/api/inference/<infer_id>/input")
-def inference_input(infer_id):
-    state = _read_infer(infer_id)
-    if state is None:
-        return jsonify({"error": "inference not found"}), 404
-    path = os.path.join(_infer_dir(infer_id), "input" + state.get("input_ext", ""))
-    if not os.path.isfile(path):
-        return jsonify({"error": "видео не найдено"}), 404
-    return send_file(path, as_attachment=True,
-                     download_name=state.get("input_name", "input"))
-
-
 _load_inferences()
+
+
+# --------------------------------------------------------------------------- #
+# Video library. Users upload videos into named catalogs (projects) regardless
+# of whether any trained model exists; videos are playable and can later be run
+# through a model by the inference endpoints above.
+# --------------------------------------------------------------------------- #
+VIDEOS = {}  # id -> meta
+DEFAULT_CATALOG = "Общий"
+
+
+def _video_dir(video_id):
+    return os.path.join(VIDEOS_DIR, video_id)
+
+
+def _video_meta_file(video_id):
+    return os.path.join(_video_dir(video_id), "meta.json")
+
+
+def _video_file(meta):
+    return os.path.join(_video_dir(meta["id"]), "video" + meta.get("ext", ""))
+
+
+def _save_video(meta):
+    os.makedirs(_video_dir(meta["id"]), exist_ok=True)
+    _save_json(_video_meta_file(meta["id"]), meta)
+
+
+def _load_videos():
+    if not os.path.isdir(VIDEOS_DIR):
+        return
+    for vid in os.listdir(VIDEOS_DIR):
+        data = _load_json(_video_meta_file(vid), None)
+        if isinstance(data, dict):
+            VIDEOS[vid] = data
+
+
+def _catalog_name(raw):
+    raw = (raw or "").strip()
+    return raw[:80] if raw else DEFAULT_CATALOG
+
+
+@app.get("/api/videos")
+def list_videos():
+    items = sorted(VIDEOS.values(),
+                   key=lambda v: v.get("created_at", 0), reverse=True)
+    return jsonify(items)
+
+
+@app.get("/api/videos/catalogs")
+def list_catalogs():
+    names = sorted({v.get("catalog", DEFAULT_CATALOG) for v in VIDEOS.values()})
+    return jsonify(names)
+
+
+@app.post("/api/videos")
+def upload_video():
+    if "file" not in request.files:
+        return jsonify({"error": "no file part"}), 400
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "empty filename"}), 400
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in VIDEO_EXTENSIONS:
+        return jsonify({"error": "ожидается видеофайл"}), 400
+
+    video_id = uuid.uuid4().hex[:12]
+    meta = {
+        "id": video_id,
+        "name": file.filename,
+        "ext": ext,
+        "catalog": _catalog_name(request.form.get("catalog")),
+        "created_at": time.time(),
+        "size": 0,
+    }
+    os.makedirs(_video_dir(video_id), exist_ok=True)
+    path = _video_file(meta)
+    file.save(path)
+    try:
+        meta["size"] = os.path.getsize(path)
+    except OSError:
+        pass
+    VIDEOS[video_id] = meta
+    _save_video(meta)
+    return jsonify(meta), 201
+
+
+@app.get("/api/videos/<video_id>/file")
+def video_file(video_id):
+    meta = VIDEOS.get(video_id)
+    if meta is None:
+        return jsonify({"error": "видео не найдено"}), 404
+    path = _video_file(meta)
+    if not os.path.isfile(path):
+        return jsonify({"error": "файл не найден"}), 404
+    # conditional=True enables HTTP range requests so the player can seek.
+    return send_file(path, conditional=True)
+
+
+@app.delete("/api/videos/<video_id>")
+def delete_video(video_id):
+    if video_id not in VIDEOS and not os.path.isdir(_video_dir(video_id)):
+        return jsonify({"error": "видео не найдено"}), 404
+    # Cascade: remove inference runs that used this video.
+    for iid in [i for i, s in list(INFERENCES.items())
+                if s.get("video_id") == video_id]:
+        INFERENCES.pop(iid, None)
+        shutil.rmtree(_infer_dir(iid), ignore_errors=True)
+        try:
+            os.remove(_infer_live_file(iid))
+        except OSError:
+            pass
+    VIDEOS.pop(video_id, None)
+    shutil.rmtree(_video_dir(video_id), ignore_errors=True)
+    return jsonify({"ok": True})
+
+
+_load_videos()
 
 
 @app.get("/api/health")

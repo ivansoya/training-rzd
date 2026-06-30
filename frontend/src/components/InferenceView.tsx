@@ -1,43 +1,43 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ProgressBar from "./ProgressBar";
+import CollapsibleSection from "./CollapsibleSection";
+import VideoUploadModal from "./VideoUploadModal";
 import {
   deleteInference,
+  deleteVideo,
   getInference,
-  inferenceInputUrl,
   inferenceVideoUrl,
   listInferenceModels,
   listInferences,
+  listVideos,
   startInference,
+  uploadVideo,
+  videoFileUrl,
 } from "../api";
 import type {
   InferenceRun,
   InferenceSummary,
   Progress,
   TrainedModel,
+  VideoItem,
 } from "../types";
 
 interface Props {
   available: boolean;
-  onBack: () => void;
 }
 
 const PROCESSING = "processing";
 
-export default function InferenceView({ available, onBack }: Props) {
+export default function InferenceView({ available }: Props) {
+  const [videos, setVideos] = useState<VideoItem[]>([]);
   const [models, setModels] = useState<TrainedModel[]>([]);
-  const [runs, setRuns] = useState<InferenceSummary[]>([]);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [run, setRun] = useState<InferenceRun | null>(null);
-  const [modelRunId, setModelRunId] = useState("");
-  const [file, setFile] = useState<File | null>(null);
-  const [progress, setProgress] = useState<Progress | null>(null);
+  const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fileRef = useRef<HTMLInputElement>(null);
-
-  async function reloadRuns() {
+  async function reloadVideos() {
     try {
-      setRuns(await listInferences());
+      setVideos(await listVideos());
     } catch (e) {
       setError((e as Error).message);
     }
@@ -45,31 +45,222 @@ export default function InferenceView({ available, onBack }: Props) {
 
   useEffect(() => {
     listInferenceModels()
-      .then((r) => {
-        setModels(r.models);
-        if (r.models[0]) setModelRunId(r.models[0].run_id);
-      })
+      .then((r) => setModels(r.models))
       .catch(() => {});
-    reloadRuns();
+    reloadVideos();
   }, []);
 
-  // Poll history while anything is processing.
+  const selectedVideo = useMemo(
+    () => videos.find((v) => v.id === selectedVideoId) || null,
+    [videos, selectedVideoId]
+  );
+
+  const byCatalog = useMemo(() => {
+    const m: Record<string, VideoItem[]> = {};
+    for (const v of videos) (m[v.catalog] ||= []).push(v);
+    return m;
+  }, [videos]);
+
+  const catalogNames = useMemo(
+    () => Object.keys(byCatalog).sort((a, b) => a.localeCompare(b, "ru")),
+    [byCatalog]
+  );
+
+  async function handleUpload(
+    file: File,
+    catalog: string,
+    onProgress: (p: Progress) => void
+  ) {
+    try {
+      const v = await uploadVideo(file, catalog, (pct) =>
+        onProgress(
+          pct >= 0.999
+            ? { label: "Передача видео на сервер…", pct: null }
+            : { label: "Загрузка видео", pct }
+        )
+      );
+      setShowAdd(false);
+      await reloadVideos();
+      setSelectedVideoId(v.id);
+    } catch (e) {
+      setError((e as Error).message);
+      throw e;
+    }
+  }
+
+  async function handleDeleteVideo(id: string) {
+    if (
+      !window.confirm(
+        "Удалить это видео? Все его проверки моделями тоже будут удалены."
+      )
+    )
+      return;
+    try {
+      await deleteVideo(id);
+      if (selectedVideoId === id) setSelectedVideoId(null);
+      await reloadVideos();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  return (
+    <div className="augment-view">
+      {!available && (
+        <div className="warn-banner">
+          ultralytics недоступна на сервере — обработка моделью отключена, но
+          видео можно загружать и просматривать.
+        </div>
+      )}
+      {error && <div className="error-banner inline">{error}</div>}
+
+      {selectedVideo ? (
+        <section className="content">
+          <button
+            className="back-arrow"
+            onClick={() => setSelectedVideoId(null)}
+            title="К списку видео"
+          >
+            ←
+          </button>
+          <VideoDetail
+            key={selectedVideo.id}
+            video={selectedVideo}
+            models={models}
+            available={available}
+            onDeleteVideo={() => handleDeleteVideo(selectedVideo.id)}
+            onError={setError}
+          />
+        </section>
+      ) : (
+        <section className="content">
+          <div className="tile-grid">
+            <button className="tile tile-add" onClick={() => setShowAdd(true)}>
+              <span className="tile-add-plus">+</span>
+              <span>Добавить видео</span>
+            </button>
+          </div>
+
+          {videos.length === 0 && (
+            <div className="tile-empty">видео пока нет</div>
+          )}
+          {catalogNames.map((cat) => (
+            <CollapsibleSection
+              key={cat}
+              title={cat}
+              count={byCatalog[cat].length}
+            >
+              {byCatalog[cat].map((v) => (
+                <VideoTile
+                  key={v.id}
+                  video={v}
+                  onSelect={() => setSelectedVideoId(v.id)}
+                  onDelete={() => handleDeleteVideo(v.id)}
+                />
+              ))}
+            </CollapsibleSection>
+          ))}
+        </section>
+      )}
+
+      {showAdd && (
+        <VideoUploadModal
+          catalogs={catalogNames}
+          onUpload={handleUpload}
+          onClose={() => setShowAdd(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function VideoTile({
+  video,
+  onSelect,
+  onDelete,
+}: {
+  video: VideoItem;
+  onSelect: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="tile video-tile" onClick={onSelect}>
+      <button
+        className="tile-del"
+        title="Удалить видео"
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete();
+        }}
+      >
+        ✕
+      </button>
+      <video
+        className="video-thumb"
+        src={`${videoFileUrl(video.id)}#t=0.1`}
+        muted
+        preload="metadata"
+        playsInline
+      />
+      <div className="tile-meta">
+        {new Date(video.created_at * 1000).toLocaleString("ru-RU")}
+      </div>
+    </div>
+  );
+}
+
+function VideoDetail({
+  video,
+  models,
+  available,
+  onDeleteVideo,
+  onError,
+}: {
+  video: VideoItem;
+  models: TrainedModel[];
+  available: boolean;
+  onDeleteVideo: () => void;
+  onError: (m: string) => void;
+}) {
+  const [runs, setRuns] = useState<InferenceSummary[]>([]);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [run, setRun] = useState<InferenceRun | null>(null);
+  const [modelRunId, setModelRunId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function reloadRuns() {
+    try {
+      const list = await listInferences(video.id);
+      setRuns(list);
+      return list;
+    } catch (e) {
+      onError((e as Error).message);
+      return [];
+    }
+  }
+
+  useEffect(() => {
+    if (models[0]) setModelRunId(models[0].run_id);
+    reloadRuns();
+  }, [video.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Poll the run list while anything is processing.
   useEffect(() => {
     if (!runs.some((r) => r.status === PROCESSING)) return;
     const h = setInterval(reloadRuns, 2500);
     return () => clearInterval(h);
-  }, [runs]);
+  }, [runs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Poll the selected run while it is processing.
   useEffect(() => {
-    if (!selectedId) {
+    if (!selectedRunId) {
       setRun(null);
       return;
     }
     let active = true;
     const tick = async () => {
       try {
-        const r = await getInference(selectedId);
+        const r = await getInference(selectedRunId);
         if (!active) return;
         setRun(r);
         if (r.status !== PROCESSING) clearInterval(h);
@@ -83,219 +274,152 @@ export default function InferenceView({ available, onBack }: Props) {
       active = false;
       clearInterval(h);
     };
-  }, [selectedId]);
+  }, [selectedRunId]);
 
-  function pickFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (f) setFile(f);
-  }
-
-  async function handleStart() {
-    if (!file || !modelRunId) return;
-    setError(null);
-    setProgress({ label: "Загрузка видео", pct: 0 });
+  async function handleRun() {
+    if (!modelRunId) return;
+    setBusy(true);
+    onError("");
     try {
-      const { id } = await startInference(file, modelRunId, (pct) =>
-        setProgress(
-          pct >= 0.999
-            ? { label: "Передача видео на сервер…", pct: null }
-            : { label: "Загрузка видео", pct }
-        )
-      );
-      setProgress(null);
-      setFile(null);
+      const { id } = await startInference({
+        video_id: video.id,
+        model_run_id: modelRunId,
+      });
       await reloadRuns();
-      setSelectedId(id);
+      setSelectedRunId(id);
     } catch (e) {
-      setError((e as Error).message);
-      setProgress(null);
+      onError((e as Error).message);
+    } finally {
+      setBusy(false);
     }
   }
 
-  async function handleDelete(id: string) {
-    if (!window.confirm("Удалить эту проверку и её видео?")) return;
+  async function handleDeleteRun(id: string) {
+    if (!window.confirm("Удалить эту проверку?")) return;
     try {
       await deleteInference(id);
-      if (selectedId === id) setSelectedId(null);
+      if (selectedRunId === id) setSelectedRunId(null);
       await reloadRuns();
     } catch (e) {
-      setError((e as Error).message);
+      onError((e as Error).message);
     }
   }
-
-  // group history by model
-  const grouped: Record<string, InferenceSummary[]> = {};
-  for (const r of runs) {
-    (grouped[r.model_name] ||= []).push(r);
-  }
-
-  return (
-    <div className="augment-view">
-      <div className="aug-bar">
-        <button className="btn" onClick={onBack}>
-          Назад к датасетам
-        </button>
-        <h2>Проверка моделей</h2>
-      </div>
-
-      {!available && (
-        <div className="warn-banner">
-          ultralytics недоступна на сервере — инференс отключён.
-        </div>
-      )}
-      {error && <div className="error-banner inline">{error}</div>}
-
-      <div className="train-layout">
-        <div className="aug-col train-history">
-          <button className="btn btn-primary block" onClick={() => setSelectedId(null)}>
-            Новая проверка
-          </button>
-          {Object.keys(grouped).length === 0 && (
-            <div className="empty">история пуста</div>
-          )}
-          {Object.entries(grouped).map(([model, list]) => (
-            <div className="group" key={model}>
-              <div className="group-header">{model}</div>
-              <ul className="dataset-list">
-                {list.map((r) => (
-                  <li
-                    key={r.id}
-                    className={r.id === selectedId ? "dataset-item active" : "dataset-item"}
-                    onClick={() => setSelectedId(r.id)}
-                  >
-                    <div className="dataset-info">
-                      <span className="dataset-name">
-                        <StatusDot status={r.status} /> {r.input_name}
-                      </span>
-                      <span className="dataset-meta">
-                        {r.status === "done"
-                          ? `${r.total_detections ?? 0} детекций`
-                          : statusLabel(r.status)}
-                      </span>
-                    </div>
-                    <button
-                      className="del-btn"
-                      title="Удалить проверку"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleDelete(r.id);
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-
-        <div className="train-main">
-          {selectedId && run ? (
-            <RunDetail run={run} onDelete={() => handleDelete(run.id)} />
-          ) : (
-            <div className="aug-col">
-              <h3 className="section-title" style={{ marginTop: 0 }}>
-                Новая проверка модели
-              </h3>
-              {models.length === 0 ? (
-                <p className="subtle">
-                  Нет обученных моделей с весами. Сначала обучите модель в разделе
-                  «Обучение моделей».
-                </p>
-              ) : (
-                <>
-                  <label className="modal-label">
-                    Модель
-                    <select
-                      className="text-input"
-                      value={modelRunId}
-                      onChange={(e) => setModelRunId(e.target.value)}
-                    >
-                      {models.map((m) => (
-                        <option key={m.run_id} value={m.run_id}>
-                          {m.model_name} · {m.dataset_name} ·{" "}
-                          {new Date(m.created_at * 1000).toLocaleDateString("ru-RU")}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-
-                  <label className="modal-label">
-                    Видео
-                    <input
-                      ref={fileRef}
-                      type="file"
-                      accept="video/*"
-                      hidden
-                      onChange={pickFile}
-                    />
-                    <button
-                      className="btn block"
-                      onClick={() => fileRef.current?.click()}
-                      disabled={progress !== null}
-                    >
-                      {file ? file.name : "Выбрать видеофайл"}
-                    </button>
-                  </label>
-
-                  {progress && <ProgressBar {...progress} />}
-
-                  <button
-                    className="btn btn-primary"
-                    onClick={handleStart}
-                    disabled={!available || !file || !modelRunId || progress !== null}
-                  >
-                    Запустить инференс
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RunDetail({
-  run,
-  onDelete,
-}: {
-  run: InferenceRun;
-  onDelete: () => void;
-}) {
-  const processing = run.status === PROCESSING;
-  const pct = run.total_frames ? run.processed_frames / run.total_frames : null;
-  const s = run.stats;
 
   return (
     <div className="aug-col">
       <div className="stats-head">
         <div>
           <h3 className="section-title" style={{ marginTop: 0 }}>
-            <StatusDot status={run.status} /> {run.input_name}
+            {video.name}
           </h3>
           <p className="subtle">
-            модель «{run.model_name}»
-            {run.dataset_name ? ` · ${run.dataset_name}` : ""} ·{" "}
-            {statusLabel(run.status)}
+            каталог «{video.catalog}» · {fmtSize(video.size)}
           </p>
         </div>
         <div className="row-actions">
-          {run.has_output && (
-            <a className="btn" href={inferenceVideoUrl(run.id)} download>
-              Скачать результат
-            </a>
-          )}
-          <a className="btn" href={inferenceInputUrl(run.id)} download>
-            Исходное видео
+          <a className="btn" href={videoFileUrl(video.id)} download={video.name}>
+            Скачать
           </a>
-          <button className="btn btn-danger" onClick={onDelete}>
-            Удалить
+          <button className="btn btn-danger" onClick={onDeleteVideo}>
+            Удалить видео
           </button>
         </div>
       </div>
+
+      <video
+        className="result-video"
+        src={videoFileUrl(video.id)}
+        controls
+        playsInline
+      />
+
+      <h3 className="section-title">Проверить моделью</h3>
+      {models.length === 0 ? (
+        <p className="subtle">
+          Нет обученных моделей с весами. Обучите модель в разделе «Обучение
+          моделей», чтобы прогнать это видео через неё.
+        </p>
+      ) : (
+        <div className="inline-form">
+          <select
+            className="text-input"
+            value={modelRunId}
+            onChange={(e) => setModelRunId(e.target.value)}
+          >
+            {models.map((m) => (
+              <option key={m.run_id} value={m.run_id}>
+                {m.model_name} · {m.dataset_name} ·{" "}
+                {new Date(m.created_at * 1000).toLocaleDateString("ru-RU")}
+              </option>
+            ))}
+          </select>
+          <button
+            className="btn btn-primary"
+            onClick={handleRun}
+            disabled={!available || !modelRunId || busy}
+          >
+            Запустить инференс
+          </button>
+        </div>
+      )}
+
+      {runs.length > 0 && (
+        <>
+          <h3 className="section-title">Результаты проверки</h3>
+          <ul className="dataset-list">
+            {runs.map((r) => (
+              <li
+                key={r.id}
+                className={
+                  r.id === selectedRunId ? "dataset-item active" : "dataset-item"
+                }
+                onClick={() => setSelectedRunId(r.id)}
+              >
+                <div className="dataset-info">
+                  <span className="dataset-name">
+                    <StatusDot status={r.status} /> {r.model_name}
+                  </span>
+                  <span className="dataset-meta">
+                    {r.status === "done"
+                      ? `${r.total_detections ?? 0} детекций · ${new Date(
+                          r.created_at * 1000
+                        ).toLocaleString("ru-RU")}`
+                      : statusLabel(r.status)}
+                  </span>
+                </div>
+                <button
+                  className="del-btn"
+                  title="Удалить проверку"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleDeleteRun(r.id);
+                  }}
+                >
+                  ✕
+                </button>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {run && <RunResult run={run} />}
+    </div>
+  );
+}
+
+function RunResult({ run }: { run: InferenceRun }) {
+  const processing = run.status === PROCESSING;
+  const pct = run.total_frames ? run.processed_frames / run.total_frames : null;
+  const s = run.stats;
+
+  return (
+    <div className="run-result">
+      <p className="subtle">
+        Обработано моделью «{run.model_name}»
+        {run.dataset_name ? ` · ${run.dataset_name}` : ""} ·{" "}
+        {statusLabel(run.status)}
+      </p>
 
       {run.error && <div className="error-banner inline">{run.error}</div>}
 
@@ -312,12 +436,19 @@ function RunDetail({
       )}
 
       {run.has_output && (
-        <video
-          className="result-video"
-          src={inferenceVideoUrl(run.id)}
-          controls
-          playsInline
-        />
+        <>
+          <video
+            className="result-video"
+            src={inferenceVideoUrl(run.id)}
+            controls
+            playsInline
+          />
+          <div className="row-actions">
+            <a className="btn" href={inferenceVideoUrl(run.id)} download>
+              Скачать результат
+            </a>
+          </div>
+        </>
       )}
 
       {s && (
@@ -382,7 +513,12 @@ function StatusDot({ status }: { status: string }) {
 }
 
 function statusLabel(s: string): string {
-  return (
-    { processing: "обработка", done: "готово", error: "ошибка" }[s] || s
-  );
+  return { processing: "обработка", done: "готово", error: "ошибка" }[s] || s;
+}
+
+function fmtSize(bytes: number): string {
+  if (!bytes) return "—";
+  const mb = bytes / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} ГБ`;
+  return `${mb.toFixed(1)} МБ`;
 }

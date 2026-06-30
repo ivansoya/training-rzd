@@ -15,6 +15,7 @@ import type {
   TrainingSummary,
   TransformInstance,
   TransformSchema,
+  VideoItem,
 } from "./types";
 
 const BASE = "/api";
@@ -266,6 +267,56 @@ export function weightsUrl(id: string): string {
   return `${BASE}/trainings/${id}/weights`;
 }
 
+// --- video library ---
+export async function listVideos(): Promise<VideoItem[]> {
+  return asJson(await fetch(`${BASE}/videos`));
+}
+
+export async function listCatalogs(): Promise<string[]> {
+  return asJson(await fetch(`${BASE}/videos/catalogs`));
+}
+
+// Upload a video into a catalog. Works regardless of whether any model exists.
+export function uploadVideo(
+  file: File,
+  catalog: string,
+  onUploadProgress: (pct: number) => void
+): Promise<VideoItem> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${BASE}/videos`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onUploadProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      let data: VideoItem & { error?: string } = {} as VideoItem;
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* ignore */
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && data.id) {
+        resolve(data);
+      } else {
+        reject(new Error(data.error || `HTTP ${xhr.status}`));
+      }
+    };
+    xhr.onerror = () => reject(new Error("Failed to fetch"));
+    const form = new FormData();
+    form.append("file", file);
+    if (catalog) form.append("catalog", catalog);
+    xhr.send(form);
+  });
+}
+
+export async function deleteVideo(id: string): Promise<void> {
+  await asJson(await fetch(`${BASE}/videos/${id}`, { method: "DELETE" }));
+}
+
+export function videoFileUrl(id: string): string {
+  return `${BASE}/videos/${id}/file`;
+}
+
 // --- inference ---
 export async function listInferenceModels(): Promise<{
   available: boolean;
@@ -274,44 +325,29 @@ export async function listInferenceModels(): Promise<{
   return asJson(await fetch(`${BASE}/inference/models`));
 }
 
-export async function listInferences(): Promise<InferenceSummary[]> {
-  return asJson(await fetch(`${BASE}/inference`));
+export async function listInferences(
+  videoId?: string
+): Promise<InferenceSummary[]> {
+  const q = videoId ? `?video_id=${encodeURIComponent(videoId)}` : "";
+  return asJson(await fetch(`${BASE}/inference${q}`));
 }
 
 export async function getInference(id: string): Promise<InferenceRun> {
   return asJson(await fetch(`${BASE}/inference/${id}`));
 }
 
-export function startInference(
-  file: File,
-  modelRunId: string,
-  onUploadProgress: (pct: number) => void
-): Promise<{ id: string }> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${BASE}/inference`);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onUploadProgress(e.loaded / e.total);
-    };
-    xhr.onload = () => {
-      let data: { id?: string; error?: string } = {};
-      try {
-        data = JSON.parse(xhr.responseText);
-      } catch {
-        /* ignore */
-      }
-      if (xhr.status >= 200 && xhr.status < 300 && data.id) {
-        resolve({ id: data.id });
-      } else {
-        reject(new Error(data.error || `HTTP ${xhr.status}`));
-      }
-    };
-    xhr.onerror = () => reject(new Error("Failed to fetch"));
-    const form = new FormData();
-    form.append("file", file);
-    form.append("model_run_id", modelRunId);
-    xhr.send(form);
-  });
+// Run a model over a library video (the video is already on the server).
+export async function startInference(body: {
+  video_id: string;
+  model_run_id: string;
+}): Promise<{ id: string }> {
+  return asJson(
+    await fetch(`${BASE}/inference`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+  );
 }
 
 export async function deleteInference(id: string): Promise<void> {
@@ -320,8 +356,4 @@ export async function deleteInference(id: string): Promise<void> {
 
 export function inferenceVideoUrl(id: string): string {
   return `${BASE}/inference/${id}/video`;
-}
-
-export function inferenceInputUrl(id: string): string {
-  return `${BASE}/inference/${id}/input`;
 }

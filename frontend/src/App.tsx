@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
 import Sidebar from "./components/Sidebar";
+import type { View } from "./components/Sidebar";
 import UploadModal from "./components/UploadModal";
 import CreateAugmentedModal from "./components/CreateAugmentedModal";
 import DatasetStatsView from "./components/DatasetStats";
+import DatasetsGrid from "./components/DatasetsGrid";
 import AugmentView from "./components/AugmentView";
 import TrainView from "./components/TrainView";
 import InferenceView from "./components/InferenceView";
@@ -42,9 +44,7 @@ function progressForJob(job: Job, fallbackLabel: string): Progress {
 }
 
 export default function App() {
-  const [view, setView] = useState<
-    "datasets" | "augment" | "train" | "inference"
-  >("datasets");
+  const [view, setView] = useState<View>("datasets");
   const [collapsed, setCollapsed] = useState(false);
   const [trainAvailable, setTrainAvailable] = useState(true);
 
@@ -179,9 +179,16 @@ export default function App() {
     }
   }
 
-  function openAugment() {
-    listConfigs().then(setConfigs).catch(() => {});
-    setView("augment");
+  function navigate(next: View) {
+    if (next === "augment") {
+      listConfigs().then(setConfigs).catch(() => {});
+    }
+    if (next === "datasets") {
+      // returning to the Datasets tab shows the tile grid, not a stale detail
+      setSelected(null);
+      setStats(null);
+    }
+    setView(next);
   }
 
   return (
@@ -198,49 +205,42 @@ export default function App() {
         <Sidebar
           collapsed={collapsed}
           onToggle={() => setCollapsed((c) => !c)}
-          datasets={datasets}
-          selected={selected}
-          onSelect={(k, n) => {
-            setView("datasets");
-            selectDataset(k, n);
-          }}
-          onDelete={handleDelete}
-          onUploadClick={() => setShowUpload(true)}
-          onAugmentClick={openAugment}
-          onTrainClick={() => setView("train")}
-          onInferenceClick={() => setView("inference")}
-          busy={busy}
+          view={view}
+          onNavigate={navigate}
         />
 
-        {view === "datasets" && (
-          <DatasetStatsView
-            stats={stats}
-            kind={selected?.kind ?? null}
-            loading={loadingStats}
-            onAugment={() => selected && setAugmentSource(selected.name)}
-          />
-        )}
+        {view === "datasets" &&
+          (selected ? (
+            <DatasetStatsView
+              stats={stats}
+              kind={selected.kind}
+              loading={loadingStats}
+              onAugment={() => selected && setAugmentSource(selected.name)}
+              onBack={() => {
+                setSelected(null);
+                setStats(null);
+              }}
+            />
+          ) : (
+            <DatasetsGrid
+              datasets={datasets}
+              onUploadClick={() => setShowUpload(true)}
+              onSelect={selectDataset}
+              onDelete={handleDelete}
+              busy={busy}
+            />
+          ))}
         {view === "augment" && (
           <AugmentView
             registry={registry}
             available={augAvailable}
             datasets={datasets}
-            onBack={() => setView("datasets")}
           />
         )}
         {view === "train" && (
-          <TrainView
-            datasets={datasets}
-            available={trainAvailable}
-            onBack={() => setView("datasets")}
-          />
+          <TrainView datasets={datasets} available={trainAvailable} />
         )}
-        {view === "inference" && (
-          <InferenceView
-            available={trainAvailable}
-            onBack={() => setView("datasets")}
-          />
-        )}
+        {view === "inference" && <InferenceView available={trainAvailable} />}
       </div>
 
       {showUpload && (

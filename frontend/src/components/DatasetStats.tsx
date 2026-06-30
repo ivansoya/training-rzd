@@ -5,16 +5,23 @@ interface Props {
   kind: DatasetKind | null;
   loading: boolean;
   onAugment: () => void;
+  onBack: () => void;
 }
 
-export default function DatasetStatsView({ stats, kind, loading, onAugment }: Props) {
+export default function DatasetStatsView({
+  stats,
+  kind,
+  loading,
+  onAugment,
+  onBack,
+}: Props) {
   if (loading) {
     return <section className="content empty-state">Загрузка статистики…</section>;
   }
   if (!stats) {
     return (
       <section className="content empty-state">
-        Выберите датасет слева, чтобы увидеть статистику
+        Выберите датасет, чтобы увидеть статистику
       </section>
     );
   }
@@ -23,6 +30,9 @@ export default function DatasetStatsView({ stats, kind, loading, onAugment }: Pr
 
   return (
     <section className="content">
+      <button className="back-arrow" onClick={onBack} title="К списку датасетов">
+        ←
+      </button>
       <div className="stats-head">
         <div>
           <h2 className="stats-title">{stats.meta?.display_name || stats.name}</h2>
