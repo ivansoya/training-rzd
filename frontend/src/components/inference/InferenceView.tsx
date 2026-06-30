@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import ProgressBar from "../common/ProgressBar";
 import CollapsibleSection from "../common/CollapsibleSection";
 import VideoUploadModal from "./VideoUploadModal";
@@ -13,6 +13,7 @@ import {
   startInference,
   uploadVideo,
   videoFileUrl,
+  videoThumbUrl,
 } from "../../api";
 import type {
   InferenceRun,
@@ -67,21 +68,39 @@ export default function InferenceView({ available }: Props) {
   );
 
   async function handleUpload(
-    file: File,
+    files: File[],
     catalog: string,
     onProgress: (p: Progress) => void
   ) {
+    const pcts = new Array(files.length).fill(0);
+    let done = 0;
+    const report = () => {
+      const avg = pcts.reduce((a, b) => a + b, 0) / files.length;
+      const suffix = files.length > 1 ? ` (${done}/${files.length})` : "";
+      onProgress(
+        avg >= 0.999
+          ? { label: `Обработка на сервере…${suffix}`, pct: null }
+          : { label: `Загрузка видео${suffix}`, pct: avg }
+      );
+    };
     try {
-      const v = await uploadVideo(file, catalog, (pct) =>
-        onProgress(
-          pct >= 0.999
-            ? { label: "Передача видео на сервер…", pct: null }
-            : { label: "Загрузка видео", pct }
+      // Upload all selected files concurrently — the server now serves them on a
+      // thread pool, so they don't queue behind one another.
+      const uploaded = await Promise.all(
+        files.map((f, i) =>
+          uploadVideo(f, catalog, (pct) => {
+            pcts[i] = pct;
+            report();
+          }).then((v) => {
+            done += 1;
+            report();
+            return v;
+          })
         )
       );
       setShowAdd(false);
       await reloadVideos();
-      setSelectedVideoId(v.id);
+      if (uploaded[0]) setSelectedVideoId(uploaded[0].id);
     } catch (e) {
       setError((e as Error).message);
       throw e;
@@ -183,6 +202,9 @@ function VideoTile({
   onSelect: () => void;
   onDelete: () => void;
 }) {
+  // Server-rendered poster image (one small JPEG) loads instantly and lazily,
+  // instead of opening the full video to grab a frame. Fall back to a marker.
+  const [failed, setFailed] = useState(false);
   return (
     <div className="tile video-tile" onClick={onSelect}>
       <button
@@ -195,15 +217,24 @@ function VideoTile({
       >
         ✕
       </button>
-      <video
-        className="video-thumb"
-        src={`${videoFileUrl(video.id)}#t=0.1`}
-        muted
-        preload="metadata"
-        playsInline
-      />
-      <div className="tile-meta">
-        {new Date(video.created_at * 1000).toLocaleString("ru-RU")}
+      {failed ? (
+        <div className="video-thumb video-thumb-fallback">🎞</div>
+      ) : (
+        <img
+          className="video-thumb"
+          src={videoThumbUrl(video.id)}
+          alt={video.name}
+          loading="lazy"
+          decoding="async"
+          draggable={false}
+          onError={() => setFailed(true)}
+        />
+      )}
+      <div className="tile-meta" title={video.name}>
+        <span className="video-name">{video.name}</span>
+        <span className="video-date">
+          {new Date(video.created_at * 1000).toLocaleString("ru-RU")}
+        </span>
       </div>
     </div>
   );
@@ -227,6 +258,35 @@ function VideoDetail({
   const [run, setRun] = useState<InferenceRun | null>(null);
   const [modelRunId, setModelRunId] = useState("");
   const [busy, setBusy] = useState(false);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const resultRef = useRef<HTMLDivElement>(null);
+  const [showToTop, setShowToTop] = useState(false);
+
+  // Show a floating "back to player" button once the player has scrolled away.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver(
+      ([e]) => setShowToTop(!e.isIntersecting),
+      { threshold: 0 }
+    );
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
+
+  function scrollToPlayer() {
+    stageRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // When a saved check is opened, reveal it below the player.
+  useEffect(() => {
+    if (!selectedRunId) return;
+    const h = setTimeout(
+      () => resultRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+      80
+    );
+    return () => clearTimeout(h);
+  }, [selectedRunId]);
 
   async function reloadRuns() {
     try {
@@ -326,84 +386,106 @@ function VideoDetail({
         </div>
       </div>
 
-      <video
-        className="result-video"
-        src={videoFileUrl(video.id)}
-        controls
-        playsInline
-      />
+      {/* player on the left, the check history at the same height on the right */}
+      <div className="infer-stage" ref={stageRef}>
+        <div className="infer-player">
+          <video
+            className="result-video"
+            src={videoFileUrl(video.id)}
+            controls
+            playsInline
+          />
 
-      <h3 className="section-title">Проверить моделью</h3>
-      {models.length === 0 ? (
-        <p className="subtle">
-          Нет обученных моделей с весами. Обучите модель в разделе «Обучение
-          моделей», чтобы прогнать это видео через неё.
-        </p>
-      ) : (
-        <div className="inline-form">
-          <select
-            className="text-input"
-            value={modelRunId}
-            onChange={(e) => setModelRunId(e.target.value)}
-          >
-            {models.map((m) => (
-              <option key={m.run_id} value={m.run_id}>
-                {m.model_name} · {m.dataset_name} ·{" "}
-                {new Date(m.created_at * 1000).toLocaleDateString("ru-RU")}
-              </option>
-            ))}
-          </select>
-          <button
-            className="btn btn-primary"
-            onClick={handleRun}
-            disabled={!available || !modelRunId || busy}
-          >
-            Запустить инференс
-          </button>
-        </div>
-      )}
-
-      {runs.length > 0 && (
-        <>
-          <h3 className="section-title">Результаты проверки</h3>
-          <ul className="dataset-list">
-            {runs.map((r) => (
-              <li
-                key={r.id}
-                className={
-                  r.id === selectedRunId ? "dataset-item active" : "dataset-item"
-                }
-                onClick={() => setSelectedRunId(r.id)}
+          <h3 className="section-title">Проверить моделью</h3>
+          {models.length === 0 ? (
+            <p className="subtle">
+              Нет обученных моделей с весами. Обучите модель в разделе «Обучение
+              моделей», чтобы прогнать это видео через неё.
+            </p>
+          ) : (
+            <div className="inline-form">
+              <select
+                className="text-input"
+                value={modelRunId}
+                onChange={(e) => setModelRunId(e.target.value)}
               >
-                <div className="dataset-info">
-                  <span className="dataset-name">
-                    <StatusDot status={r.status} /> {r.model_name}
-                  </span>
-                  <span className="dataset-meta">
-                    {r.status === "done"
-                      ? `${r.total_detections ?? 0} детекций · ${new Date(
-                          r.created_at * 1000
-                        ).toLocaleString("ru-RU")}`
-                      : statusLabel(r.status)}
-                  </span>
-                </div>
-                <button
-                  className="del-btn"
-                  title="Удалить проверку"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDeleteRun(r.id);
-                  }}
-                >
-                  ✕
-                </button>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
+                {models.map((m) => (
+                  <option key={m.run_id} value={m.run_id}>
+                    {m.model_name} · {m.dataset_name} ·{" "}
+                    {new Date(m.created_at * 1000).toLocaleDateString("ru-RU")}
+                  </option>
+                ))}
+              </select>
+              <button
+                className="btn btn-primary"
+                onClick={handleRun}
+                disabled={!available || !modelRunId || busy}
+              >
+                Запустить инференс
+              </button>
+            </div>
+          )}
+        </div>
 
-      {run && <RunResult run={run} />}
+        <div className="infer-history">
+          <h3 className="section-title" style={{ marginTop: 0 }}>
+            История проверок
+          </h3>
+          {runs.length === 0 ? (
+            <p className="subtle">Проверок ещё не было.</p>
+          ) : (
+            <ul className="dataset-list infer-history-list">
+              {runs.map((r) => (
+                <li
+                  key={r.id}
+                  className={
+                    r.id === selectedRunId
+                      ? "dataset-item active"
+                      : "dataset-item"
+                  }
+                  onClick={() => setSelectedRunId(r.id)}
+                >
+                  <div className="dataset-info">
+                    <span className="dataset-name">
+                      <StatusDot status={r.status} /> {r.model_name}
+                    </span>
+                    <span className="dataset-meta">
+                      {r.status === "done"
+                        ? `${r.total_detections ?? 0} детекций · ${new Date(
+                            r.created_at * 1000
+                          ).toLocaleString("ru-RU")}`
+                        : statusLabel(r.status)}
+                    </span>
+                  </div>
+                  <button
+                    className="del-btn"
+                    title="Удалить проверку"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDeleteRun(r.id);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      </div>
+
+      {/* the opened check is shown below the player */}
+      <div ref={resultRef}>{run && <RunResult run={run} />}</div>
+
+      {showToTop && (
+        <button
+          className="to-player-btn"
+          onClick={scrollToPlayer}
+          title="Вернуться к плееру"
+        >
+          <span className="to-player-ico">↑</span> К плееру
+        </button>
+      )}
     </div>
   );
 }

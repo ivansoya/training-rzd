@@ -337,6 +337,10 @@ export function videoFileUrl(id: string): string {
   return `${BASE}/videos/${id}/file`;
 }
 
+export function videoThumbUrl(id: string): string {
+  return `${BASE}/videos/${id}/thumb`;
+}
+
 // --- inference ---
 export async function listInferenceModels(): Promise<{
   available: boolean;

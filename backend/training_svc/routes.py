@@ -550,7 +550,9 @@ def inference_models():
 
 @bp.get("/api/inference")
 def list_inferences():
-    runs = [_read_infer(i) or INFERENCES[i] for i in list(INFERENCES)]
+    with _VIDEOS_LOCK:
+        ids = list(INFERENCES)
+    runs = [r for r in (_read_infer(i) for i in ids) if r]
     video_id = request.args.get("video_id")
     if video_id:
         runs = [r for r in runs if r.get("video_id") == video_id]
@@ -607,7 +609,8 @@ def start_inference():
         "finished_at": None,
         "error": None,
     }
-    INFERENCES[infer_id] = state
+    with _VIDEOS_LOCK:
+        INFERENCES[infer_id] = state
     _save_infer(state)
 
     threading.Thread(
@@ -621,7 +624,8 @@ def start_inference():
 def delete_inference(infer_id):
     if infer_id not in INFERENCES and not os.path.isdir(_infer_dir(infer_id)):
         return jsonify({"error": "inference not found"}), 404
-    INFERENCES.pop(infer_id, None)
+    with _VIDEOS_LOCK:
+        INFERENCES.pop(infer_id, None)
     shutil.rmtree(_infer_dir(infer_id), ignore_errors=True)
     try:
         os.remove(_infer_live_file(infer_id))
@@ -643,6 +647,13 @@ def inference_video(infer_id):
 # --------------------------------------------------------------------------- #
 VIDEOS = {}
 DEFAULT_CATALOG = "Общий"
+# Guards the in-memory VIDEOS map. The gthread worker serves requests on a pool
+# of threads, so concurrent uploads/deletes/lists must not mutate-while-iterate.
+_VIDEOS_LOCK = threading.Lock()
+# Serialises lazy thumbnail generation per video so two parallel tile requests
+# don't spawn duplicate ffmpeg processes for the same file.
+_THUMB_LOCKS = {}
+_THUMB_LOCKS_GUARD = threading.Lock()
 
 
 def _video_dir(video_id):
@@ -657,6 +668,47 @@ def _video_file(meta):
     return os.path.join(_video_dir(meta["id"]), "video" + meta.get("ext", ""))
 
 
+def _video_thumb_file(video_id):
+    return os.path.join(_video_dir(video_id), "thumb.jpg")
+
+
+def _thumb_lock_for(video_id):
+    with _THUMB_LOCKS_GUARD:
+        lock = _THUMB_LOCKS.get(video_id)
+        if lock is None:
+            lock = _THUMB_LOCKS[video_id] = threading.Lock()
+        return lock
+
+
+def _make_thumb(meta):
+    """Render a small JPEG poster frame with ffmpeg (best-effort, idempotent).
+
+    Storing one tiny image per video lets the library grid load instantly
+    instead of opening every full video to grab its first frame.
+    """
+    dst = _video_thumb_file(meta["id"])
+    if os.path.isfile(dst):
+        return True
+    src = _video_file(meta)
+    if not os.path.isfile(src) or not shutil.which("ffmpeg"):
+        return False
+    with _thumb_lock_for(meta["id"]):
+        if os.path.isfile(dst):
+            return True
+        # Seek to ~1s for a representative frame; fall back to frame 0 for very
+        # short clips where the seek lands past the end.
+        for ss in ("1", "0"):
+            subprocess.run(
+                ["ffmpeg", "-y", "-loglevel", "error", "-ss", ss, "-i", src,
+                 "-frames:v", "1", "-vf", "scale=480:-2", "-q:v", "5", dst],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=60, check=False,
+            )
+            if os.path.isfile(dst):
+                return True
+        return False
+
+
 def _save_video(meta):
     os.makedirs(_video_dir(meta["id"]), exist_ok=True)
     save_json(_video_meta_file(meta["id"]), meta)
@@ -668,7 +720,8 @@ def load_videos():
     for vid in os.listdir(VIDEOS_DIR):
         data = load_json(_video_meta_file(vid), None)
         if isinstance(data, dict):
-            VIDEOS[vid] = data
+            with _VIDEOS_LOCK:
+                VIDEOS[vid] = data
 
 
 def _catalog_name(raw):
@@ -678,14 +731,16 @@ def _catalog_name(raw):
 
 @bp.get("/api/videos")
 def list_videos():
-    items = sorted(VIDEOS.values(),
-                   key=lambda v: v.get("created_at", 0), reverse=True)
+    with _VIDEOS_LOCK:
+        snapshot = list(VIDEOS.values())
+    items = sorted(snapshot, key=lambda v: v.get("created_at", 0), reverse=True)
     return jsonify(items)
 
 
 @bp.get("/api/videos/catalogs")
 def list_catalogs():
-    names = sorted({v.get("catalog", DEFAULT_CATALOG) for v in VIDEOS.values()})
+    with _VIDEOS_LOCK:
+        names = sorted({v.get("catalog", DEFAULT_CATALOG) for v in VIDEOS.values()})
     return jsonify(names)
 
 
@@ -716,7 +771,9 @@ def upload_video():
         meta["size"] = os.path.getsize(path)
     except OSError:
         pass
-    VIDEOS[video_id] = meta
+    meta["has_thumb"] = _make_thumb(meta)
+    with _VIDEOS_LOCK:
+        VIDEOS[video_id] = meta
     _save_video(meta)
     return jsonify(meta), 201
 
@@ -732,19 +789,38 @@ def video_file(video_id):
     return send_file(path, conditional=True)
 
 
+@bp.get("/api/videos/<video_id>/thumb")
+def video_thumb(video_id):
+    meta = VIDEOS.get(video_id)
+    if meta is None:
+        return jsonify({"error": "видео не найдено"}), 404
+    path = _video_thumb_file(video_id)
+    if not os.path.isfile(path):
+        # Lazily build a thumbnail for videos uploaded before thumbs existed.
+        _make_thumb(meta)
+    if not os.path.isfile(path):
+        return jsonify({"error": "превью недоступно"}), 404
+    resp = send_file(path, mimetype="image/jpeg", conditional=True)
+    resp.headers["Cache-Control"] = "public, max-age=86400"
+    return resp
+
+
 @bp.delete("/api/videos/<video_id>")
 def delete_video(video_id):
     if video_id not in VIDEOS and not os.path.isdir(_video_dir(video_id)):
         return jsonify({"error": "видео не найдено"}), 404
-    for iid in [i for i, s in list(INFERENCES.items())
-                if s.get("video_id") == video_id]:
-        INFERENCES.pop(iid, None)
+    with _VIDEOS_LOCK:
+        infer_ids = [i for i, s in list(INFERENCES.items())
+                     if s.get("video_id") == video_id]
+        for iid in infer_ids:
+            INFERENCES.pop(iid, None)
+        VIDEOS.pop(video_id, None)
+    for iid in infer_ids:
         shutil.rmtree(_infer_dir(iid), ignore_errors=True)
         try:
             os.remove(_infer_live_file(iid))
         except OSError:
             pass
-    VIDEOS.pop(video_id, None)
     shutil.rmtree(_video_dir(video_id), ignore_errors=True)
     return jsonify({"ok": True})
 

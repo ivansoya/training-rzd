@@ -29,6 +29,9 @@ COPY common ./common
 COPY training_svc ./training_svc
 
 EXPOSE 5000
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "8", \
+# One worker (video/inference state lives in-memory and must be shared) with a
+# large thread pool so slow streaming/thumbnail requests are served in parallel
+# instead of blocking each other. Shared state is guarded by locks in routes.py.
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "32", \
      "--timeout", "1800", "--access-logfile", "-", "--error-logfile", "-", \
      "training_svc.app:app"]

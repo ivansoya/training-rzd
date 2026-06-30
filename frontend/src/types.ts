@@ -214,6 +214,7 @@ export interface VideoItem {
   catalog: string;
   size: number;
   created_at: number;
+  has_thumb?: boolean;
 }
 
 export interface InferenceSummary {

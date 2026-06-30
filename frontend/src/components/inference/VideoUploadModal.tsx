@@ -5,7 +5,7 @@ import type { Progress } from "../../types";
 interface Props {
   catalogs: string[];
   onUpload: (
-    file: File,
+    files: File[],
     catalog: string,
     onProgress: (p: Progress) => void
   ) => Promise<void>;
@@ -16,7 +16,7 @@ const NEW = "__new__";
 
 export default function VideoUploadModal({ catalogs, onUpload, onClose }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [choice, setChoice] = useState(catalogs[0] ?? NEW);
   const [newCatalog, setNewCatalog] = useState("");
   const [progress, setProgress] = useState<Progress | null>(null);
@@ -26,10 +26,10 @@ export default function VideoUploadModal({ catalogs, onUpload, onClose }: Props)
   const catalog = (isNew ? newCatalog.trim() : choice) || "Общий";
 
   async function confirm() {
-    if (!file) return;
+    if (files.length === 0) return;
     setProgress({ label: "Подготовка…", pct: null });
     try {
-      await onUpload(file, catalog, setProgress);
+      await onUpload(files, catalog, setProgress);
       // success: parent closes the modal
     } catch {
       setProgress(null); // error shown by parent banner
@@ -45,10 +45,11 @@ export default function VideoUploadModal({ catalogs, onUpload, onClose }: Props)
           ref={inputRef}
           type="file"
           accept="video/*"
+          multiple
           hidden
           onChange={(e) => {
-            const f = e.target.files?.[0];
-            if (f) setFile(f);
+            const fl = Array.from(e.target.files ?? []);
+            if (fl.length) setFiles(fl);
           }}
         />
         <button
@@ -57,8 +58,24 @@ export default function VideoUploadModal({ catalogs, onUpload, onClose }: Props)
           disabled={busy}
         >
           <span className="file-pick-icon">⭳</span>
-          <span>{file ? file.name : "Выбрать видеофайл"}</span>
+          <span>
+            {files.length === 0
+              ? "Выбрать видеофайлы"
+              : files.length === 1
+              ? files[0].name
+              : `Выбрано файлов: ${files.length}`}
+          </span>
         </button>
+
+        {files.length > 1 && (
+          <ul className="file-list">
+            {files.map((f, i) => (
+              <li key={i} className="file-list-item">
+                {f.name}
+              </li>
+            ))}
+          </ul>
+        )}
 
         {catalogs.length > 0 && (
           <label className="modal-label">
@@ -101,9 +118,13 @@ export default function VideoUploadModal({ catalogs, onUpload, onClose }: Props)
           <button
             className="btn btn-primary"
             onClick={confirm}
-            disabled={busy || !file}
+            disabled={busy || files.length === 0}
           >
-            {busy ? "Загрузка…" : "Добавить"}
+            {busy
+              ? "Загрузка…"
+              : files.length > 1
+              ? `Добавить (${files.length})`
+              : "Добавить"}
           </button>
         </div>
       </div>
