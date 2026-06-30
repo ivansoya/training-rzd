@@ -1,6 +1,6 @@
 import { useState } from "react";
-import ProgressBar from "./ProgressBar";
-import type { AugConfig, AugScope, Progress } from "../types";
+import ProgressBar from "../common/ProgressBar";
+import type { AugConfig, AugScope, Progress } from "../../types";
 
 interface Props {
   source: string;

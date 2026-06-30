@@ -6,14 +6,14 @@ import {
   listConfigs,
   previewConfig,
   updateConfig,
-} from "../api";
+} from "../../api";
 import type {
   AugConfig,
   DatasetSummary,
   PreviewResult,
   TransformInstance,
   TransformSchema,
-} from "../types";
+} from "../../types";
 
 interface Props {
   registry: TransformSchema[];

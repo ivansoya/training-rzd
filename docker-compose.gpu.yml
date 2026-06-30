@@ -2,14 +2,10 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
 #
-# Requirements on the host:
-#   * NVIDIA GPU + recent driver
-#   * NVIDIA Container Toolkit (so Docker can expose the GPU)
-#
-# This builds the backend with CUDA-enabled torch and reserves all GPUs for the
-# container. Training started with device != "cpu" then runs on the GPU.
+# Only the training service needs the GPU; the datasets and augmentation
+# services stay on CPU images.
 services:
-  backend:
+  training:
     build:
       args:
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121

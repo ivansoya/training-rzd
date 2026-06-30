@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
-import Sidebar from "./components/Sidebar";
-import type { View } from "./components/Sidebar";
-import UploadModal from "./components/UploadModal";
-import CreateAugmentedModal from "./components/CreateAugmentedModal";
-import DatasetStatsView from "./components/DatasetStats";
-import DatasetsGrid from "./components/DatasetsGrid";
-import AugmentView from "./components/AugmentView";
-import TrainView from "./components/TrainView";
-import InferenceView from "./components/InferenceView";
+import Sidebar from "./components/common/Sidebar";
+import type { View } from "./components/common/Sidebar";
+import UploadModal from "./components/datasets/UploadModal";
+import CreateAugmentedModal from "./components/augment/CreateAugmentedModal";
+import DatasetStatsView from "./components/datasets/DatasetStats";
+import DatasetsGrid from "./components/datasets/DatasetsGrid";
+import AugmentView from "./components/augment/AugmentView";
+import TrainView from "./components/train/TrainView";
+import InferenceView from "./components/inference/InferenceView";
 import {
   createAugmented,
   deleteDataset,

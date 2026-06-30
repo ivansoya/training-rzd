@@ -1,4 +1,4 @@
-import type { ParamSchema } from "../types";
+import type { ParamSchema } from "../../types";
 
 interface Props {
   schema: ParamSchema;

@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
-import ProgressBar from "./ProgressBar";
-import type { Progress } from "../types";
+import ProgressBar from "../common/ProgressBar";
+import type { Progress } from "../../types";
 
 interface Props {
   catalogs: string[];

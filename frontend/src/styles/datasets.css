@@ -1,0 +1,197 @@
+/* Datasets section: tile grid, dataset tiles, stats back-arrow,
+   applied-config chips. */
+
+/* Applied configs (augmented dataset details) */
+.applied-configs {
+  margin-bottom: 8px;
+}
+
+.applied-config {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+
+.applied-config-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.applied-config-name {
+  font-weight: 600;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* ===== Tile grid (datasets / videos) ===== */
+.tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.tile-section {
+  margin-top: 18px;
+}
+
+.tile-section-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px 0;
+  margin-bottom: 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.tile-section-head .chevron {
+  transition: transform 0.15s;
+  display: inline-block;
+  font-size: 11px;
+}
+
+.tile-section-head .chevron:not(.open) {
+  transform: rotate(-90deg);
+}
+
+.tile-section-title {
+  color: var(--text);
+}
+
+.tile {
+  position: relative;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  min-height: 110px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color 0.12s, background 0.12s;
+  text-align: left;
+  color: var(--text);
+}
+
+.tile:hover {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+
+.tile-title {
+  font-size: 15px;
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.tile-meta {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.tile-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.tile-del {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+.tile:hover .tile-del {
+  opacity: 1;
+}
+
+.tile-del:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  color: #fca5a5;
+}
+
+/* "add" tile — same footprint, dashed accent */
+.tile-add {
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+  color: var(--muted);
+  font-size: 14px;
+  gap: 8px;
+}
+
+.tile-add:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.tile-add-plus {
+  font-size: 28px;
+  line-height: 1;
+  color: var(--accent);
+}
+
+.tile-empty {
+  color: var(--muted);
+  font-size: 13px;
+  padding: 4px 2px;
+}
+
+/* video tile: preview frame + timestamp */
+.video-tile {
+  padding: 0;
+  overflow: hidden;
+  gap: 0;
+}
+
+.video-tile .tile-meta {
+  padding: 8px 12px;
+}
+
+/* bare back arrow (replaces verbose "back to datasets" buttons) */
+.back-arrow {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 8px 2px 0;
+  margin-bottom: 8px;
+}
+
+.back-arrow:hover {
+  color: var(--text);
+}

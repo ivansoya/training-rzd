@@ -1,5 +1,5 @@
-import CollapsibleSection from "./CollapsibleSection";
-import type { DatasetKind, DatasetSummary } from "../types";
+import CollapsibleSection from "../common/CollapsibleSection";
+import type { DatasetKind, DatasetSummary } from "../../types";
 
 interface Props {
   datasets: DatasetSummary[];

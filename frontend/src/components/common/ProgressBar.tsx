@@ -1,4 +1,4 @@
-import type { Progress } from "../types";
+import type { Progress } from "../../types";
 
 export default function ProgressBar({ label, pct, spinner }: Progress) {
   // Spinner variant: a plain status line with no progress track (used for

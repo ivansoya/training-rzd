@@ -11,14 +11,14 @@ import {
   stopTraining,
   streamTraining,
   weightsUrl,
-} from "../api";
+} from "../../api";
 import type {
   DatasetSummary,
   DevicesInfo,
   ModelVersion,
   TrainingRun,
   TrainingSummary,
-} from "../types";
+} from "../../types";
 
 interface Props {
   datasets: DatasetSummary[];

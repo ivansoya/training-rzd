@@ -1,4 +1,4 @@
-import type { DatasetKind, DatasetStats } from "../types";
+import type { DatasetKind, DatasetStats } from "../../types";
 
 interface Props {
   stats: DatasetStats | null;

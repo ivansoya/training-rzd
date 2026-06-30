@@ -1,23 +1,40 @@
+# Microservices: three backend services share the yolo-data volume; the frontend
+# nginx is the single externally exposed port (8080) and routes /api/* to them.
 services:
-  backend:
+  datasets:
     build:
       context: ./backend
+      dockerfile: datasets_svc/Dockerfile
+    container_name: yolo-datasets
+    restart: unless-stopped
+    volumes:
+      - yolo-data:/app/data
+    expose:
+      - "5000"
+
+  augmentation:
+    build:
+      context: ./backend
+      dockerfile: augment_svc/Dockerfile
+    container_name: yolo-augmentation
+    restart: unless-stopped
+    volumes:
+      - yolo-data:/app/data
+    expose:
+      - "5000"
+
+  training:
+    build:
+      context: ./backend
+      dockerfile: training_svc/Dockerfile
       args:
         # CPU torch by default; the GPU override switches this to a CUDA wheel.
         TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
-    container_name: yolo-backend
+    container_name: yolo-training
     restart: unless-stopped
-    # PyTorch DataLoader workers exchange batches through /dev/shm. Docker's
-    # default 64 MB causes "bus error ... insufficient shared memory" during
-    # training; give it room. Raise further for big batch/imgsz if needed.
+    # PyTorch DataLoader workers exchange batches through /dev/shm.
     shm_size: "2gb"
     volumes:
-      # Datasets, configs, training runs and metadata live in a named Docker
-      # volume (ext4 inside the VM) instead of a host bind mount. On Docker
-      # Desktop / Windows a bind mount goes through a slow file-sharing layer
-      # that starves the training DataLoader (GPU sits idle waiting for images);
-      # a named volume gives near-native I/O. Data still survives image rebuilds
-      # and `docker compose down` — only `docker compose down -v` wipes it.
       - yolo-data:/app/data
     expose:
       - "5000"
@@ -27,9 +44,13 @@ services:
     container_name: yolo-frontend
     restart: unless-stopped
     depends_on:
-      - backend
+      - datasets
+      - augmentation
+      - training
     ports:
       - "8080:80"
 
 volumes:
+  # Named volume (ext4 inside the VM) shared by all services — fast I/O and
+  # reliable cross-container reads. Survives rebuilds and `down`; `down -v` wipes.
   yolo-data:

@@ -2,8 +2,27 @@
 
 Веб-приложение для загрузки, валидации и просмотра статистики датасетов в формате YOLO.
 
-- **Бэкенд:** Python + Flask
-- **Фронтенд:** TypeScript + React (Vite)
+- **Бэкенд:** Python + Flask, разбит на **микросервисы** (датасеты, аугментация,
+  обучение/инференс), общий код — в пакете `backend/common`.
+- **Фронтенд:** TypeScript + React (Vite). Компоненты разложены по папкам
+  разделов (`components/common|datasets|augment|train|inference`), стили — на
+  общие и по разделам (`src/styles/*.css`).
+- **Шлюз:** nginx (`frontend`) — единственный внешний порт (8080): отдаёт SPA и
+  маршрутизирует `/api/*` к нужному сервису.
+
+### Архитектура (микросервисы)
+
+| Сервис | Контейнер | Отвечает за | Образ |
+| ------ | --------- | ----------- | ----- |
+| `datasets` | `yolo-datasets` | `/api/datasets`, `/api/jobs` | лёгкий |
+| `augmentation` | `yolo-augmentation` | `/api/aug/*` (конфиги, превью, генерация) | albumentations |
+| `training` | `yolo-training` | `/api/trainings` (+SSE), `/api/models`, `/api/devices`, `/api/inference`, `/api/videos` | torch/GPU |
+| `frontend` | `yolo-frontend` | SPA + nginx-шлюз | nginx |
+
+Все сервисы монтируют один именованный том `yolo-data` (`/app/data`). Состояние
+фоновых задач (`_jobs`) тоже лежит на нём, поэтому задачу, созданную сервисом
+аугментации, отдаёт сервис датасетов (`/api/jobs`). Создание аугментаций —
+`POST /api/aug/generate`.
 
 ## Возможности
 
@@ -125,10 +144,9 @@ nc: 20
 docker compose up --build
 ```
 
-Откройте **http://localhost:8080**.
-
-- `frontend` — nginx, отдаёт собранный React и проксирует `/api` на бэкенд.
-- `backend` — Flask + gunicorn.
+Откройте **http://localhost:8080** (единственный внешний порт — nginx-шлюз).
+Поднимаются четыре контейнера: `yolo-frontend` (шлюз+SPA), `yolo-datasets`,
+`yolo-augmentation`, `yolo-training`.
 
 ### Где хранятся данные
 
@@ -187,19 +205,21 @@ GPU-образ не запущен, доступен только CPU, а зап
 
 ### 1. Бэкенд
 
+Каждый сервис запускается отдельно из папки `backend` (общий пакет `common`
+доступен по `PYTHONPATH`). Пример для сервиса датасетов:
+
 ```bash
 cd backend
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# Linux/macOS
-source .venv/bin/activate
-
-pip install -r requirements.txt
-python app.py
+# Windows: .venv\Scripts\activate   |   Linux/macOS: source .venv/bin/activate
+pip install -r datasets_svc/requirements.txt
+DATA_DIR=./data PYTHONPATH=. python -m datasets_svc.app
 ```
 
-Сервер поднимется на `http://127.0.0.1:5000`.
+Аналогично запускаются `augment_svc.app` и `training_svc.app` (свои
+`requirements.txt`). Каждый поднимется на `http://127.0.0.1:5000` — для локальной
+разработки удобнее всё же `docker compose up`, чтобы nginx-шлюз сам
+маршрутизировал запросы.
 
 ### 2. Фронтенд
 

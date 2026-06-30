@@ -109,7 +109,7 @@ export async function createAugmented(
   scope: AugScope
 ): Promise<{ job_id: string }> {
   return asJson(
-    await fetch(`${BASE}/datasets/augmented`, {
+    await fetch(`${BASE}/aug/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

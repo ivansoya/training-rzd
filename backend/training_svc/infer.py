@@ -3,7 +3,6 @@
 Heavy deps (torch/ultralytics/opencv) are imported lazily. The annotated output
 is encoded as H.264 (via ffmpeg when available) so it plays in the browser.
 """
-import os
 import shutil
 import subprocess
 

@@ -56,21 +56,21 @@ def main():
     save()
 
     try:
-        import training
+        from training_svc import trainer
         from ultralytics import YOLO
 
-        training._disable_builtin_albumentations()
+        trainer._disable_builtin_albumentations()
         device = state.get("device", "cpu")
         is_cpu = str(device) == "cpu"
         model = YOLO(args.model_spec)
 
-        def _loss_items(trainer):
+        def _loss_items(trn):
             """Current per-component losses as {box_loss, cls_loss, dfl_loss}."""
             out = {}
             try:
-                tloss = getattr(trainer, "tloss", None)
+                tloss = getattr(trn, "tloss", None)
                 if tloss is not None:
-                    for k, v in trainer.label_loss_items(tloss).items():
+                    for k, v in trn.label_loss_items(tloss).items():
                         out[k.split("/")[-1]] = float(v)
             except Exception:
                 pass
@@ -81,10 +81,10 @@ def main():
         # train-epoch/-batch events instead of subclassing the trainer.
         last_write = [0.0]
 
-        def _epoch_start(trainer):
-            state["current_epoch"] = int(getattr(trainer, "epoch", 0)) + 1
+        def _epoch_start(trn):
+            state["current_epoch"] = int(getattr(trn, "epoch", 0)) + 1
             try:
-                state["total_batches"] = len(trainer.train_loader)
+                state["total_batches"] = len(trn.train_loader)
             except Exception:
                 state["total_batches"] = None
             state["phase"] = "train"
@@ -93,9 +93,9 @@ def main():
             state["epoch_started_at"] = time.time()
             save()
 
-        def _batch_end(trainer):
+        def _batch_end(trn):
             state["current_batch"] = int(state.get("current_batch", 0)) + 1
-            bm = _loss_items(trainer)
+            bm = _loss_items(trn)
             if bm:
                 state["batch_metrics"] = bm
             now = time.time()
@@ -127,12 +127,12 @@ def main():
                 last_write[0] = now
                 save_live()
 
-        def _cb(trainer):
-            epoch = int(getattr(trainer, "epoch", 0)) + 1
-            raw = getattr(trainer, "metrics", None) or {}
+        def _cb(trn):
+            epoch = int(getattr(trn, "epoch", 0)) + 1
+            raw = getattr(trn, "metrics", None) or {}
             metrics = {k: float(v) for k, v in raw.items()
                        if isinstance(v, (int, float))}
-            metrics.update(_loss_items(trainer))
+            metrics.update(_loss_items(trn))
             row = {"epoch": epoch, **metrics}
             state["current_epoch"] = epoch
             if state.get("total_batches"):
@@ -150,17 +150,15 @@ def main():
         model.add_callback("on_val_batch_end", _val_batch_end)
         model.add_callback("on_fit_epoch_end", _cb)
 
-        # Default number of DataLoader workers (used only if the user did not set
-        # one). We run in a dedicated process, so workers are safe and parallelize
-        # image loading — critical on a slow bind-mounted volume. On GPU keep
-        # fewer by default: with pin_memory too many can trigger "CUDA error: out
-        # of memory" in the pin-memory thread.
+        # Default DataLoader workers (used only if the user did not set one). On
+        # GPU keep fewer: with pin_memory too many can trigger "CUDA out of
+        # memory" in the pin-memory thread.
         cpu = os.cpu_count() or 2
         default_workers = min(8, cpu) if is_cpu else min(4, cpu)
-        overrides = dict(training.DISABLED_AUG)
+        overrides = dict(trainer.DISABLED_AUG)
         overrides["workers"] = default_workers
         # User-provided params (incl. an explicit `workers`) override the default.
-        overrides.update(training.filter_params(state.get("params", {})))
+        overrides.update(trainer.filter_params(state.get("params", {})))
         overrides.update(
             data=args.data_yaml, project=args.project, name="train",
             exist_ok=True, device=device, plots=False,

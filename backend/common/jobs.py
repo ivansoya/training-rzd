@@ -1,7 +1,7 @@
 """Tiny file-based job store for tracking progress of long operations.
 
-Jobs are persisted as JSON files so any gunicorn worker can read a job's
-progress regardless of which worker started the background thread.
+Jobs are persisted as JSON files on the shared data volume, so any service can
+read a job's progress regardless of which service started the background work.
 """
 import json
 import os

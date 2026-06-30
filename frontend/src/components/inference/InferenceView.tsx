@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
-import ProgressBar from "./ProgressBar";
-import CollapsibleSection from "./CollapsibleSection";
+import ProgressBar from "../common/ProgressBar";
+import CollapsibleSection from "../common/CollapsibleSection";
 import VideoUploadModal from "./VideoUploadModal";
 import {
   deleteInference,
@@ -13,14 +13,14 @@ import {
   startInference,
   uploadVideo,
   videoFileUrl,
-} from "../api";
+} from "../../api";
 import type {
   InferenceRun,
   InferenceSummary,
   Progress,
   TrainedModel,
   VideoItem,
-} from "../types";
+} from "../../types";
 
 interface Props {
   available: boolean;

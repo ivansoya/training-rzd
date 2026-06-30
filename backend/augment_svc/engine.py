@@ -1,8 +1,7 @@
 """Albumentations integration: transform registry, preview and dataset generation.
 
 Everything that needs albumentations / opencv / numpy lives here and is imported
-lazily, so the core dataset features keep working even if these heavy
-dependencies are not installed.
+lazily, so imports stay cheap until augmentation is actually used.
 """
 import base64
 import inspect
@@ -33,9 +32,6 @@ SPATIAL_TRANSFORMS = [
 _REGISTRY = None  # name -> {"cls": class, "category": str, "params": [...]}
 
 
-# --------------------------------------------------------------------------- #
-# Availability
-# --------------------------------------------------------------------------- #
 def is_available():
     try:
         import albumentations  # noqa: F401
@@ -123,9 +119,6 @@ def registry_schema():
     return out
 
 
-# --------------------------------------------------------------------------- #
-# Compose building
-# --------------------------------------------------------------------------- #
 def _coerce(value):
     if isinstance(value, list):
         return tuple(_coerce(v) for v in value)
@@ -169,9 +162,6 @@ def build_compose(transforms, with_bbox=True):
     return A.Compose(ops)
 
 
-# --------------------------------------------------------------------------- #
-# Image / label IO
-# --------------------------------------------------------------------------- #
 def _imread_rgb(path):
     import cv2
     import numpy as np
@@ -268,9 +258,6 @@ def _class_names(dataset_dir):
     return {}
 
 
-# --------------------------------------------------------------------------- #
-# Preview & generation
-# --------------------------------------------------------------------------- #
 def preview(dataset_dir, transforms, seed=None):
     """Apply `transforms` to a random labelled image. Returns dict with data URLs."""
     if seed is not None:
@@ -280,7 +267,6 @@ def preview(dataset_dir, transforms, seed=None):
         raise ValueError("в датасете нет изображений")
 
     names = _class_names(dataset_dir)
-    # Prefer an image that actually has boxes so spatial transforms are visible.
     random.shuffle(images)
     chosen, bboxes, labels = None, [], []
     for rel in images:
@@ -333,11 +319,8 @@ def generate(source_dir, dest_dir, passes, scope="all", progress=None):
 
     `passes` is a list of {name, transforms}. Each pass is a full cycle over
     every image with its own transform set; outputs from different passes get a
-    distinct filename suffix so they coexist in one dataset.
-
-    `scope` is "all" or "train" (augment only the train split). `progress`, if
-    given, is called as progress(done, total) after each written image. Returns
-    the number of written images.
+    distinct filename suffix so they coexist in one dataset. Returns the number
+    of written images.
     """
     import shutil
 
@@ -352,7 +335,6 @@ def generate(source_dir, dest_dir, passes, scope="all", progress=None):
         images = [r for r in images if _split_of(r) == "train"]
     total = len(images) * max(1, len(composes))
 
-    # Copy the YAML config alongside.
     yaml_path = _find_yaml(source_dir)
     if yaml_path:
         rel = os.path.relpath(yaml_path, source_dir)
