@@ -142,8 +142,9 @@ export interface EpochMetrics {
 
 export interface TrainingSummary {
   id: string;
-  status: "preparing" | "running" | "done" | "stopped" | "error";
+  status: "queued" | "preparing" | "running" | "done" | "stopped" | "error";
   model_name: string;
+  display_name?: string; // renamable user-facing name of the trained model
   dataset_name: string;
   dataset_label?: string;
   dataset_kind: DatasetKind;
@@ -175,7 +176,9 @@ export interface TrainingRun extends TrainingSummary {
 export interface TrainedModel {
   run_id: string;
   model_name: string;
+  display_name: string; // resolved trained-model name (renamable)
   dataset_name: string;
+  dataset_label?: string;
   created_at: number;
 }
 
@@ -226,9 +229,12 @@ export interface InferenceSummary {
   catalog?: string;
   model_run_id: string;
   model_name: string;
+  model_display?: string; // resolved trained-model name; falls back to id
   input_name: string;
   created_at: number;
   has_output: boolean;
+  processed_frames?: number;
+  total_frames?: number;
   total_detections?: number;
   error: string | null;
 }

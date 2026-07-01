@@ -289,6 +289,19 @@ export function streamTraining(
   return () => es.close();
 }
 
+export async function renameTraining(
+  id: string,
+  displayName: string
+): Promise<void> {
+  await asJson(
+    await fetch(`${BASE}/trainings/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ display_name: displayName }),
+    })
+  );
+}
+
 export async function stopTraining(id: string): Promise<void> {
   await asJson(await fetch(`${BASE}/trainings/${id}/stop`, { method: "POST" }));
 }

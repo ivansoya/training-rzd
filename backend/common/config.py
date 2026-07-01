@@ -19,6 +19,10 @@ AUG_META_FILE = os.path.join(DATA_DIR, "augmented.json")
 # Maps an uploaded dataset's ASCII folder id -> {display_name, created_at}.
 DATASETS_META_FILE = os.path.join(DATA_DIR, "datasets.json")
 TRAININGS_DIR = os.path.join(DATA_DIR, "trainings")
+# Maps a training run id -> {display_name}: the user-facing name of a trained
+# model. Kept out of the run state so renames never race the training runner,
+# which rewrites run.json from its own in-memory copy while a run is active.
+TRAIN_META_FILE = os.path.join(DATA_DIR, "trainings.json")
 MODELS_DIR = os.path.join(DATA_DIR, "models")
 MODELS_FILE = os.path.join(DATA_DIR, "models.json")
 INFERENCE_DIR = os.path.join(DATA_DIR, "inference")

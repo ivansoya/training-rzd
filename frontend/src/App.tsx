@@ -20,9 +20,11 @@ import {
   listConfigs,
   renameDataset,
   listDatasets,
+  listInferences,
   listTrainings,
   listTransforms,
   pollJob,
+  stopTraining,
   uploadDataset,
 } from "./api";
 import type {
@@ -31,6 +33,7 @@ import type {
   DatasetKind,
   DatasetStats,
   DatasetSummary,
+  InferenceSummary,
   TrainingSummary,
   TransformSchema,
 } from "./types";
@@ -58,7 +61,11 @@ export default function App() {
   const augJobs = useRef<Record<string, string>>({});
   const augCancelPending = useRef<Set<string>>(new Set());
   const [headerTrainings, setHeaderTrainings] = useState<TrainingSummary[]>([]);
+  const [headerInferences, setHeaderInferences] = useState<InferenceSummary[]>(
+    []
+  );
   const [focusTraining, setFocusTraining] = useState<string | undefined>();
+  const [focusVideo, setFocusVideo] = useState<string | undefined>();
 
   const [configs, setConfigs] = useState<AugConfig[]>([]);
   const [registry, setRegistry] = useState<TransformSchema[]>([]);
@@ -72,13 +79,19 @@ export default function App() {
     }
   }, []);
 
-  // Poll training summaries so the header can show active runs from any view.
+  // Poll training + inference summaries so the header can show every active
+  // process (and the training queue) from any view.
   useEffect(() => {
     let active = true;
     const tick = async () => {
       try {
-        const list = await listTrainings();
-        if (active) setHeaderTrainings(list);
+        const [tr, inf] = await Promise.all([
+          listTrainings(),
+          listInferences(),
+        ]);
+        if (!active) return;
+        setHeaderTrainings(tr);
+        setHeaderInferences(inf);
       } catch {
         /* ignore */
       }
@@ -281,13 +294,24 @@ export default function App() {
           uploads={uploads}
           augments={augments}
           trainings={headerTrainings.filter(
-            (t) => t.status === "preparing" || t.status === "running"
+            (t) =>
+              t.status === "preparing" ||
+              t.status === "running" ||
+              t.status === "queued"
           )}
+          inferences={headerInferences.filter((r) => r.status === "processing")}
           onOpenTraining={(id) => {
             setFocusTraining(id);
             setView("train");
           }}
+          onOpenInference={(videoId) => {
+            setFocusVideo(videoId);
+            setView("inference");
+          }}
           onCancelAugment={handleCancelAugment}
+          onCancelTraining={(id) => {
+            stopTraining(id).catch(() => {});
+          }}
         />
       </header>
 
@@ -338,7 +362,9 @@ export default function App() {
             focusRunId={focusTraining}
           />
         )}
-        {view === "inference" && <InferenceView available={trainAvailable} />}
+        {view === "inference" && (
+          <InferenceView available={trainAvailable} focusVideoId={focusVideo} />
+        )}
       </div>
 
       {showUpload && (

@@ -7,6 +7,7 @@ import {
   listDevices,
   listModels,
   listTrainings,
+  renameTraining,
   startTraining,
   stopTraining,
   streamTraining,
@@ -92,6 +93,12 @@ export default function TrainView({ datasets, available, focusRunId }: Props) {
   const [device, setDevice] = useState("cpu");
 
   const modelFileRef = useRef<HTMLInputElement>(null);
+
+  // A run is occupying the single training slot (or waiting for it), so a new
+  // start will be queued rather than run immediately.
+  const hasActiveRun = trainings.some((t) =>
+    ["preparing", "running", "queued"].includes(t.status)
+  );
 
   // open a specific run when requested from the header activity list
   useEffect(() => {
@@ -182,6 +189,20 @@ export default function TrainView({ datasets, available, focusRunId }: Props) {
   async function handleStop(id: string) {
     try {
       await stopTraining(id);
+      await reloadTrainings();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  async function handleRename(id: string, name: string) {
+    try {
+      await renameTraining(id, name);
+      await reloadTrainings();
+      if (selectedId === id) {
+        const r = await getTraining(id);
+        setRun(r);
+      }
     } catch (e) {
       setError((e as Error).message);
     }
@@ -253,11 +274,13 @@ export default function TrainView({ datasets, available, focusRunId }: Props) {
               >
                 <div className="dataset-info">
                   <span className="dataset-name">
-                    <StatusDot status={t.status} /> {t.model_name}
+                    <StatusDot status={t.status} />{" "}
+                    {t.display_name || t.model_name}
                   </span>
                   <span className="dataset-meta">
-                    {t.dataset_label || t.dataset_name} · {t.current_epoch}/
-                    {t.epochs} эп. · {deviceLabel(t.device)}
+                    {t.status === "queued"
+                      ? `в очереди · ${t.dataset_label || t.dataset_name}`
+                      : `${t.dataset_label || t.dataset_name} · ${t.current_epoch}/${t.epochs} эп. · ${deviceLabel(t.device)}`}
                   </span>
                 </div>
                 <button
@@ -281,6 +304,7 @@ export default function TrainView({ datasets, available, focusRunId }: Props) {
             <RunDetail
               run={run}
               onStop={() => handleStop(run.id)}
+              onRename={(name) => handleRename(run.id, name)}
               onDeleteWeights={() => handleDeleteWeights(run.id)}
               onDelete={() => handleDeleteRun(run.id)}
             />
@@ -420,6 +444,13 @@ export default function TrainView({ datasets, available, focusRunId }: Props) {
 
               <p className="subtle">
                 Все аугментации YOLO принудительно отключены при обучении.
+                {hasActiveRun && (
+                  <>
+                    {" "}
+                    Обучение уже идёт — новый запуск встанет в очередь и
+                    стартует автоматически после завершения текущего.
+                  </>
+                )}
               </p>
 
               <button
@@ -427,7 +458,11 @@ export default function TrainView({ datasets, available, focusRunId }: Props) {
                 onClick={handleStart}
                 disabled={busy || !available || !datasetKey || !modelId}
               >
-                {busy ? "Запуск…" : "Запустить обучение"}
+                {busy
+                  ? "Запуск…"
+                  : hasActiveRun
+                    ? "Добавить в очередь"
+                    : "Запустить обучение"}
               </button>
             </div>
           )}
@@ -467,39 +502,84 @@ function valPct(run: TrainingRun): number {
 function RunDetail({
   run,
   onStop,
+  onRename,
   onDeleteWeights,
   onDelete,
 }: {
   run: TrainingRun;
   onStop: () => void;
+  onRename: (name: string) => void;
   onDeleteWeights: () => void;
   onDelete: () => void;
 }) {
   const running = RUNNING.has(run.status);
+  const queued = run.status === "queued";
+  const name = run.display_name || run.model_name;
   const pct = run.epochs ? Math.min(1, run.current_epoch / run.epochs) : 0;
   const maps = run.metrics.map((m) => m["metrics/mAP50(B)"] ?? 0);
   const maxMap = Math.max(0.0001, ...maps);
   const [tip, setTip] = useState<{ x: number; y: number; text: string } | null>(
     null
   );
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+
+  function commitRename() {
+    const v = draft.trim();
+    setEditing(false);
+    if (v && v !== name) onRename(v);
+  }
 
   return (
     <div className="aug-col">
       <div className="stats-head">
         <div>
-          <h3 className="section-title" style={{ marginTop: 0 }}>
-            <StatusDot status={run.status} /> {run.model_name}
-          </h3>
+          {editing ? (
+            <div className="rename-row">
+              <input
+                className="text-input stats-title-input"
+                value={draft}
+                autoFocus
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") commitRename();
+                  if (e.key === "Escape") setEditing(false);
+                }}
+              />
+              <button className="btn btn-primary" onClick={commitRename}>
+                Сохранить
+              </button>
+              <button className="btn" onClick={() => setEditing(false)}>
+                Отмена
+              </button>
+            </div>
+          ) : (
+            <div className="title-row">
+              <h3 className="section-title" style={{ marginTop: 0 }}>
+                <StatusDot status={run.status} /> {name}
+              </h3>
+              <button
+                className="rename-btn"
+                title="Переименовать модель"
+                onClick={() => {
+                  setDraft(name);
+                  setEditing(true);
+                }}
+              >
+                ✎
+              </button>
+            </div>
+          )}
           <p className="subtle">
-            {run.dataset_label || run.dataset_name} · {deviceLabel(run.device)} ·{" "}
-            {statusLabel(run.status)}
+            {run.model_name} · {run.dataset_label || run.dataset_name} ·{" "}
+            {deviceLabel(run.device)} · {statusLabel(run.status)}
             {run.message ? ` · ${run.message}` : ""}
           </p>
         </div>
         <div className="row-actions">
-          {running && (
+          {(running || queued) && (
             <button className="btn" onClick={onStop}>
-              Остановить
+              {queued ? "Убрать из очереди" : "Остановить"}
             </button>
           )}
           {run.has_weights && (
@@ -671,6 +751,7 @@ function deviceLabel(device?: string): string {
 function statusLabel(s: string): string {
   return (
     {
+      queued: "в очереди",
       preparing: "подготовка",
       running: "обучение",
       done: "завершено",

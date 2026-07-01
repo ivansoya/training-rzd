@@ -19,6 +19,7 @@ from common.config import (
     INFERENCE_DIR,
     MODELS_DIR,
     MODELS_FILE,
+    TRAIN_META_FILE,
     TRAININGS_DIR,
     VIDEO_EXTENSIONS,
     VIDEOS_DIR,
@@ -31,6 +32,31 @@ def _dataset_label(kind, ds_id):
     """Pretty dataset name for display, resolved from the shared meta files."""
     meta_file = AUG_META_FILE if kind == "augmented" else DATASETS_META_FILE
     return load_json(meta_file, {}).get(ds_id, {}).get("display_name") or ds_id
+
+
+def _train_meta():
+    """run_id -> {display_name} registry for trained models (renamable names)."""
+    return load_json(TRAIN_META_FILE, {})
+
+
+def _model_display(run_id, state=None, meta=None):
+    """The user-facing name of a trained model, resolved dynamically by id.
+
+    Falls back to the base model name, and finally to the run id itself so a
+    deleted/unknown model still shows *something* (its id) wherever referenced.
+    """
+    if not run_id:
+        return None
+    if meta is None:
+        meta = _train_meta()
+    name = (meta.get(run_id) or {}).get("display_name")
+    if name:
+        return name
+    if state is None:
+        state = TRAININGS.get(run_id)
+    if state:
+        return state.get("model_name") or run_id
+    return run_id
 from training_svc import infer, trainer
 
 bp = Blueprint("training", __name__)
@@ -109,11 +135,20 @@ def delete_model(model_id):
 TRAININGS = {}          # id -> last-known state dict (cache)
 TRAIN_PROCS = {}        # id -> subprocess.Popen
 _STOP_REQUESTED = set()
+# Training runs sequentially — never two at once. `_ACTIVE` is the id currently
+# training; `_QUEUE` holds ids waiting (FIFO); `_PENDING_LAUNCH` carries the
+# subprocess launch args for a run until it actually starts. All guarded by
+# `_train_lock`.
+_QUEUE = []
+_ACTIVE = None
+_PENDING_LAUNCH = {}
 _train_lock = threading.Lock()
 LIVE_DIR = os.path.join(tempfile.gettempdir(), "yolo-train")
 os.makedirs(LIVE_DIR, exist_ok=True)
 RUNNER = os.path.join(os.path.dirname(__file__), "runner.py")
 RUNNING_STATES = {"preparing", "running"}
+# States for which the SSE stream stays open (a queued run will start soon).
+STREAM_OPEN_STATES = {"preparing", "running", "queued"}
 
 
 def _run_file(run_id):
@@ -150,18 +185,19 @@ def load_runs():
     for run_id in os.listdir(TRAININGS_DIR):
         data = load_json(_run_file(run_id), None)
         if isinstance(data, dict):
-            if data.get("status") in ("running", "preparing"):
+            if data.get("status") in ("running", "preparing", "queued"):
                 data["status"] = "error"
                 data["error"] = "прервано перезапуском сервера"
                 save_json(_run_file(run_id), data)
             TRAININGS[run_id] = data
 
 
-def _run_summary(state):
+def _run_summary(state, meta=None):
     return {
         "id": state["id"],
         "status": state["status"],
         "model_name": state.get("model_name"),
+        "display_name": _model_display(state["id"], state, meta),
         "dataset_name": state.get("dataset_name"),
         "dataset_label": state.get("dataset_label") or state.get("dataset_name"),
         "dataset_kind": state.get("dataset_kind"),
@@ -264,8 +300,54 @@ def _build_training_yaml(dataset_dir, run_dir):
     return out_path
 
 
+def _launch(run_id):
+    """Start the subprocess for a run whose launch args are pending."""
+    params = _PENDING_LAUNCH.pop(run_id, None)
+    if params is None:
+        return
+    model_spec, data_yaml, run_dir = params
+    proc = subprocess.Popen(
+        [
+            sys.executable, RUNNER,
+            "--run-file", _run_file(run_id),
+            "--live-file", _live_file(run_id),
+            "--model-spec", model_spec,
+            "--data-yaml", data_yaml,
+            "--project", run_dir,
+        ],
+        start_new_session=True,
+    )
+    TRAIN_PROCS[run_id] = proc
+    threading.Thread(target=_monitor, args=(run_id, proc), daemon=True).start()
+
+
+def _advance_queue(finished_id):
+    """Free the active slot held by ``finished_id`` and launch the next queued
+    run, if any. Safe to call for a run that was never active."""
+    global _ACTIVE
+    nxt = None
+    with _train_lock:
+        if _ACTIVE == finished_id:
+            _ACTIVE = None
+        if _ACTIVE is None:
+            while _QUEUE:
+                cand = _QUEUE.pop(0)
+                st = TRAININGS.get(cand)
+                if st and st.get("status") == "queued":
+                    _ACTIVE = cand
+                    st["status"] = "preparing"
+                    st["message"] = "Подготовка"
+                    nxt = cand
+                    break
+                _PENDING_LAUNCH.pop(cand, None)
+    if nxt:
+        _save_run(TRAININGS[nxt])
+        _launch(nxt)
+
+
 def _monitor(run_id, proc):
-    """Wait for a training subprocess and finalize its state."""
+    """Wait for a training subprocess, finalize its state, then start the next
+    queued run."""
     try:
         pgid = os.getpgid(proc.pid)
     except Exception:  # noqa: BLE001
@@ -277,22 +359,22 @@ def _monitor(run_id, proc):
         except Exception:  # noqa: BLE001
             pass
     TRAIN_PROCS.pop(run_id, None)
-    if run_id not in TRAININGS:
-        return
-    state = read_state(run_id)
-    if state is None:
-        return
-    if state.get("status") in ("preparing", "running"):
-        if run_id in _STOP_REQUESTED:
-            state["status"] = "stopped"
-            state["message"] = "Остановлено пользователем"
-        else:
-            state["status"] = "error"
-            state["error"] = state.get("error") or "процесс обучения завершился неожиданно"
-            state["message"] = "Ошибка"
-        state["finished_at"] = time.time()
-        _save_run(state)
-    _STOP_REQUESTED.discard(run_id)
+    try:
+        if run_id in TRAININGS:
+            state = read_state(run_id)
+            if state and state.get("status") in ("preparing", "running"):
+                if run_id in _STOP_REQUESTED:
+                    state["status"] = "stopped"
+                    state["message"] = "Остановлено пользователем"
+                else:
+                    state["status"] = "error"
+                    state["error"] = state.get("error") or "процесс обучения завершился неожиданно"
+                    state["message"] = "Ошибка"
+                state["finished_at"] = time.time()
+                _save_run(state)
+        _STOP_REQUESTED.discard(run_id)
+    finally:
+        _advance_queue(run_id)
 
 
 @bp.get("/api/devices")
@@ -306,7 +388,8 @@ def list_devices():
 def list_trainings():
     runs = [read_state(rid) or TRAININGS[rid] for rid in list(TRAININGS)]
     runs.sort(key=lambda s: s.get("created_at", 0), reverse=True)
-    return jsonify([_run_summary(s) for s in runs])
+    meta = _train_meta()
+    return jsonify([_run_summary(s, meta) for s in runs])
 
 
 @bp.get("/api/trainings/<run_id>")
@@ -314,7 +397,28 @@ def get_training(run_id):
     state = read_state(run_id)
     if state is None:
         return jsonify({"error": "training not found"}), 404
-    return jsonify(state)
+    out = dict(state)
+    out["display_name"] = _model_display(run_id, state)
+    return jsonify(out)
+
+
+@bp.patch("/api/trainings/<run_id>")
+def rename_training(run_id):
+    """Rename a trained model (display name only; id/weights unchanged). Stored
+    in a side registry so it survives the runner rewriting run.json mid-run."""
+    if read_state(run_id) is None:
+        return jsonify({"error": "training not found"}), 404
+    body = request.get_json(silent=True) or {}
+    display_name = (body.get("display_name") or "").strip()
+    meta = _train_meta()
+    if display_name:
+        entry = meta.get(run_id) or {}
+        entry["display_name"] = display_name
+        meta[run_id] = entry
+    else:
+        meta.pop(run_id, None)  # empty reverts to the default (base model name)
+    save_json(TRAIN_META_FILE, meta)
+    return jsonify({"ok": True, "display_name": _model_display(run_id, meta=meta)})
 
 
 @bp.get("/api/trainings/<run_id>/stream")
@@ -331,7 +435,9 @@ def stream_training(run_id):
             state = read_state(run_id)
             if state is None:
                 break
-            payload = json.dumps(state, ensure_ascii=False)
+            enriched = dict(state)
+            enriched["display_name"] = _model_display(run_id, state)
+            payload = json.dumps(enriched, ensure_ascii=False)
             if payload != last:
                 last = payload
                 idle = 0
@@ -341,7 +447,7 @@ def stream_training(run_id):
                 if idle >= 20:
                     idle = 0
                     yield ": keepalive\n\n"
-            if state.get("status") not in RUNNING_STATES:
+            if state.get("status") not in STREAM_OPEN_STATES:
                 yield "event: end\ndata: {}\n\n"
                 break
             time.sleep(0.5)
@@ -389,6 +495,7 @@ def start_training():
         "id": run_id,
         "status": "preparing",
         "message": "Подготовка",
+        "queued_at": time.time(),
         "model_id": model["id"],
         "model_name": model["name"],
         "dataset_kind": kind,
@@ -404,24 +511,24 @@ def start_training():
         "finished_at": None,
         "error": None,
     }
+    global _ACTIVE
     with _train_lock:
+        # Only one training runs at a time; if the slot is taken (or others are
+        # already waiting) this run goes to the back of the queue.
+        busy = _ACTIVE is not None or len(_QUEUE) > 0
+        if busy:
+            state["status"] = "queued"
+            state["message"] = "В очереди"
+            _QUEUE.append(run_id)
+        else:
+            _ACTIVE = run_id
         TRAININGS[run_id] = state
+        _PENDING_LAUNCH[run_id] = (model["spec"], data_yaml, run_dir)
     _save_run(state)
 
-    proc = subprocess.Popen(
-        [
-            sys.executable, RUNNER,
-            "--run-file", _run_file(run_id),
-            "--live-file", _live_file(run_id),
-            "--model-spec", model["spec"],
-            "--data-yaml", data_yaml,
-            "--project", run_dir,
-        ],
-        start_new_session=True,
-    )
-    TRAIN_PROCS[run_id] = proc
-    threading.Thread(target=_monitor, args=(run_id, proc), daemon=True).start()
-    return jsonify({"id": run_id}), 202
+    if not busy:
+        _launch(run_id)
+    return jsonify({"id": run_id, "queued": busy}), 202
 
 
 def _terminate(run_id, hard=False):
@@ -443,6 +550,18 @@ def _terminate(run_id, hard=False):
 def stop_training(run_id):
     if run_id not in TRAININGS:
         return jsonify({"error": "training not found"}), 404
+    state = TRAININGS.get(run_id)
+    # A queued run has no process — just drop it from the queue.
+    if state and state.get("status") == "queued":
+        with _train_lock:
+            if run_id in _QUEUE:
+                _QUEUE.remove(run_id)
+            _PENDING_LAUNCH.pop(run_id, None)
+        state["status"] = "stopped"
+        state["message"] = "Убрано из очереди"
+        state["finished_at"] = time.time()
+        _save_run(state)
+        return jsonify({"ok": True})
     _STOP_REQUESTED.add(run_id)
     _terminate(run_id)
     state = read_state(run_id)
@@ -456,6 +575,11 @@ def stop_training(run_id):
 def delete_training(run_id):
     if run_id not in TRAININGS and not os.path.isdir(os.path.join(TRAININGS_DIR, run_id)):
         return jsonify({"error": "training not found"}), 404
+    with _train_lock:
+        if run_id in _QUEUE:
+            _QUEUE.remove(run_id)
+        _PENDING_LAUNCH.pop(run_id, None)
+        was_active = _ACTIVE == run_id
     _STOP_REQUESTED.add(run_id)
     _terminate(run_id, hard=True)
     TRAININGS.pop(run_id, None)
@@ -465,6 +589,14 @@ def delete_training(run_id):
         os.remove(_live_file(run_id))
     except OSError:
         pass
+    meta = _train_meta()
+    if run_id in meta:
+        del meta[run_id]
+        save_json(TRAIN_META_FILE, meta)
+    # When we kill the active run its _monitor thread advances the queue; for a
+    # run that had no process (queued, or already finished) do it here.
+    if not was_active:
+        _advance_queue(run_id)
     return jsonify({"ok": True})
 
 
@@ -545,9 +677,14 @@ def _infer_summary(state):
         "catalog": state.get("catalog"),
         "model_run_id": state.get("model_run_id"),
         "model_name": state.get("model_name"),
+        # Resolved live from the training registry, so a rename shows everywhere
+        # and a deleted model falls back to its id.
+        "model_display": _model_display(state.get("model_run_id")),
         "input_name": state.get("input_name"),
         "created_at": state.get("created_at"),
         "has_output": state.get("has_output", False),
+        "processed_frames": state.get("processed_frames", 0),
+        "total_frames": state.get("total_frames", 0),
         "total_detections": (state.get("stats") or {}).get("total_detections"),
         "error": state.get("error"),
     }
@@ -555,6 +692,7 @@ def _infer_summary(state):
 
 def _trained_models():
     out = []
+    meta = _train_meta()
     for rid in list(TRAININGS):
         state = read_state(rid) or TRAININGS[rid]
         best = os.path.join(TRAININGS_DIR, rid, "train", "weights", "best.pt")
@@ -562,7 +700,9 @@ def _trained_models():
             out.append({
                 "run_id": rid,
                 "model_name": state.get("model_name"),
+                "display_name": _model_display(rid, state, meta),
                 "dataset_name": state.get("dataset_name"),
+                "dataset_label": state.get("dataset_label") or state.get("dataset_name"),
                 "created_at": state.get("created_at"),
                 "weights": best,
             })
@@ -623,7 +763,9 @@ def get_inference(infer_id):
     state = _read_infer(infer_id)
     if state is None:
         return jsonify({"error": "inference not found"}), 404
-    return jsonify(state)
+    out = dict(state)
+    out["model_display"] = _model_display(state.get("model_run_id"))
+    return jsonify(out)
 
 
 @bp.post("/api/inference")

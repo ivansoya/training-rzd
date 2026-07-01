@@ -25,16 +25,22 @@ import type {
 
 interface Props {
   available: boolean;
+  focusVideoId?: string;
 }
 
 const PROCESSING = "processing";
 
-export default function InferenceView({ available }: Props) {
+export default function InferenceView({ available, focusVideoId }: Props) {
   const [videos, setVideos] = useState<VideoItem[]>([]);
   const [models, setModels] = useState<TrainedModel[]>([]);
   const [selectedVideoId, setSelectedVideoId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Open a specific video when navigated here from the header activity list.
+  useEffect(() => {
+    if (focusVideoId) setSelectedVideoId(focusVideoId);
+  }, [focusVideoId]);
 
   async function reloadVideos() {
     try {
@@ -413,7 +419,7 @@ function VideoDetail({
               >
                 {models.map((m) => (
                   <option key={m.run_id} value={m.run_id}>
-                    {m.model_name} · {m.dataset_name} ·{" "}
+                    {m.display_name || m.model_name} ·{" "}
                     {new Date(m.created_at * 1000).toLocaleDateString("ru-RU")}
                   </option>
                 ))}
@@ -449,7 +455,8 @@ function VideoDetail({
                 >
                   <div className="dataset-info">
                     <span className="dataset-name">
-                      <StatusDot status={r.status} /> {r.model_name}
+                      <StatusDot status={r.status} />{" "}
+                      {r.model_display || r.model_run_id}
                     </span>
                     <span className="dataset-meta">
                       {r.status === "done"
@@ -500,7 +507,7 @@ function RunResult({ run }: { run: InferenceRun }) {
   return (
     <div className="run-result">
       <p className="subtle">
-        Обработано моделью «{run.model_name}»
+        Обработано моделью «{run.model_display || run.model_run_id}»
         {run.dataset_name ? ` · ${run.dataset_name}` : ""} ·{" "}
         {statusLabel(run.status)}
       </p>
