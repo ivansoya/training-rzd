@@ -559,8 +559,8 @@ function RunDetail({
                 <StatusDot status={run.status} /> {name}
               </h3>
               <button
-                className="rename-btn"
-                title="Переименовать модель"
+                className="icon-btn rename-btn"
+                title="Переименовать"
                 onClick={() => {
                   setDraft(name);
                   setEditing(true);
