@@ -1,6 +1,58 @@
-# Microservices: three backend services share the yolo-data volume; the frontend
+# Microservices: backend services share the yolo-data volume; the frontend
 # nginx is the single externally exposed port (8080) and routes /api/* to them.
+# PostgreSQL holds users/projects/annotations; image binaries stay on the volume.
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: yolo-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=app
+      - POSTGRES_PASSWORD=app
+      - POSTGRES_DB=app
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d app"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    ports:
+      # Local-only: DB clients and alembic autogenerate from the host.
+      - "127.0.0.1:5432:5432"
+
+  # Dev mail-catcher: every outgoing email lands here (web UI on :8025).
+  # In prod, point the auth service's SMTP_* env at a real relay instead.
+  mailpit:
+    image: axllent/mailpit
+    container_name: yolo-mailpit
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8025:8025"
+    expose:
+      - "1025"
+
+  auth:
+    build:
+      context: ./backend
+      dockerfile: auth_svc/Dockerfile
+    container_name: yolo-auth
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
+      - SMTP_HOST=mailpit
+      - SMTP_PORT=1025
+      - MAIL_FROM=Магистраль ML <no-reply@magistral.local>
+      # Address the confirmation links point at (dev server during development).
+      - APP_BASE_URL=http://localhost:5173
+    depends_on:
+      db:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    expose:
+      - "5000"
+
   datasets:
     build:
       context: ./backend
@@ -50,6 +102,7 @@ services:
     container_name: yolo-frontend
     restart: unless-stopped
     depends_on:
+      - auth
       - datasets
       - augmentation
       - training
@@ -60,3 +113,5 @@ volumes:
   # Named volume (ext4 inside the VM) shared by all services — fast I/O and
   # reliable cross-container reads. Survives rebuilds and `down`; `down -v` wipes.
   yolo-data:
+  # PostgreSQL data directory; survives rebuilds and `down`, wiped by `down -v`.
+  pg-data:

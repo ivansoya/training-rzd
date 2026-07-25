@@ -6,7 +6,13 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      "/api": "http://127.0.0.1:5000",
+      // Dev flow: backend runs in docker compose; the nginx gateway on :8080
+      // already routes /api/* to the right microservice (incl. SSE), so the
+      // dev server just forwards everything there.
+      "/api": {
+        target: "http://127.0.0.1:8080",
+        changeOrigin: false,
+      },
     },
   },
 });

@@ -1,4 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "./components/auth/AuthGate";
+import { initials } from "./components/auth/AccountPage";
 import Sidebar from "./components/common/Sidebar";
 import type { View } from "./components/common/Sidebar";
 import Header from "./components/common/Header";
@@ -41,6 +44,8 @@ import type {
 type Selected = { kind: DatasetKind; name: string };
 
 export default function App() {
+  const { me } = useAuth();
+  const routerNavigate = useNavigate();
   const [view, setView] = useState<View>("datasets");
   const [collapsed, setCollapsed] = useState(false);
   const [trainAvailable, setTrainAvailable] = useState(true);
@@ -290,29 +295,40 @@ export default function App() {
         <div className="brand">
           <span className="logo" /> YOLO Dataset Manager
         </div>
-        <Header
-          uploads={uploads}
-          augments={augments}
-          trainings={headerTrainings.filter(
-            (t) =>
-              t.status === "preparing" ||
-              t.status === "running" ||
-              t.status === "queued"
-          )}
-          inferences={headerInferences.filter((r) => r.status === "processing")}
-          onOpenTraining={(id) => {
-            setFocusTraining(id);
-            setView("train");
-          }}
-          onOpenInference={(videoId) => {
-            setFocusVideo(videoId);
-            setView("inference");
-          }}
-          onCancelAugment={handleCancelAugment}
-          onCancelTraining={(id) => {
-            stopTraining(id).catch(() => {});
-          }}
-        />
+        <div className="topbar-right">
+          <Header
+            uploads={uploads}
+            augments={augments}
+            trainings={headerTrainings.filter(
+              (t) =>
+                t.status === "preparing" ||
+                t.status === "running" ||
+                t.status === "queued"
+            )}
+            inferences={headerInferences.filter((r) => r.status === "processing")}
+            onOpenTraining={(id) => {
+              setFocusTraining(id);
+              setView("train");
+            }}
+            onOpenInference={(videoId) => {
+              setFocusVideo(videoId);
+              setView("inference");
+            }}
+            onCancelAugment={handleCancelAugment}
+            onCancelTraining={(id) => {
+              stopTraining(id).catch(() => {});
+            }}
+          />
+          <button
+            className="user-chip"
+            type="button"
+            onClick={() => routerNavigate("/")}
+            title="На главную — Магистраль ML"
+          >
+            <span className="mag-ava">{initials(me.user.display_name)}</span>
+            {me.user.display_name}
+          </button>
+        </div>
       </header>
 
       {error && <div className="error-banner">{error}</div>}

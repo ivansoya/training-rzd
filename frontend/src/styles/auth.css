@@ -1,0 +1,1059 @@
+/* «Магистраль» — согласованный стиль страниц входа, регистрации и кабинета.
+   Светлые автономные экраны; остальное приложение пока живёт в старой теме,
+   поэтому все классы имеют префикс mag- и свои локальные цвета. */
+
+.mag {
+  --mag-red: #e21a1a;
+  --mag-red-dark: #b01212;
+  --mag-ink: #1d2329;
+  --mag-muted: #6e7a87;
+  --mag-line: #e3e7ec;
+  --mag-bg: #f6f7f9;
+  --mag-graphite: #23282e;
+  background: var(--mag-bg);
+  color: var(--mag-ink);
+  font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+}
+
+/* ===== Вход / регистрация: сплит-экран ===== */
+.mag-auth {
+  display: grid;
+  grid-template-columns: 5fr 6fr;
+  min-height: 100vh;
+}
+
+.mag-brand {
+  background: var(--mag-graphite);
+  color: #f4f5f6;
+  padding: 44px;
+  display: flex;
+  flex-direction: column;
+}
+
+.mag-mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 800;
+  font-size: 17px;
+}
+
+.mag-mark i {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  background: var(--mag-red);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-style: normal;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.mag-brand h2 {
+  font-size: 26px;
+  line-height: 1.25;
+  margin: auto 0 12px;
+  font-weight: 750;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+
+.mag-brand p {
+  color: #aeb6be;
+  font-size: 13.5px;
+  margin: 0 0 28px;
+  max-width: 38ch;
+}
+
+.mag-route svg {
+  display: block;
+  width: 100%;
+  height: 46px;
+}
+
+.mag-route-cap {
+  display: flex;
+  justify-content: space-between;
+  font: 600 10px ui-monospace, Menlo, monospace;
+  letter-spacing: 0.1em;
+  color: #8b949d;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.mag-panel {
+  background: #fff;
+  padding: 56px 64px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.mag-panel form {
+  max-width: 420px;
+  width: 100%;
+}
+
+.mag-panel h1 {
+  font-size: 22px;
+  margin: 0 0 6px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.mag-sub {
+  color: var(--mag-muted);
+  font-size: 13.5px;
+  margin: 0 0 26px;
+}
+
+.mag-field {
+  margin-bottom: 16px;
+}
+
+.mag-field label {
+  display: block;
+  font-weight: 600;
+  font-size: 12.5px;
+  margin-bottom: 6px;
+}
+
+.mag-field input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd2da;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  background: #fff;
+  color: var(--mag-ink);
+}
+
+.mag-field input:focus {
+  outline: none;
+  border-color: var(--mag-red);
+  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
+}
+
+.mag-field.invalid input {
+  border-color: var(--mag-red);
+}
+
+.mag-field-error {
+  color: var(--mag-red-dark);
+  font-size: 12px;
+  margin-top: 5px;
+}
+
+.mag-cols2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 14px;
+}
+
+.mag-btn {
+  width: 100%;
+  background: var(--mag-red);
+  border: none;
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  font-family: inherit;
+  border-radius: 8px;
+  padding: 11px;
+  cursor: pointer;
+  margin-top: 6px;
+  transition: background 0.15s;
+}
+
+.mag-btn:hover:not(:disabled) {
+  background: var(--mag-red-dark);
+}
+
+.mag-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.mag-error {
+  background: rgba(226, 26, 26, 0.08);
+  border: 1px solid rgba(226, 26, 26, 0.35);
+  color: var(--mag-red-dark);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.mag-aux {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 16px;
+  font-size: 13px;
+}
+
+.mag-aux span {
+  color: var(--mag-muted);
+}
+
+.mag-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--mag-red);
+  font-weight: 600;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mag-link:hover {
+  text-decoration: underline;
+}
+
+/* ===== Личный кабинет ===== */
+.mag-topbar {
+  background: #fff;
+  border-bottom: 1px solid var(--mag-line);
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  padding: 0 26px;
+  height: 54px;
+}
+
+.mag-topbar .mag-mark {
+  font-size: 14.5px;
+  color: var(--mag-ink);
+}
+
+.mag-topbar .mag-mark i {
+  width: 22px;
+  height: 22px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.mag-back {
+  background: none;
+  border: 1px solid #cbd2da;
+  border-radius: 8px;
+  padding: 6px 14px;
+  font: 600 13px inherit;
+  font-family: inherit;
+  color: var(--mag-ink);
+  cursor: pointer;
+}
+
+.mag-back:hover {
+  border-color: var(--mag-red);
+  color: var(--mag-red);
+}
+
+.mag-me {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mag-ava {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--mag-graphite);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.mag-cab {
+  padding: 28px;
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 18px;
+  align-items: start;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.mag-card {
+  background: #fff;
+  border: 1px solid var(--mag-line);
+  border-radius: 10px;
+  padding: 22px;
+}
+
+.mag-card h3 {
+  margin: 0 0 2px;
+  font-size: 16px;
+}
+
+.mag-card h4 {
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+
+.mag-email {
+  color: var(--mag-muted);
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+
+.mag-kv {
+  display: flex;
+  justify-content: space-between;
+  font-size: 13px;
+  padding: 8px 0;
+  border-top: 1px solid var(--mag-line);
+}
+
+.mag-kv span {
+  color: var(--mag-muted);
+}
+
+.mag-ghost {
+  width: 100%;
+  margin-top: 14px;
+  background: #fff;
+  border: 1px solid #cbd2da;
+  border-radius: 8px;
+  padding: 9px;
+  font-weight: 600;
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  color: var(--mag-ink);
+}
+
+.mag-ghost:hover {
+  border-color: var(--mag-graphite);
+}
+
+.mag-ghost.mag-danger {
+  color: var(--mag-red);
+  border-color: rgba(226, 26, 26, 0.4);
+}
+
+.mag-ghost.mag-danger:hover {
+  background: rgba(226, 26, 26, 0.06);
+  border-color: var(--mag-red);
+}
+
+.mag-table-scroll {
+  overflow-x: auto;
+}
+
+.mag-cab table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mag-cab th {
+  font: 600 10.5px ui-monospace, Menlo, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--mag-muted);
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--mag-line);
+}
+
+.mag-cab td {
+  padding: 11px 10px;
+  border-bottom: 1px solid var(--mag-line);
+}
+
+.mag-cab td:first-child {
+  font-weight: 600;
+}
+
+.mag-code {
+  font: 12px ui-monospace, Menlo, monospace;
+  color: var(--mag-muted);
+}
+
+.mag-role {
+  font-weight: 700;
+  font-size: 10.5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.mag-role.admin {
+  background: rgba(226, 26, 26, 0.1);
+  color: var(--mag-red);
+}
+
+.mag-role.editor {
+  background: #edf1f6;
+  color: #3d4a5c;
+}
+
+.mag-role.viewer {
+  background: #f3f5f7;
+  color: var(--mag-muted);
+}
+
+.mag-empty {
+  color: var(--mag-muted);
+  font-size: 13.5px;
+  padding: 18px 4px;
+}
+
+.mag-ok {
+  background: rgba(34, 160, 76, 0.1);
+  border: 1px solid rgba(34, 160, 76, 0.35);
+  color: #1d7a41;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.mag-pass-form {
+  border-top: 1px solid var(--mag-line);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+/* Заглушка на время проверки сессии */
+.mag-splash {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--mag-muted);
+  font-size: 14px;
+}
+
+/* Чип пользователя в тёмном топбаре текущего приложения */
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.user-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 5px 12px 5px 5px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.user-chip:hover {
+  border-color: var(--accent);
+}
+
+.user-chip .mag-ava {
+  width: 24px;
+  height: 24px;
+  font-size: 10px;
+  background: #e21a1a;
+}
+
+@media (max-width: 860px) {
+  .mag-auth {
+    grid-template-columns: 1fr;
+  }
+
+  .mag-brand {
+    padding: 28px;
+  }
+
+  .mag-brand h2 {
+    margin-top: 24px;
+  }
+
+  .mag-panel {
+    padding: 32px 24px;
+  }
+
+  .mag-cab {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Новый сайт «Магистраль»: оболочка, проекты, модалка, стр. проекта ===== */
+
+.mag-page {
+  min-height: 100vh;
+}
+
+.mag-mark-link,
+.mag-me-link {
+  text-decoration: none;
+  color: inherit;
+}
+
+.mag-topnav {
+  display: flex;
+  gap: 4px;
+}
+
+.mag-nav-link {
+  color: var(--mag-muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  padding: 17px 10px 15px;
+  border-bottom: 2px solid transparent;
+}
+
+.mag-nav-link:hover {
+  color: var(--mag-ink);
+}
+
+.mag-nav-link.on {
+  color: var(--mag-ink);
+  font-weight: 700;
+  border-bottom-color: var(--mag-red);
+}
+
+.mag-content {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 22px 28px 48px;
+}
+
+.mag-content-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 4px 0 18px;
+}
+
+.mag-content-head h1 {
+  font-size: 22px;
+  margin: 0;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.mag-mono {
+  font-family: ui-monospace, Menlo, monospace;
+}
+
+.mag-btn-inline {
+  width: auto;
+  margin-top: 0;
+  padding: 9px 18px;
+}
+
+.mag-ghost-inline {
+  width: auto;
+  margin-top: 0;
+}
+
+.mag-btn-sm {
+  width: auto;
+  margin-top: 0;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+
+.mag-ghost-sm {
+  width: auto;
+  margin-top: 0;
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+.mag-code-badge {
+  font: 700 11px ui-monospace, Menlo, monospace;
+  background: #edf1f6;
+  color: #3d4a5c;
+  border-radius: 6px;
+  padding: 3px 8px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.mag-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.mag-dot.on {
+  background: #22a04c;
+  box-shadow: 0 0 0 3px rgba(34, 160, 76, 0.15);
+}
+
+.mag-dot.off {
+  background: #c6cdd5;
+}
+
+/* --- список проектов --- */
+.mag-projects {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 14px;
+}
+
+.mag-proj-card {
+  display: block;
+  background: #fff;
+  border: 1px solid var(--mag-line);
+  border-radius: 10px;
+  padding: 18px 20px;
+  text-decoration: none;
+  color: var(--mag-ink);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.mag-proj-card:hover {
+  border-color: var(--mag-red);
+  box-shadow: 0 4px 16px rgba(29, 35, 41, 0.08);
+}
+
+.mag-proj-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.mag-proj-top h3 {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+}
+
+.mag-proj-desc {
+  color: var(--mag-muted);
+  font-size: 13px;
+  margin: 8px 0 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.mag-proj-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+}
+
+.mag-proj-meta {
+  color: var(--mag-muted);
+  font-size: 12px;
+}
+
+.mag-empty-big {
+  text-align: center;
+  padding: 48px 24px;
+}
+
+.mag-empty-big h3 {
+  margin: 0 0 6px;
+}
+
+.mag-empty-big p {
+  color: var(--mag-muted);
+  font-size: 13.5px;
+  margin: 0;
+}
+
+/* --- баннер приглашения --- */
+.mag-invite-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: #fff;
+  border: 1px solid var(--mag-red);
+  border-left-width: 4px;
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 14px;
+  font-size: 13.5px;
+}
+
+.mag-invite-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+
+.mag-invite-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--mag-line);
+  font-size: 13px;
+}
+
+.mag-invite-line:last-child {
+  border-bottom: none;
+}
+
+/* --- модальное окно (М2: две панели) --- */
+.mag-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(29, 35, 41, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  z-index: 100;
+}
+
+.mag-modal {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 24px 70px rgba(10, 15, 20, 0.35);
+  overflow: hidden;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+
+.mag-modal-2col {
+  width: 780px;
+  max-width: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.mag-modal-left {
+  padding: 22px;
+  border-right: 1px solid var(--mag-line);
+}
+
+.mag-modal-left h1 {
+  font-size: 16px;
+  margin: 0 0 2px;
+  font-weight: 750;
+}
+
+.mag-modal-right {
+  background: var(--mag-bg);
+  padding: 22px;
+  display: flex;
+  flex-direction: column;
+}
+
+.mag-modal-right h3 {
+  font-size: 13px;
+  margin: 0 0 2px;
+}
+
+.mag-modal-right .mag-sub {
+  margin-bottom: 14px;
+  font-size: 12px;
+}
+
+.mag-modal-friends {
+  overflow-y: auto;
+  max-height: 300px;
+}
+
+.mag-friend-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #fff;
+  border: 1px solid var(--mag-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-bottom: 7px;
+  cursor: pointer;
+}
+
+.mag-friend-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--mag-red);
+}
+
+.mag-friend-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.mag-friend-name b {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mag-friend-name span {
+  font-size: 11px;
+  color: var(--mag-muted);
+}
+
+.mag-friend-row select,
+.mag-invite-row select {
+  border: 1px solid #cbd2da;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--mag-ink);
+  font-size: 12px;
+  font-family: inherit;
+  padding: 6px 8px;
+}
+
+.mag-friend-row select {
+  width: 130px;
+  margin-left: auto;
+}
+
+.mag-modal-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--mag-line);
+  background: #fafbfc;
+}
+
+/* --- страница проекта (П2: паспорт слева) --- */
+.mag-crumbs {
+  font-size: 12.5px;
+  color: var(--mag-muted);
+  margin-bottom: 14px;
+}
+
+.mag-crumbs a {
+  color: var(--mag-muted);
+}
+
+.mag-crumbs b {
+  color: var(--mag-ink);
+}
+
+.mag-pp {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.mag-pass h1 {
+  font-size: 19px;
+  margin: 10px 0 4px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.mag-pass-desc {
+  color: var(--mag-muted);
+  font-size: 13px;
+  margin: 0 0 14px;
+}
+
+.mag-pass-sect {
+  font: 600 10.5px ui-monospace, Menlo, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+  margin: 18px 0 4px;
+}
+
+.mag-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--mag-line);
+}
+
+.mag-member:last-child {
+  border-bottom: none;
+}
+
+.mag-member-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.mag-member-name b {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mag-member-name span {
+  font-size: 11.5px;
+  color: var(--mag-muted);
+}
+
+.mag-pass-invite {
+  border-top: 1px solid var(--mag-line);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.mag-invite-row {
+  display: flex;
+  gap: 8px;
+}
+
+.mag-invite-row select {
+  flex: 1;
+}
+
+.mag-pending {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--mag-muted);
+}
+
+.mag-pending div {
+  padding: 3px 0;
+}
+
+.mag-pp-main > .mag-card {
+  margin-bottom: 16px;
+}
+
+.mag-statrow {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.mag-stat {
+  background: #fff;
+  border: 1px solid var(--mag-line);
+  border-radius: 10px;
+  padding: 13px 16px;
+}
+
+.mag-stat b {
+  display: block;
+  font-size: 21px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.mag-stat span {
+  font: 600 10.5px ui-monospace, Menlo, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+}
+
+.mag-cls {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 0;
+  font-size: 13px;
+  border-bottom: 1px solid var(--mag-line);
+}
+
+.mag-cls:last-child {
+  border-bottom: none;
+}
+
+.mag-cls i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.mag-cls-n {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  color: var(--mag-muted);
+  font-size: 12.5px;
+}
+
+/* --- кабинет: правая колонка и друзья --- */
+.mag-cab-main {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.mag-friend-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mag-friend-add input {
+  flex: 1;
+  border: 1px solid #cbd2da;
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 13.5px;
+  font-family: inherit;
+  color: var(--mag-ink);
+}
+
+.mag-friend-add input:focus {
+  outline: none;
+  border-color: var(--mag-red);
+  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
+}
+
+.mag-confirm-box {
+  text-align: center;
+  max-width: 46ch;
+}
+
+.mag-confirm-box h1 {
+  font-size: 18px;
+}
+
+@media (max-width: 900px) {
+  .mag-pp {
+    grid-template-columns: 1fr;
+  }
+
+  .mag-modal-2col {
+    grid-template-columns: 1fr;
+  }
+
+  .mag-modal-left {
+    border-right: none;
+    border-bottom: 1px solid var(--mag-line);
+  }
+
+  .mag-statrow {
+    grid-template-columns: 1fr;
+  }
+
+  .mag-topnav {
+    display: none;
+  }
+}
