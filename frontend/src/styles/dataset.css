@@ -1,0 +1,366 @@
+/* «Магистраль» — страница датасета: сетка с разметкой и режим просмотра. */
+
+/* ===== Статистика датасета ===== */
+.mag-ds-stats {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+
+.mag-ds-stats .mag-stat {
+  flex: 1 1 130px;
+}
+
+/* Показатель, на который стоит посмотреть: пустые кадры, разнобой размеров */
+.mag-ds-stats .mag-stat.warn {
+  border-color: #f0d9a8;
+  background: #fff9ec;
+}
+
+.mag-ds-stats .mag-stat.warn b {
+  color: #a86a00;
+}
+
+/* ===== Панель фильтров ===== */
+.mag-filters {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.mag-filters select {
+  width: auto;
+  min-width: 128px;
+  padding: 6px 26px 6px 9px;
+  font-size: 12.5px;
+  border-radius: 7px;
+  background-position: right 9px center;
+}
+
+.mag-filters-sp {
+  margin-left: auto;
+}
+
+.mag-filters .mag-ghost-inline {
+  padding: 6px 12px;
+  font-size: 12.5px;
+}
+
+/* Включённый фильтр читается как нажатая клавиша, а не как обычная кнопка */
+.mag-ghost-inline.on {
+  background: var(--mag-graphite);
+  border-color: var(--mag-graphite);
+  color: #fff;
+}
+
+.mag-seg {
+  display: inline-flex;
+  border: 1px solid #c3ccd6;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.mag-seg button {
+  border: 0;
+  background: #fff;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-family: inherit;
+  font-weight: 600;
+  color: var(--mag-muted);
+  cursor: pointer;
+}
+
+.mag-seg button + button {
+  border-left: 1px solid #c3ccd6;
+}
+
+.mag-seg button.on {
+  background: var(--mag-graphite);
+  color: #fff;
+}
+
+.mag-found {
+  font-size: 12px;
+  color: var(--mag-muted);
+  margin-bottom: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Сетка превью ===== */
+.mag-tiles {
+  display: grid;
+  gap: 8px;
+}
+
+.mag-tiles.s { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
+.mag-tiles.m { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+.mag-tiles.l { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+
+.mag-tile {
+  position: relative;
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  overflow: hidden;
+  background: #e8ebef;
+  aspect-ratio: 4 / 3;
+  cursor: pointer;
+  /* Браузер пропускает отрисовку того, что за экраном: в режиме ленты это
+     разница между плавной прокруткой и подвисшей вкладкой. */
+  content-visibility: auto;
+  contain-intrinsic-size: 190px 142px;
+}
+
+.mag-tile img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.mag-tile:hover {
+  outline: 2px solid var(--mag-red);
+  outline-offset: -2px;
+}
+
+.mag-tile:focus-visible {
+  outline: 2px solid var(--mag-red);
+  outline-offset: 2px;
+}
+
+.mag-tile-box {
+  position: absolute;
+  border: 1.5px solid;
+  border-radius: 1px;
+  pointer-events: none;
+}
+
+.mag-tile-box b {
+  position: absolute;
+  left: -1.5px;
+  top: -1px;
+  transform: translateY(-100%);
+  font: 700 9px ui-monospace, Menlo, Consolas, monospace;
+  color: #fff;
+  padding: 1px 4px;
+  border-radius: 3px 3px 0 0;
+  white-space: nowrap;
+}
+
+.mag-tile-split,
+.mag-tile-n {
+  position: absolute;
+  bottom: 5px;
+  font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.04em;
+  background: rgba(29, 35, 41, 0.8);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.mag-tile-split { left: 5px; }
+.mag-tile-n { right: 5px; }
+
+/* Кадр без разметки — негативный пример, а не потеря; помечаем, не пряча */
+.mag-tile-n.zero { background: rgba(168, 106, 0, 0.9); }
+
+.mag-feed-foot {
+  text-align: center;
+  padding: 22px 0 6px;
+  font-size: 12.5px;
+  color: var(--mag-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===== Режим просмотра ===== */
+.mag-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: #14181c;
+  color: #e8ecef;
+  display: flex;
+  flex-direction: column;
+}
+
+.mag-v-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #262d35;
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.mag-v-head b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 46vw;
+}
+
+.mag-v-cnt {
+  color: #93a0ac;
+  font-variant-numeric: tabular-nums;
+  font-size: 12.5px;
+}
+
+.mag-v-sp { margin-left: auto; }
+
+.mag-v-btn {
+  background: #222932;
+  border: 1px solid #333c46;
+  color: #e8ecef;
+  border-radius: 7px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.mag-v-btn:hover { border-color: #55606c; }
+
+.mag-v-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.mag-v-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0e1114;
+  padding: 16px;
+}
+
+.mag-v-arrow {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid #333c46;
+  background: rgba(20, 24, 28, 0.8);
+  color: #e8ecef;
+  font-size: 17px;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.mag-v-arrow:hover:not(:disabled) { border-color: #55606c; }
+.mag-v-arrow:disabled { opacity: 0.3; cursor: default; }
+.mag-v-arrow.l { left: 14px; }
+.mag-v-arrow.r { right: 14px; }
+
+/* --- панель объектов --- */
+.mag-v-side {
+  width: 246px;
+  flex-shrink: 0;
+  background: #171c21;
+  border-left: 1px solid #262d35;
+  padding: 14px;
+  overflow-y: auto;
+}
+
+.mag-v-side h5 {
+  margin: 0 0 8px;
+  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #93a0ac;
+}
+
+.mag-v-side h5 + h5,
+.mag-v-side .mag-v-kv + h5 {
+  margin-top: 18px;
+}
+
+.mag-v-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12.5px;
+  padding: 6px 0;
+  border-top: 1px solid #262d35;
+}
+
+.mag-v-kv span { color: #93a0ac; }
+.mag-v-kv b { font-variant-numeric: tabular-nums; }
+
+.mag-v-obj {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 0;
+  border: 0;
+  border-top: 1px solid #262d35;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.mag-v-obj i {
+  width: 13px;
+  height: 13px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.mag-v-obj-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mag-v-obj-id {
+  color: #6e7a87;
+  font: 600 10.5px ui-monospace, Menlo, Consolas, monospace;
+}
+
+.mag-v-obj-n {
+  margin-left: auto;
+  color: #93a0ac;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Скрытый класс — приглушён, но остаётся на месте: это переключатель */
+.mag-v-obj.off { opacity: 0.4; }
+.mag-v-obj.off i { box-shadow: inset 0 0 0 2px #171c21; }
+
+.mag-v-empty,
+.mag-v-hint {
+  font-size: 11.5px;
+  color: #93a0ac;
+  margin: 10px 0 0;
+}
+
+/* --- кинолента --- */
+
+@media (max-width: 860px) {
+  .mag-v-side {
+    display: none;
+  }
+
+  .mag-filters-sp {
+    margin-left: 0;
+  }
+}

@@ -1,0 +1,225 @@
+/* «Магистраль» — таски: список, страница таски, нарезка видео.
+   Сам редактор разметки — в editor.css, он подключается последним. */
+
+/* ===== Состояние таски: цвет несёт смысл, а не украшает ===== */
+.mag-tstate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 10px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.mag-tstate i { width: 6px; height: 6px; border-radius: 50%; }
+.mag-tstate.queued { background: #f1f4f7; color: #56637a; border-color: #dbe1e8; }
+.mag-tstate.queued i { background: #98a5b3; }
+.mag-tstate.work { background: #fff6f6; color: #b01212; border-color: #f3c9c9; }
+.mag-tstate.work i { background: #e21a1a; }
+.mag-tstate.done { background: #eaf6ef; color: #1a7f4b; border-color: #bfe3ce; }
+.mag-tstate.done i { background: #1a7f4b; }
+.mag-tstate.upd { background: #fff9ec; color: #a86a00; border-color: #f0d9a8; }
+.mag-tstate.upd i { background: #d09a3c; }
+.mag-tstate.closed { background: #f4f6f8; color: #8b949d; border-color: #e3e7ec; }
+.mag-tstate.closed i { background: #c1c9d1; }
+
+/* ===== Список тасок ===== */
+.mag-tasks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(390px, 1fr));
+  gap: 14px;
+}
+
+@media (max-width: 820px) { .mag-tasks { grid-template-columns: 1fr; } }
+
+.mag-tcard {
+  display: block;
+  background: #fff;
+  border: 1px solid var(--mag-edge);
+  box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
+  border-radius: 10px;
+  padding: 16px 18px;
+  text-decoration: none;
+  color: var(--mag-ink);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.mag-tcard:hover {
+  border-color: var(--mag-red);
+  box-shadow: 0 4px 16px rgba(29, 35, 41, 0.08);
+}
+
+.mag-tcard-top {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 3px;
+}
+
+.mag-tcard-top h3 { margin: 0; font-size: 15.5px; font-weight: 700; }
+.mag-tcard-top .mag-tstate { margin-left: auto; }
+.mag-tcard-sub { margin: 0 0 13px; font-size: 12px; color: var(--mag-muted); }
+
+/* Полоса прогресса: размечено / отложено / остаток */
+.mag-tprog {
+  display: flex;
+  height: 7px;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #eceff3;
+}
+
+.mag-tprog i { display: block; height: 100%; }
+.mag-tprog i.done { background: #1a7f4b; }
+.mag-tprog i.nul { background: #2f6fd0; }
+.mag-tprog i.skip { background: #d09a3c; }
+
+.mag-tlegend {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-size: 11px;
+  color: var(--mag-muted);
+  margin-top: 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-tlegend span { display: inline-flex; align-items: center; gap: 5px; }
+.mag-tlegend i { width: 8px; height: 8px; border-radius: 2px; }
+.mag-tlegend i.done { background: #1a7f4b; }
+.mag-tlegend i.skip { background: #d09a3c; }
+.mag-tlegend i.rest { background: #d5dae0; }
+
+.mag-tcard-foot {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 13px;
+  padding-top: 12px;
+  border-top: 1px solid var(--mag-line);
+  font-size: 12px;
+  color: var(--mag-muted);
+}
+
+.mag-tcard-when { margin-left: auto; }
+.mag-noassignee { color: #a86a00; }
+
+/* ===== Страница таски ===== */
+.mag-task-actions {
+  display: flex;
+  gap: 9px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.mag-ok-banner {
+  background: #eaf6ef;
+  border: 1px solid #bfe3ce;
+  color: #14603a;
+  border-radius: 8px;
+  padding: 10px 13px;
+  font-size: 13px;
+  margin-bottom: 14px;
+}
+
+.mag-start { margin-top: 14px; }
+
+.mag-subtabs { margin-bottom: 14px; }
+.mag-subtabs .mag-tab {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+/* Пометка кадра в сетке таски */
+.mag-tile-mark {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: #fff;
+  background: rgba(29, 35, 41, 0.75);
+}
+
+.mag-tile-mark.annotated { background: rgba(26, 127, 75, 0.9); }
+.mag-tile-mark.skipped { background: rgba(168, 106, 0, 0.9); }
+.mag-tile-mark.empty { background: rgba(47, 111, 208, 0.9); }
+.mag-tile-mark.deleted { background: rgba(226, 26, 26, 0.9); }
+
+/* Забракованный кадр гасим: он ещё здесь, но работой уже не является */
+.mag-tile-wrap:has(.mag-tile-mark.deleted) .mag-tile { opacity: 0.45; }
+
+/* ===== Лог таски ===== */
+.mag-log-row {
+  display: grid;
+  grid-template-columns: 118px 132px 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--mag-line);
+  font-size: 13px;
+}
+
+.mag-log-row:last-child { border-bottom: 0; }
+.mag-log-when { color: var(--mag-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.mag-log-who { color: var(--mag-muted); font-size: 12px; }
+
+@media (max-width: 700px) {
+  .mag-log-row { grid-template-columns: 1fr; gap: 2px; }
+}
+
+/* ===== Нарезка видео: дорожка с участками ===== */
+.mag-track {
+  position: relative;
+  height: 44px;
+  border-radius: 8px;
+  background: #eef1f5;
+  border: 1px solid var(--mag-edge);
+  overflow: hidden;
+  margin-bottom: 5px;
+}
+
+.mag-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: 1px solid;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
+  color: var(--mag-ink);
+}
+
+.mag-ticks {
+  display: flex;
+  justify-content: space-between;
+  font: 600 10px ui-monospace, Menlo, Consolas, monospace;
+  color: var(--mag-muted);
+  margin-bottom: 12px;
+}
+
+.mag-est {
+  margin-top: 12px;
+  padding: 10px 13px;
+  border-radius: 8px;
+  background: #fff9ec;
+  border: 1px solid #f0d9a8;
+  color: #8a5a00;
+  font-size: 12.5px;
+}
+
+.mag-est.bad {
+  background: rgba(226, 26, 26, 0.08);
+  border-color: rgba(226, 26, 26, 0.35);
+  color: var(--mag-red-dark);
+}

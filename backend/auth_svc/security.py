@@ -1,11 +1,13 @@
 """Password hashing and session-token helpers for the auth service."""
-import hashlib
 import secrets
 from datetime import timedelta
 
 from werkzeug.security import check_password_hash, generate_password_hash
 
-SESSION_COOKIE = "session"
+# Cookie name and token hashing live in common: the datasets service reads the
+# same cookie, and two definitions would eventually drift apart.
+from common.auth import SESSION_COOKIE, hash_token  # noqa: F401  (re-exported)
+
 SESSION_TTL = timedelta(days=30)
 
 
@@ -19,7 +21,3 @@ def verify_password(password_hash: str, password: str) -> bool:
 
 def new_session_token() -> str:
     return secrets.token_urlsafe(32)
-
-
-def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()

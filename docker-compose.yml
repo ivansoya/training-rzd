@@ -62,6 +62,14 @@ services:
     environment:
       # Report the *real* host drive in the disk meter (see common.config).
       - HOST_STAT_PATH=/hoststat
+      # Owns project data: binaries on the volume, everything else in Postgres.
+      - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
+    depends_on:
+      db:
+        condition: service_healthy
+      # Migrations live in the auth service; wait for it to apply them.
+      auth:
+        condition: service_started
     volumes:
       - yolo-data:/app/data
       # Read-only bind of a host dir (lives on the same physical drive Docker

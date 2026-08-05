@@ -1,7 +1,7 @@
 """Core API: friends, projects, invitations. Lives in the auth service because
 it owns the DB; splits out into its own service when it grows.
 """
-import re
+import secrets
 import uuid
 
 from flask import Blueprint, jsonify, request
@@ -19,13 +19,26 @@ from common.models import (
     Project,
     ProjectInvitation,
     ProjectMember,
+    Superclass,
     User,
 )
 
 bp = Blueprint("core", __name__, url_prefix="/api")
 
-CODE_RE = re.compile(r"^[A-Z0-9][A-Z0-9-]{1,31}$")
+# Код проекта человек не придумывает: 20 знаков без похожих I, O, 0 и 1,
+# чтобы продиктованный код нельзя было записать неверно.
+CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+CODE_LEN = 20
 ROLES = ("admin", "editor", "viewer")
+
+
+def new_project_code(db) -> str:
+    """Свободный код проекта. 100 бит энтропии — проверка тут только страховка."""
+    for _ in range(10):
+        code = "".join(secrets.choice(CODE_ALPHABET) for _ in range(CODE_LEN))
+        if not db.execute(select(Project.id).where(Project.code == code)).first():
+            return code
+    raise RuntimeError("cannot allocate a free project code")
 
 
 def _person(user: User, online: bool | None = None) -> dict:
@@ -175,11 +188,26 @@ def list_projects():
         result = []
         for m in memberships:
             p = m.project
-            members_count = db.execute(
-                select(func.count()).select_from(ProjectMember).where(ProjectMember.project_id == p.id)
-            ).scalar_one()
+            members = db.execute(
+                select(ProjectMember).where(ProjectMember.project_id == p.id)
+                .order_by(ProjectMember.created_at)
+            ).scalars().all()
             datasets_count = db.execute(
                 select(func.count()).select_from(Dataset).where(Dataset.project_id == p.id)
+            ).scalar_one()
+            # Цифры для плитки проекта: по ним выбирают, куда идти работать.
+            images_count = db.execute(
+                select(func.count()).select_from(Image)
+                .where(Image.project_id == p.id, Image.dataset_id.isnot(None))
+            ).scalar_one()
+            annotations_count = db.execute(
+                select(func.count()).select_from(Annotation)
+                .join(Image, Annotation.image_id == Image.id)
+                .where(Image.project_id == p.id, Image.dataset_id.isnot(None))
+            ).scalar_one()
+            classes_count = db.execute(
+                select(func.count()).select_from(LabelClass)
+                .where(LabelClass.project_id == p.id)
             ).scalar_one()
             result.append(
                 {
@@ -187,10 +215,18 @@ def list_projects():
                     "name": p.name,
                     "code": p.code,
                     "description": p.description,
+                    "status": p.status,
                     "role": m.role,
                     "role_label": ROLE_LABELS.get(m.role, m.role),
-                    "members_count": members_count,
+                    "members_count": len(members),
+                    "members": [
+                        {"display_name": x.user.display_name, "online": is_online(x.user)}
+                        for x in members[:5]
+                    ],
                     "datasets_count": datasets_count,
+                    "images_count": images_count,
+                    "annotations_count": annotations_count,
+                    "classes_count": classes_count,
                     "created_at": p.created_at.isoformat(),
                 }
             )
@@ -201,26 +237,25 @@ def list_projects():
 def create_project():
     data = request.get_json(silent=True) or {}
     name = (data.get("name") or "").strip()
-    code = (data.get("code") or "").strip().upper()
     description = (data.get("description") or "").strip() or None
     invites = data.get("invites") or []
 
-    errors = {}
     if not name:
-        errors["name"] = "Укажите название проекта."
-    if not CODE_RE.match(code):
-        errors["code"] = "Код: 2–32 символа, заглавные латинские буквы, цифры и дефис."
-    if errors:
-        return jsonify({"errors": errors}), 400
+        return jsonify({"errors": {"name": "Укажите название проекта."}}), 400
 
     with SessionLocal() as db:
         _, user = current_session(db)
         if user is None:
             return jsonify({"error": "Не выполнен вход."}), 401
-        if db.execute(select(Project.id).where(Project.code == code)).first():
-            return jsonify({"errors": {"code": "Проект с таким кодом уже есть."}}), 409
 
-        project = Project(name=name, code=code, description=description, created_by=user.id)
+        # Проект всегда рождается пустым; в importing его переводит мастер,
+        # когда началась заливка архива.
+        project = Project(
+            name=name,
+            code=new_project_code(db),
+            description=description,
+            created_by=user.id,
+        )
         db.add(project)
         db.flush()
         db.add(
@@ -280,18 +315,19 @@ def project_detail(code):
         ]
 
         images_count = db.execute(
-            select(func.count()).select_from(Image).where(Image.project_id == project.id)
+            select(func.count()).select_from(Image)
+            .where(Image.project_id == project.id, Image.dataset_id.isnot(None))
         ).scalar_one()
         size_bytes = db.execute(
             select(func.coalesce(func.sum(Image.size_bytes), 0)).where(
-                Image.project_id == project.id
+                Image.project_id == project.id, Image.dataset_id.isnot(None)
             )
         ).scalar_one()
         annotations_count = db.execute(
             select(func.count())
             .select_from(Annotation)
             .join(Image, Annotation.image_id == Image.id)
-            .where(Image.project_id == project.id)
+            .where(Image.project_id == project.id, Image.dataset_id.isnot(None))
         ).scalar_one()
 
         datasets = db.execute(
@@ -314,17 +350,27 @@ def project_detail(code):
 
         classes = db.execute(
             select(
+                LabelClass.class_index,
                 LabelClass.name,
                 LabelClass.color,
+                Superclass.name.label("superclass"),
                 func.count(Annotation.id).label("cnt"),
             )
             .outerjoin(Annotation, Annotation.class_id == LabelClass.id)
+            .outerjoin(Superclass, Superclass.id == LabelClass.superclass_id)
             .where(LabelClass.project_id == project.id)
-            .group_by(LabelClass.id)
+            .group_by(LabelClass.id, Superclass.name)
             .order_by(func.count(Annotation.id).desc())
         ).all()
         classes_json = [
-            {"name": c.name, "color": c.color, "annotations": c.cnt} for c in classes
+            {
+                "class_index": c.class_index,
+                "name": c.name,
+                "color": c.color,
+                "superclass": c.superclass,
+                "annotations": c.cnt,
+            }
+            for c in classes
         ]
 
         creator = db.get(User, project.created_by) if project.created_by else None
@@ -334,6 +380,7 @@ def project_detail(code):
                 "name": project.name,
                 "code": project.code,
                 "description": project.description,
+                "status": project.status,
                 "created_at": project.created_at.isoformat(),
                 "created_by": creator.display_name if creator else None,
             },

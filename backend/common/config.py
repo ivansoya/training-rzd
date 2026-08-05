@@ -28,6 +28,18 @@ MODELS_FILE = os.path.join(DATA_DIR, "models.json")
 INFERENCE_DIR = os.path.join(DATA_DIR, "inference")
 VIDEOS_DIR = os.path.join(DATA_DIR, "videos")
 
+# Data of the new site's projects. Binaries only — everything queryable about
+# them (classes, splits, annotations) lives in PostgreSQL. Images are named by
+# their row id, so archive folder structure never has to be reproduced here.
+PROJECTS_DIR = os.path.join(DATA_DIR, "projects")
+THUMB_MAX_SIDE = 320
+THUMB_QUALITY = 80
+# Промежуточный размер для режима просмотра: оригинал в 670 КБ там не нужен,
+# а превью в 320 px мало. Делается лениво при первом запросе и кэшируется,
+# поэтому уже импортированные датасеты перегонять не требуется.
+PREVIEW_MAX_SIDE = 1280
+PREVIEW_QUALITY = 82
+
 # Transient job state lives on the shared volume too: it is a fast named volume
 # (ext4), so atomic renames are reliably visible across service containers — the
 # datasets service can serve a job created by the augmentation service.
@@ -40,8 +52,47 @@ BASE_CONFIG_ID = "base"
 
 _ALL_DIRS = (
     UPLOADED_DIR, AUGMENTED_DIR, TRAININGS_DIR, MODELS_DIR, INFERENCE_DIR,
-    VIDEOS_DIR, JOBS_DIR, TMP_DIR,
+    VIDEOS_DIR, JOBS_DIR, TMP_DIR, PROJECTS_DIR,
 )
+
+
+def project_dir(project_id):
+    return os.path.join(PROJECTS_DIR, str(project_id))
+
+
+def project_images_dir(project_id):
+    return os.path.join(project_dir(project_id), "images")
+
+
+def project_thumbs_dir(project_id):
+    return os.path.join(project_dir(project_id), "thumbs")
+
+
+def project_preview_dir(project_id):
+    return os.path.join(project_dir(project_id), "preview")
+
+
+def project_import_file(project_id):
+    """State of the import wizard: survives a closed tab and a restart."""
+    return os.path.join(project_dir(project_id), "_import.json")
+
+
+# Файлы таски лежат своим путём и НЕ переезжают при принятии кадров в проект:
+# перенос гигабайтов ради смены принадлежности того не стоит, а `task_id` у
+# кадра всё равно остаётся навсегда и однозначно указывает, где искать.
+def task_dir(project_id, task_id):
+    return os.path.join(project_dir(project_id), "tasks", str(task_id))
+
+
+def task_video_dir(project_id, task_id):
+    return os.path.join(task_dir(project_id, task_id), "video")
+
+
+def image_base_dir(project_id, task_id=None):
+    """Корень, под которым лежат images/, thumbs/ и preview/ этого кадра."""
+    return (
+        task_dir(project_id, task_id) if task_id else project_dir(project_id)
+    )
 
 
 def ensure_dirs():

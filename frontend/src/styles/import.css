@@ -1,0 +1,448 @@
+/* «Магистраль» — импорт архива в проект и просмотр датасета.
+   Продолжение mag-темы из auth.css: те же переменные, свои компоненты. */
+
+.mag-head-actions {
+  display: flex;
+  gap: 10px;
+}
+
+/* Пометка «идёт импорт» — в списке проектов и в шапке проекта */
+.mag-importing {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 10px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: #fff6f6;
+  color: var(--mag-red-dark);
+  border: 1px solid #f3c9c9;
+  padding: 2px 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.mag-importing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--mag-red);
+}
+
+.mag-import-banner {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: #fff;
+  border: 1px solid #f3c9c9;
+  border-left: 3px solid var(--mag-red);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.mag-import-banner b {
+  display: block;
+  font-size: 14px;
+}
+
+.mag-import-banner span {
+  font-size: 12.5px;
+  color: var(--mag-muted);
+}
+
+.mag-import-banner .mag-btn {
+  margin-left: auto;
+}
+
+/* --- шаг мастера --- */
+.mag-step {
+  display: grid;
+  grid-template-columns: 26px 1fr;
+  gap: 14px;
+  align-items: start;
+  background: #fff;
+  border: 1px solid var(--mag-line);
+  border-radius: 10px;
+  padding: 14px 18px;
+  margin-bottom: 10px;
+}
+
+.mag-step.now {
+  border-color: rgba(226, 26, 26, 0.45);
+  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.07);
+}
+
+.mag-step.todo {
+  background: #fbfcfd;
+}
+
+.mag-step-num {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font: 700 12px ui-monospace, Menlo, Consolas, monospace;
+  margin-top: 1px;
+}
+
+.mag-step.done .mag-step-num {
+  background: var(--mag-graphite);
+  color: #fff;
+}
+
+.mag-step.now .mag-step-num {
+  background: var(--mag-red);
+  color: #fff;
+}
+
+.mag-step.todo .mag-step-num {
+  background: #eceff3;
+  color: #9aa4ad;
+}
+
+.mag-step-main {
+  min-width: 0;
+}
+
+.mag-step-h {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mag-step-h b {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mag-step-h .sub {
+  font-size: 12.5px;
+  color: var(--mag-muted);
+}
+
+.mag-step-h .mag-btn,
+.mag-step-h .mag-ghost,
+.mag-step-h .mag-more {
+  margin-left: auto;
+}
+
+/* Статистика пройденного шага: он не висит пустой, а отчитывается цифрами */
+.mag-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 22px;
+  margin-top: 9px;
+}
+
+.mag-fact {
+  font-size: 12px;
+  color: var(--mag-muted);
+  white-space: nowrap;
+}
+
+.mag-fact b {
+  color: var(--mag-ink);
+  font-weight: 700;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  margin-right: 5px;
+}
+
+.mag-fact.warn,
+.mag-fact.warn b {
+  color: #a86a00;
+}
+
+.mag-fact.bad,
+.mag-fact.bad b {
+  color: var(--mag-red-dark);
+}
+
+.mag-more {
+  background: none;
+  border: 0;
+  padding: 0;
+  font-family: inherit;
+  font-size: 12.5px;
+  color: var(--mag-red);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.mag-skipped {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  list-style: none;
+  background: #fbfcfd;
+  border: 1px solid var(--mag-line);
+  border-radius: 8px;
+  font-size: 12px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+.mag-skipped li {
+  padding: 2px 0;
+  color: var(--mag-muted);
+}
+
+.mag-skipped code {
+  color: var(--mag-ink);
+  font-size: 11.5px;
+}
+
+.mag-skipped .rest {
+  font-style: italic;
+}
+
+/* --- прогресс --- */
+.mag-progress {
+  margin-top: 11px;
+  max-width: 460px;
+}
+
+.mag-progress-track {
+  height: 6px;
+  border-radius: 4px;
+  background: #e8ebef;
+  overflow: hidden;
+}
+
+.mag-progress-track i {
+  display: block;
+  height: 100%;
+  background: var(--mag-red);
+  transition: width 0.2s ease;
+}
+
+/* Неопределённое состояние: байты ещё идут, долю посчитать нечем */
+.mag-progress-track i.indeterminate {
+  width: 40%;
+  animation: mag-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes mag-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mag-progress-track i.indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.5;
+  }
+}
+
+.mag-progress-lbl {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--mag-muted);
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- выбор архива --- */
+.mag-drop {
+  margin-top: 12px;
+  border: 1px dashed #cbd2da;
+  border-radius: 9px;
+  padding: 24px;
+  text-align: center;
+}
+
+.mag-drop input[type="file"] {
+  display: none;
+}
+
+.mag-drop p {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--mag-muted);
+}
+
+.mag-ds-name {
+  max-width: 380px;
+  margin: 14px 0 6px;
+}
+
+/* --- таблица классов --- */
+.mag-classes {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mag-classes th {
+  text-align: left;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+  padding: 0 10px 8px 0;
+  border-bottom: 1px solid var(--mag-line);
+}
+
+.mag-classes td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid #f0f2f5;
+  vertical-align: middle;
+}
+
+.mag-classes td:last-child,
+.mag-classes th:last-child {
+  padding-right: 0;
+}
+
+.mag-classes input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd2da;
+  border-radius: 7px;
+  padding: 6px 9px;
+  font-family: inherit;
+  font-size: 12.5px;
+  background: #fff;
+  color: var(--mag-ink);
+}
+
+.mag-classes input[type="text"]:focus {
+  outline: none;
+  border-color: var(--mag-red);
+  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
+}
+
+/* Класс без названия — та самая работа, ради которой человек здесь */
+.mag-classes input[type="text"].blank {
+  border-color: var(--mag-red);
+  background: #fff6f6;
+}
+
+.mag-classes input[type="color"] {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid #cbd2da;
+  border-radius: 5px;
+  background: none;
+}
+
+.mag-cls-id {
+  width: 46px;
+  font: 700 12px ui-monospace, Menlo, Consolas, monospace;
+  color: var(--mag-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-cls-count {
+  width: 170px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  justify-content: flex-end;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mag-cls-bar {
+  flex: 1;
+  min-width: 54px;
+  height: 5px;
+  border-radius: 3px;
+  background: #eceff3;
+  overflow: hidden;
+}
+
+.mag-cls-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--mag-red);
+}
+
+.mag-cls-bar i.zero {
+  background: #c9d0d7;
+}
+
+.mag-cls-count .zero {
+  color: #9aa4ad;
+}
+
+/* --- суперклассы --- */
+.mag-sc-add {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.mag-sc-add input {
+  border: 1px solid #cbd2da;
+  border-radius: 7px;
+  padding: 7px 10px;
+  font-family: inherit;
+  font-size: 12.5px;
+  width: 200px;
+}
+
+.mag-sc-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.mag-sc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--mag-line);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.mag-sc-chip i {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+/* Изображение без разметки — негативный пример, а не потеря */
+.mag-pager {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 14px;
+  font-size: 12.5px;
+  color: var(--mag-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-sm {
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+@media (max-width: 700px) {
+  .mag-step {
+    padding: 12px 14px;
+  }
+
+  .mag-cls-count {
+    width: 110px;
+  }
+}

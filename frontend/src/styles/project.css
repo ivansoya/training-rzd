@@ -1,0 +1,783 @@
+/* «Магистраль» — список проектов, страница проекта, классы и участники.
+   Подключается после auth.css, поэтому здесь же лежат осознанные
+   переопределения старых правил. */
+
+/* ===== Список проектов: крупная плитка ===== */
+.mag-projects {
+  /* Было minmax(320px): на широком экране это четыре мелкие карточки.
+     Проектов единицы, а не сотни — им можно дать место. */
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 16px;
+}
+
+.mag-proj-card {
+  padding: 20px 22px;
+}
+
+.mag-proj-top h3 {
+  font-size: 18px;
+  letter-spacing: -0.01em;
+}
+
+.mag-proj-nums {
+  display: flex;
+  gap: 22px;
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+.mag-proj-nums b {
+  display: block;
+  font-size: 18px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.mag-proj-nums span {
+  font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+}
+
+.mag-proj-foot {
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--mag-line);
+  justify-content: flex-start;
+}
+
+.mag-proj-meta {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--mag-muted);
+}
+
+.mag-faces {
+  display: flex;
+}
+
+.mag-faces .mag-ava {
+  width: 24px;
+  height: 24px;
+  font-size: 9.5px;
+  margin-left: -7px;
+  border: 2px solid #fff;
+}
+
+.mag-faces .mag-ava:first-child {
+  margin-left: 0;
+}
+
+/* В сети — зелёный ободок вместо отдельной точки: на аватарах места нет */
+.mag-faces .mag-ava.on {
+  border-color: #1a7f4b;
+}
+
+.mag-faces .mag-ava.more {
+  background: #eceff3;
+  color: var(--mag-muted);
+}
+
+/* ===== Шапка проекта и вкладки ===== */
+.mag-pass-strip {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  flex-wrap: wrap;
+  background: #fff;
+  border: 1px solid var(--mag-edge);
+  box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
+}
+
+.mag-pass-id {
+  min-width: 0;
+}
+
+.mag-pass-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mag-pass-title h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 760;
+  letter-spacing: -0.015em;
+}
+
+.mag-pass-id p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: var(--mag-muted);
+}
+
+.mag-pass-nums {
+  display: flex;
+  gap: 22px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.mag-pass-nums b {
+  display: block;
+  font-size: 16px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.mag-pass-nums span {
+  font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+}
+
+.mag-tabs {
+  display: flex;
+  gap: 2px;
+  border-bottom: 1px solid var(--mag-edge);
+  margin-bottom: 16px;
+  overflow-x: auto;
+}
+
+.mag-tab {
+  padding: 9px 15px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mag-muted);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  white-space: nowrap;
+}
+
+.mag-tab:hover {
+  color: var(--mag-ink);
+}
+
+.mag-tab.on {
+  color: var(--mag-ink);
+  border-bottom-color: var(--mag-red);
+}
+
+.mag-tab span {
+  color: #9aa4ad;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-tab:focus-visible {
+  outline: 2px solid var(--mag-red);
+  outline-offset: -2px;
+}
+
+/* ===== Общее для карточек разделов ===== */
+.mag-card-h {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.mag-card-h h4 {
+  margin: 0;
+}
+
+.mag-card-h > :last-child:not(h4) {
+  margin-left: auto;
+}
+
+.mag-btn-inline,
+.mag-ghost-inline {
+  width: auto;
+  margin: 0;
+  padding: 7px 14px;
+  font-size: 13px;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.mag-hint {
+  font-size: 12px;
+  color: var(--mag-muted);
+  margin: -4px 0 16px;
+  max-width: 76ch;
+}
+
+/* ===== Таблица разделов проекта =====
+   Отдельный класс, а не расширение .mag-cab table: правила кабинета не
+   должны протекать на другие страницы. */
+.mag-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.mag-table th {
+  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--mag-muted);
+  text-align: left;
+  padding: 0 12px 9px 0;
+  border-bottom: 1px solid var(--mag-edge);
+  white-space: nowrap;
+}
+
+.mag-table td {
+  padding: 10px 12px 10px 0;
+  border-bottom: 1px solid var(--mag-line);
+}
+
+.mag-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.mag-table tbody tr:hover {
+  background: #fafbfc;
+}
+
+.mag-table th:last-child,
+.mag-table td:last-child {
+  padding-right: 0;
+}
+
+.mag-table .num,
+.mag-table td.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mag-table td.muted {
+  color: var(--mag-muted);
+}
+
+.mag-table td.actions {
+  text-align: right;
+  width: 1%;
+  white-space: nowrap;
+  padding-left: 16px;
+}
+
+/* ===== Цвет класса: квадрат, а не точка ===== */
+.mag-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  display: inline-block;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(29, 35, 41, 0.12);
+}
+
+.mag-swatch.sm {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+}
+
+/* ===== Обзор: разметки по классам ===== */
+.mag-cls {
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom-color: var(--mag-line);
+}
+
+.mag-cls-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 140px;
+}
+
+.mag-cls-name b {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.mag-cls-name span {
+  font-size: 11px;
+  color: var(--mag-muted);
+}
+
+.mag-cls-rest {
+  font-size: 12px;
+  color: var(--mag-muted);
+  padding-top: 10px;
+}
+
+.mag-zero {
+  color: #9aa4ad;
+}
+
+/* ===== Редактор классов: группы по суперклассам ===== */
+.mag-group {
+  border: 1px solid var(--mag-edge);
+  border-radius: 9px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.mag-group-h {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #fafbfc;
+  border-bottom: 1px solid var(--mag-edge);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.mag-group-n {
+  margin-left: auto;
+  font-weight: 500;
+  font-size: 11.5px;
+  color: var(--mag-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-group-empty {
+  padding: 14px;
+  font-size: 12.5px;
+  color: var(--mag-muted);
+}
+
+.mag-classes-table {
+  padding: 0 14px;
+}
+
+.mag-classes-table td {
+  padding: 8px 12px 8px 0;
+}
+
+.mag-classes-table td:first-child {
+  padding-left: 14px;
+}
+
+/* Последняя ячейка подтаблицы — кнопка «Изменить»; общий .mag-table обнуляет
+   ей правый отступ, из-за чего она липла к рамке группы. */
+.mag-classes-table td:last-child {
+  padding-right: 14px;
+}
+
+.mag-classes-table td.swatch {
+  width: 42px;
+}
+
+/* ===== Участники ===== */
+.mag-members {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+
+.mag-mem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
+  border: 1px solid var(--mag-edge);
+  border-radius: 9px;
+  background: #fff;
+}
+
+.mag-mem.pending {
+  border-style: dashed;
+}
+
+.mag-mem-name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.mag-mem-name b {
+  font-size: 13px;
+  font-weight: 650;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mag-mem-name span {
+  font-size: 11.5px;
+  color: var(--mag-muted);
+}
+
+.mag-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #cbd2da;
+  flex-shrink: 0;
+}
+
+.mag-dot.on {
+  background: #1a7f4b;
+}
+
+.mag-online-n {
+  font-weight: 500;
+  color: var(--mag-muted);
+  font-size: 12.5px;
+}
+
+/* ===== Модалки разделов ===== */
+.mag-modal-foot {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+  align-items: center;
+}
+
+.mag-modal-foot .mag-btn,
+.mag-modal-foot .mag-ghost {
+  width: auto;
+  margin: 0;
+  padding: 9px 16px;
+}
+
+/* Удаление уезжает влево, подтверждающее действие — вправо: их не путают */
+.mag-modal-foot .mag-danger {
+  margin-right: auto;
+}
+
+.mag-roles {
+  display: flex;
+  gap: 8px;
+}
+
+.mag-role-pick {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #cbd2da;
+  border-radius: 8px;
+  padding: 9px 8px;
+  font-family: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  color: var(--mag-ink);
+}
+
+.mag-role-pick.on {
+  border-color: var(--mag-red);
+  background: #fff6f6;
+  font-weight: 650;
+}
+
+.mag-role-hint {
+  font-size: 11.5px;
+  color: var(--mag-muted);
+  margin: 7px 0 0;
+}
+
+.mag-field input:disabled {
+  background: #f4f6f8;
+  color: var(--mag-muted);
+}
+
+@media (max-width: 760px) {
+  .mag-projects {
+    grid-template-columns: 1fr;
+  }
+
+  .mag-pass-nums {
+    margin-left: 0;
+  }
+
+  .mag-roles {
+    flex-direction: column;
+  }
+}
+
+
+/* ===== Пунктирные кнопки добавления =====
+   Добавление живёт там, где появится результат: суперкласс — перед «Без
+   группы», класс — в конце своей группы. */
+.mag-dashed {
+  display: block;
+  width: 100%;
+  background: none;
+  border: 1px dashed #c3ccd6;
+  border-radius: 9px;
+  padding: 11px;
+  margin-bottom: 10px;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--mag-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.mag-dashed:hover {
+  border-color: var(--mag-red);
+  color: var(--mag-red);
+  background: rgba(226, 26, 26, 0.04);
+}
+
+.mag-dashed:focus-visible {
+  outline: 2px solid var(--mag-red);
+  outline-offset: 2px;
+}
+
+/* Внутри группы кнопка не должна спорить с её рамкой */
+.mag-dashed.inner {
+  width: auto;
+  display: block;
+  margin: 10px 14px 12px;
+  padding: 9px;
+  border-radius: 8px;
+  width: calc(100% - 28px);
+}
+
+/* ===== Свой выбор цвета ===== */
+/* ===== Заголовки одноколоночных модалок ===== */
+.mag-modal > h1 {
+  margin: 0 0 5px;
+  font-size: 19px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+.mag-modal > .mag-sub {
+  margin-bottom: 20px;
+}
+
+/* ===== Селекты нового сайта =====
+   Один канонический вид на всё: системный selectbox рисуется по-разному в
+   каждой ОС и рядом с нашими полями выглядит чужим. */
+.mag select {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cbd2da;
+  border-radius: 8px;
+  padding: 10px 34px 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.3;
+  color: var(--mag-ink);
+  cursor: pointer;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%236e7a87' stroke-width='1.6' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+}
+
+.mag select:hover {
+  border-color: #aab4c0;
+}
+
+.mag select:focus {
+  outline: none;
+  border-color: var(--mag-red);
+  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
+}
+
+.mag select:disabled {
+  background-color: #f4f6f8;
+  color: var(--mag-muted);
+  cursor: default;
+}
+
+/* Компактные места: строка таблицы в мастере и фильтры галереи */
+.mag .mag-classes select,
+.mag .mag-ds-head select {
+  padding: 6px 26px 6px 9px;
+  font-size: 12.5px;
+  border-radius: 7px;
+  background-position: right 9px center;
+}
+
+.mag .mag-ds-head select {
+  width: auto;
+}
+
+/* ===== Выбор цвета: спектр ===== */
+.mag-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mag-sl {
+  position: relative;
+  height: 150px;
+  border-radius: 9px;
+  cursor: crosshair;
+  touch-action: none;
+  box-shadow: inset 0 0 0 1px rgba(29, 35, 41, 0.12);
+}
+
+.mag-sl:focus-visible,
+.mag-hue:focus-visible {
+  outline: 2px solid var(--mag-red);
+  outline-offset: 2px;
+}
+
+.mag-sl-dot {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.mag-hue {
+  position: relative;
+  height: 16px;
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: none;
+  background: linear-gradient(
+    to right,
+    #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%
+  );
+  box-shadow: inset 0 0 0 1px rgba(29, 35, 41, 0.12);
+}
+
+.mag-hue-knob {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.mag-hex {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.mag-hex-eye {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  flex-shrink: 0;
+  box-shadow: inset 0 0 0 1px rgba(29, 35, 41, 0.15);
+}
+
+.mag-hex input {
+  width: 130px;
+  border: 1px solid #cbd2da;
+  border-radius: 8px;
+  padding: 7px 11px;
+  font: 600 13px ui-monospace, Menlo, Consolas, monospace;
+  background: #fff;
+  color: var(--mag-ink);
+  text-transform: lowercase;
+}
+
+.mag-hex input:focus {
+  outline: none;
+  border-color: var(--mag-red);
+  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
+}
+
+.mag-hex-err {
+  font-size: 11.5px;
+  color: var(--mag-red-dark);
+}
+
+/* Палитра под спектром — быстрый способ взять заведомо годный цвет */
+.mag-swatches {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 6px;
+}
+
+.mag-swatch.pick {
+  width: 100%;
+  height: 22px;
+  border: 0;
+  padding: 0;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.mag-swatch.pick.on {
+  outline: 2px solid var(--mag-ink);
+  outline-offset: 2px;
+}
+
+/* Компактные селекты, которые общий вид перебил бы своей высотой */
+.mag .mag-friend-row select,
+.mag .mag-invite-row select {
+  font-size: 12px;
+  padding: 6px 24px 6px 8px;
+  border-radius: 7px;
+  background-position: right 7px center;
+}
+
+.mag .mag-friend-row select {
+  width: 130px;
+  margin-left: auto;
+}
+
+/* ===== Курсор и выделение =====
+   Это интерфейс, а не документ: над подписями, кнопками и цветными полями не
+   должно появляться текстовой каретки, будто туда собираются печатать.
+   Данные — имена классов, коды, числа в таблицах — остаются выделяемыми. */
+.mag label,
+.mag button,
+.mag .mag-tab,
+.mag .mag-group-h,
+.mag .mag-table th,
+.mag .mag-pass-nums span,
+.mag .mag-proj-nums span,
+.mag .mag-step-num,
+.mag .mag-role,
+.mag .mag-code-badge,
+.mag .mag-importing,
+.mag .mag-swatch,
+.mag .mag-sl,
+.mag .mag-hue,
+.mag .mag-hex-eye {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mag label,
+.mag .mag-swatch,
+.mag .mag-hex-eye {
+  cursor: default;
+}
+
+.mag button:not(:disabled),
+.mag .mag-tab,
+.mag .mag-swatch.pick,
+.mag a.mag-link {
+  cursor: pointer;
+}
+
+/* Крошечная полоса прокрутки под вкладками мозолит глаза; сама прокрутка
+   нужна только на узком экране и работает жестом. */
+.mag-tabs {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.mag-tabs::-webkit-scrollbar {
+  display: none;
+}

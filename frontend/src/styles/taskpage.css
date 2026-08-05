@@ -1,0 +1,1079 @@
+/* «Магистраль» — страница таски: шапка, вкладка источников, модалка нарезки. */
+
+/* ===== Шапка: прогресс и сдача видны на любой вкладке ===== */
+.mag-task-strip {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 14px 24px;
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--mag-edge);
+  box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
+  border-radius: 10px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
+}
+
+.mag-task-id p {
+  margin: 3px 0 0;
+  font-size: 12.5px;
+  color: var(--mag-muted);
+}
+
+.mag-task-nums {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+
+.mag-task-nums b {
+  display: block;
+  font-size: 17px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.mag-task-nums span {
+  font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+}
+
+/* Сдача — необратимое действие, поэтому отделена чертой, а не стоит в ряду */
+.mag-task-submit {
+  display: flex;
+  gap: 8px;
+  padding-left: 20px;
+  border-left: 1px solid var(--mag-line);
+}
+
+.mag-task-bar {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 900px) {
+  .mag-task-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .mag-task-submit {
+    padding-left: 0;
+    border-left: 0;
+  }
+}
+
+/* ===== Вкладка источников ===== */
+.mag-src-files {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--mag-line);
+  font-size: 13px;
+}
+
+.mag-src-files b {
+  font-size: 19px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-src-files .mag-ghost-inline {
+  margin-left: auto;
+}
+
+.mag-src-video {
+  display: grid;
+  grid-template-columns: 132px 1fr auto;
+  gap: 14px;
+  align-items: start;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--mag-line);
+}
+
+.mag-src-video:last-child {
+  border-bottom: 0;
+}
+
+.mag-poster {
+  position: relative;
+  border: 0;
+  padding: 0;
+  border-radius: 7px;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  background: #0e1114;
+  cursor: pointer;
+  line-height: 0;
+}
+
+.mag-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.85;
+}
+
+.mag-poster-play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 17px;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
+}
+
+.mag-poster-dur {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  font: 600 9px ui-monospace, Menlo, Consolas, monospace;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
+.mag-src-name {
+  font-size: 13.5px;
+  font-weight: 650;
+}
+
+.mag-src-facts {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+}
+
+.mag-src-facts div {
+  font-size: 11.5px;
+  color: var(--mag-muted);
+  white-space: nowrap;
+}
+
+.mag-src-facts b {
+  color: var(--mag-ink);
+  font-weight: 700;
+  font-size: 12.5px;
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Мини-дорожка: где по ролику лежат уже нарезанные участки */
+.mag-mini {
+  position: relative;
+  height: 16px;
+  border-radius: 4px;
+  background: #eceff3;
+  overflow: hidden;
+  margin-top: 9px;
+}
+
+.mag-mini-seg {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border: 1px solid;
+  border-radius: 3px;
+}
+
+.mag-seglist {
+  margin-top: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mag-segline {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+}
+
+.mag-segline i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+
+.mag-segline .sp {
+  margin-left: auto;
+  color: var(--mag-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-segline button {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--mag-red);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+@media (max-width: 760px) {
+  .mag-src-video {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ===== Метка источника на кадре ===== */
+.mag-tile-wrap {
+  position: relative;
+}
+
+.mag-from {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
+  background: rgba(29, 35, 41, 0.8);
+  color: #fff;
+  padding: 2px 6px;
+  border: 0;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.mag-from:hover {
+  background: var(--mag-red);
+}
+
+.mag-from.file {
+  background: rgba(110, 122, 135, 0.85);
+  cursor: default;
+}
+
+/* ===== Модалка нарезки: видео слева, участки справа ===== */
+.mag-cut {
+  background: #14181c;
+  color: #e8ecef;
+  border-radius: 12px;
+  overflow: hidden;
+  width: 1040px;
+  max-width: 100%;
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 24px 70px rgba(10, 15, 20, 0.45);
+}
+
+.mag-cut-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #262d35;
+  flex-shrink: 0;
+}
+
+.mag-cut-head b {
+  font-size: 14.5px;
+}
+
+.mag-cut-meta {
+  font-size: 12px;
+  color: #93a0ac;
+}
+
+.mag-cut-sp {
+  margin-left: auto;
+}
+
+.mag-cut-btn {
+  background: #222932;
+  border: 1px solid #333c46;
+  color: #e8ecef;
+  border-radius: 7px;
+  padding: 6px 11px;
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.mag-cut-body {
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  min-height: 0;
+  flex: 1;
+}
+
+@media (max-width: 900px) {
+  .mag-cut-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+.mag-cut-left {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: #0e1114;
+}
+
+.mag-cut-stage {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.mag-cut-stage video {
+  max-width: 100%;
+  max-height: 46vh;
+  display: block;
+  cursor: pointer;
+}
+
+/* Свои контролы: нативные не красятся в Firefox и не умеют шаг в один кадр. */
+.mag-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #171c21;
+  border-top: 1px solid #262d35;
+  flex-shrink: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mag-pl-btn,
+.mag-pl-take {
+  background: #222932;
+  border: 1px solid #333c46;
+  color: #e8ecef;
+  border-radius: 7px;
+  font-family: inherit;
+  font-size: 12px;
+  padding: 5px 10px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.mag-pl-btn {
+  min-width: 34px;
+  width: auto;
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.mag-pl-btn.wide {
+  min-width: 46px;
+}
+
+/* Ножницы во включённом режиме */
+.mag-pl-btn.on {
+  background: rgba(226, 26, 26, 0.22);
+  border-color: var(--mag-red);
+  color: #ff9d9d;
+}
+
+.mag-pl-btn:hover,
+.mag-pl-take:hover {
+  border-color: #4a5663;
+}
+
+.mag-pl-take {
+  font-weight: 700;
+  border-color: rgba(226, 26, 26, 0.55);
+  color: #ff8b8b;
+}
+
+.mag-pl-time {
+  font: 600 12px ui-monospace, Menlo, Consolas, monospace;
+  color: #e8ecef;
+  margin-left: 4px;
+}
+
+.mag-pl-time i {
+  font-style: normal;
+  color: #6e7a87;
+}
+
+.mag-pl-take svg {
+  display: block;
+}
+
+/* Кинолента под таймлайном: участок выбирается глазами, а не по числам */
+.mag-cut-track {
+  position: relative;
+  height: 74px;
+  border-top: 1px solid #262d35;
+  cursor: grab;
+  touch-action: none;
+  overflow: hidden;
+  flex-shrink: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mag-cut-track.cut {
+  cursor: crosshair;
+}
+
+.mag-cut-strip {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* Середина участка мышь не ловит: по ней перематывают и возят ленту.
+   Ухватить участок можно только за толстые края и за метку. */
+.mag-cut-seg {
+  position: absolute;
+  top: 0;
+  bottom: 16px;
+  border: 1px solid;
+  border-radius: 4px;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  pointer-events: none;
+  /* Переходим только по виду: геометрию трогать нельзя, иначе края будут
+     догонять курсор с задержкой при растяжке. */
+  transition: box-shadow 0.16s ease, background-color 0.16s ease, border-color 0.16s ease;
+}
+
+.mag-cut-seg.on {
+  border-width: 2px;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.55),
+    0 0 14px rgba(255, 255, 255, 0.28),
+    inset 0 0 18px rgba(255, 255, 255, 0.12);
+}
+
+.mag-cut-seg b {
+  font: 700 9.5px ui-monospace, Menlo, Consolas, monospace;
+  color: #fff;
+  padding: 2px 7px;
+  border-radius: 0 0 4px 4px;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+  transition: box-shadow 0.16s ease, filter 0.16s ease;
+}
+
+.mag-cut-seg b:hover {
+  filter: brightness(1.18);
+}
+
+.mag-cut-seg.on b {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.65), 0 2px 10px rgba(0, 0, 0, 0.45);
+}
+
+.mag-cut-seg .h {
+  transition: width 0.14s ease, filter 0.14s ease;
+}
+
+.mag-cut-seg .h:hover {
+  filter: brightness(1.3);
+}
+
+/* Одиночный кадр — ромбик поверх ленты, чтобы не путался с участками. */
+.mag-cut-one {
+  position: absolute;
+  top: 40%;
+  width: 11px;
+  height: 11px;
+  margin: -5px 0 0 -5px;
+  background: #ffd43b;
+  border: 1px solid #14181c;
+  transform: rotate(45deg);
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 2;
+}
+
+/* Ножницы: первый конец поставлен, второй тянется за курсором. */
+.mag-cut-pend {
+  position: absolute;
+  top: 0;
+  bottom: 16px;
+  width: 2px;
+  margin-left: -1px;
+  background: #ffd43b;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.mag-cut-ghost {
+  position: absolute;
+  top: 0;
+  bottom: 16px;
+  background: rgba(255, 212, 59, 0.18);
+  border: 1px dashed #ffd43b;
+  pointer-events: none;
+}
+
+/* Толстые края — они же единственная ручка растяжки и цель для выбора. */
+.mag-cut-seg .h {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 9px;
+  cursor: ew-resize;
+  opacity: 0.9;
+  pointer-events: auto;
+}
+
+.mag-cut-seg.on .h {
+  width: 11px;
+  opacity: 1;
+}
+
+.mag-cut-seg .h.l {
+  left: -4px;
+  border-radius: 4px 0 0 4px;
+}
+
+.mag-cut-seg .h.r {
+  right: -4px;
+  border-radius: 0 4px 4px 0;
+}
+
+/* Единственное место, где видны кадры нарезки: серые — уже нарезанные,
+   цветные — те, что получатся. По каждой можно навести и щёлкнуть. */
+.mag-cut-marks {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 16px;
+  background: #171c21;
+}
+
+.mag-cut-marks i {
+  position: absolute;
+  bottom: 0;
+  top: 0;
+  width: 9px;
+  margin-left: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.mag-cut-marks i b {
+  width: 3px;
+  height: 9px;
+  border-radius: 2px;
+  opacity: 0.8;
+  transition: height 0.15s cubic-bezier(0.2, 0.8, 0.3, 1), width 0.15s ease,
+    opacity 0.15s ease, filter 0.15s ease;
+}
+
+.mag-cut-marks i:hover {
+  background: radial-gradient(circle at 50% 60%, rgba(255, 255, 255, 0.16), transparent 70%);
+}
+
+.mag-cut-marks i:hover b {
+  width: 5px;
+  height: 15px;
+  opacity: 1;
+  filter: brightness(1.35) drop-shadow(0 0 5px rgba(255, 255, 255, 0.55));
+}
+
+/* Ножка под цветной засечкой — кадр уже нарезан. Нет ножки — появится. */
+.mag-cut-marks i.has::after {
+  content: "";
+  position: absolute;
+  bottom: 0;
+  width: 3px;
+  height: 3px;
+  border-radius: 1px;
+  background: #8a97a4;
+}
+
+/* Кадр есть в таске, но выпал из плана — исчезнет при применении. */
+.mag-cut-marks i.gone b {
+  height: 11px;
+  background: #6b7480;
+  box-shadow: inset 0 0 0 1px rgba(226, 26, 26, 0.9);
+}
+
+.mag-cut-marks i.gone:hover b {
+  background: var(--mag-red);
+  box-shadow: none;
+}
+
+/* Слишком частый шаг: отдельные полосы не различить, пока не приблизишь. */
+.mag-cut-marks .band {
+  width: auto;
+  margin: 0;
+  bottom: 3px;
+  top: auto;
+  height: 9px;
+  opacity: 0.7;
+  cursor: default;
+}
+
+/* Кадр под курсором — готовит скрытый плеер, основной не дёргается. */
+/* fixed, а не absolute: лента режет по overflow, и карточка обрезалась бы. */
+.mag-peek-card {
+  position: fixed;
+  transform: translateX(-50%);
+  animation: mag-peek-in 0.13s ease;
+  background: #0b0e11;
+  border: 1px solid #333c46;
+  border-radius: 7px;
+  padding: 4px;
+  pointer-events: none;
+  z-index: 6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.mag-peek-card img,
+.mag-peek-wait {
+  display: block;
+  width: 168px;
+  height: 96px;
+  object-fit: cover;
+  border-radius: 4px;
+  background: #1b2129;
+}
+
+.mag-peek-card b {
+  display: block;
+  text-align: center;
+  font: 600 10.5px ui-monospace, Menlo, Consolas, monospace;
+  color: #cbd5e0;
+  padding-top: 3px;
+}
+
+@keyframes mag-peek-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Скрытый плеер для подсказок: display:none не даёт рисовать в canvas. */
+.mag-peek {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mag-cut-head-line {
+  position: absolute;
+  top: 0;
+  bottom: 12px;
+  width: 2px;
+  background: #fff;
+  box-shadow: 0 0 5px rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+}
+
+.mag-cut-ticks {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 10px;
+  background: #171c21;
+  font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
+  color: #6e7a87;
+  flex-shrink: 0;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Одно меню на два места: шаг участка по правой кнопке и скорость плеера. */
+.mag-menu-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+}
+
+.mag-menu {
+  position: fixed;
+  z-index: 21;
+  transform: translateY(-100%);
+  min-width: 132px;
+  background: #1b2129;
+  border: 1px solid #333c46;
+  border-radius: 9px;
+  padding: 5px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55);
+}
+
+.mag-menu button {
+  background: none;
+  border: none;
+  color: #e8ecef;
+  font-family: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  padding: 6px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.mag-menu button:hover {
+  background: #2a323c;
+}
+
+.mag-menu button.on {
+  color: #ff9d9d;
+  font-weight: 700;
+}
+
+.mag-menu button.on::after {
+  content: " ✓";
+}
+
+.mag-menu button.bad {
+  color: #ff8b8b;
+  border-top: 1px solid #333c46;
+  border-radius: 0 0 6px 6px;
+  margin-top: 3px;
+}
+
+.mag-menu-h {
+  font: 700 9px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: #6e7a87;
+  padding: 4px 9px 5px;
+}
+
+.mag-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px 6px;
+  font-size: 12px;
+  color: #93a0ac;
+}
+
+.mag-menu-row input {
+  width: 62px;
+  background: #0e1114;
+  border: 1px solid #333c46;
+  border-radius: 6px;
+  color: #e8ecef;
+  padding: 4px 7px;
+  font: 600 12px ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* Во весь экран уезжает левая часть целиком — со всеми инструментами. */
+.mag-cut-left:fullscreen {
+  background: #0e1114;
+  width: 100vw;
+  height: 100vh;
+}
+
+.mag-cut-left:fullscreen .mag-cut-stage video {
+  max-height: none;
+  max-width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Ширина жёсткая: колонка не должна ездить от длины содержимого, а всё
+   внутри обязано в неё влезать — горизонтального скролла тут нет. */
+/* Ширина жёсткая, высоту задаёт левая часть: список внутри прокручивается
+   в своём слое, поэтому его длина не растягивает модалку. */
+.mag-cut-right {
+  position: relative;
+  background: #fff;
+  color: var(--mag-ink);
+  width: 340px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-left: 1px solid #262d35;
+}
+
+.mag-cut-scroll {
+  position: absolute;
+  inset: 0;
+  padding: 15px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+@media (max-width: 900px) {
+  .mag-cut-right {
+    width: auto;
+    overflow: visible;
+  }
+
+  .mag-cut-scroll {
+    position: static;
+  }
+}
+
+.mag-seg-card {
+  border: 1px solid var(--mag-edge);
+  border-radius: 9px;
+  padding: 9px 10px;
+  margin-bottom: 8px;
+  cursor: default;
+}
+
+.mag-seg-card.on {
+  border-color: var(--mag-red);
+  box-shadow: 0 0 0 2px rgba(226, 26, 26, 0.12);
+}
+
+/* Каретки быть не должно: печатают тут только в полях. */
+.mag-seg-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mag-seg-row input {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.mag-seg-row.sub {
+  margin-top: 7px;
+  font-size: 12px;
+  color: var(--mag-muted);
+}
+
+.mag-seg-row.sub b {
+  color: var(--mag-ink);
+  font-size: 12px;
+}
+
+.mag-seg-row input {
+  min-width: 0;
+  width: 68px;
+  border: 1px solid #cbd2da;
+  border-radius: 7px;
+  padding: 4px 7px;
+  font: 600 12px ui-monospace, Menlo, Consolas, monospace;
+  background: #fff;
+  color: var(--mag-ink);
+}
+
+.mag-seg-row.sub input {
+  width: 58px;
+}
+
+.mag-seg-row input:disabled {
+  background: #f4f6f8;
+  color: var(--mag-muted);
+}
+
+.mag-seg-arr,
+.mag-seg-unit {
+  color: var(--mag-muted);
+  font-size: 12px;
+}
+
+.mag-one-h {
+  margin-top: 16px;
+}
+
+.mag-one-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.mag-one {
+  position: relative;
+  border: 1px solid var(--mag-edge);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #0e1114;
+}
+
+.mag-one:hover {
+  border-color: var(--mag-red);
+}
+
+.mag-one img {
+  display: block;
+  width: 100%;
+  height: 84px;
+  object-fit: cover;
+}
+
+.mag-one-noimg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 84px;
+  font-size: 11px;
+  color: #6e7a87;
+}
+
+.mag-one-t {
+  display: block;
+  padding: 4px 6px;
+  background: #fff;
+  font: 600 11px ui-monospace, Menlo, Consolas, monospace;
+  color: var(--mag-ink);
+}
+
+.mag-one .mag-icon-btn {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  background: rgba(20, 24, 28, 0.75);
+  border-color: transparent;
+  color: #fff;
+}
+
+.mag-cut-right h5 {
+  margin: 0 0 11px;
+  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+}
+
+.mag-seg-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.mag-est-diff {
+  display: flex;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.mag-est-diff b.add {
+  color: #1a7f4b;
+}
+
+.mag-est-diff b.rm {
+  color: var(--mag-red-dark);
+}
+
+/* Подтверждение поверх модалки нарезки: удаление кадров необратимо. */
+.mag-confirm-veil {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 14, 18, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+  padding: 20px;
+}
+
+.mag-confirm {
+  background: #fff;
+  color: var(--mag-ink);
+  border-radius: 12px;
+  padding: 20px 22px;
+  width: 420px;
+  max-width: 100%;
+  max-height: 100%;
+  overflow-y: auto;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.mag-confirm h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.mag-confirm p {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--mag-muted);
+}
+
+.mag-confirm-bad {
+  background: rgba(226, 26, 26, 0.07);
+  border: 1px solid rgba(226, 26, 26, 0.3);
+  border-radius: 9px;
+  padding: 10px 12px;
+  font-size: 12.5px;
+  color: var(--mag-red-dark);
+}
+
+.mag-confirm-bad ul {
+  margin: 7px 0 0;
+  padding-left: 18px;
+  font: 600 11.5px ui-monospace, Menlo, Consolas, monospace;
+}
+
+.mag-confirm-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.mag-confirm-foot .mag-ghost,
+.mag-confirm-foot .mag-btn {
+  width: auto;
+  margin: 0;
+}
+
+.mag-cut-note {
+  font-size: 11.5px;
+  color: var(--mag-muted);
+  margin: 10px 0 0;
+}
+
+.mag-cut-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: #171c21;
+  border-top: 1px solid #262d35;
+  flex-shrink: 0;
+}
+
+.mag-cut-foot .mag-ghost,
+.mag-cut-foot .mag-btn {
+  width: auto;
+  margin: 0;
+}
+
+.mag-cut-foot .mag-ghost {
+  background: #222932;
+  border-color: #333c46;
+  color: #e8ecef;
+}
+
+.mag-cut-foot .mag-progress-lbl {
+  color: #93a0ac;
+}

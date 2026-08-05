@@ -27,6 +27,27 @@ JsonCol = sa.JSON().with_variant(JSONB(), "postgresql")
 
 ROLE_ENUM = sa.Enum("admin", "editor", "viewer", name="project_role")
 ANN_TYPE_ENUM = sa.Enum("bbox", "obb", "polygon", "mask", name="annotation_type")
+# A project is "importing" from the moment the wizard creates it until the
+# archive is written; the UI refuses tasks and export while it is.
+PROJECT_STATUS_ENUM = sa.Enum("importing", "ready", name="project_status")
+# Role of an image in training. Kept in the DB, not in the file path, so
+# re-splitting is a column update instead of moving files around.
+SPLIT_ENUM = sa.Enum("train", "val", "test", "other", name="image_split")
+# Жизнь таски. «updating» — возврат к уже принятым кадрам: они остаются в
+# проекте и правятся на месте. «closed» — черновики убраны, работа окончена.
+TASK_STATUS_ENUM = sa.Enum(
+    "queued", "in_progress", "done", "updating", "closed", name="task_status"
+)
+# Состояние кадра внутри таски. Все, кроме «new», — осознанное решение
+# разметчика: «skipped» вернуться позже, «empty» объектов нет (уходит в датасет
+# фоновым примером), «deleted» кадр забракован (dataset_id снимается, файлы
+# стираются при закрытии таски).
+IMAGE_TASK_STATUS_ENUM = sa.Enum(
+    "new", "skipped", "annotated", "empty", "deleted", name="image_task_status"
+)
+# Кто нарисовал бокс. created_by для этого не годится: там пусто и у машинной
+# разметки, и у осиротевшей после удаления пользователя.
+ANN_SOURCE_ENUM = sa.Enum("human", "model", name="annotation_source")
 FRIENDSHIP_STATUS_ENUM = sa.Enum("pending", "accepted", name="friendship_status")
 INVITATION_STATUS_ENUM = sa.Enum(
     "pending", "accepted", "declined", name="invitation_status"
@@ -85,12 +106,19 @@ class User(Base, AuditMixin):
 class Project(Base, AuditMixin):
     __tablename__ = "projects"
     # Lets images carry a composite FK (dataset_id, project_id) further down.
-    __table_args__ = (sa.UniqueConstraint("code", name="uq_projects_code"),)
+    # Код выдаёт только сервер (auth_svc/core.py), поэтому длина закреплена в БД.
+    __table_args__ = (
+        sa.UniqueConstraint("code", name="uq_projects_code"),
+        sa.CheckConstraint("char_length(code) = 20", name="ck_projects_code_len"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
-    code: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    code: Mapped[str] = mapped_column(sa.String(20), nullable=False)
     description: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    status: Mapped[str] = mapped_column(
+        PROJECT_STATUS_ENUM, nullable=False, default="ready", server_default="ready"
+    )
 
     members: Mapped[list["ProjectMember"]] = relationship(
         back_populates="project", cascade="all, delete-orphan", passive_deletes=True
@@ -152,10 +180,31 @@ class Image(Base, AuditMixin):
     project_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
-    dataset_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False)
+    # Пусто, пока кадр лежит в таске: он ещё не принадлежит проекту как данные.
+    # Составной ключ (dataset_id, project_id) это переживает — в Postgres
+    # ограничение не проверяется, если хоть одна колонка ссылки пуста.
+    dataset_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
+    # Name inside the source archive; the file on disk is named by id.
     file_name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     # Binary lives on the shared yolo-data volume; the DB stores the path.
     file_path: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    split: Mapped[str] = mapped_column(
+        SPLIT_ENUM, nullable=False, default="other", server_default="other"
+    )
+    # Откуда кадр пришёл. Ставится при загрузке и НЕ снимается при принятии:
+    # таска — это происхождение кадра, датасет — его текущая принадлежность.
+    task_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("tasks.id", ondelete="SET NULL"), nullable=True
+    )
+    task_status: Mapped[str] = mapped_column(
+        IMAGE_TASK_STATUS_ENUM, nullable=False, default="new", server_default="new"
+    )
+    # Кадр из видео помнит источник и секунду: по одному кадру не всегда
+    # понятно, что происходит, а «2:14 такого-то ролика» объясняет.
+    source_video_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="SET NULL"), nullable=True
+    )
+    source_time_ms: Mapped[int | None] = mapped_column(sa.Integer)
     width: Mapped[int | None] = mapped_column(sa.Integer)
     height: Mapped[int | None] = mapped_column(sa.Integer)
     size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
@@ -215,6 +264,89 @@ class Annotation(Base, AuditMixin):
     area: Mapped[float | None] = mapped_column(sa.Float)
     iscrowd: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
     attributes: Mapped[dict | None] = mapped_column(JsonCol)
+    source: Mapped[str] = mapped_column(
+        ANN_SOURCE_ENUM, nullable=False, default="human", server_default="human"
+    )
+
+
+class Task(Base, AuditMixin):
+    """Долгоживущий пул кадров: загрузили, размечаем, готовое отдаём в проект.
+
+    Целевой датасет выбирается один раз при создании, поэтому «готово» потом
+    работает одной кнопкой без вопросов. Исполнитель может стать пустым, если
+    человека убрали из проекта, — тогда таска ждёт нового.
+    """
+
+    __tablename__ = "tasks"
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    status: Mapped[str] = mapped_column(
+        TASK_STATUS_ENUM, nullable=False, default="queued", server_default="queued"
+    )
+    assignee_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    # Куда уйдут принятые кадры. Пусто = создать датасет с именем таски при
+    # первом «готово».
+    target_dataset_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+    )
+    target_dataset_name: Mapped[str | None] = mapped_column(sa.String(255))
+
+    assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id])
+
+
+class TaskVideo(Base, AuditMixin):
+    """Исходник, из которого нарезали кадры. Живёт, пока таска не закрыта:
+    к нему возвращаются, чтобы дорезать участок поплотнее."""
+
+    __tablename__ = "task_videos"
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    file_name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    duration_ms: Mapped[int | None] = mapped_column(sa.Integer)
+    fps: Mapped[float | None] = mapped_column(sa.Float)
+    width: Mapped[int | None] = mapped_column(sa.Integer)
+    height: Mapped[int | None] = mapped_column(sa.Integer)
+    size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
+    # План нарезки: [{start_ms, end_ms, step_ms}]. Именно план, а не история —
+    # кадры таски приводятся к нему, поэтому он перезаписывается целиком.
+    # Одиночный кадр — участок длиной в миллисекунду.
+    segments: Mapped[list | None] = mapped_column(JsonCol)
+
+
+class TaskEvent(Base):
+    """Крупные события таски: смены состояний, загрузки, принятия, удаления.
+
+    Отдельные боксы сюда не пишутся — у каждой аннотации уже есть автор и
+    время, а тысяча строк «добавлен бокс» утопила бы всё остальное.
+    """
+
+    __tablename__ = "task_events"
+    __table_args__ = (sa.Index("ix_task_events_task", "task_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(sa.String(48), nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JsonCol)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+    user: Mapped[User | None] = relationship()
 
 
 class EmailConfirmation(Base):

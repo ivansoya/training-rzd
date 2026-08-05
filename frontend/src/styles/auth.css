@@ -7,7 +7,10 @@
   --mag-red-dark: #b01212;
   --mag-ink: #1d2329;
   --mag-muted: #6e7a87;
+  /* Разделители внутри карточки — тихие; границы самих карточек заметно
+     темнее, иначе белая карточка на #f6f7f9 выглядит пятном без краёв. */
   --mag-line: #e3e7ec;
+  --mag-edge: #d3dae2;
   --mag-bg: #f6f7f9;
   --mag-graphite: #23282e;
   background: var(--mag-bg);
@@ -122,7 +125,8 @@
   margin-bottom: 6px;
 }
 
-.mag-field input {
+.mag-field input,
+.mag-field textarea {
   width: 100%;
   box-sizing: border-box;
   border: 1px solid #cbd2da;
@@ -134,13 +138,22 @@
   color: var(--mag-ink);
 }
 
-.mag-field input:focus {
+/* Тянуть только вниз: по горизонтали textarea вылезает из колонки модалки. */
+.mag-field textarea {
+  resize: vertical;
+  min-height: 76px;
+  line-height: 1.45;
+}
+
+.mag-field input:focus,
+.mag-field textarea:focus {
   outline: none;
   border-color: var(--mag-red);
   box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
 }
 
-.mag-field.invalid input {
+.mag-field.invalid input,
+.mag-field.invalid textarea {
   border-color: var(--mag-red);
 }
 
@@ -290,7 +303,8 @@
 
 .mag-card {
   background: #fff;
-  border: 1px solid var(--mag-line);
+  border: 1px solid var(--mag-edge);
+  box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
   border-radius: 10px;
   padding: 22px;
 }
@@ -551,10 +565,6 @@
   letter-spacing: -0.01em;
 }
 
-.mag-mono {
-  font-family: ui-monospace, Menlo, monospace;
-}
-
 .mag-btn-inline {
   width: auto;
   margin-top: 0;
@@ -580,14 +590,15 @@
   font-size: 12px;
 }
 
+/* Код — 20 знаков; разрядку убрали, иначе бейдж отъедает строку заголовка. */
 .mag-code-badge {
-  font: 700 11px ui-monospace, Menlo, monospace;
+  font: 700 10px ui-monospace, Menlo, monospace;
   background: #edf1f6;
   color: #3d4a5c;
   border-radius: 6px;
-  padding: 3px 8px;
-  letter-spacing: 0.04em;
+  padding: 4px 7px;
   white-space: nowrap;
+  flex: none;
 }
 
 .mag-dot {
@@ -617,7 +628,8 @@
 .mag-proj-card {
   display: block;
   background: #fff;
-  border: 1px solid var(--mag-line);
+  border: 1px solid var(--mag-edge);
+  box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
   border-radius: 10px;
   padding: 18px 20px;
   text-decoration: none;
@@ -737,6 +749,24 @@
   overflow: hidden;
   max-height: calc(100vh - 48px);
   overflow-y: auto;
+  /* Одноколоночная модалка сама отвечает за поля; двухколоночная раздаёт их
+     своим половинам и обнуляет здесь, иначе паддинг удваивается. */
+  padding: 26px 32px;
+  width: 440px;
+  max-width: 100%;
+}
+
+/* Ответ на клик мимо модалки, когда придраться не к чему: она не закрывается,
+   но и молчать нельзя — иначе клик выглядит как сломанный. */
+.mag-modal-nudge {
+  animation: mag-nudge 0.36s ease;
+}
+
+@keyframes mag-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  45% { transform: translateX(5px); }
+  70% { transform: translateX(-3px); }
 }
 
 .mag-modal-2col {
@@ -744,6 +774,7 @@
   max-width: 100%;
   display: grid;
   grid-template-columns: 1fr 1fr;
+  padding: 0;
 }
 
 .mag-modal-left {
@@ -829,7 +860,9 @@
   margin-left: auto;
 }
 
-.mag-modal-foot {
+/* Подвал двухколоночной модалки — часть её сетки. Одноколоночные модалки
+   разделов оформляют свой подвал сами (project.css). */
+.mag-modal-2col .mag-modal-foot {
   grid-column: 1 / -1;
   display: flex;
   justify-content: flex-end;
@@ -949,7 +982,7 @@
 
 .mag-stat {
   background: #fff;
-  border: 1px solid var(--mag-line);
+  border: 1px solid var(--mag-edge);
   border-radius: 10px;
   padding: 13px 16px;
 }

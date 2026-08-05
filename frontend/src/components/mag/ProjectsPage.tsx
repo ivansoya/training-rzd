@@ -8,6 +8,7 @@ import {
 } from "../../auth/api";
 import type { InvitationItem, ProjectSummary } from "../../auth/api";
 import CreateProjectModal from "./CreateProjectModal";
+import { initials } from "../auth/AccountPage";
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
@@ -86,7 +87,7 @@ export default function ProjectsPage() {
           type="button"
           onClick={() => setShowCreate(true)}
         >
-          Новый проект
+          Создать проект
         </button>
       </div>
 
@@ -104,16 +105,55 @@ export default function ProjectsPage() {
             <Link key={p.id} to={`/projects/${p.code}`} className="mag-proj-card">
               <div className="mag-proj-top">
                 <h3>{p.name}</h3>
-                <span className="mag-code-badge">{p.code}</span>
+                {p.status === "importing" ? (
+                  <span className="mag-importing"><i />импорт</span>
+                ) : (
+                  <span className="mag-code-badge">{p.code}</span>
+                )}
               </div>
               {p.description && <p className="mag-proj-desc">{p.description}</p>}
+
+              <div className="mag-proj-nums">
+                <div>
+                  <b>{p.images_count.toLocaleString("ru-RU")}</b>
+                  <span>изображений</span>
+                </div>
+                <div>
+                  <b>{p.annotations_count.toLocaleString("ru-RU")}</b>
+                  <span>разметок</span>
+                </div>
+                <div>
+                  <b>{p.classes_count}</b>
+                  <span>классов</span>
+                </div>
+                <div>
+                  <b>{p.datasets_count}</b>
+                  <span>
+                    {plural(p.datasets_count, "датасет", "датасета", "датасетов")}
+                  </span>
+                </div>
+              </div>
+
               <div className="mag-proj-foot">
+                <span className="mag-faces">
+                  {p.members.map((m, i) => (
+                    <span
+                      key={i}
+                      className={m.online ? "mag-ava on" : "mag-ava"}
+                      title={m.display_name}
+                    >
+                      {initials(m.display_name)}
+                    </span>
+                  ))}
+                  {p.members_count > p.members.length && (
+                    <span className="mag-ava more">
+                      +{p.members_count - p.members.length}
+                    </span>
+                  )}
+                </span>
                 <span className={`mag-role ${p.role}`}>{p.role_label}</span>
                 <span className="mag-proj-meta">
-                  {p.members_count}{" "}
-                  {plural(p.members_count, "участник", "участника", "участников")} ·{" "}
-                  {p.datasets_count}{" "}
-                  {plural(p.datasets_count, "датасет", "датасета", "датасетов")}
+                  создан {new Date(p.created_at).toLocaleDateString("ru-RU")}
                 </span>
               </div>
             </Link>

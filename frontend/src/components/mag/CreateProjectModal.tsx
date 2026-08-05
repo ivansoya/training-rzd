@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { ApiError, createProject, getFriends } from "../../auth/api";
 import type { FriendEntry } from "../../auth/api";
 import { initials } from "../auth/AccountPage";
+import { useEscape } from "./useEscape";
 
 interface Props {
   onClose: () => void;
@@ -14,22 +15,8 @@ interface Pick {
   role: string;
 }
 
-// Derive a project code from the latin letters/digits of the name; the user
-// can always overwrite it by hand.
-function suggestCode(name: string): string {
-  const latin = name
-    .toUpperCase()
-    .replace(/[^A-Z0-9\s-]/g, "")
-    .trim()
-    .replace(/[\s]+/g, "-")
-    .replace(/-+/g, "-");
-  return latin.slice(0, 16).replace(/^-|-$/g, "");
-}
-
 export default function CreateProjectModal({ onClose, onCreated }: Props) {
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
-  const [codeTouched, setCodeTouched] = useState(false);
   const [description, setDescription] = useState("");
   const [friends, setFriends] = useState<FriendEntry[]>([]);
   const [picks, setPicks] = useState<Record<string, Pick>>({});
@@ -37,12 +24,28 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [nudge, setNudge] = useState(false);
+  const nameRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     getFriends()
       .then((f) => setFriends(f.friends))
       .catch(() => {});
   }, []);
+
+  useEscape(onClose);
+
+  // Клик мимо модалки больше не закрывает её — слишком легко потерять набранное.
+  // Вместо этого показываем, чего не хватает; всё заполнено — просто дёргаем.
+  function handleBackdrop() {
+    if (!name.trim()) {
+      setFieldErrors((prev) => ({ ...prev, name: "Укажите название проекта." }));
+      nameRef.current?.focus();
+      return;
+    }
+    setNudge(true);
+    window.setTimeout(() => setNudge(false), 400);
+  }
 
   const visibleFriends = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -72,12 +75,7 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
       const invites = Object.entries(picks)
         .filter(([, p]) => p.checked)
         .map(([user_id, p]) => ({ user_id, role: p.role }));
-      const { code: created } = await createProject({
-        name,
-        code,
-        description,
-        invites,
-      });
+      const { code: created } = await createProject({ name, description, invites });
       onCreated(created);
     } catch (err) {
       if (err instanceof ApiError && err.fields) setFieldErrors(err.fields);
@@ -88,16 +86,21 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
   }
 
   return (
-    <div className="mag-backdrop" onClick={onClose}>
+    <div className="mag-backdrop" onClick={handleBackdrop}>
       <form
-        className="mag-modal mag-modal-2col"
+        className={
+          nudge
+            ? "mag-modal mag-modal-2col mag-modal-nudge"
+            : "mag-modal mag-modal-2col"
+        }
         onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
       >
         <div className="mag-modal-left">
           <h1>Новый проект</h1>
           <p className="mag-sub">
-            Код генерируется из названия — по нему проект находят в поиске.
+            Код проекта присвоится автоматически. Датасет загрузим на странице
+            проекта.
           </p>
           {error && <div className="mag-error">{error}</div>}
           <div className={fieldErrors.name ? "mag-field invalid" : "mag-field"}>
@@ -105,36 +108,25 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
             <input
               id="np-name"
               type="text"
+              ref={nameRef}
               value={name}
               onChange={(e) => {
                 setName(e.target.value);
-                if (!codeTouched) setCode(suggestCode(e.target.value));
+                // Подсветка гаснет, как только человек начал отвечать на неё.
+                if (fieldErrors.name) {
+                  setFieldErrors(({ name: _drop, ...rest }) => rest);
+                }
               }}
             />
             {fieldErrors.name && (
               <div className="mag-field-error">{fieldErrors.name}</div>
             )}
           </div>
-          <div className={fieldErrors.code ? "mag-field invalid" : "mag-field"}>
-            <label htmlFor="np-code">Код проекта</label>
-            <input
-              id="np-code"
-              type="text"
-              className="mag-mono"
-              value={code}
-              onChange={(e) => {
-                setCodeTouched(true);
-                setCode(e.target.value.toUpperCase());
-              }}
-            />
-            {fieldErrors.code && (
-              <div className="mag-field-error">{fieldErrors.code}</div>
-            )}
-          </div>
           <div className="mag-field">
             <label htmlFor="np-desc">Описание</label>
             <textarea
               id="np-desc"
+              rows={3}
               value={description}
               onChange={(e) => setDescription(e.target.value)}
             />

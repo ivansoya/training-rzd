@@ -36,6 +36,27 @@ def slugify(text):
     return re.sub(r"[^A-Za-z0-9]+", "_", text or "").strip("_")
 
 
+_TRANSLIT = {
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "c", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+}
+
+
+def translit_slug(text):
+    """Slug that survives a Cyrillic name: «Варан КЗТ» -> varan_kzt.
+
+    Plain slugify() would return an empty string for it, so every dataset in a
+    project would end up named "dataset", "dataset_2"…
+    """
+    out = []
+    for ch in (text or "").lower():
+        out.append(_TRANSLIT.get(ch, ch))
+    return slugify("".join(out))
+
+
 def make_id(display_name, parent, fallback="ds"):
     """Build a unique ASCII id for a new folder under ``parent``.
 
