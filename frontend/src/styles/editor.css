@@ -58,6 +58,63 @@
 .mag-cv.cur-draw { cursor: crosshair; }
 .mag-cv.cur-pan { cursor: grab; }
 .mag-cv.cur-grabbing { cursor: grabbing; }
+.mag-cv.cur-auto { cursor: crosshair; }
+
+/* --- полуавтоматическая разметка ---
+   Слой лежит поверх сцены и вне трансформа, поэтому размеры здесь обычные,
+   экранные: делить на масштаб нельзя — доли пикселя браузер округляет
+   по-разному, и точка вытягивается в овал с чёрной каймой вместо заливки. */
+.mag-cv-over {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.mag-cv-pt {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: #2ee06a;
+  border: 2px solid #08120c;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 7px rgba(46, 224, 106, 0.8);
+}
+
+/* Полая точка — «этого участка в объекте нет» */
+.mag-cv-pt.neg {
+  background: #14181c;
+  border-color: #ff5d5d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45), 0 0 7px rgba(255, 93, 93, 0.8);
+}
+
+.mag-cv-lasso {
+  position: absolute;
+  border: 2px dashed #ffd43b;
+  background: rgba(255, 212, 59, 0.12);
+}
+
+/* Ещё не закреплённая детекция: рамка пунктиром, чтобы её нельзя было
+   спутать с обычным боксом. */
+.mag-cv-pre {
+  position: absolute;
+  border: 2px dashed var(--bc);
+  box-sizing: border-box;
+}
+
+.mag-cv-mask {
+  position: absolute;
+  overflow: visible;
+}
+
+/* non-scaling-stroke: контур растянут под кадр, но толщина остаётся 2 px */
+.mag-cv-mask polygon {
+  fill: none;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
 
 /* will-change тут был бы вреден: слой кешируется растром и на зуме мылится */
 .mag-cv-canvas {
@@ -305,6 +362,47 @@
   white-space: nowrap;
 }
 
+/* Класс, который получат новые объекты: в полуавтомате он важнее всего —
+   именно им подпишется всё, что найдёт модель. */
+.mag-ed-active {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--ed-dim);
+  background: none;
+  border: 1px solid #333c46;
+  border-radius: 999px;
+  padding: 3px 10px 3px 6px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.mag-ed-active:hover {
+  border-color: #4a5663;
+  color: #e8ecef;
+}
+
+.mag-ed-active b {
+  font-size: 9px;
+  opacity: 0.7;
+}
+
+.mag-ed-active i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+}
+
+.mag-ed-active.on {
+  color: #e8ecef;
+  border-color: var(--mag-red);
+  box-shadow: 0 0 0 2px rgba(226, 26, 26, 0.16);
+}
+
 .mag-ed-flag.del { color: #ff8a80; border-color: rgba(226, 26, 26, 0.5); }
 .mag-ed-flag.nul { color: #9dc2f5; border-color: rgba(47, 111, 208, 0.55); }
 .mag-ed-flag.skip { color: #e6c07a; border-color: rgba(208, 154, 60, 0.5); }
@@ -360,6 +458,148 @@
   border: 0;
   border-top: 1px solid var(--ed-edge);
   margin: 3px 0;
+}
+
+/* Пока модель поднимается — кнопка приглушена и медленно дышит: первый
+   подъём весов занимает десятки секунд, и молчание выглядело бы поломкой. */
+.mag-tool.warming {
+  animation: mag-warming 1.4s ease-in-out infinite;
+}
+
+@keyframes mag-warming {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 0.75; }
+}
+
+/* Полоса подтверждения: пока показан пунктир, принять его должно быть видно */
+.mag-auto-bar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  z-index: 9;
+  display: flex;
+  gap: 8px;
+  padding: 7px;
+  background: rgba(20, 24, 28, 0.92);
+  border: 1px solid #333c46;
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+.mag-auto-ok,
+.mag-auto-no {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: inherit;
+  font-size: 12.5px;
+  border-radius: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+  border: 1px solid #333c46;
+  background: var(--ed-btn);
+  color: #e8ecef;
+}
+
+.mag-auto-ok {
+  background: var(--mag-red);
+  border-color: var(--mag-red);
+  font-weight: 700;
+}
+
+.mag-auto-ok kbd,
+.mag-auto-no kbd {
+  font: 600 10px ui-monospace, Menlo, Consolas, monospace;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 4px;
+  padding: 1px 5px;
+  opacity: 0.85;
+}
+
+/* Окошко параметров полуавтомата — рядом с рейком, поверх холста */
+.mag-auto-panel {
+  position: absolute;
+  left: 52px;
+  top: 12px;
+  z-index: 8;
+  width: 236px;
+  background: #1b2129;
+  border: 1px solid #333c46;
+  border-radius: 10px;
+  padding: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+}
+
+.mag-auto-panel h5 {
+  margin: 0 0 10px;
+  font: 700 9px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ed-dim);
+}
+
+.mag-auto-row,
+.mag-auto-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: #cbd5e0;
+}
+
+.mag-auto-row > span:first-child {
+  width: 82px;
+  flex: none;
+  color: var(--ed-dim);
+}
+
+.mag-auto-row select,
+.mag-auto-row input[type="number"] {
+  flex: 1;
+  min-width: 0;
+  background: #0e1114;
+  border: 1px solid #333c46;
+  border-radius: 6px;
+  color: #e8ecef;
+  padding: 4px 7px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.mag-auto-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--mag-red);
+}
+
+.mag-auto-row b {
+  font: 600 11px ui-monospace, Menlo, Consolas, monospace;
+  width: 30px;
+  text-align: right;
+}
+
+.mag-auto-check {
+  align-items: flex-start;
+  line-height: 1.35;
+}
+
+.mag-auto-hint {
+  margin: 10px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ed-dim);
+}
+
+.mag-auto-err {
+  margin-top: 9px;
+  padding: 7px 9px;
+  border-radius: 7px;
+  font-size: 11.5px;
+  background: rgba(226, 26, 26, 0.12);
+  border: 1px solid rgba(226, 26, 26, 0.4);
+  color: #ff9d9d;
 }
 
 .mag-tool {
@@ -571,6 +811,25 @@
   gap: 2px;
   max-height: 232px;
   overflow-y: auto;
+}
+
+/* Отделено чертой: это не выбор класса, а удаление */
+.mag-cmenu-del {
+  border: none;
+  border-top: 1px solid #333c46;
+  background: none;
+  color: #ff8b8b;
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  padding: 8px 8px 2px;
+  margin-top: 1px;
+  cursor: pointer;
+  border-radius: 0 0 6px 6px;
+}
+
+.mag-cmenu-del:hover {
+  background: rgba(226, 26, 26, 0.12);
 }
 
 /* ===== Просмотр: холст встаёт между стрелками ===== */

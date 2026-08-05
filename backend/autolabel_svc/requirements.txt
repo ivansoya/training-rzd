@@ -1,0 +1,11 @@
+Flask==3.0.3
+flask-cors==4.0.1
+gunicorn==22.0.0
+SQLAlchemy==2.0.41
+psycopg2-binary==2.9.10
+Pillow==11.0.0
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+# SAM2 ставится из репозитория Meta: на PyPI официального пакета нет.
+# Тянет за собой hydra-core и iopath.
+git+https://github.com/facebookresearch/sam2.git@main

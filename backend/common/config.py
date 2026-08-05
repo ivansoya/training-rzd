@@ -46,13 +46,23 @@ PREVIEW_QUALITY = 82
 JOBS_DIR = os.path.join(DATA_DIR, "_jobs")
 TMP_DIR = os.path.join(DATA_DIR, "_tmp")
 
+# Веса моделей полуавтоматической разметки. На томе, а не в образе: образ не
+# пухнет на гигабайты, веса переживают пересборку, а сменить размер модели
+# можно переменной окружения. Отдельно от MODELS_DIR — тот перечисляется как
+# список обученных моделей в /tools, и папка sam2 в нём стала бы «моделью».
+AUTOLABEL_DIR = os.path.join(DATA_DIR, "_autolabel")
+
+
+def auto_weights_dir(model):
+    return os.path.join(AUTOLABEL_DIR, model)
+
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
 BASE_CONFIG_ID = "base"
 
 _ALL_DIRS = (
     UPLOADED_DIR, AUGMENTED_DIR, TRAININGS_DIR, MODELS_DIR, INFERENCE_DIR,
-    VIDEOS_DIR, JOBS_DIR, TMP_DIR, PROJECTS_DIR,
+    VIDEOS_DIR, JOBS_DIR, TMP_DIR, PROJECTS_DIR, AUTOLABEL_DIR,
 )
 
 

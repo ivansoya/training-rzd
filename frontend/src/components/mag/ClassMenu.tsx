@@ -11,12 +11,15 @@ export default function ClassMenu({
   at,
   current,
   onPick,
+  onDelete,
   onClose,
 }: {
   classes: LabelClass[];
   at: { x: number; y: number };
   current: number | null;
   onPick: (classIndex: number) => void;
+  /** Есть только когда меню открыто на детекции, а не на плашке класса. */
+  onDelete?: () => void;
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -83,6 +86,11 @@ export default function ClassMenu({
           ))
         )}
       </div>
+      {onDelete && (
+        <button type="button" className="mag-cmenu-del" onClick={onDelete}>
+          Удалить детекцию
+        </button>
+      )}
     </div>
   );
 }

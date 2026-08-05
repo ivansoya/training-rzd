@@ -757,6 +757,64 @@ export async function cutVideo(
   return asJson(await post(`tasks/${taskId}/videos/${videoId}/cut`, { segments }));
 }
 
+// --- полуавтоматическая разметка ---
+// Диалога у воркера нет: весь набор точек уходит на каждый клик. Поэтому
+// перезапуск процесса на сервере не теряет начатое выделение.
+
+export interface AutoPoint {
+  x: number;
+  y: number;
+  /** 1 — объект здесь, 0 — этого участка в объекте нет. */
+  label: number;
+}
+
+export interface AutoRefine {
+  detail?: "auto" | "object" | "part" | "subpart";
+  score_min?: number;
+  min_area?: number;
+  fill_holes?: boolean;
+  polygon_points?: number;
+}
+
+export interface AutoShape {
+  type: string;
+  box: { x: number; y: number; w: number; h: number };
+  /** Все куски маски: объект бывает разорван стойкой на несколько областей. */
+  polygons?: [number, number][][];
+  score: number;
+}
+
+export async function openAutoSession(
+  model = "sam2",
+  params: Record<string, unknown> = {}
+): Promise<{ session_id: string; model: string; info: Record<string, unknown> }> {
+  return asJson(await post("auto/sessions", { model, params }));
+}
+
+export async function closeAutoSession(sessionId: string): Promise<void> {
+  await fetch(`/api/auto/sessions/${sessionId}`, { method: "DELETE", keepalive: true });
+}
+
+export async function warmAutoFrame(sessionId: string, imageId: string): Promise<void> {
+  await asJson(await post(`auto/sessions/${sessionId}/warm`, { image_id: imageId }));
+}
+
+export async function autoPredict(
+  sessionId: string,
+  imageId: string,
+  prompts: { points?: AutoPoint[]; box?: { x: number; y: number; w: number; h: number } },
+  refine: AutoRefine
+): Promise<{ shapes: AutoShape[]; reason?: string }> {
+  return asJson(
+    await post(`auto/sessions/${sessionId}/predict`, {
+      image_id: imageId,
+      prompts,
+      want: ["box", "polygon"],
+      refine,
+    })
+  );
+}
+
 export async function saveAnnotations(
   imageId: string,
   boxes: { class_index: number; x: number; y: number; w: number; h: number }[]

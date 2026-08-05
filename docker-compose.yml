@@ -1,6 +1,9 @@
 # Microservices: backend services share the yolo-data volume; the frontend
 # nginx is the single externally exposed port (8080) and routes /api/* to them.
 # PostgreSQL holds users/projects/annotations; image binaries stay on the volume.
+#
+# GPU обязателен: обучение и полуавтоматическая разметка резервируют nvidia
+# безусловно, отдельного CPU-пути и файла-оверрайда больше нет.
 services:
   db:
     image: postgres:16-alpine
@@ -94,8 +97,7 @@ services:
       context: ./backend
       dockerfile: training_svc/Dockerfile
       args:
-        # CPU torch by default; the GPU override switches this to a CUDA wheel.
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cpu
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
     container_name: yolo-training
     restart: unless-stopped
     # PyTorch DataLoader workers exchange batches through /dev/shm.
@@ -104,6 +106,44 @@ services:
       - yolo-data:/app/data
     expose:
       - "5000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # Полуавтоматическая разметка: пул процессов с моделями сегментации.
+  # Держит том (кадры читает по image_id) и БД (права по сессионной куке).
+  autolabel:
+    build:
+      context: ./backend
+      dockerfile: autolabel_svc/Dockerfile
+    container_name: yolo-autolabel
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
+      # Сколько разметчиков живёт на одном процессе с моделью.
+      - AUTOLABEL_USERS_PER_WORKER=5
+      - SAM2_MODEL=sam2.1_hiera_small
+      - SAM2_DEVICE=cuda
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    volumes:
+      - yolo-data:/app/data
+    expose:
+      - "5000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   frontend:
     build: ./frontend
@@ -114,6 +154,7 @@ services:
       - datasets
       - augmentation
       - training
+      - autolabel
     ports:
       - "8080:80"
 

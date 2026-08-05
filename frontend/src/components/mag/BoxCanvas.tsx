@@ -30,11 +30,35 @@ type Drag =
   | { kind: "new"; i: number; x0: number; y0: number }
   | { kind: "move"; i: number; dx: number; dy: number }
   | { kind: "resize"; i: number; corner: string }
-  | { kind: "pan"; px: number; py: number; ox: number; oy: number };
+  | { kind: "pan"; px: number; py: number; ox: number; oy: number }
+  // Выделение области под подсказку модели — боксом оно ещё не становится.
+  | { kind: "lasso"; x0: number; y0: number }
+  // В полуавтомате Shift значит и точку, и панораму: клик без движения —
+  // точка, протяжка — панорама. Развести их можно только по факту движения.
+  | { kind: "maybe"; px: number; py: number; ox: number; oy: number;
+      ix: number; iy: number; shift: boolean };
 
 export interface CanvasHandle {
   zoomBy(factor: number): void;
   fit(): void;
+}
+
+/** Подсказка для модели: где объект (label 1) и где его точно нет (label 0). */
+export interface CanvasPoint {
+  x: number;
+  y: number;
+  label: number;
+}
+
+/** Ещё не закреплённая детекция: контур того, что модель сочла объектом. */
+export interface CanvasPreview {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  /** Куски маски. Рамка охватывает их все, обводка обязана показывать столько же. */
+  polygons?: [number, number][][];
+  color: string;
 }
 
 const MIN_BOX = 3;
@@ -66,7 +90,11 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   hidden?: Set<number>;
   labels?: boolean;
   editable?: boolean;
-  tool?: "select" | "box";
+  tool?: "select" | "box" | "auto";
+  /** Вид полуавтомата: набор точек или выделение области. */
+  autoMode?: "points" | "box";
+  autoPoints?: CanvasPoint[];
+  autoPreview?: CanvasPreview | null;
   activeClass?: number | null;
   selected?: number | null;
   grid?: boolean;
@@ -78,14 +106,26 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onScale?: (s: number) => void;
   /** Правая кнопка на боксе — сменить класс. */
   onContext?: (i: number, clientX: number, clientY: number) => void;
+  /** Клик в полуавтомате. Смысл жеста решает редактор, холст только сообщает. */
+  onAutoPoint?: (
+    p: { x: number; y: number },
+    opts: { shift: boolean; negative: boolean; onBox: number | null }
+  ) => void;
+  /** Область, выделенная в полуавтомате: подсказка-бокс для модели. */
+  onAutoBox?: (b: { x: number; y: number; w: number; h: number }) => void;
+  /** Клик без протяжки в режиме области — «закрепить показанное». */
+  onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
     imageId, fileName, width, height, boxes, labelOf, hidden, labels = true,
-    editable = false, tool = "select", activeClass = null, selected = null,
+    editable = false, tool = "select", autoMode = "points", autoPoints,
+    autoPreview = null, activeClass = null, selected = null,
     grid = true, reserve = 210, onSelect, onBoxes, onDrawn, onScale, onContext,
+    onAutoPoint, onAutoBox, onAutoCommit,
   },
   ref
 ) {
+  const [lasso, setLasso] = useState<CanvasBox | null>(null);
   const [view, setView] = useState({ s: 1, x: 0, y: 0 });
   const [hires, setHires] = useState(false);
   const [dragKind, setDragKind] = useState<Drag["kind"] | null>(null);
@@ -96,6 +136,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   const stageRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<Drag | null>(null);
+  const lassoRef = useRef<CanvasBox | null>(null);
   const boxesRef = useRef(boxes);
   boxesRef.current = boxes;
 
@@ -173,6 +214,20 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     const d = dragRef.current;
     dragRef.current = null;
     setDragKind(null);
+    if (d?.kind === "maybe") {
+      // Мышь не сдвинулась — это был клик по кадру, а не панорама.
+      onAutoPoint?.({ x: d.ix, y: d.iy }, { shift: d.shift, negative: false, onBox: null });
+      return;
+    }
+    if (d?.kind === "lasso") {
+      const b = lassoRef.current;
+      lassoRef.current = null;
+      setLasso(null);
+      // Протяжка — новая подсказка модели, клик без протяжки — «закрепить».
+      if (b && b.w >= MIN_BOX && b.h >= MIN_BOX) onAutoBox?.({ x: b.x, y: b.y, w: b.w, h: b.h });
+      else onAutoCommit?.();
+      return;
+    }
     if (d?.kind !== "new") return;
     // Промах мышью — не объект.
     const b = boxesRef.current[d.i];
@@ -181,7 +236,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       onSelect?.(null);
     }
     onDrawn?.();
-  }, [onBoxes, onSelect, onDrawn]);
+  }, [onBoxes, onSelect, onDrawn, onAutoPoint, onAutoBox, onAutoCommit]);
 
   // Страховка от залипания: если pointerup потерялся (нативный drag, уход из
   // окна, Alt+Tab), бокс иначе продолжает ехать за курсором.
@@ -217,9 +272,35 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   }
 
   function onStageDown(e: ReactPointerEvent<HTMLDivElement>) {
+    // Shift плюс правая кнопка — «этого участка в объекте нет». Только в
+    // режиме точек: в режиме области уточнять нечем, там работает рамка.
+    if (e.button === 2 && tool === "auto" && autoMode === "points" && editable && e.shiftKey) {
+      e.preventDefault();
+      onAutoPoint?.(toImage(e), { shift: true, negative: true, onBox: null });
+      return;
+    }
     if (e.button !== 0) return;
     // Гасим нативный drag и выделение текста: именно они рождают призрак бокса.
     e.preventDefault();
+    if (tool === "auto" && editable) {
+      if (autoMode === "box") {
+        if (e.shiftKey) {
+          begin(e, { kind: "pan", px: e.clientX, py: e.clientY, ox: view.x, oy: view.y });
+          return;
+        }
+        const p = toImage(e);
+        lassoRef.current = { class_index: -1, x: p.x, y: p.y, w: 0, h: 0 };
+        setLasso(lassoRef.current);
+        begin(e, { kind: "lasso", x0: p.x, y0: p.y });
+        return;
+      }
+      const p = toImage(e);
+      begin(e, {
+        kind: "maybe", px: e.clientX, py: e.clientY, ox: view.x, oy: view.y,
+        ix: p.x, iy: p.y, shift: e.shiftKey,
+      });
+      return;
+    }
     if (e.shiftKey || !editable) {
       begin(e, { kind: "pan", px: e.clientX, py: e.clientY, ox: view.x, oy: view.y });
       return;
@@ -238,6 +319,21 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   function onStageMove(e: ReactPointerEvent<HTMLDivElement>) {
     const d = dragRef.current;
     if (!d) return;
+    if (d.kind === "maybe") {
+      if (Math.abs(e.clientX - d.px) < 3 && Math.abs(e.clientY - d.py) < 3) return;
+      dragRef.current = { kind: "pan", px: d.px, py: d.py, ox: d.ox, oy: d.oy };
+      setDragKind("pan");
+      return;
+    }
+    if (d.kind === "lasso") {
+      const p = toImage(e);
+      const next = clampBox(
+        { class_index: -1, x: d.x0, y: d.y0, w: p.x - d.x0, h: p.y - d.y0 }, width, height
+      );
+      lassoRef.current = next;
+      setLasso(next);
+      return;
+    }
     if (d.kind === "pan") {
       setView((v) => ({
         ...v,
@@ -275,6 +371,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
 
   const cursor = dragKind === "pan"
     ? "grabbing"
+    : tool === "auto" && editable ? "auto"
     : shift || !editable ? "pan"
     : tool === "box" ? "draw" : "pick";
 
@@ -325,12 +422,31 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   if (!editable || !onContext) return;
                   e.preventDefault();
                   e.stopPropagation();
+                  // Shift+правая в полуавтомате — «убрать этот участок»,
+                  // точку уже поставил обработчик холста; меню тут лишнее.
+                  if (tool === "auto" && e.shiftKey) return;
                   onSelect?.(i);
                   onContext(i, e.clientX, e.clientY);
                 }}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return;
-                  onSelect?.(i);
+                  if (tool !== "auto") onSelect?.(i);
+                  // В полуавтомате бокс не таскают: Shift по нему — «доуточни
+                  // вот этот», обычный клик — начало нового объекта. В режиме
+                  // области событие уходит на холст: рамку рисуют и поверх
+                  // готовых боксов.
+                  if (tool === "auto" && editable) {
+                    if (autoMode !== "points") return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    // Выбор меняем только при подхвате: иначе обычный клик
+                    // забирал бы выделение, а Delete удалял не то.
+                    if (e.shiftKey) onSelect?.(i);
+                    onAutoPoint?.(toImage(e), {
+                      shift: e.shiftKey, negative: false, onBox: i,
+                    });
+                    return;
+                  }
                   // В просмотре бокс только выбирается, а протяжка панорамит:
                   // событие нарочно уходит дальше на холст.
                   if (!editable || e.shiftKey) return;
@@ -340,7 +456,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   begin(e, { kind: "move", i, dx: p.x - b.x, dy: p.y - b.y });
                 }}
               >
-                {on && editable && HANDLES.map((corner) => (
+                {on && editable && tool !== "auto" && HANDLES.map((corner) => (
                   <span
                     key={corner}
                     className={`mag-cv-h ${corner}`}
@@ -355,8 +471,77 @@ const BoxCanvas = forwardRef<CanvasHandle, {
               </span>
             );
           })}
+
         </div>
       </div>
+
+      {/* Слой полуавтомата — поверх сцены и вне трансформа. Внутри него
+          размеры пришлось бы делить на масштаб, а доли пикселя браузер
+          округляет по-разному: точка вытягивалась в овал, а её обводка
+          поднималась до целого пикселя и съедала заливку. */}
+      {(lasso || autoPreview || (autoPoints && autoPoints.length > 0)) && (
+        <div className="mag-cv-over">
+          {lasso && (
+            <span
+              className="mag-cv-lasso"
+              style={{
+                left: rect.l + (lasso.x / width) * rect.w,
+                top: rect.t + (lasso.y / height) * rect.h,
+                width: (lasso.w / width) * rect.w,
+                height: (lasso.h / height) * rect.h,
+              }}
+            />
+          )}
+
+          {/* Предварительная детекция: контур того, что модель сочла объектом,
+              и рамка вокруг. По одной рамке не понять, то ли она схватила. */}
+          {autoPreview && (
+            <>
+              <span
+                className="mag-cv-pre"
+                style={{
+                  left: rect.l + (autoPreview.x / width) * rect.w,
+                  top: rect.t + (autoPreview.y / height) * rect.h,
+                  width: (autoPreview.w / width) * rect.w,
+                  height: (autoPreview.h / height) * rect.h,
+                  ["--bc" as string]: autoPreview.color,
+                }}
+              />
+              {!!autoPreview.polygons?.length && (
+                <svg
+                  className="mag-cv-mask"
+                  viewBox={`0 0 ${width} ${height}`}
+                  preserveAspectRatio="none"
+                  style={{ left: rect.l, top: rect.t, width: rect.w, height: rect.h }}
+                >
+                  {autoPreview.polygons.map((ring, i) =>
+                    ring.length > 2 ? (
+                      <polygon
+                        key={i}
+                        points={ring.map((p) => p.join(",")).join(" ")}
+                        style={{ stroke: autoPreview.color }}
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    ) : null
+                  )}
+                </svg>
+              )}
+            </>
+          )}
+
+          {/* Точки-подсказки: сплошная — объект здесь, полая — здесь его нет */}
+          {autoPoints?.map((p, i) => (
+            <span
+              key={i}
+              className={p.label ? "mag-cv-pt" : "mag-cv-pt neg"}
+              style={{
+                left: rect.l + (p.x / width) * rect.w,
+                top: rect.t + (p.y / height) * rect.h,
+              }}
+            />
+          ))}
+        </div>
+      )}
 
       {/* Подписи — поверх сцены и вне трансформа: внутри масштабируемого слоя
           текст растрируется в уменьшенном виде и на зуме рассыпается. */}
