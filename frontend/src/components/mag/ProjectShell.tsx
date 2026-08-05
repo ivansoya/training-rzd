@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router-dom";
 import { getProject } from "../../auth/api";
 import type { ProjectDetail } from "../../auth/api";
+import ExportModal from "./ExportModal";
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} Б`;
@@ -31,6 +32,7 @@ export default function ProjectShell() {
   const { code } = useParams<{ code: string }>();
   const [detail, setDetail] = useState<ProjectDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [exporting, setExporting] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!code) return;
@@ -91,6 +93,21 @@ export default function ProjectShell() {
           <div><b>{stats.classes}</b><span>классов</span></div>
           <div><b>{formatBytes(stats.size_bytes)}</b><span>на сервере</span></div>
         </div>
+        {/* Выгрузка — чтение, поэтому доступна и наблюдателю: он и так видит
+            все кадры и может скачать их по одному. */}
+        <button
+          className="mag-ghost mag-ghost-inline mag-pass-export"
+          type="button"
+          disabled={project.status === "importing"}
+          title={
+            project.status === "importing"
+              ? "Дождитесь окончания импорта"
+              : "Собрать архив с изображениями и разметкой"
+          }
+          onClick={() => setExporting(true)}
+        >
+          Экспорт
+        </button>
       </div>
 
       <nav className="mag-tabs">
@@ -112,6 +129,10 @@ export default function ProjectShell() {
       </nav>
 
       <Outlet context={{ detail, refresh } satisfies ProjectContext} />
+
+      {exporting && (
+        <ExportModal detail={detail} onClose={() => setExporting(false)} />
+      )}
     </div>
   );
 }

@@ -10,6 +10,7 @@ from flask import Flask
 from flask_cors import CORS
 
 from common import config, db, jobs
+from datasets_svc.export_routes import bp as export_bp
 from datasets_svc.project_routes import bp as project_bp
 from datasets_svc.routes import bp
 from datasets_svc.task_routes import bp as task_bp
@@ -25,6 +26,7 @@ CORS(app, supports_credentials=True)
 app.register_blueprint(bp)
 app.register_blueprint(project_bp)
 app.register_blueprint(task_bp)
+app.register_blueprint(export_bp)
 
 
 if __name__ == "__main__":

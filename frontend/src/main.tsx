@@ -28,6 +28,7 @@ import "./styles/dataset.css";
 import "./styles/task.css";
 import "./styles/taskpage.css";
 import "./styles/editor.css";
+import "./styles/export.css";
 
 // Новый сайт («Магистраль»: проекты, кабинет) — главный. Старое приложение
 // живёт отдельно на /tools за тем же входом и напрямую не связано с новым.

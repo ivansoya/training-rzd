@@ -875,3 +875,70 @@ export function imagePreviewUrl(id: string): string {
 export function imageFileUrl(id: string): string {
   return `/api/images/${id}/file`;
 }
+
+// --- экспорт проекта ---
+// Номера классов в выгрузке свои (0..N-1): номера проекта разрежены, а YOLO
+// требует сплошной ряд. Соответствие лежит в classes.json внутри архива.
+
+export interface ExportOptions {
+  datasets: string[];
+  classes: string[];
+  /** keep — брать images.split, resplit — поделить всё заново. */
+  split_mode: "keep" | "resplit";
+  val_ratio: number;
+  format?: string;
+  ann_type?: string;
+}
+
+export interface ExportClassRow {
+  export_id: number;
+  class_index: number;
+  name: string;
+  train: number;
+  val: number;
+  test: number;
+  annotations: number;
+}
+
+export interface ExportPreview {
+  classes: ExportClassRow[];
+  images: number;
+  annotations: number;
+  /** Кадры «пусто»: уходят с пустым .txt как фоновые примеры. */
+  empty: number;
+  /** Отсеяно фильтром классов — разметка была, но не выбранная. */
+  dropped: number;
+  /** Кадры, которых никогда не касались: в выгрузку не идут по правилу. */
+  unlabelled: number;
+  splits: Record<string, number>;
+  val_ratio: number;
+  warnings: string[];
+}
+
+export interface ExportResult {
+  job_id: string;
+  file_name: string;
+  size_bytes: number;
+  images: number;
+  annotations: number;
+  splits: Record<string, number>;
+  classes: number;
+}
+
+export async function previewExport(
+  code: string,
+  opts: ExportOptions
+): Promise<ExportPreview> {
+  return asJson(await post(`projects/${encodeURIComponent(code)}/export/preview`, opts));
+}
+
+export async function startExport(
+  code: string,
+  opts: ExportOptions
+): Promise<{ job_id: string }> {
+  return asJson(await post(`projects/${encodeURIComponent(code)}/export`, opts));
+}
+
+export function exportDownloadUrl(code: string, jobId: string): string {
+  return `/api/projects/${encodeURIComponent(code)}/export/${jobId}/download`;
+}

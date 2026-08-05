@@ -46,6 +46,22 @@ PREVIEW_QUALITY = 82
 JOBS_DIR = os.path.join(DATA_DIR, "_jobs")
 TMP_DIR = os.path.join(DATA_DIR, "_tmp")
 
+# Готовые выгрузки проектов. Живут рядом с временным, но своей папкой: их
+# чистит возраст, а не завершение операции — ссылку на скачивание человек
+# открывает уже после того, как джоба закончилась.
+EXPORTS_DIR = os.path.join(TMP_DIR, "exports")
+EXPORT_KEEP_HOURS = 6
+
+
+def export_file(job_id):
+    return os.path.join(EXPORTS_DIR, f"{job_id}.zip")
+
+
+def export_meta(job_id):
+    """Паспорт выгрузки рядом с архивом: скачивание не зависит от того, жива
+    ли ещё запись джобы (файлы джоб чистятся по возрасту)."""
+    return os.path.join(EXPORTS_DIR, f"{job_id}.json")
+
 # Веса моделей полуавтоматической разметки. На томе, а не в образе: образ не
 # пухнет на гигабайты, веса переживают пересборку, а сменить размер модели
 # можно переменной окружения. Отдельно от MODELS_DIR — тот перечисляется как
@@ -62,7 +78,7 @@ BASE_CONFIG_ID = "base"
 
 _ALL_DIRS = (
     UPLOADED_DIR, AUGMENTED_DIR, TRAININGS_DIR, MODELS_DIR, INFERENCE_DIR,
-    VIDEOS_DIR, JOBS_DIR, TMP_DIR, PROJECTS_DIR, AUTOLABEL_DIR,
+    VIDEOS_DIR, JOBS_DIR, TMP_DIR, EXPORTS_DIR, PROJECTS_DIR, AUTOLABEL_DIR,
 )
 
 

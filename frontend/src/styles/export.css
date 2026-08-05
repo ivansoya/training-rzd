@@ -1,0 +1,315 @@
+/* Экспорт проекта: слева выбор (датасеты и классы), справа — что получится.
+   Обе колонки скроллятся сами, высота модалки не зависит от числа классов. */
+
+.mag-exp {
+  width: 940px;
+  max-width: 100%;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr 340px;
+  /* Строка списков тянется, подвал — по содержимому: иначе длинный список
+     классов вырастил бы модалку выше экрана. */
+  grid-template-rows: minmax(0, 1fr) auto;
+  max-height: min(720px, calc(100vh - 48px));
+  overflow: hidden;
+}
+
+.mag-exp-pick,
+.mag-exp-side {
+  padding: 22px;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.mag-exp-side {
+  background: var(--mag-bg);
+  border-left: 1px solid var(--mag-line);
+}
+
+.mag-exp-pick h1 {
+  font-size: 16px;
+  margin: 0 0 2px;
+  font-weight: 750;
+}
+
+.mag-exp-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+  margin: 16px 0 8px;
+}
+
+.mag-exp-pick > .mag-sub {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.mag-exp-acts {
+  margin-left: auto;
+  display: flex;
+  gap: 6px;
+}
+
+.mag-exp-acts button {
+  border: 1px solid var(--mag-edge);
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--mag-muted);
+  cursor: pointer;
+}
+
+.mag-exp-acts button:hover {
+  color: var(--mag-ink);
+  border-color: var(--mag-muted);
+}
+
+.mag-exp-list {
+  border: 1px solid var(--mag-line);
+  border-radius: 8px;
+  background: #fff;
+  overflow: auto;
+  flex: 0 0 auto;
+}
+
+/* Классов бывает под сотню — список получает всё, что осталось от колонки. */
+.mag-exp-classes {
+  flex: 1 1 auto;
+  min-height: 120px;
+}
+
+.mag-exp-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--mag-line);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mag-exp-row:last-child {
+  border-bottom: none;
+}
+
+.mag-exp-row:hover {
+  background: var(--mag-bg);
+}
+
+.mag-exp-row input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--mag-red);
+  cursor: pointer;
+}
+
+.mag-exp-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex: none;
+}
+
+.mag-exp-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mag-exp-num,
+.mag-exp-split {
+  font: 600 11px ui-monospace, Menlo, Consolas, monospace;
+  color: var(--mag-muted);
+  flex: none;
+}
+
+/* Пока выбор не посчитан, справа стоит число разметок; после подсчёта — как
+   класс лёг на train/val. Это и есть обещанная табличка. */
+.mag-exp-split b {
+  color: var(--mag-ink);
+  font-weight: 700;
+}
+
+.mag-exp-seg {
+  display: flex;
+  gap: 4px;
+  background: #fff;
+  border: 1px solid var(--mag-edge);
+  border-radius: 8px;
+  padding: 3px;
+}
+
+.mag-exp-seg button {
+  flex: 1 1 0;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  padding: 6px 4px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--mag-muted);
+  cursor: pointer;
+}
+
+.mag-exp-seg button.on {
+  background: var(--mag-graphite);
+  color: #fff;
+  font-weight: 650;
+}
+
+.mag-exp-seg button:disabled {
+  color: #b4bcc5;
+  cursor: not-allowed;
+}
+
+.mag-exp-hint {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--mag-muted);
+}
+
+.mag-exp-slider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.mag-exp-slider input {
+  flex: 1 1 auto;
+  accent-color: var(--mag-red);
+}
+
+.mag-exp-slider span {
+  font-size: 11.5px;
+  color: var(--mag-muted);
+  white-space: nowrap;
+}
+
+.mag-exp-sum {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 18px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--mag-line);
+  border-radius: 8px;
+}
+
+.mag-exp-sum b {
+  display: block;
+  font-size: 16px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-exp-sum span {
+  font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--mag-muted);
+}
+
+.mag-exp-warn {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid #f0d48a;
+  background: #fdf6e3;
+  color: #7a5a00;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mag-exp-progress {
+  position: relative;
+  margin-top: 14px;
+  height: 26px;
+  border-radius: 7px;
+  background: #fff;
+  border: 1px solid var(--mag-line);
+  overflow: hidden;
+}
+
+.mag-exp-progress i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: rgba(226, 26, 26, 0.16);
+  transition: width 0.2s ease;
+}
+
+.mag-exp-progress span {
+  position: relative;
+  display: block;
+  line-height: 24px;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--mag-ink);
+}
+
+.mag-exp-done {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border-radius: 7px;
+  border: 1px solid #b7e0c2;
+  background: #f0f9f3;
+}
+
+.mag-exp-done b {
+  display: block;
+  font-size: 13px;
+}
+
+.mag-exp-done span {
+  font-size: 11.5px;
+  color: var(--mag-muted);
+}
+
+.mag-exp .mag-modal-foot {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 22px;
+  border-top: 1px solid var(--mag-line);
+  background: #fafbfc;
+}
+
+/* Скачивание — ссылка, а не кнопка: браузер сам заберёт файл с куками. */
+.mag-exp .mag-modal-foot a.mag-btn {
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+}
+
+.mag-pass-export {
+  align-self: center;
+}
+
+@media (max-width: 860px) {
+  .mag-exp {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(0, 1fr) auto auto;
+  }
+
+  .mag-exp-side {
+    border-left: none;
+    border-top: 1px solid var(--mag-line);
+  }
+}
