@@ -195,26 +195,38 @@ docker run --rm -v training-rzd_yolo-data:/data -v "$PWD":/out alpine \
 
 Остановить: `docker compose down` (данные остаются).
 
-### Обучение на GPU
+### Два композа: GPU и Mac
 
-По умолчанию образ собирается с CPU-версией PyTorch. Для обучения на GPU есть
-override-файл `docker-compose.gpu.yml`, который собирает бэкенд с CUDA-сборкой
-torch и пробрасывает в контейнер все GPU:
+`docker-compose.yml` — основной, для машины с NVIDIA. Сервисы `training` и
+`autolabel` собираются с CUDA-сборкой torch (cu121 и cu128) и резервируют все
+GPU через `deploy.resources.reservations.devices`. Требования на хосте:
 
-```bash
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up --build
-```
-
-Требования на хосте:
 - NVIDIA GPU и свежий драйвер;
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   (чтобы Docker мог отдать GPU контейнеру).
 
-После запуска на странице «Обучение моделей» в поле **«Устройство»** появятся
-доступные GPU; обучение с выбранным GPU идёт на сервере (в контейнере). Если
-GPU-образ не запущен, доступен только CPU, а запрос обучения на GPU отклоняется.
+На странице «Обучение моделей» в поле **«Устройство»** появятся доступные GPU;
+обучение с выбранным GPU идёт на сервере, в контейнере.
 
-> Образ с CUDA-сборкой torch заметно больше (несколько ГБ) и собирается дольше.
+`docker-compose.mac.yml` — для разработки на Mac с Apple Silicon:
+
+```bash
+docker compose -f docker-compose.mac.yml up -d --build
+```
+
+Тот же набор сервисов, но всё считает процессор: torch ставится обычными
+arm64-колёсами с PyPI, nvidia-резервации сняты, SAM2 работает с
+`SAM2_DEVICE=cpu` и лёгким весом `sam2.1_hiera_tiny`. Устройство «GPU» в UI не
+появится — список придёт пустым, запрос обучения на GPU отклоняется.
+
+> Docker Desktop на macOS запускает контейнеры в Linux-VM **без доступа к
+> Metal**: ни CUDA, ни MPS внутри контейнера не существует. Ускорить обучение
+> на Apple GPU можно только запуском сервиса на самом хосте, вне докера.
+
+Имя compose-проекта оба файла берут из каталога, поэтому тома у них общие
+(`training-rzd_pg-data`, `training-rzd_yolo-data`) — база и датасеты те же.
+Одновременно поднять оба нельзя: совпадают имена контейнеров и порт 8080.
+Правки в наборе сервисов нужно вносить в оба файла.
 
 > **Shared memory.** Обучение использует несколько процессов загрузки данных
 > (DataLoader), которые обмениваются батчами через `/dev/shm`. По умолчанию в

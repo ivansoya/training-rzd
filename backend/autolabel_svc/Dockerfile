@@ -18,7 +18,11 @@ RUN pip install --no-cache-dir torch==2.7.1 torchvision==0.22.1 \
     --index-url ${TORCH_INDEX_URL}
 
 COPY autolabel_svc/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# У sam2 в setup.py есть опциональное CUDA-расширение. Без nvcc его сборка
+# падает (ошибку пакет проглатывает, но тратит время и пугает логом), поэтому
+# на CPU-сборках передаём SAM2_BUILD_CUDA=0. По умолчанию — как было.
+ARG SAM2_BUILD_CUDA=1
+RUN SAM2_BUILD_CUDA=${SAM2_BUILD_CUDA} pip install --no-cache-dir -r requirements.txt
 
 ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app
 COPY common ./common

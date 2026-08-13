@@ -1,11 +1,18 @@
-# Microservices: backend services share the yolo-data volume; the frontend
-# nginx is the single externally exposed port (8080) and routes /api/* to them.
-# PostgreSQL holds users/projects/annotations; image binaries stay on the volume.
+# Сборка под Mac на Apple Silicon (arm64) — второй композ рядом с основным.
 #
-# Этот файл — основной, для машины с nvidia: обучение и полуавтоматическая
-# разметка резервируют GPU безусловно. Для разработки на Mac (Apple Silicon)
-# рядом лежит docker-compose.mac.yml — тот же набор сервисов на CPU/arm64.
-# Правки сервисов нужно вносить в оба файла.
+# Docker Desktop на macOS держит контейнеры в Linux-VM без доступа к Metal:
+# внутри контейнера нет ни CUDA, ни MPS. Поэтому здесь всё считает процессор —
+# обучение и полуавтоматическая разметка работают, но заметно медленнее, чем на
+# nvidia. Ускорение через MPS возможно только запуском сервиса на самом хосте,
+# вне докера; такого пути в проекте пока нет.
+#
+#   docker compose -f docker-compose.mac.yml up -d --build
+#   docker compose -f docker-compose.mac.yml down
+#
+# Имя проекта compose берёт из каталога, поэтому тома здесь те же, что у
+# основного файла (training-rzd_pg-data, training-rzd_yolo-data): база и
+# снимки общие. Одновременно оба композа не поднять — совпадают имена
+# контейнеров и порт 8080.
 services:
   db:
     image: postgres:16-alpine
@@ -27,7 +34,6 @@ services:
       - "127.0.0.1:5432:5432"
 
   # Dev mail-catcher: every outgoing email lands here (web UI on :8025).
-  # In prod, point the auth service's SMTP_* env at a real relay instead.
   mailpit:
     image: axllent/mailpit
     container_name: yolo-mailpit
@@ -67,7 +73,6 @@ services:
     environment:
       # Report the *real* host drive in the disk meter (see common.config).
       - HOST_STAT_PATH=/hoststat
-      # Owns project data: binaries on the volume, everything else in Postgres.
       - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
     depends_on:
       db:
@@ -77,8 +82,8 @@ services:
         condition: service_started
     volumes:
       - yolo-data:/app/data
-      # Read-only bind of a host dir (lives on the same physical drive Docker
-      # stores its data on) purely so the service can stat real free space.
+      # На macOS это bind в VM: каталог только стат-ится, ничего не читается
+      # построчно, так что медленный проброс тут не мешает.
       - ./:/hoststat:ro
     expose:
       - "5000"
@@ -99,7 +104,10 @@ services:
       context: ./backend
       dockerfile: training_svc/Dockerfile
       args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+        # Колёса torch под linux/aarch64 живут на обычном PyPI; индексы
+        # download.pytorch.org/whl/* собраны под x86 и этих версий там нет.
+        # Обычная aarch64-сборка torch и так без CUDA — ровно что нужно.
+        TORCH_INDEX_URL: https://pypi.org/simple
     container_name: yolo-training
     restart: unless-stopped
     # PyTorch DataLoader workers exchange batches through /dev/shm.
@@ -108,28 +116,27 @@ services:
       - yolo-data:/app/data
     expose:
       - "5000"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # Никаких deploy.resources.reservations.devices: nvidia-рантайма на Mac нет,
+    # с этим блоком контейнер просто не стартует. Обучение пойдёт на CPU —
+    # в UI выбирайте устройство «cpu», список GPU придёт пустым.
 
-  # Полуавтоматическая разметка: пул процессов с моделями сегментации.
-  # Держит том (кадры читает по image_id) и БД (права по сессионной куке).
+  # Полуавтоматическая разметка на CPU. Кодировщик кадра считается секундами,
+  # клики после этого мгновенные; берём самый лёгкий вес, чтобы разница не
+  # превращала редактор в слайд-шоу.
   autolabel:
     build:
       context: ./backend
       dockerfile: autolabel_svc/Dockerfile
+      args:
+        TORCH_INDEX_URL: https://pypi.org/simple
+        SAM2_BUILD_CUDA: "0"
     container_name: yolo-autolabel
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
-      # Сколько разметчиков живёт на одном процессе с моделью.
       - AUTOLABEL_USERS_PER_WORKER=5
-      - SAM2_MODEL=sam2.1_hiera_small
-      - SAM2_DEVICE=cuda
+      - SAM2_MODEL=sam2.1_hiera_tiny
+      - SAM2_DEVICE=cpu
     depends_on:
       db:
         condition: service_healthy
@@ -139,13 +146,6 @@ services:
       - yolo-data:/app/data
     expose:
       - "5000"
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
 
   frontend:
     build: ./frontend
@@ -161,8 +161,6 @@ services:
       - "8080:80"
 
 volumes:
-  # Named volume (ext4 inside the VM) shared by all services — fast I/O and
-  # reliable cross-container reads. Survives rebuilds and `down`; `down -v` wipes.
+  # Те же имена, что в основном композе: данные общие между сборками.
   yolo-data:
-  # PostgreSQL data directory; survives rebuilds and `down`, wiped by `down -v`.
   pg-data:
