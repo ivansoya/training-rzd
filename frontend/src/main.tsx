@@ -28,6 +28,7 @@ import "./styles/dataset.css";
 import "./styles/task.css";
 import "./styles/taskpage.css";
 import "./styles/editor.css";
+import "./styles/video.css";
 import "./styles/export.css";
 
 // Новый сайт («Магистраль»: проекты, кабинет) — главный. Старое приложение

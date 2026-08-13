@@ -160,9 +160,40 @@ services:
     ports:
       - "8080:80"
 
+  # Прогон тестов и отчёт на http://localhost:8090. Только для разработки:
+  #   docker compose --profile dev up -d tests
+  # Без --profile dev сервис не поднимается — тесты ходят в живой бэкенд и
+  # создают там данные, чему в бою делать нечего.
+  tests:
+    profiles: ["dev"]
+    build: ./tests
+    container_name: yolo-tests
+    environment:
+      - TEST_BASE_URL=http://frontend
+      - TEST_DB_DSN=postgresql://app:app@db:5432/app
+      - TEST_MAILPIT_URL=http://mailpit:8025
+    depends_on:
+      - frontend
+    volumes:
+      # Исходники монтируются, а не копируются: правку теста видно сразу.
+      - ./tests:/work/tests
+      - ./backend:/work/backend:ro
+      - ./frontend:/work/frontend
+      # Свои node_modules поверх хозяйских: бинарники в них собраны под
+      # платформу разработчика и в linux-контейнере не запускаются.
+      - test-node-modules:/work/frontend/node_modules
+      # То же для сквозных тестов: пакет Playwright раскатывается сюда
+      # из образа, а каталог тестов остаётся чистым.
+      - test-e2e-modules:/work/tests/e2e/node_modules
+    ports:
+      - "127.0.0.1:8090:8090"
+
 volumes:
   # Named volume (ext4 inside the VM) shared by all services — fast I/O and
   # reliable cross-container reads. Survives rebuilds and `down`; `down -v` wipes.
   yolo-data:
   # PostgreSQL data directory; survives rebuilds and `down`, wiped by `down -v`.
   pg-data:
+  # Зависимости клиента для тестового прогона. Живут отдельно от хозяйских.
+  test-node-modules:
+  test-e2e-modules:

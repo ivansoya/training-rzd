@@ -48,6 +48,10 @@ IMAGE_TASK_STATUS_ENUM = sa.Enum(
 # Кто нарисовал бокс. created_by для этого не годится: там пусто и у машинной
 # разметки, и у осиротевшей после удаления пользователя.
 ANN_SOURCE_ENUM = sa.Enum("human", "model", name="annotation_source")
+# Что делают с загруженным роликом. Выбирается один раз при загрузке и больше
+# не меняется: «cut» — нарезаем кадры и размечаем их, «annotate» — размечаем
+# сам ролик по кадрам, а кадры появляются при сдаче таски.
+VIDEO_MODE_ENUM = sa.Enum("cut", "annotate", name="video_mode")
 FRIENDSHIP_STATUS_ENUM = sa.Enum("pending", "accepted", name="friendship_status")
 INVITATION_STATUS_ENUM = sa.Enum(
     "pending", "accepted", "declined", name="invitation_status"
@@ -174,6 +178,8 @@ class Image(Base, AuditMixin):
         ),
         sa.Index("ix_images_dataset", "dataset_id"),
         sa.Index("ix_images_project", "project_id"),
+        # Поиск «есть ли уже изображение для этого кадра» при повторной сдаче.
+        sa.Index("ix_images_video_frame", "source_video_id", "source_frame_no"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
@@ -205,6 +211,11 @@ class Image(Base, AuditMixin):
         sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="SET NULL"), nullable=True
     )
     source_time_ms: Mapped[int | None] = mapped_column(sa.Integer)
+    # Номер кадра — только у кадров, материализованных из размечаемого видео.
+    # По нему повторная сдача находит уже созданное изображение и правит его,
+    # а не плодит второй экземпляр того же кадра. У нарезки он пуст: там кадр
+    # адресуется временем, и попасть точно в тот же кадр нарезка не обещает.
+    source_frame_no: Mapped[int | None] = mapped_column(sa.Integer)
     width: Mapped[int | None] = mapped_column(sa.Integer)
     height: Mapped[int | None] = mapped_column(sa.Integer)
     size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
@@ -317,10 +328,98 @@ class TaskVideo(Base, AuditMixin):
     width: Mapped[int | None] = mapped_column(sa.Integer)
     height: Mapped[int | None] = mapped_column(sa.Integer)
     size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
+    # Что с роликом делают. Решается при загрузке и не меняется: от режима
+    # зависит и хранение разметки, и то, откуда в проекте берутся кадры.
+    mode: Mapped[str] = mapped_column(
+        VIDEO_MODE_ENUM, nullable=False, default="cut", server_default="cut"
+    )
+    # Сколько всего кадров. Нужен размечаемому видео: таймлайн ходит по
+    # номерам кадров, а не по секундам, иначе «тот самый кадр» не адресуется.
+    frame_count: Mapped[int | None] = mapped_column(sa.Integer)
     # План нарезки: [{start_ms, end_ms, step_ms}]. Именно план, а не история —
     # кадры таски приводятся к нему, поэтому он перезаписывается целиком.
     # Одиночный кадр — участок длиной в миллисекунду.
     segments: Mapped[list | None] = mapped_column(JsonCol)
+
+
+class VideoTrack(Base, AuditMixin):
+    """Объект, живущий во времени: появился на кадре, пропал на другом.
+
+    Трек-бокс — второй инструмент редактора рядом с обычным боксом. Обычный
+    принадлежит одному кадру, трек тянется от кадра появления до кадра, где
+    его убрали, и между ключевыми кадрами считается сам.
+    """
+
+    __tablename__ = "video_tracks"
+    __table_args__ = (sa.Index("ix_video_tracks_video", "video_id"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="CASCADE"), nullable=False
+    )
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("classes.id", ondelete="CASCADE"), nullable=False
+    )
+    # Кадр появления и кадр, на котором трек убрали. Пустой конец — «ещё не
+    # убран», трек живёт до последнего кадра ролика.
+    start_frame: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    end_frame: Mapped[int | None] = mapped_column(sa.Integer)
+    # Считать ли положение между ключевыми кадрами. Выключено — бокс стоит на
+    # месте последнего ключевого до следующего.
+    interpolate: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=True, server_default=sa.true()
+    )
+    # Каждый N-й кадр трека уходит в проект при сдаче таски. Задаётся у трека:
+    # быстрый объект выгружают часто, медленный — редко.
+    export_step: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=1, server_default="1"
+    )
+    # Подпись в списке объектов редактора: «вагон #3». Не обязательна.
+    label: Mapped[str | None] = mapped_column(sa.String(64))
+
+
+class VideoAnnotation(Base, AuditMixin):
+    """Бокс на конкретном кадре размечаемого видео.
+
+    Пока таска не сдана, разметка видео живёт здесь, а не в ``annotations``:
+    кадров как изображений ещё не существует. На сдаче нужные кадры
+    извлекаются из ролика и разметка переезжает в обычные аннотации.
+
+    У трека строки — это ключевые кадры: то, что разметчик поставил рукой.
+    Промежуточные положения считаются из соседних ключевых.
+    """
+
+    __tablename__ = "video_annotations"
+    __table_args__ = (
+        # У трека на кадре ровно один бокс — иначе интерполяция неоднозначна.
+        sa.UniqueConstraint("track_id", "frame_no", name="uq_track_frame"),
+        sa.Index("ix_video_ann_video_frame", "video_id", "frame_no"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="CASCADE"), nullable=False
+    )
+    # Пусто — обычный одиночный бокс, живущий только на своём кадре.
+    track_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("video_tracks.id", ondelete="CASCADE"), nullable=True
+    )
+    frame_no: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("classes.id", ondelete="CASCADE"), nullable=False
+    )
+    ann_type: Mapped[str] = mapped_column(
+        ANN_TYPE_ENUM, nullable=False, default="bbox", server_default="bbox"
+    )
+    geometry: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    # Объект есть, но его не видно — заслонён. Действует от этого ключевого
+    # кадра до следующего; невидимые кадры в разметку проекта не попадают.
+    visible: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=True, server_default=sa.true()
+    )
+    source: Mapped[str] = mapped_column(
+        ANN_SOURCE_ENUM, nullable=False, default="human", server_default="human"
+    )
 
 
 class TaskEvent(Base):

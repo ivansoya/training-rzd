@@ -1,7 +1,8 @@
 """API полуавтоматической разметки.
 
 Кадр сюда не загружают: сервис держит тот же том, что и остальные, и читает
-файл по image_id. Права проверяются по сессионной куке — как в datasets_svc.
+файл сам — по image_id для изображения или по ролику и номеру кадра для
+размечаемого видео. Права проверяются по сессионной куке — как в datasets_svc.
 """
 import os
 import uuid
@@ -12,7 +13,7 @@ from autolabel_svc.manager import WorkerError, manager
 from common import config
 from common.auth import current_user, has_role, role_in
 from common.db import SessionLocal
-from common.models import Image, Project
+from common.models import Image, Project, Task, TaskVideo
 
 bp = Blueprint("autolabel", __name__, url_prefix="/api/auto")
 
@@ -38,15 +39,35 @@ def _caller():
         db.close()
 
 
-def _frame(image_id):
+def frame_key(data):
+    """Чем кодировщик помечает закодированный кадр в своём кэше.
+
+    У изображения это его id, у кадра видео — ролик и номер. Ключи не должны
+    пересекаться: иначе кадр одного ролика подменил бы кадр другого.
+    """
+    if data.get("video_id") is not None:
+        return f"v:{data['video_id']}:{int(data.get('frame_no') or 0)}"
+    return str(data.get("image_id"))
+
+
+def _frame(data):
     """(user_id, путь к кадру, error) одним походом в БД: predict зовут на
-    каждый клик, и лишний запрос там стоит миллисекунд отклика."""
+    каждый клик, и лишний запрос там стоит миллисекунд отклика.
+
+    Кадр размечаемого видео берётся из того же распакованного кэша, который
+    пишет datasets_svc, отдавая кадр редактору. Второго декодера здесь нет
+    осознанно: видео умеет разбирать один сервис, и он же владеет кэшем.
+    """
     db = SessionLocal()
     try:
         user = current_user(db)
         if user is None:
             return None, None, (jsonify({"error": "Не выполнен вход."}), 401)
-        iid = _uuid_or_none(image_id)
+
+        if data.get("video_id") is not None:
+            return _video_frame(db, user, data)
+
+        iid = _uuid_or_none(data.get("image_id"))
         image = db.get(Image, iid) if iid else None
         if image is None:
             return None, None, (jsonify({"error": "Изображение не найдено."}), 404)
@@ -59,6 +80,33 @@ def _frame(image_id):
         return str(user.id), path, None
     finally:
         db.close()
+
+
+def _video_frame(db, user, data):
+    vid = _uuid_or_none(data.get("video_id"))
+    video = db.get(TaskVideo, vid) if vid else None
+    if video is None:
+        return None, None, (jsonify({"error": "Видео не найдено."}), 404)
+    task = db.get(Task, video.task_id)
+    project = db.get(Project, task.project_id) if task else None
+    if project is None or not has_role(role_in(db, user, project), "editor"):
+        return None, None, (jsonify({"error": "Недостаточно прав в проекте."}), 403)
+
+    try:
+        frame_no = int(data.get("frame_no"))
+    except (TypeError, ValueError):
+        return None, None, (jsonify({"error": "Не указан кадр."}), 400)
+    path = os.path.join(
+        config.task_video_dir(project.id, task.id), f"{video.id}_frames", f"{frame_no}.jpg"
+    )
+    if not os.path.exists(path):
+        # Кадр вытеснили из кэша. Клиент умеет это чинить: запросит картинку
+        # кадра, датасетный сервис распакует её заново, и клик повторится.
+        return None, None, (
+            jsonify({"error": "Кадр ещё не распакован.", "code": "frame_not_ready"}),
+            409,
+        )
+    return str(user.id), path, None
 
 
 @bp.post("/sessions")
@@ -94,7 +142,7 @@ def warm(session_id):
     """Прогрев кадра. Редактор зовёт его на текущий кадр и фоном на соседний:
     кодировщик — самая дорогая часть, клики после него мгновенные."""
     data = request.get_json(silent=True) or {}
-    user_id, path, err = _frame(data.get("image_id"))
+    user_id, path, err = _frame(data)
     if err:
         return err
     session = manager.get(session_id, user_id)
@@ -102,7 +150,9 @@ def warm(session_id):
         return jsonify({"error": "Сессия не найдена."}), 404
     try:
         return jsonify(
-            session.worker.call("warm", {"image_path": path, "image_id": data["image_id"]})
+            session.worker.call(
+                "warm", {"image_path": path, "image_id": frame_key(data)}
+            )
         )
     except WorkerError as exc:
         return jsonify({"error": str(exc)}), 503
@@ -113,7 +163,7 @@ def predict(session_id):
     """Весь набор точек приходит целиком на каждый клик — воркер не помнит
     диалог, поэтому его перезапуск не теряет начатое выделение."""
     data = request.get_json(silent=True) or {}
-    user_id, path, err = _frame(data.get("image_id"))
+    user_id, path, err = _frame(data)
     if err:
         return err
     session = manager.get(session_id, user_id)
@@ -125,7 +175,7 @@ def predict(session_id):
                 "predict",
                 {
                     "image_path": path,
-                    "image_id": data["image_id"],
+                    "image_id": frame_key(data),
                     "prompts": data.get("prompts") or {},
                     "want": data.get("want") or ["box"],
                     "refine": data.get("refine") or {},

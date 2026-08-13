@@ -81,7 +81,12 @@ function clampBox(b: CanvasBox, w: number, h: number): CanvasBox {
 }
 
 const BoxCanvas = forwardRef<CanvasHandle, {
+  /** Ключ картинки: по нему сбрасывается зум при смене кадра. Для изображения
+   *  это его id, для кадра видео — номер кадра. */
   imageId: string;
+  /** Готовый адрес картинки. Кадр видео приходит из декодера одним размером,
+   *  и превью с оригиналом у него не различаются — значит адрес задаёт хозяин. */
+  src?: string;
   fileName?: string;
   width: number;
   height: number;
@@ -117,7 +122,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, fileName, width, height, boxes, labelOf, hidden, labels = true,
+    imageId, src, fileName, width, height, boxes, labelOf, hidden, labels = true,
     editable = false, tool = "select", autoMode = "points", autoPoints,
     autoPreview = null, activeClass = null, selected = null,
     grid = true, reserve = 210, onSelect, onBoxes, onDrawn, onScale, onContext,
@@ -394,13 +399,14 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       >
         <div className="mag-cv-frame" ref={frameRef}>
           <img
-            src={imagePreviewUrl(imageId)}
+            src={src || imagePreviewUrl(imageId)}
             alt={fileName || ""}
             draggable={false}
             style={{ maxHeight: `calc(100vh - ${reserve}px)` }}
           />
-          {/* Оригинал приезжает вторым слоем: подмена src дала бы моргание */}
-          {hires && (
+          {/* Оригинал приезжает вторым слоем: подмена src дала бы моргание.
+              У кадра видео второго размера нет — слой не нужен. */}
+          {hires && !src && (
             <img className="mag-cv-hires" src={imageFileUrl(imageId)} alt="" draggable={false} />
           )}
           {boxes.map((b, i) => {

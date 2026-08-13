@@ -233,7 +233,10 @@ export default function AnnotationEditor({
 
   // --- полуавтоматическая разметка ---------------------------------------- #
 
-  const auto = useAutoLabel(image?.id, images[index + 1]?.id);
+  const auto = useAutoLabel(
+    image ? { image_id: image.id } : null,
+    images[index + 1] ? { image_id: images[index + 1].id } : null
+  );
 
   const clearAuto = useCallback(() => {
     setAutoPts([]);

@@ -21,7 +21,9 @@ import type {
 import AnnotationEditor from "./AnnotationEditor";
 import { TaskState } from "./ProjectTasks";
 import { plural } from "./ProjectsPage";
+import VideoAnnotator from "./VideoAnnotator";
 import VideoCutModal, { fmtBytes, fmtTime } from "./VideoCutModal";
+import VideoModeModal from "./VideoModeModal";
 
 const NEXT: Record<TaskStatus, { to: TaskStatus; label: string; hint: string }[]> = {
   queued: [{ to: "in_progress", label: "Взять в работу", hint: "" }],
@@ -55,6 +57,10 @@ export default function TaskPage() {
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [editing, setEditing] = useState<number | null>(null);
   const [cutting, setCutting] = useState<{ video: TaskVideoItem; at?: number } | null>(null);
+  // Размечаемый ролик открывается своим редактором, а не модалкой нарезки.
+  const [annotating, setAnnotating] = useState<TaskVideoItem | null>(null);
+  // Файл выбран, но режим ещё не назван: спрашиваем до отправки.
+  const [pendingVideo, setPendingVideo] = useState<File | null>(null);
   const [tab, setTab] = useState<Tab>("frames");
   const [filter, setFilter] = useState("");
 
@@ -265,13 +271,10 @@ export default function TaskPage() {
                 <input ref={videoRef} type="file" accept="video/*" hidden
                   onChange={(e) => {
                     const f = e.target.files?.[0];
-                    if (f && taskId) {
-                      setUploadPct(0);
-                      uploadTaskVideo(taskId, f, setUploadPct)
-                        .then(() => load())
-                        .catch((err) => setError((err as Error).message))
-                        .finally(() => setUploadPct(null));
-                    }
+                    // Режим спрашиваем до отправки: он навсегда, а файл может
+                    // быть на гигабайты — переливать его заново обидно.
+                    if (f) setPendingVideo(f);
+                    e.target.value = "";
                   }} />
                 <button className="mag-ghost mag-ghost-inline" type="button"
                   onClick={() => fileRef.current?.click()}>
@@ -301,7 +304,9 @@ export default function TaskPage() {
 
           {task.videos.map((v) => (
             <VideoRow key={v.id} taskId={task.id} video={v} editable={editable}
-              onOpen={(at) => setCutting({ video: v, at })} />
+              onOpen={(at) =>
+                v.mode === "annotate" ? setAnnotating(v) : setCutting({ video: v, at })
+              } />
           ))}
 
           {task.videos.length === 0 && task.from_files === 0 && (
@@ -448,9 +453,37 @@ export default function TaskPage() {
         </p>
       )}
 
+      {pendingVideo && (
+        <VideoModeModal
+          fileName={pendingVideo.name}
+          onClose={() => setPendingVideo(null)}
+          onPick={(mode) => {
+            const file = pendingVideo;
+            setPendingVideo(null);
+            if (!taskId) return;
+            setUploadPct(0);
+            uploadTaskVideo(taskId, file, setUploadPct, mode)
+              .then(() => load())
+              .catch((err) => setError((err as Error).message))
+              .finally(() => setUploadPct(null));
+          }}
+        />
+      )}
+
       {cutting && (
         <VideoCutModal taskId={task.id} video={cutting.video} editable={editable}
           startAtMs={cutting.at} onClose={() => setCutting(null)} onDone={load} />
+      )}
+
+      {annotating && (
+        <VideoAnnotator
+          code={code!}
+          taskId={task.id}
+          taskName={task.name}
+          video={annotating}
+          readOnly={!editable}
+          onClose={() => { setAnnotating(null); load(); }}
+        />
       )}
 
       {editing !== null && images[editing] && (
@@ -485,6 +518,7 @@ function VideoRow({
   onOpen: (at?: number) => void;
 }) {
   const duration = video.duration_ms || 1;
+  const marking = video.mode === "annotate";
   return (
     <div className="mag-src-video">
       <button className="mag-poster" type="button" onClick={() => onOpen()}>
@@ -494,29 +528,54 @@ function VideoRow({
       </button>
 
       <div className="mag-src-main">
-        <div className="mag-src-name">{video.file_name}</div>
+        <div className="mag-src-name">
+          {video.file_name}
+          <span className={marking ? "mag-src-mode mark" : "mag-src-mode"}>
+            {marking ? "размечается" : "нарезка"}
+          </span>
+        </div>
         <div className="mag-src-facts">
-          <div><b>{video.frames}</b>кадров нарезано</div>
-          <div>
-            <b>{video.segments.length}</b>
-            {plural(video.segments.length, "участок", "участка", "участков")}
-          </div>
+          {marking ? (
+            <>
+              <div>
+                <b>{video.tracks}</b>
+                {plural(video.tracks, "объект", "объекта", "объектов")}
+              </div>
+              <div><b>{video.frames}</b>кадров в проекте</div>
+            </>
+          ) : (
+            <>
+              <div><b>{video.frames}</b>кадров нарезано</div>
+              <div>
+                <b>{video.segments.length}</b>
+                {plural(video.segments.length, "участок", "участка", "участков")}
+              </div>
+            </>
+          )}
           <div><b>{fmtTime(duration)}</b>· {video.fps} к/с · {video.width}×{video.height}</div>
           <div><b>{fmtBytes(video.size_bytes)}</b></div>
         </div>
 
-        <div className="mag-mini">
-          {video.segments.map((s, i) => (
-            <span key={i} className="mag-mini-seg" style={{
-              left: `${(s.start_ms / duration) * 100}%`,
-              width: `${((s.end_ms - s.start_ms) / duration) * 100}%`,
-              background: `${SEG_COLORS[i % SEG_COLORS.length]}55`,
-              borderColor: SEG_COLORS[i % SEG_COLORS.length],
-            }} />
-          ))}
-        </div>
+        {!marking && (
+          <div className="mag-mini">
+            {video.segments.map((s, i) => (
+              <span key={i} className="mag-mini-seg" style={{
+                left: `${(s.start_ms / duration) * 100}%`,
+                width: `${((s.end_ms - s.start_ms) / duration) * 100}%`,
+                background: `${SEG_COLORS[i % SEG_COLORS.length]}55`,
+                borderColor: SEG_COLORS[i % SEG_COLORS.length],
+              }} />
+            ))}
+          </div>
+        )}
 
-        {video.segments.length > 0 ? (
+        {marking ? (
+          <p className="mag-hint" style={{ margin: "8px 0 0" }}>
+            {video.tracks > 0
+              ? "Разметка идёт по кадрам. Размеченные кадры уйдут в проект, когда сдадите таску."
+              : "Объектов пока нет — откройте редактор и обведите первый."}
+          </p>
+        ) : video.segments.length > 0 ? (
           <div className="mag-seglist">
             {video.segments.map((s, i) => {
               // Участок в миллисекунду — это одиночный кадр, а не диапазон.
@@ -552,7 +611,11 @@ function VideoRow({
 
       <div className="mag-src-act">
         <button className="mag-btn mag-btn-inline" type="button" onClick={() => onOpen()}>
-          {editable ? (video.segments.length ? "Нарезать ещё" : "Нарезать") : "Смотреть"}
+          {marking
+            ? (editable ? "Размечать" : "Смотреть разметку")
+            : editable
+              ? (video.segments.length ? "Нарезать ещё" : "Нарезать")
+              : "Смотреть"}
         </button>
       </div>
     </div>

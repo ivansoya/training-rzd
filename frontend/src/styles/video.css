@@ -1,0 +1,332 @@
+/* Видеоредактор, компоновка В2 «Жизнь объектов слева».
+
+   Оболочка та же, что у редактора кадров (.mag-ed): рейка слева, тёмный
+   «Пульт», те же токены. Отличие в том, что панель объектов переехала налево и
+   у каждого объекта своя дорожка времени, а внизу вместо киноленты — транспорт.
+
+   Дорожка объекта читается тремя вещами: отрезком жизни, ромбами ключей и
+   штриховкой на заслонённых кусках. Красная игла — текущий кадр, и она одна
+   на все дорожки: это единственное, что у них общее. */
+
+.mag-ved .mag-ed-body {
+  position: relative;
+}
+
+/* ===== Левая панель: классы, объекты, свойства ===== */
+.mag-ved-side {
+  width: 268px;
+  flex-shrink: 0;
+  background: var(--ed-panel);
+  border-right: 1px solid var(--ed-edge);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.mag-ved-side h5 {
+  margin: 0;
+  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ed-dim);
+}
+
+.mag-ved-classes {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 22vh;
+  overflow-y: auto;
+}
+
+.mag-ved-objs {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.mag-ved-obj {
+  border: 1px solid var(--ed-edge);
+  border-radius: 7px;
+  background: var(--ed-bg);
+  padding: 7px 8px 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.mag-ved-obj.on {
+  border-color: var(--mag-red, #e21a1a);
+  background: #1b2128;
+}
+
+.mag-ved-obj-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ed-ink);
+}
+
+.mag-ved-obj-head i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+
+.mag-ved-obj-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mag-ved-obj-n {
+  margin-left: auto;
+  font: 500 9.5px ui-monospace, Menlo, Consolas, monospace;
+  color: var(--ed-faint);
+  white-space: nowrap;
+}
+
+/* ===== Дорожка объекта ===== */
+.mag-ved-track {
+  position: relative;
+  height: 16px;
+  border: 1px solid var(--ed-edge);
+  border-radius: 4px;
+  background:
+    repeating-linear-gradient(90deg, transparent 0 23px, #1e252c 23px 24px);
+}
+
+.mag-ved-life {
+  position: absolute;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  opacity: 0.85;
+}
+
+/* Заслонённый кусок: объект есть, но в разметку не идёт. Штриховка, а не
+   пустота — пустота читалась бы как «здесь не размечали». */
+.mag-ved-occl {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.24) 0 2px,
+    transparent 2px 5px
+  );
+}
+
+.mag-ved-key {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border: 1.5px solid var(--ed-bg);
+  border-radius: 1px;
+}
+
+/* Ключ, объявляющий объект заслонённым, — полый: работа сделана, но кадр
+   в датасет не пойдёт. */
+.mag-ved-key.off {
+  background: var(--ed-bg) !important;
+  border-color: currentColor;
+  box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.45);
+}
+
+.mag-ved-needle {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--mag-red, #e21a1a);
+  pointer-events: none;
+}
+
+/* ===== Свойства выбранного объекта ===== */
+.mag-ved-props {
+  border-top: 1px solid var(--ed-edge);
+  padding-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.mag-ved-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ed-dim);
+}
+
+.mag-ved-row input[type="number"] {
+  width: 68px;
+  background: var(--ed-bg);
+  border: 1px solid #333c46;
+  border-radius: 5px;
+  padding: 4px 7px;
+  color: var(--ed-ink);
+  font: 500 12px ui-monospace, Menlo, Consolas, monospace;
+}
+
+.mag-ved-row input:focus { outline: none; border-color: var(--mag-red, #e21a1a); }
+
+.mag-ved-note {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--ed-faint);
+  line-height: 1.4;
+}
+
+.mag-ved-acts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+}
+
+.mag-ved-acts .mag-ed-btn { width: 100%; justify-content: center; }
+.mag-ved-acts .mag-ed-btn.del { color: #ff8f8f; }
+
+/* ===== Сцена: плеер и холст ===== */
+.mag-ved-stage {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+}
+
+/* Плеер живёт всегда — иначе перемотка каждый раз заново тянула бы файл, —
+   но виден только пока играет. Кадр под разметку приходит с сервера. */
+.mag-ved-player {
+  display: none;
+  max-width: 100%;
+  max-height: calc(100vh - 196px);
+  background: #000;
+}
+
+.mag-ved-player.on { display: block; }
+
+/* ===== Транспорт ===== */
+.mag-ved-transport {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 12px;
+  background: var(--ed-chrome);
+  border-top: 1px solid var(--ed-edge);
+}
+
+.mag-ved-time {
+  font: 500 11.5px ui-monospace, Menlo, Consolas, monospace;
+  color: var(--ed-dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mag-ved-scrub {
+  flex: 1;
+  min-width: 120px;
+  accent-color: var(--mag-red, #e21a1a);
+  height: 4px;
+}
+
+.mag-ved-mark {
+  font-size: 10.5px;
+  color: var(--s-done);
+  border: 1px solid var(--s-done);
+  border-radius: 999px;
+  padding: 1px 9px;
+  white-space: nowrap;
+}
+
+.mag-ved-plan {
+  font-size: 11.5px;
+  color: var(--ed-dim);
+  white-space: nowrap;
+}
+
+.mag-ved-plan b { color: var(--ed-ink); font-variant-numeric: tabular-nums; }
+
+.mag-ved-transport .mag-ed-keys {
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* ===== Выбор режима при загрузке видео ===== */
+.mag-vmode { max-width: 520px; }
+
+.mag-vmode-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0 12px;
+}
+
+.mag-vmode-pick {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  border: 1px solid var(--mag-edge, #dfe3e6);
+  border-radius: 8px;
+  padding: 13px 14px;
+  cursor: pointer;
+}
+
+.mag-vmode-pick.on {
+  border-color: var(--mag-red, #e21a1a);
+  background: #fdf3f3;
+}
+
+.mag-vmode-pick input { margin-top: 3px; accent-color: var(--mag-red, #e21a1a); }
+
+.mag-vmode-body { display: flex; flex-direction: column; gap: 4px; }
+.mag-vmode-body b { font-size: 14.5px; }
+.mag-vmode-body span { font-size: 13px; color: #5a646e; line-height: 1.45; }
+
+.mag-vmode-warn {
+  margin: 0;
+  font-size: 12.5px;
+  color: #7a848d;
+  border-left: 2px solid var(--mag-red, #e21a1a);
+  padding-left: 10px;
+}
+
+/* ===== Метка режима в списке источников ===== */
+.mag-src-mode {
+  margin-left: 8px;
+  font: 600 10px ui-monospace, Menlo, Consolas, monospace;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--mag-edge, #dfe3e6);
+  border-radius: 3px;
+  padding: 1px 6px;
+  color: #6f7a84;
+  vertical-align: middle;
+}
+
+.mag-src-mode.mark {
+  border-color: var(--mag-red, #e21a1a);
+  color: var(--mag-red, #e21a1a);
+}
+
+@media (max-width: 1100px) {
+  .mag-ved-side { width: 220px; }
+  .mag-ved-transport .mag-ed-keys { display: none; }
+}

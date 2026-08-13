@@ -141,8 +141,24 @@ async function asJson<T>(res: Response): Promise<T> {
 }
 
 function post(path: string, body: unknown = {}): Promise<Response> {
+  return send("POST", path, body);
+}
+
+function put(path: string, body: unknown = {}): Promise<Response> {
+  return send("PUT", path, body);
+}
+
+function patch(path: string, body: unknown = {}): Promise<Response> {
+  return send("PATCH", path, body);
+}
+
+function del(path: string): Promise<Response> {
+  return fetch(`/api/${path}`, { method: "DELETE" });
+}
+
+function send(method: string, path: string, body: unknown): Promise<Response> {
   return fetch(`/api/${path}`, {
-    method: "POST",
+    method,
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -560,6 +576,10 @@ export interface CutSegment {
   step_ms: number;
 }
 
+/** Что делают с роликом. Выбирается при загрузке и дальше не меняется:
+ *  «cut» — режем на кадры и размечаем их, «annotate» — размечаем сам ролик. */
+export type VideoMode = "cut" | "annotate";
+
 export interface TaskVideoItem {
   id: string;
   file_name: string;
@@ -568,8 +588,12 @@ export interface TaskVideoItem {
   width: number | null;
   height: number | null;
   size_bytes: number | null;
+  mode: VideoMode;
+  frame_count: number | null;
   segments: CutSegment[];
   frames: number;
+  /** Сколько объектов ведётся на размечаемом ролике. */
+  tracks: number;
 }
 
 export interface TaskDetail extends TaskSummary {
@@ -703,7 +727,8 @@ export function uploadTaskImages(
 export function uploadTaskVideo(
   id: string,
   file: File,
-  onProgress: (pct: number) => void
+  onProgress: (pct: number) => void,
+  mode: VideoMode = "cut"
 ): Promise<TaskVideoItem> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -724,6 +749,8 @@ export function uploadTaskVideo(
     xhr.onerror = () => reject(new ApiError("Не удалось передать видео."));
     const form = new FormData();
     form.append("file", file);
+    // Режим фиксируется на загрузке и потом не меняется — сервер это проверяет.
+    form.append("mode", mode);
     xhr.send(form);
   });
 }
@@ -755,6 +782,148 @@ export async function cutVideo(
   segments: Segment[]
 ): Promise<{ job_id: string }> {
   return asJson(await post(`tasks/${taskId}/videos/${videoId}/cut`, { segments }));
+}
+
+// --- разметка видео по кадрам ---
+// Кадр адресуется номером, а не временем: currentTime у <video> не даёт
+// номера, и «тот самый кадр» из-за этого не воспроизводится.
+
+export function videoFrameUrl(taskId: string, videoId: string, frameNo: number): string {
+  return `/api/tasks/${taskId}/videos/${videoId}/frame?n=${frameNo}`;
+}
+
+/** Положение объекта, заданное рукой. Между ключевыми кадрами считается. */
+export interface TrackKey {
+  frame_no: number;
+  geometry: { x: number; y: number; w: number; h: number };
+  /** Объект есть, но заслонён: до следующего ключа в разметку не идёт. */
+  visible: boolean;
+  source: string;
+}
+
+export interface VideoTrack {
+  id: string;
+  class_index: number | null;
+  start_frame: number;
+  end_frame: number | null;
+  interpolate: boolean;
+  export_step: number;
+  label: string | null;
+  keys: TrackKey[];
+}
+
+export interface VideoSingleBox {
+  id: string;
+  frame_no: number;
+  class_index: number | null;
+  geometry: { x: number; y: number; w: number; h: number };
+  source: string;
+}
+
+export interface VideoAnnotations {
+  video: {
+    id: string;
+    file_name: string;
+    mode: VideoMode;
+    fps: number | null;
+    duration_ms: number | null;
+    frame_count: number | null;
+    width: number | null;
+    height: number | null;
+  };
+  tracks: VideoTrack[];
+  singles: VideoSingleBox[];
+  /** Кадры, уже уехавшие в проект: правка попадёт в то же изображение. */
+  materialized: Record<string, string>;
+  editable: boolean;
+}
+
+export async function getVideoAnnotations(
+  taskId: string,
+  videoId: string
+): Promise<VideoAnnotations> {
+  return asJson(await fetch(`/api/tasks/${taskId}/videos/${videoId}/annotations`));
+}
+
+export async function createTrack(
+  taskId: string,
+  videoId: string,
+  body: {
+    class_index: number;
+    frame_no: number;
+    geometry: { x: number; y: number; w: number; h: number };
+    interpolate?: boolean;
+    export_step?: number;
+    label?: string | null;
+    source?: string;
+  }
+): Promise<VideoTrack> {
+  return asJson(await post(`tasks/${taskId}/videos/${videoId}/tracks`, body));
+}
+
+export async function updateTrack(
+  trackId: string,
+  body: Partial<{
+    class_index: number;
+    interpolate: boolean;
+    export_step: number;
+    label: string | null;
+    end_frame: number | null;
+  }>
+): Promise<VideoTrack> {
+  return asJson(await patch(`video-tracks/${trackId}`, body));
+}
+
+export async function deleteTrack(trackId: string): Promise<void> {
+  await asJson(await del(`video-tracks/${trackId}`));
+}
+
+export async function putTrackKey(
+  trackId: string,
+  frameNo: number,
+  body: {
+    geometry?: { x: number; y: number; w: number; h: number };
+    visible?: boolean;
+    source?: string;
+  }
+): Promise<VideoTrack> {
+  return asJson(await put(`video-tracks/${trackId}/keys/${frameNo}`, body));
+}
+
+export async function deleteTrackKey(
+  trackId: string,
+  frameNo: number
+): Promise<VideoTrack> {
+  return asJson(await del(`video-tracks/${trackId}/keys/${frameNo}`));
+}
+
+export async function saveFrameBoxes(
+  taskId: string,
+  videoId: string,
+  frameNo: number,
+  boxes: { class_index: number; x: number; y: number; w: number; h: number }[]
+): Promise<{ saved: number }> {
+  return asJson(
+    await put(`tasks/${taskId}/videos/${videoId}/frames/${frameNo}/boxes`, { boxes })
+  );
+}
+
+export interface MaterializePreview {
+  frames: number;
+  boxes: number;
+  new_frames: number;
+  updated_frames: number;
+  first_frames: number[];
+  error?: string;
+}
+
+export async function previewMaterialize(
+  taskId: string,
+  videoId: string
+): Promise<MaterializePreview> {
+  return asJson(
+    await post(`tasks/${taskId}/videos/${videoId}/materialize/preview`, {})
+  );
 }
 
 // --- полуавтоматическая разметка ---
@@ -795,19 +964,32 @@ export async function closeAutoSession(sessionId: string): Promise<void> {
   await fetch(`/api/auto/sessions/${sessionId}`, { method: "DELETE", keepalive: true });
 }
 
-export async function warmAutoFrame(sessionId: string, imageId: string): Promise<void> {
-  await asJson(await post(`auto/sessions/${sessionId}/warm`, { image_id: imageId }));
+/** Какой кадр греем и по какому предсказываем. Изображение адресуется своим
+ *  id, кадр размечаемого видео — роликом и номером: изображения для него ещё
+ *  не существует, оно появится только при сдаче таски. */
+export type AutoFrameRef =
+  | { image_id: string }
+  | { video_id: string; frame_no: number };
+
+/** Одна строка на кадр — по ней клиент отличает «это тот же кадр». */
+export function autoFrameKey(ref: AutoFrameRef | null): string | null {
+  if (!ref) return null;
+  return "image_id" in ref ? ref.image_id : `v:${ref.video_id}:${ref.frame_no}`;
+}
+
+export async function warmAutoFrame(sessionId: string, ref: AutoFrameRef): Promise<void> {
+  await asJson(await post(`auto/sessions/${sessionId}/warm`, ref));
 }
 
 export async function autoPredict(
   sessionId: string,
-  imageId: string,
+  ref: AutoFrameRef,
   prompts: { points?: AutoPoint[]; box?: { x: number; y: number; w: number; h: number } },
   refine: AutoRefine
 ): Promise<{ shapes: AutoShape[]; reason?: string }> {
   return asJson(
     await post(`auto/sessions/${sessionId}/predict`, {
-      image_id: imageId,
+      ...ref,
       prompts,
       want: ["box", "polygon"],
       refine,

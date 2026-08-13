@@ -32,9 +32,12 @@ from common.models import (
     TaskEvent,
     TaskVideo,
     User,
+    VideoTrack,
 )
 from common.storage import translit_slug
+from datasets_svc import materialize
 from datasets_svc import video as videolib
+from datasets_svc import video_tracks
 
 bp = Blueprint("tasks", __name__)
 
@@ -311,6 +314,14 @@ def get_task(task_id):
                    Image.task_status != "deleted")
             .group_by(Image.source_video_id)
         ).all())
+        # Сколько объектов ведётся на каждом размечаемом ролике: в списке
+        # источников у нарезки счётчик кадров, а у разметки — счётчик треков.
+        per_video_tracks = dict(db.execute(
+            select(VideoTrack.video_id, func.count(VideoTrack.id))
+            .join(TaskVideo, TaskVideo.id == VideoTrack.video_id)
+            .where(TaskVideo.task_id == task.id)
+            .group_by(VideoTrack.video_id)
+        ).all())
         data["videos"] = [
             {
                 "id": str(v.id),
@@ -320,8 +331,11 @@ def get_task(task_id):
                 "width": v.width,
                 "height": v.height,
                 "size_bytes": v.size_bytes,
+                "mode": v.mode,
+                "frame_count": v.frame_count,
                 "segments": v.segments or [],
                 "frames": per_video.get(v.id, 0),
+                "tracks": per_video_tracks.get(v.id, 0),
             }
             for v in videos
         ]
@@ -435,6 +449,23 @@ def set_status(task_id):
 
         result = {}
         if target == "done":
+            # Размеченное видео сдаётся не мгновенно: каждый кадр плана надо
+            # достать из ролика. Это фоновая задача с прогрессом — той же
+            # природы, что нарезка, и вести себя должна так же.
+            try:
+                pending_frames = materialize.count_pending(db, task)
+            except (videolib.VideoError, video_tracks.TrackError) as exc:
+                return jsonify({"error": str(exc)}), 400
+            if pending_frames:
+                job_id = jobs.create(
+                    "task-accept", total=pending_frames, message="Подготовка"
+                )
+                threading.Thread(
+                    target=_run_accept_job,
+                    args=(job_id, task.id, user.id),
+                    daemon=True,
+                ).start()
+                return jsonify({"job_id": job_id, "frames": pending_frames}), 202
             result = _accept(db, task, user)
         elif target == "closed":
             result = _close(db, task, user)
@@ -469,6 +500,41 @@ def _accept(db, task, user):
     return {"accepted": len(pending), "dataset": dataset.name}
 
 
+def _run_accept_job(job_id, task_id, user_id):
+    """Сдача таски с размеченным видео: извлечь кадры, потом принять их.
+
+    Состояние таски меняется только по успеху. Если декодер споткнулся,
+    таска остаётся в работе: «готово» при половине кадров в проекте — это
+    обещание, которого сдача не выполнила.
+    """
+    db = SessionLocal()
+    try:
+        task = db.get(Task, task_id)
+        user = db.get(User, user_id) if user_id else None
+        jobs.update(job_id, message="Извлекаю кадры из видео", phase="frames")
+        made = materialize.run(
+            db, task, user_id,
+            progress=lambda done: jobs.update(job_id, processed=done),
+        )
+        if made["created"] or made["updated"]:
+            _log(db, task, user, "video_materialized",
+                 created=made["created"], updated=made["updated"],
+                 boxes=made["boxes"])
+        jobs.update(job_id, message="Принимаю кадры в датасет", phase="accept")
+        result = _accept(db, task, user)
+        task.status = "done"
+        db.commit()
+        jobs.update(job_id, status="done", result={**result, **made})
+    except (videolib.VideoError, video_tracks.TrackError) as exc:
+        db.rollback()
+        jobs.update(job_id, status="error", error=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        jobs.update(job_id, status="error", error=str(exc))
+    finally:
+        db.close()
+
+
 def _drop_files(base, image_id):
     """Три размера кадра на томе. Отсутствие файла — не ошибка."""
     for sub in ("images", "thumbs", "preview"):
@@ -498,6 +564,13 @@ def _close(db, task, user):
             os.remove(os.path.join(config.DATA_DIR, v.file_path))
         except OSError:
             pass
+        # Распакованные кадры размечаемого ролика — такой же черновик, как сам
+        # ролик: то, что было размечено, уже лежит в проекте отдельными файлами.
+        shutil.rmtree(
+            os.path.join(config.task_video_dir(task.project_id, task.id),
+                         f"{v.id}_frames"),
+            ignore_errors=True,
+        )
         db.delete(v)
     _log(db, task, user, "closed", removed_images=removed, removed_videos=len(videos))
     return {"removed_images": removed, "removed_videos": len(videos)}
@@ -642,6 +715,11 @@ def upload_video(task_id):
         ext = os.path.splitext(file.filename)[1].lower()
         if ext not in config.VIDEO_EXTENSIONS:
             return jsonify({"error": "Такой формат видео не поддерживается."}), 400
+        # Режим выбирается здесь и больше не меняется: от него зависит и то,
+        # где живёт разметка, и то, откуда в проекте берутся кадры.
+        mode = (request.form.get("mode") or "cut").strip()
+        if mode not in ("cut", "annotate"):
+            return jsonify({"error": "Неизвестный режим работы с видео."}), 400
 
         vid = uuid.uuid4()
         vdir = config.task_video_dir(task.project_id, task.id)
@@ -654,21 +732,31 @@ def upload_video(task_id):
             os.remove(path)
             return jsonify({"error": str(exc)}), 400
 
+        # Размечаемому ролику нужен последний кадр: таймлайн ходит по номерам.
+        frame_count = videolib.count_frames(path) if mode == "annotate" else None
+        if mode == "annotate" and not meta.get("fps"):
+            os.remove(path)
+            return jsonify({
+                "error": "В видео нет частоты кадров — размечать его покадрово нельзя."
+            }), 400
+
         row = TaskVideo(
             id=vid, task_id=task.id, file_name=file.filename,
             file_path=os.path.relpath(path, config.DATA_DIR),
             size_bytes=os.path.getsize(path), segments=[],
+            mode=mode, frame_count=frame_count,
             created_by=user.id, **meta,
         )
         db.add(row)
         # Кинолента под таймлайн — сразу, пока файл горячий.
         videolib.make_strip(path, _strip_path(task, vid), meta.get("duration_ms"))
         _log(db, task, user, "video_added", file=file.filename,
-             duration_ms=meta.get("duration_ms"))
+             duration_ms=meta.get("duration_ms"), mode=mode)
         db.commit()
         return jsonify({
             "id": str(vid), "file_name": row.file_name,
-            "size_bytes": row.size_bytes, **meta,
+            "size_bytes": row.size_bytes, "mode": mode,
+            "frame_count": frame_count, **meta,
         }), 201
     finally:
         db.close()
