@@ -147,10 +147,18 @@
   box-shadow: 0 10px 40px rgba(0, 0, 0, 0.55);
 }
 
-.mag-cv-frame img {
+.mag-cv-frame img,
+.mag-cv-frame canvas {
   display: block;
   max-width: 100%;
   -webkit-user-drag: none;
+}
+
+/* Кадр ролика разжат в браузере и рисуется на холсте. Размер холста задаётся
+   атрибутами — так он ведёт себя как картинка: собственные пропорции плюс
+   ограничение по высоте, и боксы ложатся на те же проценты. */
+.mag-cv-frame canvas {
+  height: auto;
 }
 
 /* Оригинал приезжает вторым слоем: подмена src дала бы моргание */
@@ -347,6 +355,15 @@
 
 .mag-ed-cnt { color: var(--ed-dim); font-variant-numeric: tabular-nums; }
 .mag-ed-sp { margin-left: auto; }
+/* «сохраняю…» и «сохранено» разной длины: без общей ширины кнопки справа
+   прыгали бы на каждом сохранении. */
+.mag-ed-saved,
+.mag-ed-saving {
+  min-width: 74px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
 .mag-ed-saved { color: var(--ed-faint); font-size: 11.5px; }
 .mag-ed-saving { color: var(--s-skip); font-size: 11.5px; }
 .mag-ed-err { color: #ff8a80; font-size: 11.5px; }
@@ -439,6 +456,8 @@
   display: flex;
   flex: 1;
   min-height: 0;
+  /* Полоса ожидания ложится поверх кадра, а не в поток. */
+  position: relative;
 }
 
 .mag-ed-rail {

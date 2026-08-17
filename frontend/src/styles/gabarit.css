@@ -1,0 +1,567 @@
+/* ГАБАРИТ — очерк, в который вписываются все экраны «Магистрали».
+ *
+ * У железнодорожников габарит — очерк, за который не должно выходить ничего
+ * едущего по путям. Здесь то же: один набор имён цветов на весь проект.
+ *
+ * Светлые экраны управления и тёмный редактор перестают быть разными темами —
+ * это один набор имён с двумя наборами значений. Компонент не знает, на каком
+ * он фоне; он знает только, что написан на `--card` цветом `--ink`.
+ *
+ * Файл подключается ПОСЛЕДНИМ: старые наборы переменных (--mag-*, --ed-*,
+ * и легаси --bg/--panel) переопределяются здесь мостами на те же селекторы,
+ * что и в исходных файлах, и выигрывают по порядку. Так весь накопленный CSS
+ * получает новую палитру, не переписываясь построчно.
+ */
+
+/* ============================== ТОКЕНЫ ============================== */
+:root {
+  /* Поверхности: от фона страницы к карточке и её внутренним линиям. */
+  --paper: #f1f3f4;
+  --card: #ffffff;
+  --sunk: #f7f8f9;
+  --rule: #e2e6e9;
+  --hair: #edf0f2;
+
+  /* Текст: основной, приглушённый, служебный. */
+  --ink: #23282e;
+  --dim: #5d6873;
+  --faint: #8a949d;
+
+  /* Марка. */
+  --red: #e21a1a;
+  --red-hi: #c81616;
+  --red-in: #fdf3f3;
+
+  /* Состояния разметки — те же четыре, что и в данных. */
+  --done: #1a7f4b;
+  --null: #1f6feb;
+  --skip: #b8860b;
+  --del: #c2410c;
+
+  /* Текст на заливке акцентом. */
+  --on-acc: #ffffff;
+
+  --shadow: 0 1px 2px rgba(35, 40, 46, 0.06), 0 8px 24px rgba(35, 40, 46, 0.05);
+
+  --radius-s: 3px;
+  --radius: 5px;
+  --radius-l: 7px;
+
+  --mono: ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Тёмные значения. Три состояния темы: «как в системе» не ставит на корень
+ * ничего, поэтому основной случай — медиа-запрос, а стампы data-theme только
+ * перебивают его в обе стороны. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #15191d;
+    --card: #1c2126;
+    --sunk: #181d22;
+    --rule: #2b3238;
+    --hair: #242a30;
+
+    --ink: #e8ecef;
+    --dim: #9aa4ae;
+    --faint: #6b757f;
+
+    /* Фирменный #e21a1a на графите проваливается и перестаёт быть акцентом. */
+    --red: #ff4d4d;
+    --red-hi: #ff6b6b;
+    --red-in: #2a1618;
+
+    --done: #3fbf7f;
+    --null: #5a9bff;
+    --skip: #d9a441;
+    --del: #f97b4f;
+
+    --on-acc: #15191d;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper: #15191d;
+  --card: #1c2126;
+  --sunk: #181d22;
+  --rule: #2b3238;
+  --hair: #242a30;
+  --ink: #e8ecef;
+  --dim: #9aa4ae;
+  --faint: #6b757f;
+  --red: #ff4d4d;
+  --red-hi: #ff6b6b;
+  --red-in: #2a1618;
+  --done: #3fbf7f;
+  --null: #5a9bff;
+  --skip: #d9a441;
+  --del: #f97b4f;
+  --on-acc: #15191d;
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
+}
+
+/* ====================== МОСТЫ К НАКОПЛЕННОМУ CSS ====================== */
+
+/* Светлый сайт «Магистраль». Селектор тот же, что в auth.css, — выигрываем
+ * порядком подключения. */
+.mag {
+  --mag-red: var(--red);
+  --mag-red-dark: var(--red-hi);
+  --mag-ink: var(--ink);
+  --mag-muted: var(--dim);
+  --mag-line: var(--hair);
+  --mag-edge: var(--rule);
+  --mag-bg: var(--paper);
+  --mag-graphite: var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* В тёмной теме бренд-панель входа не может быть цветом текста — она сама
+ * поверхность. Возвращаем ей графит явно. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mag {
+    --mag-graphite: #10141a;
+  }
+}
+:root[data-theme="dark"] .mag {
+  --mag-graphite: #10141a;
+}
+
+/* Редактор разметки тёмный всегда, в любой теме: кадр рассматривают на
+ * нейтральном тёмном фоне, светлый вокруг картинки врёт про её яркость. */
+.mag-ed,
+.mag-cv,
+.mag-fs {
+  --ed-bg: #10141a;
+  --ed-chrome: #171c21;
+  --ed-panel: #1c2126;
+  --ed-edge: #2b3238;
+  --ed-btn: #242a30;
+  --ed-ink: #e8ecef;
+  --ed-dim: #9aa4ae;
+  --ed-faint: #6b757f;
+
+  --s-done: #3fbf7f;
+  --s-skip: #d9a441;
+  --s-null: #5a9bff;
+  --s-del: #ff4d4d;
+
+  /* Внутри редактора общие имена тоже тёмные — новые узлы пишутся уже на них. */
+  --paper: #10141a;
+  --card: #1c2126;
+  --sunk: #171c21;
+  --rule: #2b3238;
+  --hair: #242a30;
+  --ink: #e8ecef;
+  --dim: #9aa4ae;
+  --faint: #6b757f;
+  --red: #ff4d4d;
+  --red-hi: #ff6b6b;
+  --red-in: #2a1618;
+  --done: #3fbf7f;
+  --null: #5a9bff;
+  --skip: #d9a441;
+  --del: #f97b4f;
+  --on-acc: #10141a;
+}
+
+/* Старое приложение на /tools остаётся тёмным — оно писалось под тёмный фон
+ * с жёстко заданными цветами, и переключать его темой значило бы переписать
+ * тысячу строк ради экрана, который и так доживает свой век. Палитру
+ * пригоняем к общей: синий акцент уходит, красный приходит. */
+:root {
+  --bg: #10141a;
+  --panel: #1c2126;
+  --panel-2: #242a30;
+  --border: #2b3238;
+  --text: #e8ecef;
+  --muted: #9aa4ae;
+  --accent: #ff4d4d;
+  --danger: #ff4d4d;
+  --green: #3fbf7f;
+}
+
+/* ========================= ОБЩИЕ ПРИМИТИВЫ ========================= */
+
+/* Клавиатурный фокус виден везде одинаково. */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--red);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Всё, что число, набирается цифрами одинаковой ширины — иначе столбцы
+ * «прыгают», и сравнить два значения глазом нельзя. */
+.g-num,
+.g-stat b,
+.g-legend em,
+.g-rail b {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Крупное число с подписью под ним. Подпись именно снизу: пара «сколько
+ * чего» так читается одним движением глаз, а не двумя. */
+.g-stat b {
+  display: block;
+  font-size: 27px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -0.025em;
+}
+
+.g-stat span {
+  display: block;
+  margin-top: 5px;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+
+.g-stat.s b {
+  font-size: 19px;
+}
+
+/* Служебная метка: моноширинная, вразрядку, капсом. */
+.g-label {
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+/* Метка состояния. */
+.g-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 5px 9px;
+  border-radius: var(--radius-s);
+  border: 1px solid var(--rule);
+  color: var(--dim);
+  background: none;
+}
+
+.g-chip.mark { border-color: var(--red); color: var(--red); }
+.g-chip.done { border-color: var(--done); color: var(--done); }
+.g-chip.skip { border-color: var(--skip); color: var(--skip); }
+.g-chip.null { border-color: var(--null); color: var(--null); }
+
+/* Составная полоса состояния: доли читаются раньше, чем цифры. */
+.g-meter {
+  display: flex;
+  height: 9px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--hair);
+}
+
+.g-meter i { display: block; }
+.g-meter .m-done { background: var(--done); }
+.g-meter .m-null { background: var(--null); }
+.g-meter .m-skip { background: var(--skip); }
+
+.g-legend {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+.g-legend div {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--dim);
+}
+
+.g-legend em {
+  font-style: normal;
+  font-weight: 700;
+  font-size: 14.5px;
+  color: var(--ink);
+}
+
+.g-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+/* Путевая шкала — сквозной приём системы: появляется везде, где что-то
+ * меряется вдоль оси. Отметки как на километровом столбе, закрашенное —
+ * то, что уже сделано. */
+.g-rail {
+  position: relative;
+  height: 26px;
+}
+
+.g-rail-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 8px;
+  height: 2px;
+  background: var(--rule);
+}
+
+.g-rail i {
+  position: absolute;
+  top: 4px;
+  width: 1px;
+  height: 10px;
+  background: var(--faint);
+}
+
+.g-rail i.major {
+  top: 1px;
+  height: 16px;
+  background: var(--dim);
+}
+
+.g-rail u {
+  position: absolute;
+  top: 5px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--red);
+  opacity: 0.85;
+  text-decoration: none;
+}
+
+.g-rail b {
+  position: absolute;
+  top: 18px;
+  transform: translateX(-50%);
+  font: 500 9.5px/1 var(--mono);
+  color: var(--faint);
+}
+
+/* ===================== ВТОРОЙ УРОВЕНЬ НАВИГАЦИИ ===================== */
+
+/* Контекст: где мы сейчас и что у него внутри. Приклеен к верхней строке —
+ * на длинных списках кадров «где я» не должно уезжать вверх вместе с ними. */
+.g-ctx {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 0 22px;
+  min-height: 46px;
+  background: var(--sunk);
+  border-bottom: 1px solid var(--rule);
+  flex-wrap: wrap;
+}
+
+.g-ctx-back {
+  color: var(--dim);
+  text-decoration: none;
+  font-size: 17px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: var(--radius-s);
+}
+
+.g-ctx-back:hover {
+  color: var(--ink);
+  background: var(--hair);
+}
+
+.g-ctx-name {
+  font-weight: 680;
+  font-size: 14.5px;
+  letter-spacing: -0.012em;
+}
+
+.g-ctx-code {
+  font: 500 11px/1 var(--mono);
+  letter-spacing: 0.05em;
+  color: var(--faint);
+}
+
+.g-ctx-nav {
+  display: flex;
+  gap: 2px;
+  margin-left: auto;
+  overflow-x: auto;
+}
+
+.g-ctx-link {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+  padding: 13px 11px;
+  font-size: 13.5px;
+  color: var(--dim);
+  text-decoration: none;
+  border-bottom: 2px solid transparent;
+}
+
+.g-ctx-link:hover { color: var(--ink); }
+
+.g-ctx-link.on {
+  color: var(--red);
+  font-weight: 600;
+  border-bottom-color: var(--red);
+}
+
+.g-ctx-link span {
+  font: 600 10.5px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  background: var(--hair);
+  color: var(--faint);
+  padding: 3px 6px;
+  border-radius: 999px;
+}
+
+.g-ctx-link.on span {
+  background: var(--red-in);
+  color: var(--red);
+}
+
+/* Переключатель темы в верхней строке: три состояния, а не два — «как в
+ * системе» тоже осознанный выбор, и он должен быть виден. */
+.g-theme {
+  display: flex;
+  gap: 1px;
+  margin-left: auto;
+  background: var(--hair);
+  border-radius: var(--radius);
+  padding: 2px;
+}
+
+.g-theme button {
+  border: 0;
+  background: none;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1;
+  padding: 5px 8px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.g-theme button:hover { color: var(--ink); }
+
+.g-theme button.on {
+  background: var(--card);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+/* Пустой экран — приглашение действовать, а не сообщение о пустоте. */
+.g-empty {
+  text-align: center;
+  padding: 34px 20px;
+  color: var(--dim);
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius-l);
+  background: var(--sunk);
+}
+
+.g-empty b {
+  display: block;
+  color: var(--ink);
+  font-size: 15.5px;
+  margin-bottom: 5px;
+}
+
+/* ===================== БЛОКИ ИСТОЧНИКОВ И РОЛИКОВ ===================== */
+
+.g-blocks { display: flex; flex-direction: column; gap: 12px; }
+
+.g-block {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-l);
+  overflow: hidden;
+  background: var(--card);
+}
+
+.g-block-h {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  flex-wrap: wrap;
+  padding: 11px 14px;
+  background: var(--sunk);
+  border-bottom: 1px solid var(--rule);
+}
+
+.g-block-h h4 { margin: 0; font-size: 15px; font-weight: 650; }
+
+.g-block-poster {
+  width: 64px;
+  height: 30px;
+  object-fit: cover;
+  border-radius: var(--radius-s);
+  flex-shrink: 0;
+}
+
+.g-when {
+  font: 500 11.5px/1 var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.g-sp { flex: 1; }
+
+.g-block-b { padding: 14px; }
+
+/* Карточка ролика: числа слева, время справа. Компоновка К4 — у разметки
+   видео есть место во времени, и терять его в списке цифр жалко. */
+.g-vcard { display: grid; grid-template-columns: 190px 1fr; gap: 20px; }
+
+.g-vcard-nums { display: flex; flex-direction: column; gap: 14px; }
+
+.g-vcard-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+.g-strip {
+  width: 100%;
+  height: 54px;
+  object-fit: cover;
+  border-radius: var(--radius);
+  background: var(--hair);
+}
+
+.g-vcard-facts { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 6px; }
+
+.g-vcard-note {
+  margin: 4px 0 0;
+  font-size: 12.5px;
+  color: var(--dim);
+  line-height: 1.45;
+}
+
+/* Предупреждение о незакрытых роликах: их работы ещё нет в кадрах, и без
+   этой строки прогресс врал бы. */
+.g-warn {
+  border-left: 3px solid var(--skip);
+  font-size: 13.5px;
+  color: var(--dim);
+}
+
+.g-warn b { color: var(--ink); }
+
+@media (max-width: 780px) {
+  .g-vcard { grid-template-columns: 1fr; }
+  .g-vcard-nums { flex-direction: row; gap: 26px; flex-wrap: wrap; }
+}

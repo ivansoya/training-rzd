@@ -15,11 +15,11 @@
 /* Показатель, на который стоит посмотреть: пустые кадры, разнобой размеров */
 .mag-ds-stats .mag-stat.warn {
   border-color: #f0d9a8;
-  background: #fff9ec;
+  background: color-mix(in srgb, var(--skip) 12%, var(--card));
 }
 
 .mag-ds-stats .mag-stat.warn b {
-  color: #a86a00;
+  color: var(--skip);
 }
 
 /* ===== Панель фильтров ===== */
@@ -53,19 +53,19 @@
 .mag-ghost-inline.on {
   background: var(--mag-graphite);
   border-color: var(--mag-graphite);
-  color: #fff;
+  color: var(--on-acc);
 }
 
 .mag-seg {
   display: inline-flex;
-  border: 1px solid #c3ccd6;
+  border: 1px solid var(--rule);
   border-radius: 8px;
   overflow: hidden;
 }
 
 .mag-seg button {
   border: 0;
-  background: #fff;
+  background: var(--card);
   padding: 6px 12px;
   font-size: 12px;
   font-family: inherit;
@@ -75,12 +75,12 @@
 }
 
 .mag-seg button + button {
-  border-left: 1px solid #c3ccd6;
+  border-left: 1px solid var(--rule);
 }
 
 .mag-seg button.on {
   background: var(--mag-graphite);
-  color: #fff;
+  color: var(--on-acc);
 }
 
 .mag-found {
@@ -108,7 +108,7 @@
   border: 0;
   border-radius: 7px;
   overflow: hidden;
-  background: #e8ebef;
+  background: var(--hair);
   aspect-ratio: 4 / 3;
   cursor: pointer;
   /* Браузер пропускает отрисовку того, что за экраном: в режиме ленты это
@@ -147,7 +147,7 @@
   top: -1px;
   transform: translateY(-100%);
   font: 700 9px ui-monospace, Menlo, Consolas, monospace;
-  color: #fff;
+  color: var(--on-acc);
   padding: 1px 4px;
   border-radius: 3px 3px 0 0;
   white-space: nowrap;
@@ -160,7 +160,7 @@
   font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0.04em;
   background: rgba(29, 35, 41, 0.8);
-  color: #fff;
+  color: var(--on-acc);
   padding: 1px 5px;
   border-radius: 3px;
 }
@@ -332,7 +332,7 @@
 }
 
 .mag-v-obj-id {
-  color: #6e7a87;
+  color: var(--dim);
   font: 600 10.5px ui-monospace, Menlo, Consolas, monospace;
 }
 

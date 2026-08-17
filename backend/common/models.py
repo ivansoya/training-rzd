@@ -335,7 +335,18 @@ class TaskVideo(Base, AuditMixin):
     )
     # Сколько всего кадров. Нужен размечаемому видео: таймлайн ходит по
     # номерам кадров, а не по секундам, иначе «тот самый кадр» не адресуется.
+    # У размечаемого ролика это точное число из таблицы кадров, а не оценка.
     frame_count: Mapped[int | None] = mapped_column(sa.Integer)
+    # Отпечаток таблицы кадров. Сама таблица лежит файлом рядом с роликом —
+    # десятки тысяч чисел в строке БД не ищутся и не соединяются. Отпечаток
+    # нужен, чтобы отказать плану разметки, посчитанному по другой нумерации.
+    index_version: Mapped[str | None] = mapped_column(sa.String(32))
+    # Когда разметку ролика закрыли и превратили в кадры таски. Пусто — она
+    # ещё в работе. Материализация — событие, а не вечная синхронизация:
+    # созданные кадры дальше живут как обычные и никем не переписываются.
+    annotation_closed_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
     # План нарезки: [{start_ms, end_ms, step_ms}]. Именно план, а не история —
     # кадры таски приводятся к нему, поэтому он перезаписывается целиком.
     # Одиночный кадр — участок длиной в миллисекунду.
@@ -376,6 +387,12 @@ class VideoTrack(Base, AuditMixin):
     )
     # Подпись в списке объектов редактора: «вагон #3». Не обязательна.
     label: Mapped[str | None] = mapped_column(sa.String(64))
+    # Отрезки [от, до), на которых объект заслонён: он есть, но в разметку не
+    # идёт. Отрезки, а не флаг у ключа: разметчик тянет их за края мышью, и
+    # край обязан быть собственной сущностью, иначе жест двигал бы и бокс.
+    hidden_ranges: Mapped[list | None] = mapped_column(
+        JsonCol, nullable=False, default=list, server_default="[]"
+    )
 
 
 class VideoAnnotation(Base, AuditMixin):
@@ -386,7 +403,8 @@ class VideoAnnotation(Base, AuditMixin):
     извлекаются из ролика и разметка переезжает в обычные аннотации.
 
     У трека строки — это ключевые кадры: то, что разметчик поставил рукой.
-    Промежуточные положения считаются из соседних ключевых.
+    Промежуточные положения считаются из соседних ключевых, а заслонённые
+    участки живут отрезками у самого трека.
     """
 
     __tablename__ = "video_annotations"
@@ -412,11 +430,6 @@ class VideoAnnotation(Base, AuditMixin):
         ANN_TYPE_ENUM, nullable=False, default="bbox", server_default="bbox"
     )
     geometry: Mapped[dict] = mapped_column(JsonCol, nullable=False)
-    # Объект есть, но его не видно — заслонён. Действует от этого ключевого
-    # кадра до следующего; невидимые кадры в разметку проекта не попадают.
-    visible: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, default=True, server_default=sa.true()
-    )
     source: Mapped[str] = mapped_column(
         ANN_SOURCE_ENUM, nullable=False, default="human", server_default="human"
     )

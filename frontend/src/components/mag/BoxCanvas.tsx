@@ -80,6 +80,51 @@ function clampBox(b: CanvasBox, w: number, h: number): CanvasBox {
   return { ...b, x, y, w: x2 - x, h: y2 - y };
 }
 
+/** Кадр ролика на холсте.
+ *
+ * Разжатый кадр — не файл, грузить его неоткуда: он уже в памяти. Пока едет
+ * следующий, на холсте остаётся предыдущий: гасить картинку на время разжатия
+ * значило бы моргать при каждом шаге стрелкой.
+ */
+function BitmapView({
+  bitmap, width, height, maxHeight,
+}: {
+  bitmap: ImageBitmap | null;
+  width: number;
+  height: number;
+  maxHeight: string;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas || !bitmap) return;
+    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+    }
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    try {
+      ctx.drawImage(bitmap, 0, 0);
+    } catch {
+      // Картинку успели закрыть, пока мы до неё добирались: следующий кадр
+      // приедет и перерисует. Ронять отрисовку из-за этого незачем.
+    }
+  }, [bitmap]);
+
+  // До первого кадра размер берётся у исходника: иначе холст встанет в свои
+  // стандартные 300×150 и вся вёрстка дёрнется, когда приедет картинка.
+  return (
+    <canvas
+      ref={ref}
+      width={width}
+      height={height}
+      style={{ maxHeight }}
+    />
+  );
+}
+
 const BoxCanvas = forwardRef<CanvasHandle, {
   /** Ключ картинки: по нему сбрасывается зум при смене кадра. Для изображения
    *  это его id, для кадра видео — номер кадра. */
@@ -87,14 +132,25 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   /** Готовый адрес картинки. Кадр видео приходит из декодера одним размером,
    *  и превью с оригиналом у него не различаются — значит адрес задаёт хозяин. */
   src?: string;
+  /** Готовая картинка вместо адреса: кадр ролика, разжатый в браузере. Такой
+   *  кадр не существует отдельным файлом, и грузить его неоткуда — он уже
+   *  здесь, в памяти. Владеет им хозяин: холст только рисует. */
+  bitmap?: ImageBitmap | null;
   fileName?: string;
   width: number;
   height: number;
   boxes: CanvasBox[];
   labelOf: (classIndex: number) => { name: string; color: string };
+  /** Индексы боксов, которые рисуются прерывистой рамкой: объект на кадре
+   *  есть, но заслонён, и в разметку этот кадр не пойдёт. */
+  dashed?: Set<number>;
   hidden?: Set<number>;
   labels?: boolean;
   editable?: boolean;
+  /** Картинка догоняет запрошенный кадр. Рисовать в это время нельзя: бокс
+   *  привязался бы к кадру, которого на экране не было. Курсор говорит об
+   *  этом прямо — молчаливый отказ читался бы как поломка мыши. */
+  waiting?: boolean;
   tool?: "select" | "box" | "auto";
   /** Вид полуавтомата: набор точек или выделение области. */
   autoMode?: "points" | "box";
@@ -122,8 +178,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, src, fileName, width, height, boxes, labelOf, hidden, labels = true,
-    editable = false, tool = "select", autoMode = "points", autoPoints,
+    imageId, src, bitmap, fileName, width, height, boxes, labelOf, dashed, hidden, labels = true,
+    editable = false, waiting = false, tool = "select", autoMode = "points", autoPoints,
     autoPreview = null, activeClass = null, selected = null,
     grid = true, reserve = 210, onSelect, onBoxes, onDrawn, onScale, onContext,
     onAutoPoint, onAutoBox, onAutoCommit,
@@ -376,6 +432,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
 
   const cursor = dragKind === "pan"
     ? "grabbing"
+    : waiting ? "wait"
     : tool === "auto" && editable ? "auto"
     : shift || !editable ? "pan"
     : tool === "box" ? "draw" : "pick";
@@ -398,25 +455,37 @@ const BoxCanvas = forwardRef<CanvasHandle, {
         }}
       >
         <div className="mag-cv-frame" ref={frameRef}>
-          <img
-            src={src || imagePreviewUrl(imageId)}
-            alt={fileName || ""}
-            draggable={false}
-            style={{ maxHeight: `calc(100vh - ${reserve}px)` }}
-          />
+          {bitmap !== undefined ? (
+            <BitmapView
+              bitmap={bitmap}
+              width={width}
+              height={height}
+              maxHeight={`calc(100vh - ${reserve}px)`}
+            />
+          ) : (
+            <img
+              src={src || imagePreviewUrl(imageId)}
+              alt={fileName || ""}
+              draggable={false}
+              style={{ maxHeight: `calc(100vh - ${reserve}px)` }}
+            />
+          )}
           {/* Оригинал приезжает вторым слоем: подмена src дала бы моргание.
               У кадра видео второго размера нет — слой не нужен. */}
-          {hires && !src && (
+          {hires && !src && bitmap === undefined && (
             <img className="mag-cv-hires" src={imageFileUrl(imageId)} alt="" draggable={false} />
           )}
           {boxes.map((b, i) => {
             if (hidden?.has(b.class_index)) return null;
             const meta = labelOf(b.class_index);
             const on = i === selected;
+            const ghost = dashed?.has(i);
             return (
               <span
                 key={i}
-                className={on ? "mag-cv-box on" : "mag-cv-box"}
+                className={
+                  (on ? "mag-cv-box on" : "mag-cv-box") + (ghost ? " occluded" : "")
+                }
                 style={{
                   left: `${(b.x / width) * 100}%`,
                   top: `${(b.y / height) * 100}%`,

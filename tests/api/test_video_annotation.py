@@ -1,8 +1,12 @@
-"""Разметка видео целиком: загрузка, треки, сдача таски, кадры в проекте.
+"""Разметка видео целиком: загрузка, треки, закрытие разметки, кадры в проекте.
 
 Проверяется живой бэкенд — тот же, что открыт в браузере. Поэтому тесты
-говорят про наблюдаемое поведение (что вернул API, что появилось в проекте),
+говорят про наблюдаемое поведение (что вернул API, что появилось в таске),
 а не про внутренности.
+
+Главное правило механизма: разметка ролика становится кадрами не при сдаче
+таски, а когда её закрывают отдельным действием. Дальше эти кадры — обычные
+кадры таски, и никто их не переписывает.
 """
 from conftest import BASE_URL, wait_job
 
@@ -30,6 +34,7 @@ def test_неизвестный_режим_отвергается(api, task, sam
     assert res.status_code == 400
 
 
+# --- кадры ----------------------------------------------------------------- #
 def test_кадр_отдаётся_картинкой(api, task, video):
     res = api.get(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frame?n=5")
     assert res.status_code == 200
@@ -46,6 +51,41 @@ def test_разные_кадры_дают_разные_картинки(api, tas
 def test_отрицательный_кадр_отвергается(api, task, video):
     res = api.get(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frame?n=-1")
     assert res.status_code == 400
+
+
+def test_окно_кадров_греется_одним_проходом(api, task, video):
+    """Подряд идущие кадры декодируются в разы дешевле одиночных — на этом
+    держится быстрая перемотка."""
+    url = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/prefetch"
+    res = api.post(url, json={"from": 0, "to": 20})
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["ready"] == 21
+    assert body["decoded"] >= 1
+
+    # Повторный прогрев того же окна ничего не декодирует: всё уже на месте.
+    again = api.post(url, json={"from": 0, "to": 20}).json()
+    assert again["decoded"] == 0
+
+
+def test_окно_подрезается_длиной_ролика(api, task, video):
+    """Запрос за конец ролика — не ошибка: на краю таймлайна это обычное дело,
+    и окно просто упирается в последний кадр."""
+    res = api.post(
+        f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/prefetch",
+        json={"from": 0, "to": 5000},
+    )
+    assert res.status_code == 200, res.text
+    assert res.json()["ready"] == 30      # столько кадров в ролике и есть
+
+
+def test_окно_наизнанку_ничего_не_делает(api, task, video):
+    res = api.post(
+        f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/prefetch",
+        json={"from": 20, "to": 5},
+    )
+    assert res.status_code == 200
+    assert res.json() == {"ready": 0, "decoded": 0}
 
 
 # --- треки ----------------------------------------------------------------- #
@@ -69,6 +109,7 @@ def test_трек_создаётся_с_первым_ключом(api, task, vid
     assert len(track["keys"]) == 1
     assert track["interpolate"] is True
     assert track["export_step"] == 1
+    assert track["hidden_ranges"] == []
 
 
 def test_трек_без_класса_не_создаётся(api, task, video):
@@ -88,6 +129,31 @@ def test_ключ_добавляется_на_другом_кадре(api, task,
     assert [k["frame_no"] for k in res.json()["keys"]] == [0, 20]
 
 
+def test_ключ_переносится_одной_операцией(api, task, video, label_class):
+    """Удалить и поставить заново — две операции, между ними трек без ключа."""
+    track = make_track(api, task, video, label_class)
+    api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20",
+            json={"geometry": {"x": 170, "y": 90, "w": 60, "h": 60}})
+    res = api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20",
+                    json={"to": 14})
+    assert res.status_code == 200, res.text
+    assert [k["frame_no"] for k in res.json()["keys"]] == [0, 14]
+
+
+def test_перенос_на_занятый_кадр_отвергается(api, task, video, label_class):
+    track = make_track(api, task, video, label_class)
+    api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20", json={})
+    res = api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20", json={"to": 0})
+    assert res.status_code == 409
+
+
+def test_перенос_первого_ключа_двигает_начало(api, task, video, label_class):
+    track = make_track(api, task, video, label_class, frame_no=5)
+    api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20", json={})
+    res = api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/5", json={"to": 12})
+    assert res.json()["start_frame"] == 12
+
+
 def test_последний_ключ_снять_нельзя(api, task, video, label_class):
     track = make_track(api, task, video, label_class)
     res = api.delete(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/0")
@@ -103,6 +169,14 @@ def test_настройки_трека_меняются(api, task, video, label_
     assert body["interpolate"] is False
     assert body["export_step"] == 5
     assert body["label"] == "вагон #3"
+
+
+def test_отрезки_невидимости_склеиваются(api, task, video, label_class):
+    track = make_track(api, task, video, label_class)
+    res = api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}",
+                    json={"hidden_ranges": [[12, 18], [4, 9], [7, 13]]})
+    assert res.status_code == 200, res.text
+    assert res.json()["hidden_ranges"] == [[4, 18]]
 
 
 def test_нулевой_шаг_выгрузки_отвергается(api, task, video, label_class):
@@ -149,7 +223,7 @@ def test_боксы_кадра_заменяются_целиком(api, task, vi
     assert len([s for s in body["singles"] if s["frame_no"] == 7]) == 1
 
 
-# --- материализация -------------------------------------------------------- #
+# --- предпросмотр ---------------------------------------------------------- #
 def test_предпросмотр_считает_кадры_по_шагу(api, task, video, label_class):
     track = make_track(api, task, video, label_class)
     api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20",
@@ -165,15 +239,14 @@ def test_предпросмотр_считает_кадры_по_шагу(api, t
     # Кадры 0,5,10,15,20 — трек живёт до последнего ключа.
     assert body["frames"] == 5
     assert body["boxes"] == 5
-    assert body["new_frames"] == 5
 
 
 def test_заслонённый_участок_в_план_не_идёт(api, task, video, label_class):
     track = make_track(api, task, video, label_class)
-    api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/10", json={"visible": False})
     api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20",
-            json={"geometry": {"x": 170, "y": 90, "w": 60, "h": 60}, "visible": True})
-    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 5})
+            json={"geometry": {"x": 170, "y": 90, "w": 60, "h": 60}})
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}",
+              json={"export_step": 5, "hidden_ranges": [[10, 20]]})
 
     body = api.post(
         f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/materialize/preview",
@@ -183,23 +256,32 @@ def test_заслонённый_участок_в_план_не_идёт(api, ta
     assert body["frames"] == 3
 
 
-def test_сдача_таски_кладёт_кадры_в_проект(api, task, video, label_class):
+# --- закрытие разметки ----------------------------------------------------- #
+def close_annotation(api, task, video, expect=202):
+    res = api.post(
+        f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/close-annotation",
+        json={},
+    )
+    assert res.status_code == expect, res.text
+    return res
+
+
+def test_закрытие_разметки_делает_кадры_таски(api, task, video, label_class):
     track = make_track(api, task, video, label_class)
     api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20",
             json={"geometry": {"x": 170, "y": 90, "w": 60, "h": 60}})
     api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 10})
 
-    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
-    assert res.status_code == 202, res.text
-    job = wait_job(api, res.json()["job_id"])
+    job = wait_job(api, close_annotation(api, task, video).json()["job_id"])
     assert job["status"] == "done", job.get("error")
     assert job["result"]["created"] == 3          # кадры 0, 10, 20
     assert job["result"]["boxes"] == 3
-    assert job["result"]["accepted"] == 3
 
     body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
-    assert body["status"] == "done"
-    assert body["counts"]["accepted"] == 3
+    assert body["videos"][0]["annotation_closed_at"] is not None
+    # Кадры уже в таске, но ещё не в проекте — это обычные кадры.
+    assert body["counts"]["annotated"] == 3
+    assert body["counts"]["accepted"] == 0
 
     images = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]
     assert len(images) == 3
@@ -207,37 +289,104 @@ def test_сдача_таски_кладёт_кадры_в_проект(api, task
     assert sorted(i["source_time_ms"] for i in images) == [0, 1000, 2000]
 
 
-def test_повторная_сдача_правит_тот_же_кадр(api, task, video, label_class):
+def test_разметку_без_боксов_закрыть_нечем(api, task, video):
+    close_annotation(api, task, video, expect=400)
+
+
+def test_повторное_закрытие_требует_убрать_кадры(api, task, video, label_class):
     track = make_track(api, task, video, label_class)
     api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
 
-    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
-    job = wait_job(api, res.json()["job_id"])
-    assert job["result"]["created"] == 1
-    first = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]
-    assert len(first) == 1
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/reopen-annotation")
+    res = close_annotation(api, task, video, expect=409)
+    assert res.json()["code"] == "frames_exist"
+    assert res.json()["frames"] == 1
 
-    # Вернулись к разметке, добавили второй объект на тот же кадр и сдали снова.
+
+def test_кадры_ролика_убираются_и_разметка_идёт_заново(api, task, video, label_class):
+    track = make_track(api, task, video, label_class)
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/reopen-annotation")
+
+    res = api.delete(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames")
+    assert res.status_code == 200, res.text
+    assert res.json() == {"removed": 1, "kept_accepted": 0}
+
+    # Кадров нет — закрывать снова можно.
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    assert len(api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]) == 1
+
+
+def test_принятые_кадры_уборка_не_трогает(api, task, video, label_class):
+    """После сдачи кадры — данные проекта, а не черновик таски."""
+    track = make_track(api, task, video, label_class)
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
     api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "updating"})
-    api.put(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/0/boxes",
-            json={"boxes": [{"class_index": label_class["class_index"],
-                             "x": 200, "y": 20, "w": 40, "h": 40}]})
+
+    res = api.delete(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames")
+    assert res.json() == {"removed": 0, "kept_accepted": 1}
+
+
+def test_сдача_принимает_кадры_ролика_как_обычные(api, task, video, label_class):
+    track = make_track(api, task, video, label_class)
+    api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20", json={})
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 10})
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+
     res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
-    job = wait_job(api, res.json()["job_id"])
-    assert job["result"]["created"] == 0
-    assert job["result"]["updated"] == 1
-
-    second = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]
-    assert len(second) == 1, "кадр не должен раздваиваться"
-    assert second[0]["id"] == first[0]["id"]
-    assert second[0]["annotations"] == 2
+    assert res.status_code == 200, res.text
+    assert res.json()["accepted"] == 3
+    assert api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()["counts"]["accepted"] == 3
 
 
-def test_закрытие_таски_убирает_видео_но_оставляет_кадры(api, task, video, label_class):
+def test_правка_кадра_переживает_повторную_сдачу(api, task, video, label_class):
+    """Кадр в таске — обычный кадр: план ролика его больше не переписывает."""
     track = make_track(api, task, video, label_class)
     api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
-    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
-    wait_job(api, res.json()["job_id"])
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+
+    image = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"][0]
+    ci = label_class["class_index"]
+    api.put(f"{BASE_URL}/api/images/{image['id']}/annotations", json={"boxes": [
+        {"class_index": ci, "x": 5, "y": 5, "w": 30, "h": 30},
+        {"class_index": ci, "x": 90, "y": 20, "w": 40, "h": 40},
+    ]})
+
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "updating"})
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
+
+    after = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]
+    assert len(after) == 1
+    assert after[0]["annotations"] == 2, "правку руками переписал план ролика"
+
+
+def test_незакрытые_ролики_видны_в_сводке(api, task, video, label_class):
+    track = make_track(api, task, video, label_class)
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 10})
+
+    body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
+    assert len(body["pending_videos"]) == 1
+    assert body["pending_videos"][0]["file_name"] == "sample-30f.mp4"
+    assert body["pending_videos"][0]["frames"] == 1
+    assert body["pending_videos"][0]["tracks"] == 1
+
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    assert api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()["pending_videos"] == []
+
+
+# --- границы --------------------------------------------------------------- #
+def test_закрытие_таски_уносит_видео_но_оставляет_принятые_кадры(
+    api, task, video, label_class
+):
+    track = make_track(api, task, video, label_class)
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
 
     res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "closed"})
     assert res.status_code == 200, res.text
@@ -246,34 +395,6 @@ def test_закрытие_таски_убирает_видео_но_оставл
     body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
     assert body["videos"] == []
     assert body["counts"]["accepted"] == 1
-
-
-def test_закрытие_таски_уносит_треки_вместе_с_роликом(api, task, video, label_class):
-    """Закрытие убирает черновое, а трек — это разметка ролика, а не проекта.
-
-    Кадры, которые он успел дать, уже лежат в датасете отдельными файлами со
-    своей разметкой, поэтому терять тут нечего.
-    """
-    track = make_track(api, task, video, label_class)
-    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
-    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
-    wait_job(api, res.json()["job_id"])
-    api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "closed"})
-
-    res = api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 2})
-    assert res.status_code == 404
-
-
-def test_в_замороженной_таске_трек_не_правится(api, task, video, label_class):
-    """До закрытия таска замораживается сдачей: ролик ещё жив, но правки нет."""
-    track = make_track(api, task, video, label_class)
-    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
-    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
-    wait_job(api, res.json()["job_id"])
-
-    # «Готово» — не заморозка: к разметке возвращаются через «изменение».
-    res = api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 5})
-    assert res.status_code == 200, res.text
 
 
 def test_нарезаемое_видео_треков_не_принимает(api, task, sample_video, label_class):

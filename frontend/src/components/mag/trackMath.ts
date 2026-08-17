@@ -32,11 +32,20 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-/** Последний кадр, на котором трек ещё существует. */
+/** Последний кадр, на котором трек ещё существует.
+ *
+ *  Трек без заданного конца живёт до последнего ключа, а не до конца ролика:
+ *  иначе он замер бы в последнем положении и потащил в датасет кадры, которых
+ *  никто не размечал. */
 export function trackEnd(track: VideoTrack): number {
   if (track.end_frame !== null) return track.end_frame;
   const keys = track.keys;
-  return keys.length ? keys[keys.length - 1].frame_no : track.start_frame;
+  return keys.length ? Math.max(...keys.map((k) => k.frame_no)) : track.start_frame;
+}
+
+/** Заслонён ли объект на кадре. Отрезок полуоткрыт: [от, до). */
+export function isHidden(track: VideoTrack, frameNo: number): boolean {
+  return (track.hidden_ranges || []).some(([from, to]) => from <= frameNo && frameNo < to);
 }
 
 /**
@@ -46,7 +55,10 @@ export function trackEnd(track: VideoTrack): number {
  * ключевого и участок, объявленный невидимым. Последнее — не пробел в
  * разметке, а «здесь его заслонило»: такие кадры в датасет не идут.
  */
-export function boxAt(track: VideoTrack, frameNo: number): Geometry | null {
+export function stateAt(
+  track: VideoTrack,
+  frameNo: number
+): { geometry: Geometry; hidden: boolean } | null {
   const keys = [...track.keys].sort((a, b) => a.frame_no - b.frame_no);
   if (!keys.length) return null;
   if (frameNo < track.start_frame || frameNo > trackEnd(track)) return null;
@@ -60,11 +72,25 @@ export function boxAt(track: VideoTrack, frameNo: number): Geometry | null {
       break;
     }
   }
-  if (!prev || !prev.visible) return null;
-  if (!next || !track.interpolate) return { ...prev.geometry };
-  const span = next.frame_no - prev.frame_no;
-  if (span <= 0) return { ...prev.geometry };
-  return interpolate(prev.geometry, next.geometry, (frameNo - prev.frame_no) / span);
+  if (!prev) return null;
+
+  let geometry: Geometry;
+  if (!next || !track.interpolate) {
+    geometry = { ...prev.geometry };
+  } else {
+    const span = next.frame_no - prev.frame_no;
+    geometry =
+      span <= 0
+        ? { ...prev.geometry }
+        : interpolate(prev.geometry, next.geometry, (frameNo - prev.frame_no) / span);
+  }
+  return { geometry, hidden: isHidden(track, frameNo) };
+}
+
+/** Бокс, который уйдёт в разметку, или `null`. Заслонённый не уходит. */
+export function boxAt(track: VideoTrack, frameNo: number): Geometry | null {
+  const state = stateAt(track, frameNo);
+  return state && !state.hidden ? state.geometry : null;
 }
 
 /** Есть ли на этом кадре ключ — то есть положение, заданное рукой. */
@@ -72,17 +98,27 @@ export function keyAt(track: VideoTrack, frameNo: number) {
   return track.keys.find((k) => k.frame_no === frameNo) || null;
 }
 
-/** Заслонённые отрезки трека: `[от, до)` в номерах кадров.
- *  Рисуются на дорожке штриховкой, чтобы дыра в разметке была видна. */
+/** Заслонённые отрезки, приведённые к жизни трека: рисуются штриховкой,
+ *  чтобы дыра в разметке была видна на дорожке. */
 export function hiddenRanges(track: VideoTrack): [number, number][] {
-  const keys = [...track.keys].sort((a, b) => a.frame_no - b.frame_no);
-  const end = trackEnd(track);
+  const end = trackEnd(track) + 1;
+  return (track.hidden_ranges || [])
+    .map(([from, to]) => [Math.max(from, track.start_frame), Math.min(to, end)] as [number, number])
+    .filter(([from, to]) => to > from);
+}
+
+/** Склеить пересекающиеся отрезки: мышью их легко нарезать внахлёст. */
+export function normalizeRanges(raw: [number, number][]): [number, number][] {
+  const clean = raw
+    .map(([a, b]) => [Math.round(a), Math.round(b)] as [number, number])
+    .filter(([a, b]) => b > a)
+    .sort((x, y) => x[0] - y[0]);
   const out: [number, number][] = [];
-  keys.forEach((key, i) => {
-    if (key.visible) return;
-    const to = i + 1 < keys.length ? keys[i + 1].frame_no : end + 1;
-    out.push([key.frame_no, to]);
-  });
+  for (const [from, to] of clean) {
+    const last = out[out.length - 1];
+    if (last && from <= last[1]) last[1] = Math.max(last[1], to);
+    else out.push([from, to]);
+  }
   return out;
 }
 

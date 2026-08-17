@@ -6,11 +6,11 @@ import {
   deleteTrackKey,
   getClasses,
   getVideoAnnotations,
+  moveTrackKey,
   previewMaterialize,
   putTrackKey,
   saveFrameBoxes,
   updateTrack,
-  videoFileUrl,
   videoFrameUrl,
 } from "../../auth/api";
 import type {
@@ -24,32 +24,72 @@ import type {
 import BoxCanvas from "./BoxCanvas";
 import type { CanvasBox, CanvasHandle, CanvasPoint, CanvasPreview } from "./BoxCanvas";
 import ClassMenu from "./ClassMenu";
+import TrackLanes from "./TrackLanes";
+import type { LaneAction } from "./TrackLanes";
 import { useAutoLabel } from "./useAutoLabel";
+import { useClip, useClipFrame, usePlayback } from "./useClip";
 import {
-  boxAt,
   exportCount,
   fmtFrameTime,
   frameToMs,
-  hiddenRanges,
   keyAt,
   msToFrame,
-  trackEnd,
+  normalizeRanges,
+  stateAt,
 } from "./trackMath";
+
+/** Управление редактором: клавиша и что она делает.
+ *
+ * Один список на две задачи — подсветку самого элемента и панель со всеми
+ * сочетаниями. Держать их порознь значило бы, что однажды они разойдутся, и
+ * подсказка начнёт врать про клавишу.
+ */
+const HELP = {
+  close: ["Esc", "Выйти из разметки"],
+  select: ["V", "Выбор и правка"],
+  box: ["B", "Бокс на этом кадре"],
+  track: ["T", "Трек-бокс: объект, живущий во времени"],
+  auto: ["A", "Полуавтомат: обвести объект по клику"],
+  zoomIn: ["", "Приблизить"],
+  zoomOut: ["", "Отдалить"],
+  fit: ["0", "Вписать кадр в окно"],
+  play: ["Пробел", "Играть или остановить"],
+  prev: ["←", "Кадр назад"],
+  next: ["→", "Кадр вперёд"],
+  speed: ["", "Скорость просмотра. Быстрее единицы — через кадр"],
+  quality: ["", "Качество картинки: исходное или помельче"],
+  scrub: ["", "Перемотка по ролику"],
+  key: ["K", "Поставить ключ трека на этом кадре"],
+  occlude: ["Alt + протяжка", "Заслонить участок на дорожке объекта"],
+  lane: ["", "Дорожка объекта: ромб — ключ, края — жизнь трека"],
+  cls: ["", "Класс для новых объектов"],
+} as const;
+
+type HelpId = keyof typeof HELP;
+
+/** Разметить элемент для справки: подсветится и покажет свою подсказку. */
+function hk(id: HelpId) {
+  const [key, text] = HELP[id];
+  return { "data-hk": key || undefined, "data-ht": text, "data-help": "" };
+}
 
 const GREY = { name: "", color: "#9aa4ae" };
 
-/** Что стоит за боксом на холсте: трек или одиночный бокс этого кадра.
- *  Холст отдаёт плоский массив, и по этой карте правка попадает по адресу. */
+/** Что стоит за боксом на холсте: трек или одиночный бокс этого кадра. */
 type Item =
-  | { kind: "track"; track: VideoTrack }
+  | { kind: "track"; track: VideoTrack; hidden: boolean }
   | { kind: "single"; box: VideoSingleBox };
 
 /**
- * Редактор размечаемого видео, компоновка В2 «Жизнь объектов слева».
+ * Редактор размечаемого видео.
  *
- * Кадр рисуется по серверной картинке — той же, что уйдёт в датасет. Браузерный
- * <video> нужен только чтобы искать момент: currentTime не даёт номера кадра,
- * и рисовать по нему значило бы разметить не тот кадр, который выгрузится.
+ * Кадр всегда серверный — тот же, что уйдёт в датасет. Браузерного плеера
+ * здесь нет вовсе: currentTime не даёт номера кадра, и рисовать по нему значило
+ * бы разметить не тот кадр, который выгрузится. Быстрая перемотка держится на
+ * прогреве окна кадров одним проходом декодера.
+ *
+ * Время объектов живёт внизу, под кадром: дорожки всех треков разом показывают,
+ * кто когда появляется, где они пересекаются и где кто заслонён.
  */
 export default function VideoAnnotator({
   code,
@@ -67,9 +107,14 @@ export default function VideoAnnotator({
   onClose: () => void;
 }) {
   const fps = video.fps || 25;
+
+  // Ролик приезжает перегонами, и число кадров берётся из его таблицы кадров,
+  // а не из прикидки по длительности: разметка адресуется номером кадра, и
+  // «примерно столько» тут не годится.
+  const clip = useClip(taskId, video.id);
   const lastFrame = Math.max(
     0,
-    (video.frame_count ?? msToFrame(video.duration_ms || 0, fps)) - 1
+    (clip.manifest?.frame_count ?? video.frame_count ?? msToFrame(video.duration_ms || 0, fps)) - 1
   );
 
   const [data, setData] = useState<VideoAnnotations | null>(null);
@@ -79,35 +124,55 @@ export default function VideoAnnotator({
   const [tool, setTool] = useState<"select" | "box" | "track" | "auto">("select");
   const [selected, setSelected] = useState<number | null>(null);
   const [pickedTrack, setPickedTrack] = useState<string | null>(null);
-  // Рамка в процессе рисования или переноса: показываем её сразу, а на сервер
-  // отправляем, когда рука остановилась.
-  const [draft, setDraft] = useState<CanvasBox[] | null>(null);
-  const [playing, setPlaying] = useState(false);
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<{ frames: number; boxes: number } | null>(null);
   const [menu, setMenu] = useState<{ i: number | null; x: number; y: number } | null>(null);
+  const [laneMenu, setLaneMenu] = useState<LaneAction | null>(null);
   const [scale, setScale] = useState(1);
+  const [draft, setDraft] = useState<CanvasBox[] | null>(null);
 
-  // Полуавтомат: набор точек и ещё не закреплённая детекция.
   const [autoPts, setAutoPts] = useState<CanvasPoint[]>([]);
   const [autoPrev, setAutoPrev] = useState<CanvasPreview | null>(null);
-  const [autoPanel, setAutoPanel] = useState(false);
-  const [refine, setRefine] = useState<AutoRefine>({
+  // Параметры полуавтомата пока не настраиваются из видеоредактора: панель
+  // жила в правой колонке, которой больше нет. Значения те же, что по
+  // умолчанию в редакторе кадров.
+  const [refine] = useState<AutoRefine>({
     detail: "auto", score_min: 0.3, min_area: 64, fill_holes: true, polygon_points: 64,
   });
 
   const canvas = useRef<CanvasHandle>(null);
-  const player = useRef<HTMLVideoElement>(null);
+  const draftTimer = useRef<number>();
 
   const frozen = readOnly || !data?.editable;
 
-  // --- загрузка ----------------------------------------------------------- #
+  // --- кадры и проигрывание ------------------------------------------------ #
+  // Ступень качества: исходное или уменьшенное. Хранится здесь, а не в
+  // читателе, чтобы её видел и хук, и кнопка выбора.
+  const [quality, setQuality] = useState<string>("");
+  const [qualityOpen, setQualityOpen] = useState(false);
+  const [help, setHelp] = useState(false);
+  const [objectsOpen, setObjectsOpen] = useState(false);
+
+  useEffect(() => {
+    if (clip.manifest && !quality) setQuality(clip.manifest.quality);
+  }, [clip.manifest, quality]);
+  const shown = useClipFrame(clip.reader, frame, quality);
+  const onPlayFrame = useCallback((f: number) => setFrame(f), []);
+  // Проигрывание ждёт картинку: пока показан не тот кадр, время стоит. Иначе
+  // полоса убегает вперёд, кадр замирает, и кусок ролика проходит незамеченным.
+  const behind = useRef(false);
+  behind.current = shown.lagging;
+  const caughtUp = useCallback(() => !behind.current, []);
+  const { playing, speed, start, stop, changeSpeed } = usePlayback(
+    fps, lastFrame, onPlayFrame, caughtUp
+  );
+
+  // --- загрузка ------------------------------------------------------------ #
   const load = useCallback(async () => {
     try {
-      const fresh = await getVideoAnnotations(taskId, video.id);
-      setData(fresh);
+      setData(await getVideoAnnotations(taskId, video.id));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
@@ -125,8 +190,6 @@ export default function VideoAnnotator({
       .catch(() => {});
   }, [code]);
 
-  // Прикидка «сколько уйдёт в проект» пересчитывается после правок, но не на
-  // каждое движение мышью: на сервере это полный обход всех треков.
   useEffect(() => {
     if (!data) return;
     const h = window.setTimeout(() => {
@@ -153,22 +216,24 @@ export default function VideoAnnotator({
     );
   }, [classes, query]);
 
-  // --- что показано на кадре ---------------------------------------------- #
-  const { items, boxes } = useMemo(() => {
+  // --- что показано на кадре ----------------------------------------------- #
+  const { items, boxes, dashed } = useMemo(() => {
     const its: Item[] = [];
     const bs: CanvasBox[] = [];
+    const dim = new Set<number>();
     for (const track of data?.tracks || []) {
-      const g = boxAt(track, frame);
-      if (!g || track.class_index === null) continue;
-      its.push({ kind: "track", track });
-      bs.push({ class_index: track.class_index, ...g });
+      const state = stateAt(track, frame);
+      if (!state || track.class_index === null) continue;
+      if (state.hidden) dim.add(bs.length);
+      its.push({ kind: "track", track, hidden: state.hidden });
+      bs.push({ class_index: track.class_index, ...state.geometry });
     }
     for (const single of data?.singles || []) {
       if (single.frame_no !== frame || single.class_index === null) continue;
       its.push({ kind: "single", box: single });
       bs.push({ class_index: single.class_index, ...single.geometry });
     }
-    return { items: its, boxes: bs };
+    return { items: its, boxes: bs, dashed: dim };
   }, [data, frame]);
 
   const singlesHere = useMemo(
@@ -181,16 +246,19 @@ export default function VideoAnnotator({
     [data, pickedTrack]
   );
 
-  // --- сохранение --------------------------------------------------------- #
+  const trackById = useCallback(
+    (id: string) => (data?.tracks || []).find((t) => t.id === id) || null,
+    [data]
+  );
+
+  // --- сохранение ---------------------------------------------------------- #
   const guard = useCallback(async (fn: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
     try {
       await fn();
-      return true;
     } catch (e) {
       setError((e as Error).message);
-      return false;
     } finally {
       setBusy(false);
     }
@@ -205,8 +273,11 @@ export default function VideoAnnotator({
     [guard, taskId, video.id, frame, load]
   );
 
-  /** Холст отдаёт весь набор боксов. Что именно изменилось — выясняем сами:
-   *  один жест правит ровно один бокс, поэтому различий не больше одного. */
+  const singlesAsList = useCallback(
+    () => singlesHere.map((s) => ({ class_index: s.class_index as number, ...s.geometry })),
+    [singlesHere]
+  );
+
   const commit = useCallback(
     (next: CanvasBox[]) => {
       if (frozen || active === null) return;
@@ -224,12 +295,7 @@ export default function VideoAnnotator({
             await load();
           });
         } else {
-          saveSingles([
-            ...singlesHere.map((s) => ({
-              class_index: s.class_index as number, ...s.geometry,
-            })),
-            fresh,
-          ]);
+          saveSingles([...singlesAsList(), fresh]);
         }
         return;
       }
@@ -238,13 +304,8 @@ export default function VideoAnnotator({
         const gone = items[boxes.findIndex((b, i) => !same(b, next[i]))] ?? items[items.length - 1];
         if (!gone) return;
         if (gone.kind === "track") removeTrackBox(gone.track);
-        else {
-          saveSingles(
-            singlesHere
-              .filter((s) => s.id !== gone.box.id)
-              .map((s) => ({ class_index: s.class_index as number, ...s.geometry }))
-          );
-        }
+        else saveSingles(singlesHere.filter((s) => s.id !== gone.box.id)
+          .map((s) => ({ class_index: s.class_index as number, ...s.geometry })));
         return;
       }
 
@@ -253,8 +314,8 @@ export default function VideoAnnotator({
       const item = items[idx];
       const box = next[idx];
       if (item.kind === "track") {
-        // Правка положения на кадре — это и есть постановка ключа: разметчик
-        // сказал «здесь объект вот так», и с этого кадра счёт идёт от него.
+        // Правка положения на кадре и есть постановка ключа: разметчик сказал
+        // «здесь объект вот так», и с этого кадра счёт идёт от него.
         guard(async () => {
           await putTrackKey(item.track.id, frame, {
             geometry: { x: box.x, y: box.y, w: box.w, h: box.h },
@@ -271,14 +332,13 @@ export default function VideoAnnotator({
         );
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [frozen, active, boxes, items, tool, frame, guard, taskId, video.id, load,
-     saveSingles, singlesHere]
+     saveSingles, singlesHere, singlesAsList]
   );
 
   /** Пока тянут рамку, холст сообщает о каждом её положении — начиная с
-   *  нулевого на нажатии. Отправляем осевшее: иначе сервер получил бы точку
-   *  вместо бокса, а на переносе — по запросу на каждое движение мыши. */
-  const draftTimer = useRef<number>();
+   *  нулевой на нажатии. Отправляем осевшее. */
   const onBoxes = useCallback(
     (next: CanvasBox[]) => {
       setDraft(next);
@@ -288,20 +348,16 @@ export default function VideoAnnotator({
     [commit]
   );
 
-  // Ушли с кадра — черновик к нему уже не относится.
   useEffect(() => {
     setDraft(null);
     window.clearTimeout(draftTimer.current);
   }, [frame, video.id]);
 
-  // Пришёл свежий ответ сервера — он и есть истина.
   useEffect(() => { setDraft(null); }, [data]);
 
-  /** Удаление бокса трека на кадре. Один ключ — значит удаляют весь объект. */
   const removeTrackBox = useCallback(
     (track: VideoTrack) => {
-      const key = keyAt(track, frame);
-      if (track.keys.length <= 1 || !key) {
+      if (track.keys.length <= 1 || !keyAt(track, frame)) {
         if (!window.confirm(`Удалить объект «${trackName(track, labelOf)}» целиком?`)) return;
         guard(async () => {
           await deleteTrack(track.id);
@@ -318,25 +374,6 @@ export default function VideoAnnotator({
     [frame, guard, load, labelOf]
   );
 
-  // --- действия над треком ------------------------------------------------ #
-  const putKeyHere = useCallback(
-    (track: VideoTrack, visible: boolean) =>
-      guard(async () => {
-        await putTrackKey(track.id, frame, { visible });
-        await load();
-      }),
-    [frame, guard, load]
-  );
-
-  const endTrackHere = useCallback(
-    (track: VideoTrack) =>
-      guard(async () => {
-        await updateTrack(track.id, { end_frame: frame });
-        await load();
-      }),
-    [frame, guard, load]
-  );
-
   const patchTrack = useCallback(
     (track: VideoTrack, body: Parameters<typeof updateTrack>[1]) =>
       guard(async () => {
@@ -346,46 +383,65 @@ export default function VideoAnnotator({
     [guard, load]
   );
 
-  // --- навигация ---------------------------------------------------------- #
+  // --- действия с дорожек -------------------------------------------------- #
+  const onLane = useCallback(
+    (action: LaneAction) => {
+      const track = trackById(action.trackId);
+      if (!track) return;
+      switch (action.kind) {
+        case "seek":
+          setFrame(action.frame);
+          break;
+        case "move-key":
+          guard(async () => {
+            await moveTrackKey(track.id, action.from!, action.frame);
+            await load();
+          });
+          break;
+        case "set-start":
+          // Начало трека — его первый ключ, поэтому двигаем именно ключ.
+          guard(async () => {
+            await moveTrackKey(track.id, track.start_frame, action.frame);
+            await load();
+          });
+          break;
+        case "set-end":
+          patchTrack(track, { end_frame: action.frame });
+          break;
+        case "hide":
+          patchTrack(track, {
+            hidden_ranges: normalizeRanges([
+              ...(track.hidden_ranges || []),
+              [action.from!, action.frame],
+            ]),
+          });
+          break;
+        case "menu":
+          setLaneMenu(action);
+          break;
+      }
+    },
+    [trackById, guard, load, patchTrack]
+  );
+
+  // --- навигация ----------------------------------------------------------- #
   const go = useCallback(
     (delta: number) => {
+      stop();
       setFrame((f) => Math.max(0, Math.min(lastFrame, f + delta)));
       setSelected(null);
     },
-    [lastFrame]
-  );
-
-  const seek = useCallback(
-    (target: number) => {
-      const clamped = Math.max(0, Math.min(lastFrame, Math.round(target)));
-      setFrame(clamped);
-      setSelected(null);
-      if (player.current) player.current.currentTime = frameToMs(clamped, fps) / 1000;
-    },
-    [lastFrame, fps]
+    [lastFrame, stop]
   );
 
   const togglePlay = useCallback(() => {
-    const el = player.current;
-    if (!el) return;
-    if (playing) {
-      el.pause();
-      return;
-    }
-    el.currentTime = frameToMs(frame, fps) / 1000;
-    el.play().catch(() => setError("Браузер не смог проиграть этот файл — листайте кадрами."));
-  }, [playing, frame, fps]);
+    if (playing) stop();
+    else start(frame >= lastFrame ? 0 : frame);
+  }, [playing, stop, start, frame, lastFrame]);
 
-  // Встали — снимаем номер кадра с плеера и дальше работаем по серверному кадру.
-  const onPause = useCallback(() => {
-    setPlaying(false);
-    const el = player.current;
-    if (el) setFrame(Math.max(0, Math.min(lastFrame, Math.round(el.currentTime * fps))));
-  }, [fps, lastFrame]);
-
-  // --- полуавтомат -------------------------------------------------------- #
+  // --- полуавтомат --------------------------------------------------------- #
   const ensureFrame = useCallback(
-    async (ref: { video_id?: string; frame_no?: number } | Record<string, unknown>) => {
+    async (ref: Record<string, unknown>) => {
       const n = (ref as { frame_no?: number }).frame_no;
       if (n === undefined) return;
       await fetch(videoFrameUrl(taskId, video.id, n), { cache: "reload" });
@@ -409,10 +465,7 @@ export default function VideoAnnotator({
   const ask = useCallback(
     async (points: CanvasPoint[], prompt: CanvasBox | null) => {
       const shape = await auto.predict(
-        {
-          points,
-          box: prompt ? { x: prompt.x, y: prompt.y, w: prompt.w, h: prompt.h } : undefined,
-        },
+        { points, box: prompt ? { x: prompt.x, y: prompt.y, w: prompt.w, h: prompt.h } : undefined },
         refine
       );
       if (!shape) { setAutoPrev(null); return; }
@@ -421,36 +474,27 @@ export default function VideoAnnotator({
     [auto, refine, labelOf, active]
   );
 
-  /** Закрепление детекции. Инструмент решает, чем она станет: боксом кадра
-   *  или новым треком — полуавтомат одинаково полезен и там, и там. */
   const commitAuto = useCallback(() => {
     if (!autoPrev || active === null) return;
-    const box: CanvasBox = {
-      class_index: active, x: autoPrev.x, y: autoPrev.y, w: autoPrev.w, h: autoPrev.h,
-    };
-    if (pickedTrack && currentTrack) {
-      guard(async () => {
-        await putTrackKey(currentTrack.id, frame, {
-          geometry: { x: box.x, y: box.y, w: box.w, h: box.h },
-          source: "model",
-        });
-        await load();
-      });
-    } else {
-      guard(async () => {
+    const geometry = { x: autoPrev.x, y: autoPrev.y, w: autoPrev.w, h: autoPrev.h };
+    guard(async () => {
+      if (currentTrack && tool === "track") {
+        await putTrackKey(currentTrack.id, frame, { geometry, source: "model" });
+      } else if (tool === "track") {
         const track = await createTrack(taskId, video.id, {
-          class_index: active,
-          frame_no: frame,
-          geometry: { x: box.x, y: box.y, w: box.w, h: box.h },
-          source: "model",
+          class_index: active, frame_no: frame, geometry, source: "model",
         });
         setPickedTrack(track.id);
-        await load();
-      });
-    }
+      } else {
+        await saveFrameBoxes(taskId, video.id, frame, [
+          ...singlesAsList(), { class_index: active, ...geometry },
+        ]);
+      }
+      await load();
+    });
     clearAuto();
-  }, [autoPrev, active, pickedTrack, currentTrack, frame, guard, load, taskId,
-      video.id, clearAuto]);
+  }, [autoPrev, active, currentTrack, tool, frame, guard, load, taskId, video.id,
+      clearAuto, singlesAsList]);
 
   const onAutoPoint = useCallback(
     (p: { x: number; y: number }, o: { shift: boolean; negative: boolean; onBox: number | null }) => {
@@ -492,7 +536,7 @@ export default function VideoAnnotator({
     [frozen, active, auto.state, autoPrev, commitAuto, ask]
   );
 
-  // --- клавиши ------------------------------------------------------------ #
+  // --- клавиши ------------------------------------------------------------- #
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
@@ -502,6 +546,7 @@ export default function VideoAnnotator({
       switch (e.code) {
         case "Escape":
           if (autoPrev || autoPts.length) clearAuto();
+          else if (laneMenu) setLaneMenu(null);
           else if (tool !== "select") setTool("select");
           else onClose();
           break;
@@ -515,8 +560,11 @@ export default function VideoAnnotator({
         case "KeyB": if (!frozen) setTool("box"); break;
         case "KeyT": if (!frozen) setTool("track"); break;
         case "KeyA": if (!frozen && auto.state === "ready") setTool("auto"); break;
-        case "KeyK": if (!frozen && currentTrack) putKeyHere(currentTrack, true); break;
-        case "KeyH": if (!frozen && currentTrack) putKeyHere(currentTrack, false); break;
+        case "KeyK":
+          if (!frozen && currentTrack) {
+            guard(async () => { await putTrackKey(currentTrack.id, frame, {}); await load(); });
+          }
+          break;
         case "Digit0": canvas.current?.fit(); break;
         case "Delete":
         case "Backspace":
@@ -524,11 +572,8 @@ export default function VideoAnnotator({
             const item = items[selected];
             if (item?.kind === "track") removeTrackBox(item.track);
             else if (item) {
-              saveSingles(
-                singlesHere
-                  .filter((s) => s.id !== item.box.id)
-                  .map((s) => ({ class_index: s.class_index as number, ...s.geometry }))
-              );
+              saveSingles(singlesHere.filter((s) => s.id !== item.box.id)
+                .map((s) => ({ class_index: s.class_index as number, ...s.geometry })));
             }
             setSelected(null);
           } else if (autoPrev || autoPts.length) clearAuto();
@@ -548,88 +593,255 @@ export default function VideoAnnotator({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [tool, frozen, autoPrev, autoPts, clearAuto, onClose, togglePlay, go,
-      auto.state, currentTrack, putKeyHere, selected, items, removeTrackBox,
-      saveSingles, singlesHere, visibleClasses, commitAuto]);
+  }, [tool, frozen, autoPrev, autoPts, clearAuto, onClose, togglePlay, go, auto.state,
+      currentTrack, selected, items, removeTrackBox, saveSingles, singlesHere,
+      visibleClasses, commitAuto, frame, guard, load, laneMenu]);
 
-  // Выбор бокса на холсте подсвечивает объект слева, и наоборот.
   useEffect(() => {
     if (selected === null) return;
     const item = items[selected];
     if (item?.kind === "track") setPickedTrack(item.track.id);
   }, [selected, items]);
 
+
+  /** Превратить одиночный бокс в трек: тот же класс и та же рамка, но объект
+   *  начинает жить во времени. Нужно постоянно — разметчик обводит объект,
+   *  видит, что тот едет дальше, и хочет вести его, а не обводить заново. */
+  const toTrack = useCallback(
+    (box: VideoSingleBox) => {
+      if (box.class_index === null) return;
+      guard(async () => {
+        const track = await createTrack(taskId, video.id, {
+          class_index: box.class_index as number,
+          frame_no: box.frame_no,
+          geometry: box.geometry,
+        });
+        setPickedTrack(track.id);
+        setTool("track");
+        // Одиночный уходит: иначе на кадре осталось бы два бокса на одном месте.
+        await saveFrameBoxes(
+          taskId,
+          video.id,
+          box.frame_no,
+          (data?.singles || [])
+            .filter((s) => s.frame_no === box.frame_no && s.id !== box.id)
+            .map((s) => ({ class_index: s.class_index as number, ...s.geometry }))
+        );
+        await load();
+      });
+    },
+    [taskId, video.id, data, guard, load]
+  );
+
+  const dropItem = useCallback(
+    (item: Item) => {
+      guard(async () => {
+        if (item.kind === "track") {
+          await deleteTrack(item.track.id);
+          setPickedTrack(null);
+        } else {
+          await saveFrameBoxes(
+            taskId,
+            video.id,
+            item.box.frame_no,
+            (data?.singles || [])
+              .filter((s) => s.frame_no === item.box.frame_no && s.id !== item.box.id)
+              .map((s) => ({ class_index: s.class_index as number, ...s.geometry }))
+          );
+        }
+        setSelected(null);
+        await load();
+      });
+    },
+    [taskId, video.id, data, guard, load]
+  );
+
+  /** Одиночные объекты по классам: на каких кадрах они есть.
+   *
+   *  У трека время видно на дорожке, а одиночный бокс живёт на своём кадре и
+   *  из общей картины выпадает: разметчик не помнит, где уже обвёл, а где нет.
+   *  Поэтому — отдельный свод, по классам и с номерами кадров.
+   */
+  const singleFrames = useMemo(() => {
+    const by = new Map<number, number[]>();
+    for (const single of data?.singles || []) {
+      if (single.class_index === null) continue;
+      const list = by.get(single.class_index) || [];
+      list.push(single.frame_no);
+      by.set(single.class_index, list);
+    }
+    return [...by.entries()]
+      .map(([ci, frames]) => ({ ci, frames: [...new Set(frames)].sort((a, b) => a - b) }))
+      .sort((a, b) => b.frames.length - a.frames.length);
+  }, [data]);
+
   const timeMs = frameToMs(frame, fps);
+  const closed = video.annotation_closed_at !== null;
 
   return (
-    <div className="mag-ed mag-ved" role="dialog" aria-modal="true" aria-label="Разметка видео">
+    <div
+      className={help ? "mag-ed mag-ved help" : "mag-ed mag-ved"}
+      role="dialog"
+      aria-modal="true"
+      aria-label="Разметка видео"
+    >
       <div className="mag-ed-head">
         <b>{taskName}</b>
         <span className="mag-ed-cnt">
-          кадр {frame} / {lastFrame} · {fmtFrameTime(timeMs)}
+          кадр {String(frame).padStart(String(lastFrame).length, " ")} / {lastFrame}
+          {" · "}
+          {fmtFrameTime(timeMs)}
         </span>
         {active !== null && (
-          <button
-            type="button"
+          <button type="button"
             className={tool === "auto" ? "mag-ed-active on" : "mag-ed-active"}
-            title="Класс для новых объектов"
+            {...hk("cls")}
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
               setMenu({ i: null, x: r.left, y: r.bottom + 6 });
-            }}
-          >
+            }}>
             <i style={{ background: labelOf(active).color }} />
             {labelOf(active).name || active}
             <b>▾</b>
           </button>
         )}
+        {closed && <span className="mag-ed-flag nul">разметка закрыта</span>}
         <span className="mag-ed-sp" />
-        {error && <span className="mag-ed-err">{error}</span>}
+        {(error || clip.error || shown.error) && (
+          <span className="mag-ed-err">{error || clip.error || shown.error}</span>
+        )}
+        {clip.loading && <span className="mag-ed-note">Читаю ролик…</span>}
         {plan && (
-          <span className="mag-ved-plan" title="Столько кадров уйдёт в проект при сдаче таски">
-            в проект: <b>{plan.frames}</b> кадров · {plan.boxes} объектов
+          <span className="mag-ved-plan">
+            в таску: <b>{plan.frames}</b> кадров · {plan.boxes} объектов
           </span>
         )}
         <span className={busy ? "mag-ed-saving" : "mag-ed-saved"}>
           {busy ? "сохраняю…" : "сохранено"}
         </span>
-        <button className="mag-ed-btn" type="button" onClick={onClose} aria-label="Закрыть">
-          ✕
+        <button
+          className={objectsOpen ? "mag-ed-btn on" : "mag-ed-btn"}
+          type="button"
+          onClick={() => setObjectsOpen((v) => !v)}
+          aria-pressed={objectsOpen}
+        >
+          объекты
         </button>
+        <button
+          className={help ? "mag-ed-btn on" : "mag-ed-btn"}
+          type="button"
+          onClick={() => setHelp((v) => !v)}
+          aria-pressed={help}
+        >
+          справка
+        </button>
+        <button className="mag-ed-btn" type="button" onClick={onClose}
+          aria-label="Закрыть" {...hk("close")}>✕</button>
       </div>
 
+      {/* Справка: гасим всё, оставляя светиться органы управления. Подсказки
+          по наведению вместо вечных всплывашек — они мешали работать. */}
+      {help && (
+        <>
+          <div className="mag-ed-dim" onClick={() => setHelp(false)} />
+          <div className="mag-ed-help">
+            <b>Управление</b>
+            <div className="mag-ed-help-list">
+              {Object.entries(HELP)
+                .filter(([, [key]]) => key)
+                .map(([id, [key, text]]) => (
+                  <div key={id}>
+                    <kbd>{key}</kbd>
+                    <span>{text}</span>
+                  </div>
+                ))}
+            </div>
+            <p>
+              Наведите на любую кнопку — покажет, что она делает. Щелчок мимо
+              закрывает справку.
+            </p>
+          </div>
+        </>
+      )}
+
+      {objectsOpen && (
+        <div className="mag-ed-objects">
+          <div className="mag-ed-objects-h">
+            <b>Одиночные объекты</b>
+            <button type="button" onClick={() => setObjectsOpen(false)} aria-label="Закрыть">
+              ✕
+            </button>
+          </div>
+          {singleFrames.length === 0 ? (
+            <p className="mag-ed-objects-empty">
+              Одиночных объектов нет. Обведённое обычным боксом живёт на своём
+              кадре и появится здесь.
+            </p>
+          ) : (
+            <div className="mag-ed-objects-list">
+              {singleFrames.map(({ ci, frames }) => (
+                <div key={ci}>
+                  <span className="mag-ed-objects-cls">
+                    <i style={{ background: labelOf(ci).color }} />
+                    {labelOf(ci).name || ci}
+                    <em>{frames.length}</em>
+                  </span>
+                  <span className="mag-ed-objects-frames">
+                    {frames.map((f) => (
+                      <button
+                        key={f}
+                        type="button"
+                        className={f === frame ? "on" : undefined}
+                        onClick={() => {
+                          stop();
+                          setFrame(f);
+                        }}
+                      >
+                        {f}
+                      </button>
+                    ))}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="mag-ed-body">
-        <div className="mag-ed-rail">
+        {/* Пока картинка догоняет, подсветка инструмента гаснет: рисовать
+            нельзя, и это должно быть видно, а не выясняться протяжкой. */}
+        <div className={shown.lagging ? "mag-ed-rail waiting" : "mag-ed-rail"}>
           <button className={tool === "select" ? "mag-tool on" : "mag-tool"} type="button"
-            onClick={() => setTool("select")} title="Выбор и правка — V">↖</button>
+            onClick={() => setTool("select")} {...hk("select")}>↖</button>
           <button className={tool === "box" ? "mag-tool on" : "mag-tool"} type="button"
             disabled={frozen} onClick={() => setTool("box")}
-            title="Бокс на этом кадре — B">▢</button>
+            {...hk("box")}>▢</button>
           <button className={tool === "track" ? "mag-tool on" : "mag-tool"} type="button"
             disabled={frozen} onClick={() => setTool("track")}
-            title="Трек-бокс: объект, живущий во времени — T">◇</button>
+            {...hk("track")}>◇</button>
           <button
             className={(tool === "auto" ? "mag-tool on" : "mag-tool") +
               (auto.state === "starting" ? " warming" : "")}
-            type="button"
-            disabled={frozen || auto.state !== "ready"}
+            type="button" disabled={frozen || auto.state !== "ready"}
             onClick={() => { setTool("auto"); clearAuto(); }}
-            title={auto.state === "ready" ? "Полуавтомат — A" : "Модель готовится…"}
-          >✨</button>
-          {tool === "auto" && (
-            <button className={autoPanel ? "mag-tool on" : "mag-tool"} type="button"
-              onClick={() => setAutoPanel((v) => !v)} title="Параметры полуавтомата">⚙</button>
-          )}
+            {...hk("auto")}
+            data-ht={
+              auto.state === "ready"
+                ? HELP.auto[1]
+                : "Полуавтомат: модель ещё готовится"
+            }>✨</button>
           <hr />
-          <button className="mag-tool" type="button" title="Приблизить"
+          <button className="mag-tool" type="button" {...hk("zoomIn")}
             onClick={() => canvas.current?.zoomBy(1.3)}>+</button>
-          <button className="mag-tool" type="button" title="Отдалить"
+          <button className="mag-tool" type="button" {...hk("zoomOut")}
             onClick={() => canvas.current?.zoomBy(1 / 1.3)}>−</button>
-          <button className="mag-tool wide" type="button" title="Вписать — 0"
+          <button className="mag-tool wide" type="button" {...hk("fit")}
             onClick={() => canvas.current?.fit()}>{Math.round(scale * 100)}%</button>
         </div>
 
-        {/* Объекты и их время — слева: выбрал строку, тут же видишь ключи. */}
+        {/* Объекты: только свойства и статистика. Действия переехали на
+            дорожки — там, где у объекта есть время. */}
         <aside className="mag-ved-side">
           <h5>Класс</h5>
           <input className="mag-ed-search" type="text" value={query}
@@ -664,137 +876,83 @@ export default function VideoAnnotator({
           <div className="mag-ved-objs">
             {(data?.tracks || []).length === 0 ? (
               <p className="mag-ed-hint">
-                Нажмите T и обведите объект — он станет треком и будет виден,
-                пока вы его не уберёте.
+                Нажмите T и обведите объект — он появится дорожкой внизу.
               </p>
             ) : (
-              (data?.tracks || []).map((track) => (
-                <TrackRow
-                  key={track.id}
-                  track={track}
-                  frame={frame}
-                  lastFrame={lastFrame}
-                  label={labelOf(track.class_index ?? -1)}
-                  picked={track.id === pickedTrack}
-                  onPick={() => setPickedTrack(track.id)}
-                  onSeek={seek}
-                />
-              ))
+              (data?.tracks || []).map((track) => {
+                const label = labelOf(track.class_index ?? -1);
+                const on = track.id === pickedTrack;
+                return (
+                  <div key={track.id} className={on ? "mag-ved-obj on" : "mag-ved-obj"}
+                    onClick={() => setPickedTrack(track.id)}>
+                    <div className="mag-ved-obj-head">
+                      <i style={{ background: label.color }} />
+                      <span className="mag-ved-obj-name">
+                        {track.label || label.name || "объект"}
+                      </span>
+                      <span className="mag-ved-obj-n">{exportCount(track)} кадров</span>
+                    </div>
+                    <label className="mag-ved-row">
+                      <span>Интерполяция</span>
+                      <input type="checkbox" checked={track.interpolate} disabled={frozen}
+                        onChange={(e) => patchTrack(track, { interpolate: e.target.checked })} />
+                    </label>
+                    <label className="mag-ved-row">
+                      <span>Шаг выгрузки</span>
+                      <input type="number" min={1} value={track.export_step} disabled={frozen}
+                        onChange={(e) =>
+                          patchTrack(track, { export_step: Math.max(1, Number(e.target.value)) })
+                        } />
+                    </label>
+                    <p className="mag-ved-note">
+                      {track.keys.length} ключей · кадры {track.start_frame}—
+                      {track.end_frame ?? "…"}
+                    </p>
+                  </div>
+                );
+              })
             )}
           </div>
-
-          {currentTrack && (
-            <div className="mag-ved-props">
-              <h5>{trackName(currentTrack, labelOf)}</h5>
-              <label className="mag-ved-row">
-                <span>Интерполяция</span>
-                <input type="checkbox" checked={currentTrack.interpolate} disabled={frozen}
-                  onChange={(e) => patchTrack(currentTrack, { interpolate: e.target.checked })} />
-              </label>
-              <label className="mag-ved-row">
-                <span>Шаг выгрузки</span>
-                <input type="number" min={1} value={currentTrack.export_step} disabled={frozen}
-                  onChange={(e) =>
-                    patchTrack(currentTrack, { export_step: Math.max(1, Number(e.target.value)) })
-                  } />
-              </label>
-              <p className="mag-ved-note">
-                В проект уйдёт {exportCount(currentTrack)} кадров этого объекта.
-              </p>
-              <div className="mag-ved-acts">
-                <button className="mag-ed-btn" type="button" disabled={frozen}
-                  onClick={() => putKeyHere(currentTrack, true)}
-                  title="Закрепить положение на этом кадре — K">Ключ здесь</button>
-                <button className="mag-ed-btn warn" type="button" disabled={frozen}
-                  onClick={() => putKeyHere(currentTrack, false)}
-                  title="Объект заслонён с этого кадра — H">Скрыт отсюда</button>
-                <button className="mag-ed-btn" type="button" disabled={frozen}
-                  onClick={() => endTrackHere(currentTrack)}
-                  title="Объект исчезает на этом кадре">Убрать отсюда</button>
-                <button className="mag-ed-btn del" type="button" disabled={frozen}
-                  onClick={() => {
-                    if (window.confirm(`Удалить объект «${trackName(currentTrack, labelOf)}» целиком?`)) {
-                      guard(async () => {
-                        await deleteTrack(currentTrack.id);
-                        setPickedTrack(null);
-                        await load();
-                      });
-                    }
-                  }}>Удалить объект</button>
-              </div>
-            </div>
-          )}
         </aside>
 
-        {/* Пока играем — показываем плеер, встали — серверный кадр. Рисуют
-            всегда по серверному: он и уйдёт в датасет. */}
         <div className="mag-ved-stage">
-          <video
-            ref={player}
-            className={playing ? "mag-ved-player on" : "mag-ved-player"}
-            src={videoFileUrl(taskId, video.id)}
-            style={{ aspectRatio: `${video.width || 16} / ${video.height || 9}` }}
-            onPlay={() => setPlaying(true)}
-            onPause={onPause}
-            onEnded={onPause}
-            preload="metadata"
-          />
-          {!playing && (
-            <BoxCanvas
-              ref={canvas}
-              imageId={`${video.id}:${frame}`}
-              src={videoFrameUrl(taskId, video.id, frame)}
-              fileName={video.file_name}
-              width={video.width || 1}
-              height={video.height || 1}
-              boxes={draft ?? boxes}
-              labelOf={labelOf}
-              editable={!frozen}
-              tool={tool === "track" ? "box" : tool}
-              autoMode="points"
-              autoPoints={autoPts}
-              autoPreview={autoPrev}
-              activeClass={active}
-              selected={selected}
-              reserve={196}
-              onSelect={setSelected}
-              onBoxes={onBoxes}
-              onDrawn={() => setTool("select")}
-              onScale={setScale}
-              onContext={(i, x, y) => setMenu({ i, x, y })}
-              onAutoPoint={onAutoPoint}
-              onAutoBox={onAutoBox}
-              onAutoCommit={commitAuto}
-            />
+          {/* Кадр готовится: гасим картинку и показываем кружок. Показывать
+              проценты нечего — ждать приходится то сеть, то декодер, и число
+              всё равно ничего не говорит о том, сколько осталось. */}
+          {shown.pending && (
+            <div className="mag-ved-busy" role="status" aria-label="Готовлю кадр">
+              <span className="mag-ved-spin" />
+            </div>
           )}
+          <BoxCanvas
+            ref={canvas}
+            imageId={`${video.id}:${frame}`}
+            bitmap={shown.image}
+            fileName={video.file_name}
+            width={video.width || 1}
+            height={video.height || 1}
+            boxes={draft ?? boxes}
+            dashed={dashed}
+            labelOf={labelOf}
+            editable={!frozen && !shown.lagging}
+            waiting={shown.lagging}
+            tool={tool === "track" ? "box" : tool}
+            autoMode="points"
+            autoPoints={autoPts}
+            autoPreview={autoPrev}
+            activeClass={active}
+            selected={selected}
+            reserve={280}
+            onSelect={setSelected}
+            onBoxes={onBoxes}
+            onDrawn={() => setTool("select")}
+            onScale={setScale}
+            onContext={(i, x, y) => setMenu({ i, x, y })}
+            onAutoPoint={onAutoPoint}
+            onAutoBox={onAutoBox}
+            onAutoCommit={commitAuto}
+          />
         </div>
-
-        {tool === "auto" && autoPanel && (
-          <div className="mag-auto-panel">
-            <h5>Полуавтомат</h5>
-            <label className="mag-auto-row">
-              <span>Детализация</span>
-              <select value={refine.detail}
-                onChange={(e) => setRefine((r) => ({ ...r, detail: e.target.value as AutoRefine["detail"] }))}>
-                <option value="auto">Как решит модель</option>
-                <option value="object">Объект целиком</option>
-                <option value="part">Часть</option>
-                <option value="subpart">Подчасть</option>
-              </select>
-            </label>
-            <label className="mag-auto-row">
-              <span>Порог</span>
-              <input type="range" min="0" max="0.9" step="0.05" value={refine.score_min ?? 0}
-                onChange={(e) => setRefine((r) => ({ ...r, score_min: Number(e.target.value) }))} />
-              <b>{(refine.score_min ?? 0).toFixed(2)}</b>
-            </label>
-            <p className="mag-auto-hint">
-              Клик — объект под курсором. Пробел или клик мимо закрепляет: если
-              выбран объект, положение ляжет ключом в него, иначе появится новый.
-            </p>
-            {auto.error && <div className="mag-auto-err">{auto.error}</div>}
-          </div>
-        )}
 
         {autoPrev && (
           <div className="mag-auto-bar">
@@ -808,34 +966,117 @@ export default function VideoAnnotator({
         )}
       </div>
 
-      <div className="mag-ved-transport">
-        <button className="mag-ed-btn" type="button" onClick={togglePlay}
-          title="Играть / стоп (Пробел)">{playing ? "⏸" : "▶"}</button>
-        <button className="mag-ed-btn" type="button" onClick={() => go(-1)}
-          title="Кадр назад (←)">⏮</button>
-        <button className="mag-ed-btn" type="button" onClick={() => go(1)}
-          title="Кадр вперёд (→)">⏭</button>
-        <span className="mag-ved-time">{fmtFrameTime(timeMs)} · {frame}</span>
-
-        <input
-          className="mag-ved-scrub"
-          type="range"
-          min={0}
-          max={lastFrame}
-          value={frame}
-          aria-label="Кадр"
-          onChange={(e) => seek(Number(e.target.value))}
-        />
-
-        {data?.materialized[String(frame)] && (
-          <span className="mag-ved-mark" title="Этот кадр уже в проекте — правка обновит его">
-            кадр в проекте
+      {/* Транспорт и время объектов */}
+      <div className="mag-ved-bottom">
+        <div className="mag-ved-transport">
+          <button className="mag-ed-btn" type="button" onClick={togglePlay}
+            {...hk("play")}>{playing ? "⏸" : "▶"}</button>
+          <button className="mag-ed-btn" type="button" onClick={() => go(-1)}
+            {...hk("prev")}>⏮</button>
+          <button className="mag-ed-btn" type="button" onClick={() => go(1)}
+            {...hk("next")}>⏭</button>
+          <span className="mag-ved-speed" {...hk("speed")}>
+            {[0.25, 0.5, 1, 2].map((v) => (
+              <button
+                key={v}
+                type="button"
+                className={v === speed ? "on" : undefined}
+                onClick={() => changeSpeed(v, frame)}
+                
+              >
+                {v === 0.25 ? "¼" : v === 0.5 ? "½" : `${v}×`}
+              </button>
+            ))}
           </span>
-        )}
-        <span className="mag-ed-keys">
-          <kbd>T</kbd> трек <kbd>B</kbd> бокс <kbd>K</kbd> ключ <kbd>H</kbd> скрыт{" "}
-          <kbd>Shift</kbd>+←→ по 10
-        </span>
+          <span className="mag-ved-quality">
+            <button
+              className={qualityOpen ? "mag-ed-btn on" : "mag-ed-btn"}
+              type="button"
+              onClick={() => setQualityOpen((v) => !v)}
+              aria-label="Качество"
+              aria-expanded={qualityOpen}
+              {...hk("quality")}
+            >
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M8 5.4a2.6 2.6 0 1 0 0 5.2 2.6 2.6 0 0 0 0-5.2Zm0 4a1.4 1.4 0 1 1 0-2.8 1.4 1.4 0 0 1 0 2.8Z"
+                />
+                <path
+                  fill="currentColor"
+                  d="m13.9 9.3.1-1.3-.1-1.3 1.2-1-1.3-2.2-1.5.5a5.6 5.6 0 0 0-2.2-1.3L9.7 1H6.3l-.4 1.7c-.8.3-1.5.7-2.2 1.3l-1.5-.5-1.3 2.2 1.2 1L2 8l.1 1.3-1.2 1 1.3 2.2 1.5-.5c.7.6 1.4 1 2.2 1.3l.4 1.7h3.4l.4-1.7c.8-.3 1.5-.7 2.2-1.3l1.5.5 1.3-2.2-1.2-1Z"
+                  opacity=".55"
+                />
+              </svg>
+            </button>
+            {qualityOpen && (
+              <div className="mag-ved-quality-menu" role="menu">
+                {(clip.manifest?.qualities || []).map((q) => (
+                  <button
+                    key={q.id}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={q.id === quality}
+                    className={q.id === quality ? "on" : undefined}
+                    onClick={() => {
+                      setQuality(q.id);
+                      setQualityOpen(false);
+                    }}
+                  >
+                    <span>{q.label}</span>
+                    <em>{q.height ? `${q.height}p` : ""}</em>
+                  </button>
+                ))}
+              </div>
+            )}
+          </span>
+          <span className="mag-ved-time">
+            {/* Номер добит до ширины последнего кадра. Иначе «0» → «250»
+                раздвигает строку, и всё правее дёргается на каждом переходе
+                через десяток. Добивка — цифровой пробел: он ровно в цифру. */}
+            {fmtFrameTime(timeMs)} ·{" "}
+            {String(frame).padStart(String(lastFrame).length, " ")}
+            {/* Точка нарисована всегда и лишь гаснет: появляйся она по месту,
+                строка времени раздвигалась бы и дёргала всё правее себя. */}
+            <i
+              className={shown.pending ? "mag-ved-wait on" : "mag-ved-wait"}
+              aria-hidden={!shown.pending}
+            />
+          </span>
+        </div>
+
+        {/* Шкала ролика стоит в той же сетке, что и дорожки объектов: имя —
+            полоса — состояние. Иначе их шкалы совпадали бы лишь на глаз, и
+            «объект появляется здесь» на дорожке указывало бы не туда. */}
+        <div className="g-lane mag-ved-ruler">
+          <span className="g-lane-name">кадр</span>
+          <span className="g-lane-track">
+            <input className="mag-ved-scrub" type="range" min={0} max={lastFrame}
+              value={frame} aria-label="Кадр" {...hk("scrub")}
+              onChange={(e) => { stop(); setFrame(Number(e.target.value)); }} />
+          </span>
+          {/* Место занято всегда: появляясь по месту, метка сжимала строку. */}
+          <span
+            className={
+              data?.materialized[String(frame)]
+                ? "g-lane-state mag-ved-mark on"
+                : "g-lane-state mag-ved-mark"
+            }
+          >
+            в таске
+          </span>
+        </div>
+
+        <TrackLanes
+          tracks={data?.tracks || []}
+          frame={frame}
+          lastFrame={lastFrame}
+          labelOf={labelOf}
+          selected={pickedTrack}
+          editable={!frozen}
+          onSelect={setPickedTrack}
+          onAction={onLane}
+        />
       </div>
 
       {menu && (
@@ -860,7 +1101,77 @@ export default function VideoAnnotator({
             }
             setMenu(null);
           }}
+          deleteLabel={
+            menu.i === null
+              ? undefined
+              : items[menu.i]?.kind === "track"
+                ? "трек целиком"
+                : "объект"
+          }
+          onDelete={
+            menu.i === null || !items[menu.i]
+              ? undefined
+              : () => {
+                  dropItem(items[menu.i as number]);
+                  setMenu(null);
+                }
+          }
+          actions={
+            menu.i !== null && items[menu.i]?.kind === "single"
+              ? [
+                  {
+                    label: "Сделать треком",
+                    hint: "объект начнёт жить во времени",
+                    run: () => {
+                      const item = items[menu.i as number];
+                      if (item.kind === "single") toTrack(item.box);
+                      setMenu(null);
+                    },
+                  },
+                ]
+              : undefined
+          }
           onClose={() => setMenu(null)}
+        />
+      )}
+
+      {laneMenu && (
+        <LaneMenu
+          action={laneMenu}
+          track={trackById(laneMenu.trackId)}
+          frozen={frozen}
+          onClose={() => setLaneMenu(null)}
+          onKey={() => guard(async () => {
+            await putTrackKey(laneMenu.trackId, laneMenu.frame, {});
+            await load();
+          })}
+          onDropKey={() => guard(async () => {
+            await deleteTrackKey(laneMenu.trackId, laneMenu.frame);
+            await load();
+          })}
+          onEnd={() => {
+            const track = trackById(laneMenu.trackId);
+            if (track) patchTrack(track, { end_frame: laneMenu.frame });
+          }}
+          onShow={() => {
+            const track = trackById(laneMenu.trackId);
+            if (!track) return;
+            patchTrack(track, {
+              hidden_ranges: (track.hidden_ranges || []).filter(
+                ([from, to]) => !(from <= laneMenu.frame && laneMenu.frame < to)
+              ),
+            });
+          }}
+          onDelete={() => {
+            const track = trackById(laneMenu.trackId);
+            if (!track) return;
+            if (!window.confirm(`Удалить объект «${trackName(track, labelOf)}» целиком?`)) return;
+            guard(async () => {
+              await deleteTrack(track.id);
+              setPickedTrack(null);
+              await load();
+            });
+          }}
         />
       )}
     </div>
@@ -880,53 +1191,51 @@ function trackName(track: VideoTrack, labelOf: (ci: number) => { name: string })
   return track.label || labelOf(track.class_index ?? -1).name || "объект";
 }
 
-/** Строка объекта со своей дорожкой: жизнь трека, ключи и заслонённые куски. */
-function TrackRow({
-  track, frame, lastFrame, label, picked, onPick, onSeek,
+/** Меню на дорожке: то же, что делают жестами. Жест, о котором нельзя
+ *  догадаться, для нового разметчика не существует. */
+function LaneMenu({
+  action, track, frozen, onClose, onKey, onDropKey, onEnd, onShow, onDelete,
 }: {
-  track: VideoTrack;
-  frame: number;
-  lastFrame: number;
-  label: { name: string; color: string };
-  picked: boolean;
-  onPick: () => void;
-  onSeek: (frame: number) => void;
+  action: LaneAction;
+  track: VideoTrack | null;
+  frozen: boolean;
+  onClose: () => void;
+  onKey: () => void;
+  onDropKey: () => void;
+  onEnd: () => void;
+  onShow: () => void;
+  onDelete: () => void;
 }) {
-  const span = Math.max(1, lastFrame);
-  const pct = (f: number) => `${Math.max(0, Math.min(100, (f / span) * 100))}%`;
-  const end = trackEnd(track);
-  const here = boxAt(track, frame) !== null;
+  if (!track) return null;
+  const hasKey = keyAt(track, action.frame) !== null;
+  const state = stateAt(track, action.frame);
+  const run = (fn: () => void) => () => { fn(); onClose(); };
 
   return (
-    <div className={picked ? "mag-ved-obj on" : "mag-ved-obj"} onClick={onPick}>
-      <div className="mag-ved-obj-head">
-        <i style={{ background: label.color }} />
-        <span className="mag-ved-obj-name">{track.label || label.name || "объект"}</span>
-        <span className="mag-ved-obj-n">
-          {track.keys.length} кл{here ? "" : " · не здесь"}
-        </span>
+    <>
+      <div className="mag-menu-veil" onClick={onClose} onContextMenu={(e) => e.preventDefault()} />
+      <div className="mag-menu g-lane-menu"
+        style={{ left: action.at?.x ?? 0, top: action.at?.y ?? 0 }}>
+        <div className="g-lane-menu-h">кадр {action.frame}</div>
+        <button type="button" disabled={frozen} onClick={run(onKey)}>
+          {hasKey ? "Обновить ключ здесь" : "Поставить ключ здесь"}
+        </button>
+        {hasKey && track.keys.length > 1 && (
+          <button type="button" disabled={frozen} onClick={run(onDropKey)}>Снять ключ</button>
+        )}
+        {state?.hidden && (
+          <button type="button" disabled={frozen} onClick={run(onShow)}>
+            Снять заслонение
+          </button>
+        )}
+        <button type="button" disabled={frozen} onClick={run(onEnd)}>
+          Объект исчезает здесь
+        </button>
+        <hr />
+        <button type="button" className="del" disabled={frozen} onClick={run(onDelete)}>
+          Удалить объект
+        </button>
       </div>
-      <div
-        className="mag-ved-track"
-        onClick={(e) => {
-          const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-          onSeek(((e.clientX - r.left) / r.width) * span);
-        }}
-      >
-        <span className="mag-ved-life"
-          style={{ left: pct(track.start_frame), right: `${100 - (end / span) * 100}%`,
-                   background: label.color }} />
-        {hiddenRanges(track).map(([from, to], i) => (
-          <span key={i} className="mag-ved-occl"
-            style={{ left: pct(from), width: pct(Math.max(0, to - from)) }} />
-        ))}
-        {track.keys.map((k) => (
-          <span key={k.frame_no}
-            className={k.visible ? "mag-ved-key" : "mag-ved-key off"}
-            style={{ left: pct(k.frame_no), background: label.color }} />
-        ))}
-        <span className="mag-ved-needle" style={{ left: pct(frame) }} />
-      </div>
-    </div>
+    </>
   );
 }

@@ -30,6 +30,12 @@ import "./styles/taskpage.css";
 import "./styles/editor.css";
 import "./styles/video.css";
 import "./styles/export.css";
+// Последним: «Габарит» переопределяет накопленные наборы переменных своими
+// токенами, поэтому подключается после всех, кого переопределяет.
+import "./styles/gabarit.css";
+import { applyStoredTheme } from "./theme";
+
+applyStoredTheme();
 
 // Новый сайт («Магистраль»: проекты, кабинет) — главный. Старое приложение
 // живёт отдельно на /tools за тем же входом и напрямую не связано с новым.

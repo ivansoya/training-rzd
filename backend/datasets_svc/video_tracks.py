@@ -8,6 +8,11 @@
 Кадр — единица адресации. Время (миллисекунды) считается из кадра и частоты,
 а не наоборот: обратный пересчёт на дробном fps уводит на соседний кадр, и
 разметка перестаёт совпадать с картинкой.
+
+Заслонённость — отрезки у трека, а не флаг у ключа. Разметчик тянет её мышью
+за края, и края обязаны быть собственной сущностью: если бы концом отрезка
+служил соседний ключ, то, потянув за него, человек заодно двигал бы положение
+объекта — жест делал бы не то, что обещает.
 """
 
 # Больше этого числа кадров из одного трека не выгружаем. Потолок тот же по
@@ -44,35 +49,70 @@ def interpolate(box_a: dict, box_b: dict, t: float) -> dict:
     }
 
 
-def track_span(track: dict, last_frame: int | None = None) -> tuple[int, int]:
-    """Кадры, на которых трек существует: от появления до кадра, где убран.
+def normalize_ranges(raw) -> list[list[int]]:
+    """Приводим отрезки к порядку и склеиваем пересекающиеся.
 
-    Пустой ``end_frame`` значит «ещё не убирали» — трек живёт до конца ролика.
+    Разметчик режет их мышью и легко делает внахлёст; хранить как есть значило
+    бы каждый раз гадать, что такое два наложенных отрезка.
     """
-    start = int(track["start_frame"])
-    end = track.get("end_frame")
-    if end is None:
-        end = last_frame if last_frame is not None else start
-    return start, max(start, int(end))
+    clean = []
+    for item in raw or []:
+        try:
+            start, end = int(item[0]), int(item[1])
+        except (TypeError, ValueError, IndexError):
+            raise TrackError("Отрезок невидимости должен быть парой кадров.")
+        if end <= start:
+            continue
+        clean.append([start, end])
+    clean.sort()
+
+    merged: list[list[int]] = []
+    for start, end in clean:
+        if merged and start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], end)
+        else:
+            merged.append([start, end])
+    return merged
 
 
-def box_at(track: dict, keys: list[dict], frame_no: int) -> dict | None:
-    """Бокс трека на кадре или ``None``, если объекта там нет.
+def is_hidden(track: dict, frame_no: int) -> bool:
+    """Заслонён ли объект на этом кадре. Отрезок полуоткрыт: [от, до)."""
+    for start, end in track.get("hidden_ranges") or []:
+        if start <= frame_no < end:
+            return True
+    return False
 
-    Объекта нет в трёх случаях: кадр вне жизни трека, кадр раньше первого
-    ключевого, и участок, объявленный невидимым (объект заслонён). Последний
-    случай — не отсутствие разметки, а осознанное «здесь его не видно», и в
-    выгрузку такой кадр не идёт.
+
+def track_end(track: dict, keys: list[dict], last_frame: int | None = None) -> int:
+    """Последний кадр, на котором трек ещё существует.
+
+    Пустой ``end_frame`` значит «ещё не убирали». Такой трек живёт до
+    последнего ключа, а не до конца ролика: иначе он замер бы в последнем
+    положении и потащил в датасет кадры, которых никто не размечал.
+    """
+    if track.get("end_frame") is not None:
+        return max(int(track["start_frame"]), int(track["end_frame"]))
+    if keys:
+        return max(int(k["frame_no"]) for k in keys)
+    return int(track["start_frame"])
+
+
+def state_at(track: dict, keys: list[dict], frame_no: int) -> dict | None:
+    """Положение объекта на кадре и виден ли он там.
+
+    Возвращает ``{"geometry": …, "hidden": bool}`` либо ``None``, если объекта
+    на кадре нет вовсе — то есть кадр вне жизни трека или раньше первого
+    ключа. Заслонённый объект существует: редактор рисует его прерывистой
+    рамкой, а в выгрузку он не идёт.
     """
     if not keys:
         return None
-    start, end = track_span(track, None)
-    if track.get("end_frame") is None:
-        end = max(end, keys[-1]["frame_no"])
+    ordered = sorted(keys, key=lambda k: k["frame_no"])
+    start = int(track["start_frame"])
+    end = track_end(track, ordered)
     if frame_no < start or frame_no > end:
         return None
 
-    ordered = sorted(keys, key=lambda k: k["frame_no"])
     prev = None
     nxt = None
     for key in ordered:
@@ -83,15 +123,25 @@ def box_at(track: dict, keys: list[dict], frame_no: int) -> dict | None:
             break
     if prev is None:
         return None
-    if not prev.get("visible", True):
-        return None
+
     if nxt is None or not track.get("interpolate", True):
-        return dict(prev["geometry"])
-    span = nxt["frame_no"] - prev["frame_no"]
-    if span <= 0:
-        return dict(prev["geometry"])
-    t = (frame_no - prev["frame_no"]) / span
-    return interpolate(prev["geometry"], nxt["geometry"], t)
+        geometry = dict(prev["geometry"])
+    else:
+        span = nxt["frame_no"] - prev["frame_no"]
+        geometry = (
+            dict(prev["geometry"]) if span <= 0
+            else interpolate(prev["geometry"], nxt["geometry"],
+                             (frame_no - prev["frame_no"]) / span)
+        )
+    return {"geometry": geometry, "hidden": is_hidden(track, frame_no)}
+
+
+def box_at(track: dict, keys: list[dict], frame_no: int) -> dict | None:
+    """Бокс, который уйдёт в разметку, или ``None``. Заслонённый не уходит."""
+    state = state_at(track, keys, frame_no)
+    if state is None or state["hidden"]:
+        return None
+    return state["geometry"]
 
 
 def export_frames(track: dict, keys: list[dict], last_frame: int | None = None) -> list[int]:
@@ -99,14 +149,13 @@ def export_frames(track: dict, keys: list[dict], last_frame: int | None = None) 
 
     Ключевые кадры берутся всегда — это работа руками, терять её нельзя.
     Остальное добирается шагом трека: быстрый объект выгружают часто, стоящий
-    редко. Невидимые участки отсеиваются вместе с боксами.
+    редко. Заслонённые участки отсеиваются вместе с боксами.
     """
     if not keys:
         return []
     step = max(1, int(track.get("export_step", 1) or 1))
-    start, end = track_span(track, last_frame)
-    if track.get("end_frame") is None:
-        end = max(end, max(k["frame_no"] for k in keys))
+    start = int(track["start_frame"])
+    end = track_end(track, keys, last_frame)
 
     wanted = {int(k["frame_no"]) for k in keys if start <= k["frame_no"] <= end}
     frame = start
@@ -122,7 +171,7 @@ def export_frames(track: dict, keys: list[dict], last_frame: int | None = None) 
 
 
 def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None) -> dict:
-    """Что именно материализуется при сдаче таски.
+    """Что именно материализуется при закрытии разметки ролика.
 
     Возвращает ``{frame_no: [бокс, ...]}``. Бокс — словарь с ``class_id``,
     геометрией и происхождением; из него потом получается обычная аннотация.
@@ -142,13 +191,11 @@ def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None)
                 "geometry": geometry,
                 # Посчитанное положение — не работа человека, и помечать его
                 # как ручную разметку было бы неправдой в истории объекта.
-                "source": (exact or {}).get("source", "human") if exact else "model",
+                "source": exact.get("source", "human") if exact else "model",
                 "track_id": track.get("id"),
             })
 
     for single in singles:
-        if not single.get("visible", True):
-            continue
         by_frame.setdefault(int(single["frame_no"]), []).append({
             "class_id": single["class_id"],
             "geometry": dict(single["geometry"]),

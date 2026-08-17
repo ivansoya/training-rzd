@@ -330,3 +330,688 @@
   .mag-ved-side { width: 220px; }
   .mag-ved-transport .mag-ed-keys { display: none; }
 }
+
+/* Заслонённый объект: он на кадре есть, но в датасет не пойдёт. Прерывистая
+   рамка честнее исчезновения — пропажа читалась бы как «здесь не размечено». */
+.mag-cv-box.occluded {
+  border-style: dashed;
+  opacity: 0.72;
+}
+
+/* ===================== ДОРОЖКИ ОБЪЕКТОВ ПОД КАДРОМ =====================
+
+   Таймлайн треков переехал под кадр, чтобы видеть время всех объектов разом:
+   кто когда появляется, где пересекаются, где кто заслонён. Дорожка одного
+   объекта такого не показывает.
+
+   Жесты: клик — встать на кадр, протяжка ромба — перенести ключ, протяжка
+   краёв — сдвинуть появление и исчезновение, Alt+протяжка — вырезать
+   заслонённый участок, правая кнопка — то же меню для тех, кто не догадался. */
+
+.mag-ved-bottom {
+  flex-shrink: 0;
+  border-top: 1px solid var(--ed-edge);
+  background: var(--ed-chrome);
+}
+
+.mag-ved-bottom .mag-ved-transport { border-top: 0; }
+
+.g-lanes {
+  max-height: 178px;
+  overflow-y: auto;
+  padding: 4px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.g-lanes-empty {
+  padding: 18px 14px 22px;
+  text-align: center;
+  color: var(--ed-faint);
+  font-size: 12.5px;
+}
+
+.g-lanes-empty kbd {
+  font: 600 10px var(--mono);
+  background: var(--ed-btn);
+  border: 1px solid var(--ed-edge);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.g-lane {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 3px 5px;
+  border-radius: 5px;
+  border: 1px solid transparent;
+}
+
+.g-lane.on { border-color: var(--ed-edge); background: var(--ed-panel); }
+
+.g-lane-name {
+  width: 132px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: none;
+  border: 0;
+  padding: 3px 0;
+  color: var(--ed-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.g-lane.on .g-lane-name { color: var(--ed-ink); }
+
+.g-lane-name i { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+.g-lane-name span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.g-lane-name em {
+  margin-left: auto;
+  font-style: normal;
+  font: 600 10px var(--mono);
+  color: var(--ed-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.g-lane-track {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  height: 20px;
+  border: 1px solid var(--ed-edge);
+  border-radius: 4px;
+  background: repeating-linear-gradient(90deg, transparent 0 23px, #1e252c 23px 24px);
+  cursor: crosshair;
+  touch-action: none;
+}
+
+.g-lane-life {
+  position: absolute;
+  top: 50%;
+  height: 3px;
+  transform: translateY(-50%);
+  border-radius: 2px;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
+/* Ручки краёв: появляются у выбранного объекта — иначе дорожки превратились
+   бы в частокол хватательных зон. */
+.g-lane-grip {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  width: 7px;
+  transform: translateX(-50%);
+  border-radius: 2px;
+  background: var(--ed-ink);
+  opacity: 0.5;
+  cursor: ew-resize;
+}
+
+.g-lane-grip:hover { opacity: 0.95; }
+
+.g-lane-occl {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background-image: repeating-linear-gradient(
+    -45deg, rgba(255, 255, 255, 0.24) 0 2px, transparent 2px 5px
+  );
+  pointer-events: none;
+}
+
+.g-lane-occl.ghost { border-style: dashed; opacity: 0.6; }
+
+.g-lane-key {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  transform: translate(-50%, -50%) rotate(45deg);
+  border: 1.5px solid var(--ed-panel);
+  border-radius: 1px;
+  cursor: grab;
+}
+
+.g-lane-key.now { box-shadow: 0 0 0 2px var(--s-del); }
+
+.g-lane-key.ghost {
+  background: var(--ed-ink) !important;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.g-lane-needle {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: var(--s-del);
+  pointer-events: none;
+}
+
+.g-lane-state {
+  width: 74px;
+  flex-shrink: 0;
+  font: 500 10.5px var(--mono);
+  color: var(--ed-faint);
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Меню на дорожке */
+.g-lane-menu { min-width: 210px; }
+
+.g-lane-menu-h {
+  padding: 8px 12px 6px;
+  font: 600 10px var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ed-faint);
+  border-bottom: 1px solid var(--ed-edge);
+}
+
+.g-lane-menu button.del { color: #ff8f8f; }
+
+/* ---- плеер перегонов ---------------------------------------------------- */
+
+/* Скорости стоят рядом с транспортом: их меняют на ходу, глядя в кадр. */
+.mag-ved-speed {
+  display: flex;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.mag-ved-speed button {
+  border: 0;
+  border-right: 1px solid var(--ed-edge);
+  background: var(--ed-btn);
+  color: var(--ed-faint);
+  font: 500 10.5px/1 var(--mono);
+  padding: 7px 8px;
+  cursor: pointer;
+}
+
+.mag-ved-speed button:last-child { border-right: 0; }
+.mag-ved-speed button:hover { color: var(--ed-ink); }
+
+.mag-ved-speed button.on {
+  background: var(--ed-edge);
+  color: var(--ed-ink);
+}
+
+.mag-ed-btn.on {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* Кадр разжимается: точка вместо подмены картинки. Гасить кадр на время
+   ожидания нельзя — при шаге стрелкой это читалось бы как моргание.
+
+   Место под точку занято всегда, а меняется только видимость: иначе строка
+   времени раздвигалась бы в момент появления и дёргала всё, что правее. */
+.mag-ved-wait {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 7px;
+  border-radius: 50%;
+  background: var(--red);
+  opacity: 0;
+  transition: opacity 0.15s linear;
+}
+
+.mag-ved-wait.on {
+  opacity: 1;
+  animation: mag-ved-pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes mag-ved-pulse {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+.mag-ed-note {
+  font-size: 12.5px;
+  color: var(--ed-dim);
+}
+
+/* Картинка догоняет запрошенный кадр: рисовать нельзя. Инструменты гаснут, а
+   курсор над кадром становится «ждать» — молчаливый отказ читался бы как
+   поломка мыши, и разметчик тянул бы бокс второй раз и третий. */
+.mag-ed-rail.waiting .mag-tool.on {
+  border-color: var(--ed-edge);
+  color: var(--ed-faint);
+  background: var(--ed-btn);
+}
+
+.mag-ed-rail.waiting { opacity: 0.6; }
+
+.mag-cv.cur-wait { cursor: wait; }
+
+
+/* Кадр готовится: гасим картинку и показываем кружок. Затемнение важнее
+   самого кружка — оно сразу говорит «на это сейчас смотреть нельзя», а
+   разметчик и так знает, что кадр не тот. */
+.mag-ved-busy {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: grid;
+  place-items: center;
+  background: rgba(10, 13, 17, 0.55);
+  pointer-events: none;
+}
+
+.mag-ved-spin {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 3px solid var(--ed-edge);
+  border-top-color: var(--red);
+  animation: mag-ved-spin 0.8s linear infinite;
+}
+
+@keyframes mag-ved-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---- постоянные размеры в плеере --------------------------------------- */
+
+/* Всё, что меняется по ходу работы, обязано занимать одно и то же место.
+   Иначе кнопка «играть» превращается в «стоп», символ оказывается другой
+   ширины, и таймлайн рядом дёргается на каждом нажатии. */
+.mag-ved-transport .mag-ed-btn {
+  width: 34px;
+  padding: 6px 0;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Кнопки с текстом ширины не меняют, но и им нужен свой размер. */
+.mag-ved-transport .mag-ed-btn.wide {
+  width: auto;
+  min-width: 86px;
+  padding: 6px 11px;
+}
+
+/* ¼ и 2× — разной ширины символы; без общей ширины ряд «дышит». */
+.mag-ved-speed button {
+  width: 30px;
+  padding: 7px 0;
+  text-align: center;
+}
+
+/* Метка занимает место всегда и лишь гаснет: её появление сжимало ползунок. */
+.mag-ved-mark {
+  visibility: hidden;
+  flex-shrink: 0;
+}
+
+.mag-ved-mark.on { visibility: visible; }
+
+/* ---- справка ------------------------------------------------------------ */
+
+.mag-ed-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  background: rgba(6, 9, 12, 0.72);
+}
+
+/* Органы управления остаются над затемнением — в этом весь смысл справки:
+   видно, чем управляют, а не общий силуэт окна. */
+.mag-ed.help .mag-ed-head,
+.mag-ed.help .mag-ed-rail,
+.mag-ed.help .mag-ved-bottom {
+  position: relative;
+  z-index: 41;
+}
+
+.mag-ed.help [data-help] {
+  position: relative;
+  outline: 1px solid var(--red);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}
+
+/* Клавиша — прямо на элементе, мелко и в углу: подписи над кнопками в тесном
+   ряду наезжали бы друг на друга. */
+.mag-ed.help [data-hk]::after {
+  content: attr(data-hk);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 5px);
+  transform: translateX(-50%);
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--red);
+  color: var(--on-acc);
+  font: 700 9px/1.4 var(--mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Описание — по наведению: сразу все не поместились бы, да и не нужны все. */
+.mag-ed.help [data-help]:hover {
+  outline-width: 2px;
+  z-index: 42;
+}
+
+.mag-ed.help [data-help]:hover::before {
+  content: attr(data-ht);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 7px);
+  transform: translateX(-50%);
+  max-width: 260px;
+  width: max-content;
+  padding: 7px 10px;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius);
+  background: var(--ed-panel);
+  color: var(--ed-ink);
+  font: 400 12px/1.45 var(--sans, inherit);
+  text-align: left;
+  white-space: normal;
+  z-index: 43;
+  pointer-events: none;
+}
+
+/* У нижнего ряда подсказка уходит вверх: снизу её обрезало бы окном. */
+.mag-ed.help .mag-ved-bottom [data-help]:hover::before {
+  top: auto;
+  bottom: calc(100% + 22px);
+}
+
+.mag-ed-help {
+  position: absolute;
+  z-index: 42;
+  right: 26px;
+  top: 74px;
+  width: 330px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius-l);
+  background: var(--ed-panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+
+.mag-ed-help b {
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ed-faint);
+}
+
+.mag-ed-help-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.mag-ed-help-list div {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 11px;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--ed-dim);
+}
+
+.mag-ed-help-list kbd {
+  justify-self: start;
+  padding: 3px 7px;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius-s);
+  background: var(--ed-btn);
+  color: var(--ed-ink);
+  font: 600 10.5px/1.3 var(--mono);
+  white-space: nowrap;
+}
+
+.mag-ed-help p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ed-faint);
+}
+
+/* ---- выбор качества ------------------------------------------------------ */
+
+.mag-ved-quality {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.mag-ved-quality > .mag-ed-btn {
+  width: 34px;
+  padding: 6px 0;
+  display: grid;
+  place-items: center;
+}
+
+.mag-ved-quality-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  z-index: 12;
+  min-width: 132px;
+  display: flex;
+  flex-direction: column;
+  padding: 4px;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius);
+  background: var(--ed-panel);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+}
+
+.mag-ved-quality-menu button {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border: 0;
+  background: none;
+  color: var(--ed-dim);
+  font: 400 13px/1 inherit;
+  text-align: left;
+  padding: 8px 9px;
+  border-radius: var(--radius-s);
+  cursor: pointer;
+}
+
+.mag-ved-quality-menu button:hover { background: var(--ed-btn); color: var(--ed-ink); }
+
+.mag-ved-quality-menu button.on {
+  color: var(--red);
+  font-weight: 600;
+}
+
+.mag-ved-quality-menu em {
+  font: 500 10.5px/1 var(--mono);
+  font-style: normal;
+  color: var(--ed-faint);
+}
+
+/* ---- шкала ролика в сетке дорожек ---------------------------------------- */
+
+/* Ползунок стоит в той же строке-сетке, что и дорожки объектов: имя, полоса,
+   состояние. Только так его шкала совпадает с их шкалами буквально — раньше
+   они были в разных потоках и сходились лишь на глаз. */
+.mag-ved-ruler {
+  margin-top: 4px;
+  border-top: 1px solid var(--ed-edge);
+  border-radius: 0;
+  padding-top: 7px;
+}
+
+.mag-ved-ruler .g-lane-name {
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ed-faint);
+}
+
+.mag-ved-ruler .g-lane-track {
+  height: 20px;
+  background: none;
+}
+
+.mag-ved-ruler .mag-ved-scrub {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  margin: 0;
+}
+
+/* ---- окно одиночных объектов -------------------------------------------- */
+
+/* У трека время видно на дорожке, а одиночный бокс живёт на своём кадре и из
+   общей картины выпадает. Здесь он собран по классам и с номерами кадров:
+   видно, где уже обведено, а где нет. */
+.mag-ed-objects {
+  position: absolute;
+  z-index: 20;
+  right: 26px;
+  top: 74px;
+  width: 340px;
+  max-height: min(60vh, 520px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 15px 17px 16px;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius-l);
+  background: var(--ed-panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+
+.mag-ed-objects-h {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mag-ed-objects-h b {
+  flex: 1;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ed-faint);
+}
+
+.mag-ed-objects-h button {
+  border: 0;
+  background: none;
+  color: var(--ed-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.mag-ed-objects-h button:hover { color: var(--ed-ink); }
+
+.mag-ed-objects-empty {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ed-faint);
+}
+
+.mag-ed-objects-list {
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+
+.mag-ed-objects-cls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ed-ink);
+}
+
+.mag-ed-objects-cls i { width: 9px; height: 9px; border-radius: 2px; flex-shrink: 0; }
+
+.mag-ed-objects-cls em {
+  margin-left: auto;
+  font: 600 10.5px/1 var(--mono);
+  font-style: normal;
+  color: var(--ed-faint);
+}
+
+/* Номера кадров — кнопки: по ним и переходят. */
+.mag-ed-objects-frames {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.mag-ed-objects-frames button {
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius-s);
+  background: var(--ed-btn);
+  color: var(--ed-dim);
+  font: 500 10.5px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+
+.mag-ed-objects-frames button:hover { color: var(--ed-ink); border-color: var(--ed-faint); }
+
+.mag-ed-objects-frames button.on {
+  border-color: var(--red);
+  color: var(--red);
+}
+
+/* Действие в меню по правой кнопке: «сделать треком» и подобные. */
+.mag-cmenu-act {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 0;
+  border-top: 1px solid #333c46;
+  background: none;
+  color: var(--ed-ink);
+  font: inherit;
+  font-size: 12.5px;
+  text-align: left;
+  padding: 8px;
+  margin-top: 1px;
+  cursor: pointer;
+}
+
+.mag-cmenu-act:hover { background: var(--ed-btn); }
+
+.mag-cmenu-act em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--ed-faint);
+}

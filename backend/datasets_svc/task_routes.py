@@ -37,7 +37,7 @@ from common.models import (
 from common.storage import translit_slug
 from datasets_svc import materialize
 from datasets_svc import video as videolib
-from datasets_svc import video_tracks
+from datasets_svc import video_chunks as chunklib
 
 bp = Blueprint("tasks", __name__)
 
@@ -336,15 +336,58 @@ def get_task(task_id):
                 "segments": v.segments or [],
                 "frames": per_video.get(v.id, 0),
                 "tracks": per_video_tracks.get(v.id, 0),
+                "annotation_closed_at": (
+                    v.annotation_closed_at.isoformat() if v.annotation_closed_at else None
+                ),
+                "created_at": v.created_at.isoformat(),
             }
             for v in videos
         ]
+        # Работа по незакрытому ролику ещё не стала кадрами и потому невидима
+        # в счётчиках. Без этой сводки прогресс врал бы, а сдача молча теряла
+        # бы разметку целого ролика.
+        data["pending_videos"] = materialize.pending_summary(db, task)
         data["from_files"] = db.execute(
             select(func.count(Image.id)).where(
                 Image.task_id == task.id, Image.source_video_id.is_(None),
                 Image.task_status != "deleted",
             )
         ).scalar_one()
+
+        # Разбивка по источникам считается здесь, а не на клиенте: клиент
+        # видит лишь первую страницу кадров, и его счётчики врали бы тем
+        # сильнее, чем больше таска.
+        rows = db.execute(
+            select(Image.source_video_id, Image.task_status, func.count(Image.id))
+            .where(Image.task_id == task.id)
+            .group_by(Image.source_video_id, Image.task_status)
+        ).all()
+        buckets = {}
+        for source_id, status, count in rows:
+            key = str(source_id) if source_id else "files"
+            bucket = buckets.setdefault(key, {
+                "new": 0, "annotated": 0, "empty": 0, "skipped": 0, "deleted": 0,
+            })
+            bucket[status] = bucket.get(status, 0) + count
+        accepted = db.execute(
+            select(Image.source_video_id, func.count(Image.id))
+            .where(Image.task_id == task.id, Image.dataset_id.isnot(None))
+            .group_by(Image.source_video_id)
+        ).all()
+        for source_id, count in accepted:
+            key = str(source_id) if source_id else "files"
+            buckets.setdefault(key, {})["accepted"] = count
+        # Самый ранний кадр источника: по нему блоки выстраиваются во времени.
+        first_seen = db.execute(
+            select(Image.source_video_id, func.min(Image.created_at))
+            .where(Image.task_id == task.id)
+            .group_by(Image.source_video_id)
+        ).all()
+        for source_id, when in first_seen:
+            key = str(source_id) if source_id else "files"
+            if when is not None:
+                buckets.setdefault(key, {})["first_at"] = when.isoformat()
+        data["by_source"] = buckets
 
         # Чем именно размечено: по одному числу «86 разметок» перекос не виден.
         rows = db.execute(
@@ -449,23 +492,6 @@ def set_status(task_id):
 
         result = {}
         if target == "done":
-            # Размеченное видео сдаётся не мгновенно: каждый кадр плана надо
-            # достать из ролика. Это фоновая задача с прогрессом — той же
-            # природы, что нарезка, и вести себя должна так же.
-            try:
-                pending_frames = materialize.count_pending(db, task)
-            except (videolib.VideoError, video_tracks.TrackError) as exc:
-                return jsonify({"error": str(exc)}), 400
-            if pending_frames:
-                job_id = jobs.create(
-                    "task-accept", total=pending_frames, message="Подготовка"
-                )
-                threading.Thread(
-                    target=_run_accept_job,
-                    args=(job_id, task.id, user.id),
-                    daemon=True,
-                ).start()
-                return jsonify({"job_id": job_id, "frames": pending_frames}), 202
             result = _accept(db, task, user)
         elif target == "closed":
             result = _close(db, task, user)
@@ -498,41 +524,6 @@ def _accept(db, task, user):
         img.dataset_id = dataset.id
     _log(db, task, user, "accepted", accepted=len(pending), dataset=dataset.name)
     return {"accepted": len(pending), "dataset": dataset.name}
-
-
-def _run_accept_job(job_id, task_id, user_id):
-    """Сдача таски с размеченным видео: извлечь кадры, потом принять их.
-
-    Состояние таски меняется только по успеху. Если декодер споткнулся,
-    таска остаётся в работе: «готово» при половине кадров в проекте — это
-    обещание, которого сдача не выполнила.
-    """
-    db = SessionLocal()
-    try:
-        task = db.get(Task, task_id)
-        user = db.get(User, user_id) if user_id else None
-        jobs.update(job_id, message="Извлекаю кадры из видео", phase="frames")
-        made = materialize.run(
-            db, task, user_id,
-            progress=lambda done: jobs.update(job_id, processed=done),
-        )
-        if made["created"] or made["updated"]:
-            _log(db, task, user, "video_materialized",
-                 created=made["created"], updated=made["updated"],
-                 boxes=made["boxes"])
-        jobs.update(job_id, message="Принимаю кадры в датасет", phase="accept")
-        result = _accept(db, task, user)
-        task.status = "done"
-        db.commit()
-        jobs.update(job_id, status="done", result={**result, **made})
-    except (videolib.VideoError, video_tracks.TrackError) as exc:
-        db.rollback()
-        jobs.update(job_id, status="error", error=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        db.rollback()
-        jobs.update(job_id, status="error", error=str(exc))
-    finally:
-        db.close()
 
 
 def _drop_files(base, image_id):
@@ -700,6 +691,39 @@ def upload_images(task_id):
         db.close()
 
 
+def _run_chunks_job(job_id, path, index, quality):
+    try:
+        made = chunklib.cut_all(
+            path, index, quality,
+            progress=lambda done, total: jobs.update(job_id, processed=done),
+            skip_existing=True,
+        )
+        jobs.update(job_id, status="done", processed=index["count"],
+                    result={"chunks": made})
+    except Exception as exc:  # noqa: BLE001
+        jobs.update(job_id, status="error", error=str(exc))
+
+
+def _start_chunking(path, index):
+    """Нарезать ролик на перегоны в фоне.
+
+    Один проход декодера на весь ролик: подряд идущие кадры дешевле добытых по
+    одному, а разметчику потом не приходится ждать нигде. Нарезка в пожатом
+    качестве весит вдвое меньше самого ролика.
+    """
+    # Ступень та же, что попросит клиент: у маленького ролика ступеней ниже
+    # исходной нет вовсе, и нарезать «720» значило бы готовить то, чего никто
+    # не спросит.
+    quality = chunklib.default_for(index["height"])
+    job_id = jobs.create(
+        "video-chunks", total=index["count"], message="Готовлю перегоны"
+    )
+    threading.Thread(
+        target=_run_chunks_job, args=(job_id, path, index, quality), daemon=True
+    ).start()
+    return job_id
+
+
 @bp.post("/api/tasks/<task_id>/videos")
 def upload_video(task_id):
     """Кладём исходник и отдаём его параметры — резать будем отдельным шагом."""
@@ -732,19 +756,31 @@ def upload_video(task_id):
             os.remove(path)
             return jsonify({"error": str(exc)}), 400
 
-        # Размечаемому ролику нужен последний кадр: таймлайн ходит по номерам.
-        frame_count = videolib.count_frames(path) if mode == "annotate" else None
-        if mode == "annotate" and not meta.get("fps"):
-            os.remove(path)
-            return jsonify({
-                "error": "В видео нет частоты кадров — размечать его покадрово нельзя."
-            }), 400
+        # Размечаемому ролику сразу строим таблицу кадров: демуксинг читает
+        # только заголовки пакетов и стоит доли секунды, зато даёт точное число
+        # кадров — контейнер о нём врёт или молчит.
+        index = None
+        frame_count = None
+        index_version = None
+        if mode == "annotate":
+            if not meta.get("fps"):
+                os.remove(path)
+                return jsonify({
+                    "error": "В видео нет частоты кадров — размечать его покадрово нельзя."
+                }), 400
+            try:
+                index = chunklib.ensure_index(path)
+            except chunklib.VideoError as exc:
+                os.remove(path)
+                return jsonify({"error": str(exc)}), 400
+            frame_count = index["count"]
+            index_version = index["version"]
 
         row = TaskVideo(
             id=vid, task_id=task.id, file_name=file.filename,
             file_path=os.path.relpath(path, config.DATA_DIR),
             size_bytes=os.path.getsize(path), segments=[],
-            mode=mode, frame_count=frame_count,
+            mode=mode, frame_count=frame_count, index_version=index_version,
             created_by=user.id, **meta,
         )
         db.add(row)
@@ -753,10 +789,12 @@ def upload_video(task_id):
         _log(db, task, user, "video_added", file=file.filename,
              duration_ms=meta.get("duration_ms"), mode=mode)
         db.commit()
+        # Перегоны готовятся в фоне: разметчик открывает ролик и не ждёт.
+        cut_job = _start_chunking(path, index) if index else None
         return jsonify({
             "id": str(vid), "file_name": row.file_name,
             "size_bytes": row.size_bytes, "mode": mode,
-            "frame_count": frame_count, **meta,
+            "frame_count": frame_count, "cut_job": cut_job, **meta,
         }), 201
     finally:
         db.close()
@@ -966,6 +1004,13 @@ def task_images(task_id):
         q = select(Image).where(Image.task_id == task.id)
         if status:
             q = q.where(Image.task_status == status)
+        # «files» — загруженные файлами, иначе идентификатор ролика.
+        source = request.args.get("source")
+        if source == "files":
+            q = q.where(Image.source_video_id.is_(None))
+        elif source:
+            sid = _uuid_or_none(source)
+            q = q.where(Image.source_video_id == sid)
         matched = db.execute(
             select(func.count()).select_from(q.subquery())
         ).scalar_one()

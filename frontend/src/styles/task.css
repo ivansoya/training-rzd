@@ -38,7 +38,7 @@
 
 .mag-tcard {
   display: block;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--mag-edge);
   box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
   border-radius: 10px;
@@ -70,7 +70,7 @@
   height: 7px;
   border-radius: 4px;
   overflow: hidden;
-  background: #eceff3;
+  background: var(--hair);
 }
 
 .mag-tprog i { display: block; height: 100%; }
@@ -117,7 +117,7 @@
 }
 
 .mag-ok-banner {
-  background: #eaf6ef;
+  background: color-mix(in srgb, var(--done) 12%, var(--card));
   border: 1px solid #bfe3ce;
   color: #14603a;
   border-radius: 8px;
@@ -145,7 +145,7 @@
   font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
   padding: 1px 5px;
   border-radius: 3px;
-  color: #fff;
+  color: var(--on-acc);
   background: rgba(29, 35, 41, 0.75);
 }
 
@@ -212,7 +212,7 @@
   margin-top: 12px;
   padding: 10px 13px;
   border-radius: 8px;
-  background: #fff9ec;
+  background: color-mix(in srgb, var(--skip) 12%, var(--card));
   border: 1px solid #f0d9a8;
   color: #8a5a00;
   font-size: 12.5px;

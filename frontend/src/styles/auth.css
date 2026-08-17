@@ -50,7 +50,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--on-acc);
   font-style: normal;
   font-size: 13px;
   font-weight: 800;
@@ -83,13 +83,13 @@
   justify-content: space-between;
   font: 600 10px ui-monospace, Menlo, monospace;
   letter-spacing: 0.1em;
-  color: #8b949d;
+  color: var(--faint);
   text-transform: uppercase;
   margin-top: 4px;
 }
 
 .mag-panel {
-  background: #fff;
+  background: var(--card);
   padding: 56px 64px;
   display: flex;
   flex-direction: column;
@@ -129,12 +129,12 @@
 .mag-field textarea {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #cbd2da;
+  border: 1px solid var(--rule);
   border-radius: 8px;
   padding: 10px 12px;
   font-size: 14px;
   font-family: inherit;
-  background: #fff;
+  background: var(--card);
   color: var(--mag-ink);
 }
 
@@ -173,7 +173,7 @@
   width: 100%;
   background: var(--mag-red);
   border: none;
-  color: #fff;
+  color: var(--on-acc);
   font-weight: 700;
   font-size: 14px;
   font-family: inherit;
@@ -232,7 +232,7 @@
 
 /* ===== Личный кабинет ===== */
 .mag-topbar {
-  background: #fff;
+  background: var(--card);
   border-bottom: 1px solid var(--mag-line);
   display: flex;
   align-items: center;
@@ -255,7 +255,7 @@
 
 .mag-back {
   background: none;
-  border: 1px solid #cbd2da;
+  border: 1px solid var(--rule);
   border-radius: 8px;
   padding: 6px 14px;
   font: 600 13px inherit;
@@ -282,8 +282,8 @@
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: var(--mag-graphite);
-  color: #fff;
+  background: var(--ink);
+  color: var(--paper);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -302,7 +302,7 @@
 }
 
 .mag-card {
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--mag-edge);
   box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
   border-radius: 10px;
@@ -340,8 +340,9 @@
 .mag-ghost {
   width: 100%;
   margin-top: 14px;
-  background: #fff;
-  border: 1px solid #cbd2da;
+  background: var(--card);
+  color: var(--ink);
+  border: 1px solid var(--rule);
   border-radius: 8px;
   padding: 9px;
   font-weight: 600;
@@ -352,7 +353,7 @@
 }
 
 .mag-ghost:hover {
-  border-color: var(--mag-graphite);
+  border-color: var(--faint);
 }
 
 .mag-ghost.mag-danger {
@@ -413,7 +414,7 @@
 }
 
 .mag-role.editor {
-  background: #edf1f6;
+  background: var(--hair);
   color: #3d4a5c;
 }
 
@@ -484,7 +485,7 @@
   width: 24px;
   height: 24px;
   font-size: 10px;
-  background: #e21a1a;
+  background: var(--red);
 }
 
 @media (max-width: 860px) {
@@ -593,7 +594,7 @@
 /* Код — 20 знаков; разрядку убрали, иначе бейдж отъедает строку заголовка. */
 .mag-code-badge {
   font: 700 10px ui-monospace, Menlo, monospace;
-  background: #edf1f6;
+  background: var(--hair);
   color: #3d4a5c;
   border-radius: 6px;
   padding: 4px 7px;
@@ -627,7 +628,7 @@
 
 .mag-proj-card {
   display: block;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--mag-edge);
   box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
   border-radius: 10px;
@@ -699,7 +700,7 @@
   justify-content: space-between;
   gap: 14px;
   flex-wrap: wrap;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--mag-red);
   border-left-width: 4px;
   border-radius: 10px;
@@ -743,7 +744,7 @@
 }
 
 .mag-modal {
-  background: #fff;
+  background: var(--card);
   border-radius: 12px;
   box-shadow: 0 24px 70px rgba(10, 15, 20, 0.35);
   overflow: hidden;
@@ -814,7 +815,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--mag-line);
   border-radius: 8px;
   padding: 8px 10px;
@@ -846,9 +847,9 @@
 
 .mag-friend-row select,
 .mag-invite-row select {
-  border: 1px solid #cbd2da;
+  border: 1px solid var(--rule);
   border-radius: 7px;
-  background: #fff;
+  background: var(--card);
   color: var(--mag-ink);
   font-size: 12px;
   font-family: inherit;
@@ -869,7 +870,7 @@
   gap: 10px;
   padding: 14px 22px;
   border-top: 1px solid var(--mag-line);
-  background: #fafbfc;
+  background: var(--sunk);
 }
 
 /* --- страница проекта (П2: паспорт слева) --- */
@@ -981,7 +982,7 @@
 }
 
 .mag-stat {
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--mag-edge);
   border-radius: 10px;
   padding: 13px 16px;
@@ -1045,7 +1046,7 @@
 
 .mag-friend-add input {
   flex: 1;
-  border: 1px solid #cbd2da;
+  border: 1px solid var(--rule);
   border-radius: 8px;
   padding: 9px 12px;
   font-size: 13.5px;

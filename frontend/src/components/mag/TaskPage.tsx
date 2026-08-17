@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  closeVideoAnnotation,
+  dropVideoFrames,
   getTask,
   getTaskEvents,
   getTaskImages,
   imageThumbUrl,
+  reopenVideoAnnotation,
   setTaskStatus,
   uploadTaskImages,
   uploadTaskVideo,
-  videoStripUrl,
 } from "../../auth/api";
 import type {
   ImageTaskStatus,
@@ -18,11 +20,13 @@ import type {
   TaskStatus,
   TaskVideoItem,
 } from "../../auth/api";
+import { pollJob } from "../../api";
 import AnnotationEditor from "./AnnotationEditor";
 import { TaskState } from "./ProjectTasks";
 import { plural } from "./ProjectsPage";
+import { SourceCard, VideoCard, buildSources } from "./TaskSources";
 import VideoAnnotator from "./VideoAnnotator";
-import VideoCutModal, { fmtBytes, fmtTime } from "./VideoCutModal";
+import VideoCutModal from "./VideoCutModal";
 import VideoModeModal from "./VideoModeModal";
 
 const NEXT: Record<TaskStatus, { to: TaskStatus; label: string; hint: string }[]> = {
@@ -33,7 +37,6 @@ const NEXT: Record<TaskStatus, { to: TaskStatus; label: string; hint: string }[]
   closed: [],
 };
 
-const SEG_COLORS = ["#e21a1a", "#1f6feb", "#1a7f4b", "#8957e5", "#e8590c"];
 // У размеченного кадра на метке число объектов, у остальных — словом.
 const MARK: Partial<Record<ImageTaskStatus, string>> = {
   new: "—",
@@ -42,7 +45,21 @@ const MARK: Partial<Record<ImageTaskStatus, string>> = {
   deleted: "брак",
 };
 
-type Tab = "sources" | "frames" | "log";
+/** Четыре вкладки, четыре разных вопроса.
+ *
+ *  «Кадры» — откуда они взялись и сколько ещё осталось. «Видео» — что с
+ *  роликами сделано. «Прогресс» — что уже размечено. «История» — что тут
+ *  вообще происходило. Раньше первые две жили в одной куче под названием
+ *  «Источники», и ни на один из вопросов список не отвечал внятно.
+ */
+type Tab = "frames" | "videos" | "progress" | "log";
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: "frames", label: "Кадры" },
+  { id: "videos", label: "Видео" },
+  { id: "progress", label: "Прогресс разметки" },
+  { id: "log", label: "История" },
+];
 
 export default function TaskPage() {
   const { code, taskId } = useParams<{ code: string; taskId: string }>();
@@ -55,14 +72,14 @@ export default function TaskPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
-  const [editing, setEditing] = useState<number | null>(null);
-  const [cutting, setCutting] = useState<{ video: TaskVideoItem; at?: number } | null>(null);
-  // Размечаемый ролик открывается своим редактором, а не модалкой нарезки.
-  const [annotating, setAnnotating] = useState<TaskVideoItem | null>(null);
-  // Файл выбран, но режим ещё не назван: спрашиваем до отправки.
-  const [pendingVideo, setPendingVideo] = useState<File | null>(null);
   const [tab, setTab] = useState<Tab>("frames");
-  const [filter, setFilter] = useState("");
+
+  // Редактор кадров открывается с подмножеством: «Размечать» у блока ведёт
+  // только к кадрам этой загрузки, а не ко всей таске.
+  const [editing, setEditing] = useState<{ list: TaskImage[]; index: number } | null>(null);
+  const [cutting, setCutting] = useState<{ video: TaskVideoItem; at?: number } | null>(null);
+  const [annotating, setAnnotating] = useState<TaskVideoItem | null>(null);
+  const [pendingVideo, setPendingVideo] = useState<File | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLInputElement>(null);
@@ -77,11 +94,11 @@ export default function TaskPage() {
       ]);
       setTask(t);
       setImages(imgs.images);
-      // Пустая таска открывается на источниках: там единственное, что можно
-      // сделать. Дальше вкладку выбирает человек.
+      // Пустая таска открывается на видео: загрузить ролик — единственное
+      // осмысленное действие, когда кадров ещё нет.
       if (firstLoad.current) {
         firstLoad.current = false;
-        if (t.counts.total === 0) setTab("sources");
+        if (t.counts.total === 0) setTab(t.videos.length ? "videos" : "frames");
       }
       setError(null);
     } catch (e) {
@@ -89,28 +106,46 @@ export default function TaskPage() {
     }
   }, [taskId]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useEffect(() => { load(); }, [load]);
 
   useEffect(() => {
     if (tab === "log" && taskId) getTaskEvents(taskId).then(setEvents).catch(() => {});
   }, [tab, taskId]);
 
+  const guard = useCallback(async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
   async function move(to: TaskStatus) {
     if (!taskId || !task) return;
+    // Незакрытый ролик — это работа, которой ещё нет в кадрах. Молча сдать
+    // таску мимо неё значило бы потерять разметку целого видео.
+    if (to === "done" && task.pending_videos.length) {
+      const list = task.pending_videos
+        .map((v) => `«${v.file_name}» — ${v.frames} ${plural(v.frames, "кадр", "кадра", "кадров")}`)
+        .join(", ");
+      if (!window.confirm(
+        `Разметка не закрыта у ${task.pending_videos.length} ` +
+        `${plural(task.pending_videos.length, "ролика", "роликов", "роликов")}: ${list}. ` +
+        "Эти кадры в проект не уйдут. Сдать всё равно?"
+      )) return;
+    }
     if (to === "closed") {
-      // Стирается всё, у чего нет датасета: и неразмеченное, и забракованное.
-      const drafts =
-        task.counts.total - task.counts.accepted + task.counts.deleted;
+      const drafts = task.counts.total - task.counts.accepted + task.counts.deleted;
       const msg = drafts
         ? `Закрыть таску? Будет удалено ${drafts} ${plural(drafts, "черновой кадр", "черновых кадра", "черновых кадров")} и исходное видео. Действие необратимо.`
         : "Закрыть таску?";
       if (!window.confirm(msg)) return;
     }
-    setBusy(true);
-    setNotice(null);
-    try {
+    await guard(async () => {
       const res = await setTaskStatus(taskId, to);
       if (res.accepted) {
         setNotice(
@@ -122,11 +157,7 @@ export default function TaskPage() {
         setNotice(`Удалено ${res.removed_images} черновых кадров.`);
       }
       await load();
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setBusy(false);
-    }
+    });
   }
 
   async function onFiles(files: FileList | null) {
@@ -143,6 +174,34 @@ export default function TaskPage() {
     }
   }
 
+  /** «Размечать» у блока: берём кадры именно этого источника. */
+  async function openSource(sourceKey: string) {
+    if (!taskId) return;
+    await guard(async () => {
+      const res = await getTaskImages(taskId, { limit: 200, source: sourceKey });
+      if (!res.images.length) return;
+      const first = res.images.findIndex(
+        (i) => i.task_status === "new" || i.task_status === "skipped"
+      );
+      setEditing({ list: res.images, index: first >= 0 ? first : 0 });
+    });
+  }
+
+  /** Закрытие разметки ролика: фоновая задача, ждём её и обновляем таску. */
+  async function closeVideo(video: TaskVideoItem) {
+    if (!taskId) return;
+    await guard(async () => {
+      const { job_id } = await closeVideoAnnotation(taskId, video.id);
+      setNotice(`Достаю кадры из «${video.file_name}»…`);
+      const made = await pollJob<{ created: number; boxes: number }>(job_id, () => {});
+      setNotice(
+        `Разметка «${video.file_name}» закрыта: ${made.created} ` +
+        `${plural(made.created, "кадр", "кадра", "кадров")} в таске.`
+      );
+      await load();
+    });
+  }
+
   if (error && !task) {
     return (
       <div className="mag-content">
@@ -154,22 +213,26 @@ export default function TaskPage() {
   if (!task) return <div className="mag-content mag-empty">Загружаем таску…</div>;
 
   const editable = task.can_work && task.status !== "closed";
-  const shown = filter ? images.filter((i) => i.task_status === filter) : images;
+  const sources = buildSources(task);
+  const annotated = images.filter((i) => i.annotations > 0);
   const total = Math.max(1, task.counts.total);
-  const maxCls = Math.max(1, ...task.classes.map((c) => c.annotations));
-  const videoById = new Map(task.videos.map((v) => [v.id, v]));
+  const percent = Math.round((task.counts.annotated / total) * 100);
+  const counts: Record<Tab, string> = {
+    frames: String(task.counts.total),
+    videos: String(task.videos.length),
+    progress: `${percent} %`,
+    log: "",
+  };
 
   return (
     <div className="mag-content">
       <div className="mag-crumbs">
-        <Link to="/">Проекты</Link> / <Link to={`/projects/${code}`}>{code}</Link> /{" "}
         <Link to={`/projects/${code}/tasks`}>Таски</Link> / <b>{task.name}</b>
       </div>
 
       {error && <div className="mag-error">{error}</div>}
       {notice && <div className="mag-ok-banner">{notice}</div>}
 
-      {/* Шапка держит прогресс и сдачу на виду, на какой бы вкладке ни был */}
       <div className="mag-task-strip">
         <div className="mag-task-id">
           <div className="mag-pass-title">
@@ -184,45 +247,29 @@ export default function TaskPage() {
 
         <div className="mag-task-nums">
           <div><b>{task.counts.annotated}</b><span>размечено</span></div>
-          {task.counts.empty > 0 && (
-            <div><b>{task.counts.empty}</b><span>фон</span></div>
-          )}
+          {task.counts.empty > 0 && <div><b>{task.counts.empty}</b><span>фон</span></div>}
           <div><b>{task.counts.skipped}</b><span>отложено</span></div>
           <div><b>{task.counts.new}</b><span>не тронуто</span></div>
           {task.counts.accepted > 0 && (
             <div><b>{task.counts.accepted}</b><span>в проекте</span></div>
           )}
-          {task.counts.deleted > 0 && (
-            <div><b>{task.counts.deleted}</b><span>забраковано</span></div>
-          )}
         </div>
 
         <div className="mag-task-submit">
           {NEXT[task.status].map((s) => (
-            <button
-              key={s.to}
-              className="mag-btn mag-btn-inline"
-              type="button"
-              disabled={busy || !task.can_work}
-              title={s.hint}
-              onClick={() => move(s.to)}
-            >
+            <button key={s.to} className="mag-btn mag-btn-inline" type="button"
+              disabled={busy || !task.can_work} title={s.hint} onClick={() => move(s.to)}>
               {s.label}
             </button>
           ))}
           {task.status !== "closed" && (
-            <button
-              className="mag-ghost mag-ghost-inline"
-              type="button"
-              disabled={busy || !task.can_work}
-              onClick={() => move("closed")}
-            >
+            <button className="mag-ghost mag-ghost-inline" type="button"
+              disabled={busy || !task.can_work} onClick={() => move("closed")}>
               Закрыть
             </button>
           )}
         </div>
 
-        {/* Фон идёт рядом с размеченным: в датасет уходит и то, и другое */}
         <div className="mag-tprog mag-task-bar">
           <i className="done" style={{ width: `${(task.counts.annotated / total) * 100}%` }} />
           <i className="nul" style={{ width: `${(task.counts.empty / total) * 100}%` }} />
@@ -231,18 +278,13 @@ export default function TaskPage() {
       </div>
 
       <nav className="mag-tabs">
-        <button type="button" className={tab === "sources" ? "mag-tab on" : "mag-tab"}
-          onClick={() => setTab("sources")}>
-          Источники <span>{task.videos.length + (task.from_files ? 1 : 0)}</span>
-        </button>
-        <button type="button" className={tab === "frames" ? "mag-tab on" : "mag-tab"}
-          onClick={() => setTab("frames")}>
-          Кадры <span>{task.counts.total}</span>
-        </button>
-        <button type="button" className={tab === "log" ? "mag-tab on" : "mag-tab"}
-          onClick={() => setTab("log")}>
-          Что происходило
-        </button>
+        {TABS.map((t) => (
+          <button key={t.id} type="button"
+            className={tab === t.id ? "mag-tab on" : "mag-tab"}
+            onClick={() => setTab(t.id)}>
+            {t.label} {counts[t.id] && <span>{counts[t.id]}</span>}
+          </button>
+        ))}
       </nav>
 
       {uploadPct !== null && (
@@ -260,7 +302,8 @@ export default function TaskPage() {
         </div>
       )}
 
-      {tab === "sources" && (
+      {/* ---------------- Кадры ---------------- */}
+      {tab === "frames" && (
         <div className="mag-card">
           <div className="mag-card-h">
             <h4>Откуда кадры</h4>
@@ -268,6 +311,37 @@ export default function TaskPage() {
               <div className="mag-head-actions">
                 <input ref={fileRef} type="file" accept="image/*" multiple hidden
                   onChange={(e) => onFiles(e.target.files)} />
+                <button className="mag-btn mag-btn-inline" type="button"
+                  onClick={() => fileRef.current?.click()}>
+                  Загрузить изображения
+                </button>
+              </div>
+            )}
+          </div>
+
+          {sources.length === 0 ? (
+            <div className="g-empty">
+              <b>Кадров пока нет</b>
+              Загрузите изображения или добавьте ролик во вкладке «Видео».
+            </div>
+          ) : (
+            <div className="g-blocks">
+              {sources.map((block) => (
+                <SourceCard key={block.key} taskId={task.id} block={block}
+                  editable={editable} onAnnotate={() => openSource(block.key)} />
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ---------------- Видео ---------------- */}
+      {tab === "videos" && (
+        <div className="mag-card">
+          <div className="mag-card-h">
+            <h4>Ролики · {task.videos.length}</h4>
+            {editable && (
+              <div className="mag-head-actions">
                 <input ref={videoRef} type="file" accept="video/*" hidden
                   onChange={(e) => {
                     const f = e.target.files?.[0];
@@ -276,10 +350,6 @@ export default function TaskPage() {
                     if (f) setPendingVideo(f);
                     e.target.value = "";
                   }} />
-                <button className="mag-ghost mag-ghost-inline" type="button"
-                  onClick={() => fileRef.current?.click()}>
-                  Загрузить изображения
-                </button>
                 <button className="mag-btn mag-btn-inline" type="button"
                   onClick={() => videoRef.current?.click()}>
                   Добавить видео
@@ -288,38 +358,68 @@ export default function TaskPage() {
             )}
           </div>
 
-          {task.from_files > 0 && (
-            <div className="mag-src-files">
-              <b>{task.from_files}</b>
-              <span>
-                {plural(task.from_files, "изображение", "изображения", "изображений")} загружено
-                файлами
-              </span>
-              <button className="mag-ghost mag-ghost-inline" type="button"
-                onClick={() => { setFilter(""); setTab("frames"); }}>
-                Показать кадры
-              </button>
+          {task.videos.length === 0 ? (
+            <div className="g-empty">
+              <b>Роликов пока нет</b>
+              Добавьте видео — его можно нарезать на кадры или размечать целиком.
             </div>
-          )}
-
-          {task.videos.map((v) => (
-            <VideoRow key={v.id} taskId={task.id} video={v} editable={editable}
-              onOpen={(at) =>
-                v.mode === "annotate" ? setAnnotating(v) : setCutting({ video: v, at })
-              } />
-          ))}
-
-          {task.videos.length === 0 && task.from_files === 0 && (
-            <div className="mag-empty">
-              Источников пока нет. Загрузите изображения или добавьте видео — из
-              него нарежем кадры участками.
+          ) : (
+            <div className="g-blocks">
+              {task.videos.map((v) =>
+                v.mode === "annotate" ? (
+                  <VideoCard
+                    key={v.id}
+                    taskId={task.id}
+                    video={v}
+                    pending={task.pending_videos.find((p) => p.video_id === v.id)}
+                    editable={editable}
+                    busy={busy}
+                    onOpen={() => setAnnotating(v)}
+                    onClose={() => closeVideo(v)}
+                    onReopen={() => guard(async () => {
+                      await reopenVideoAnnotation(task.id, v.id);
+                      await load();
+                    })}
+                    onDropFrames={() => {
+                      if (!window.confirm(
+                        `Убрать кадры «${v.file_name}» из таски? Принятые в проект останутся.`
+                      )) return;
+                      guard(async () => {
+                        const res = await dropVideoFrames(task.id, v.id);
+                        setNotice(
+                          `Убрано ${res.removed} ${plural(res.removed, "кадр", "кадра", "кадров")}` +
+                          (res.kept_accepted ? `, ${res.kept_accepted} осталось в проекте.` : ".")
+                        );
+                        await load();
+                      });
+                    }}
+                  />
+                ) : (
+                  <CutVideoCard key={v.id} taskId={task.id} video={v} editable={editable}
+                    onOpen={() => setCutting({ video: v })} />
+                )
+              )}
             </div>
           )}
         </div>
       )}
 
-      {tab === "frames" && (
+      {/* ---------------- Прогресс разметки ---------------- */}
+      {tab === "progress" && (
         <>
+          {task.pending_videos.length > 0 && (
+            <div className="mag-card g-warn">
+              <b>Набор не окончательный.</b> У{" "}
+              {task.pending_videos.length}{" "}
+              {plural(task.pending_videos.length, "ролика", "роликов", "роликов")} разметка
+              ещё не закрыта, и их кадров здесь нет:{" "}
+              {task.pending_videos.map((v) => `«${v.file_name}» (${v.frames})`).join(", ")}.{" "}
+              <button className="mag-link" type="button" onClick={() => setTab("videos")}>
+                Закрыть разметку
+              </button>
+            </div>
+          )}
+
           {task.classes.length > 0 && (
             <div className="mag-card">
               <div className="mag-card-h">
@@ -330,96 +430,67 @@ export default function TaskPage() {
                   {plural(task.classes.length, "классе", "классах", "классах")}
                 </span>
               </div>
-              {task.classes.map((c) => (
-                <div key={c.class_index} className="mag-cls">
-                  <span className="mag-swatch" style={{ background: c.color }} />
-                  <span className="mag-cls-id">{c.class_index}</span>
-                  <span className="mag-cls-name"><b>{c.name}</b></span>
-                  <span className="mag-cls-bar">
-                    <i style={{ width: `${(c.annotations / maxCls) * 100}%`, background: c.color }} />
-                  </span>
-                  <span className="mag-cls-n">{c.annotations}</span>
-                </div>
-              ))}
+              {task.classes.map((c) => {
+                const maxCls = Math.max(1, ...task.classes.map((x) => x.annotations));
+                return (
+                  <div key={c.class_index} className="mag-cls">
+                    <span className="mag-swatch" style={{ background: c.color }} />
+                    <span className="mag-cls-id">{c.class_index}</span>
+                    <span className="mag-cls-name"><b>{c.name}</b></span>
+                    <span className="mag-cls-bar">
+                      <i style={{ width: `${(c.annotations / maxCls) * 100}%`, background: c.color }} />
+                    </span>
+                    <span className="mag-cls-n">{c.annotations}</span>
+                  </div>
+                );
+              })}
             </div>
           )}
 
           <div className="mag-card">
             <div className="mag-card-h">
-              <h4>Кадры · {shown.length}</h4>
-              <div className="mag-head-actions">
-                <select value={filter} aria-label="Фильтр"
-                  onChange={(e) => setFilter(e.target.value)}>
-                  <option value="">Все</option>
-                  <option value="new">Не тронутые</option>
-                  <option value="annotated">Размеченные</option>
-                  <option value="empty">Фоновые</option>
-                  <option value="skipped">Отложенные</option>
-                  <option value="deleted">Забракованные</option>
-                </select>
-                {editable && images.length > 0 && (
-                  <button className="mag-btn mag-btn-inline" type="button"
-                    onClick={() => {
-                      // Встаём на первый кадр, по которому решения ещё нет.
-                      const first = images.findIndex(
-                        (i) => i.task_status === "new" || i.task_status === "skipped"
-                      );
-                      setEditing(first >= 0 ? first : 0);
-                    }}>
-                    {task.counts.annotated > 0 ? "Продолжить разметку →" : "Начать разметку →"}
-                  </button>
-                )}
-              </div>
+              <h4>Размеченные кадры · {annotated.length}</h4>
+              {editable && annotated.length > 0 && (
+                <button className="mag-ghost mag-ghost-inline" type="button"
+                  onClick={() => setEditing({ list: annotated, index: 0 })}>
+                  Просмотреть
+                </button>
+              )}
             </div>
-
-            {shown.length === 0 ? (
-              <div className="mag-empty">
-                {images.length === 0
-                  ? "Кадров пока нет — загрузите их во вкладке «Источники»."
-                  : "Под фильтр ничего не подошло."}
+            {annotated.length === 0 ? (
+              <div className="g-empty">
+                <b>Размеченных кадров пока нет</b>
+                Откройте кадры во вкладке «Кадры» и обведите объекты.
               </div>
             ) : (
               <div className="mag-tiles m">
-                {shown.map((im) => {
-                  const src = im.source_video_id ? videoById.get(im.source_video_id) : undefined;
-                  return (
-                    <div key={im.id} className="mag-tile-wrap">
-                      <button className="mag-tile" type="button"
-                        onClick={() => setEditing(images.findIndex((x) => x.id === im.id))}
-                        title={im.file_name}>
-                        <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
-                        {im.boxes.map((b, k) => (
-                          <span key={k} className="mag-tile-box" style={{
-                            left: `${(b.x / (im.width || 1)) * 100}%`,
-                            top: `${(b.y / (im.height || 1)) * 100}%`,
-                            width: `${(b.w / (im.width || 1)) * 100}%`,
-                            height: `${(b.h / (im.height || 1)) * 100}%`,
-                            borderColor: b.color,
-                          }} />
-                        ))}
-                        <span className={`mag-tile-mark ${im.task_status}`}>
-                          {MARK[im.task_status] ?? im.annotations}
-                        </span>
-                      </button>
-                      {/* Кадр ссылается на источник: по одному кадру объект
-                          часто не опознать, а соседние секунды объясняют. */}
-                      {src && im.source_time_ms !== null ? (
-                        <button className="mag-from" type="button"
-                          onClick={() => setCutting({ video: src, at: im.source_time_ms! })}>
-                          ▶ {fmtTime(im.source_time_ms)}
-                        </button>
-                      ) : (
-                        <span className="mag-from file">файл</span>
-                      )}
-                    </div>
-                  );
-                })}
+                {annotated.map((im, i) => (
+                  <div key={im.id} className="mag-tile-wrap">
+                    <button className="mag-tile" type="button" title={im.file_name}
+                      onClick={() => setEditing({ list: annotated, index: i })}>
+                      <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
+                      {im.boxes.map((b, k) => (
+                        <span key={k} className="mag-tile-box" style={{
+                          left: `${(b.x / (im.width || 1)) * 100}%`,
+                          top: `${(b.y / (im.height || 1)) * 100}%`,
+                          width: `${(b.w / (im.width || 1)) * 100}%`,
+                          height: `${(b.h / (im.height || 1)) * 100}%`,
+                          borderColor: b.color,
+                        }} />
+                      ))}
+                      <span className={`mag-tile-mark ${im.task_status}`}>
+                        {MARK[im.task_status] ?? im.annotations}
+                      </span>
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>
         </>
       )}
 
+      {/* ---------------- История ---------------- */}
       {tab === "log" && (
         <div className="mag-card">
           <div className="mag-log">
@@ -476,27 +547,26 @@ export default function TaskPage() {
       )}
 
       {annotating && (
-        <VideoAnnotator
-          code={code!}
-          taskId={task.id}
-          taskName={task.name}
-          video={annotating}
-          readOnly={!editable}
-          onClose={() => { setAnnotating(null); load(); }}
-        />
+        <VideoAnnotator code={code!} taskId={task.id} taskName={task.name}
+          video={annotating} readOnly={!editable}
+          onClose={() => { setAnnotating(null); load(); }} />
       )}
 
-      {editing !== null && images[editing] && (
+      {editing && editing.list[editing.index] && (
         <AnnotationEditor
           code={code!}
           taskName={task.name}
-          images={images}
-          index={editing}
+          images={editing.list}
+          index={editing.index}
           readOnly={!editable}
-          onIndex={setEditing}
+          onIndex={(i) => setEditing((prev) => (prev ? { ...prev, index: i } : prev))}
           onClose={() => { setEditing(null); load(); }}
           onChanged={(updated) =>
-            setImages((prev) => prev.map((x) => (x.id === updated.id ? updated : x)))
+            setEditing((prev) =>
+              prev
+                ? { ...prev, list: prev.list.map((x) => (x.id === updated.id ? updated : x)) }
+                : prev
+            )
           }
         />
       )}
@@ -504,120 +574,55 @@ export default function TaskPage() {
   );
 }
 
-// --- строка видео: компоновка И2, всё развёрнуто сразу ---
-
-function VideoRow({
-  taskId,
-  video,
-  editable,
-  onOpen,
+/** Нарезаемый ролик: у него вопрос не «что размечено», а «что нарезано». */
+function CutVideoCard({
+  taskId, video, editable, onOpen,
 }: {
   taskId: string;
   video: TaskVideoItem;
   editable: boolean;
-  onOpen: (at?: number) => void;
+  onOpen: () => void;
 }) {
   const duration = video.duration_ms || 1;
-  const marking = video.mode === "annotate";
   return (
-    <div className="mag-src-video">
-      <button className="mag-poster" type="button" onClick={() => onOpen()}>
-        <img src={videoStripUrl(taskId, video.id)} alt="" />
-        <span className="mag-poster-play">▶</span>
-        <span className="mag-poster-dur">{fmtTime(duration)}</span>
-      </button>
-
-      <div className="mag-src-main">
-        <div className="mag-src-name">
-          {video.file_name}
-          <span className={marking ? "mag-src-mode mark" : "mag-src-mode"}>
-            {marking ? "размечается" : "нарезка"}
-          </span>
-        </div>
-        <div className="mag-src-facts">
-          {marking ? (
-            <>
-              <div>
-                <b>{video.tracks}</b>
-                {plural(video.tracks, "объект", "объекта", "объектов")}
-              </div>
-              <div><b>{video.frames}</b>кадров в проекте</div>
-            </>
-          ) : (
-            <>
-              <div><b>{video.frames}</b>кадров нарезано</div>
-              <div>
-                <b>{video.segments.length}</b>
-                {plural(video.segments.length, "участок", "участка", "участков")}
-              </div>
-            </>
-          )}
-          <div><b>{fmtTime(duration)}</b>· {video.fps} к/с · {video.width}×{video.height}</div>
-          <div><b>{fmtBytes(video.size_bytes)}</b></div>
-        </div>
-
-        {!marking && (
-          <div className="mag-mini">
-            {video.segments.map((s, i) => (
-              <span key={i} className="mag-mini-seg" style={{
-                left: `${(s.start_ms / duration) * 100}%`,
-                width: `${((s.end_ms - s.start_ms) / duration) * 100}%`,
-                background: `${SEG_COLORS[i % SEG_COLORS.length]}55`,
-                borderColor: SEG_COLORS[i % SEG_COLORS.length],
-              }} />
-            ))}
-          </div>
-        )}
-
-        {marking ? (
-          <p className="mag-hint" style={{ margin: "8px 0 0" }}>
-            {video.tracks > 0
-              ? "Разметка идёт по кадрам. Размеченные кадры уйдут в проект, когда сдадите таску."
-              : "Объектов пока нет — откройте редактор и обведите первый."}
-          </p>
-        ) : video.segments.length > 0 ? (
-          <div className="mag-seglist">
-            {video.segments.map((s, i) => {
-              // Участок в миллисекунду — это одиночный кадр, а не диапазон.
-              const single = s.end_ms - s.start_ms <= 1;
-              const frames = single
-                ? 1
-                : Math.max(0, Math.ceil((s.end_ms - s.start_ms) / Math.max(1, s.step_ms)));
-              return (
-                <div key={i} className="mag-segline">
-                  <i style={{ background: SEG_COLORS[i % SEG_COLORS.length] }} />
-                  {single ? (
-                    <>кадр в {fmtTime(s.start_ms)}</>
-                  ) : (
-                    <>
-                      {fmtTime(s.start_ms)} — {fmtTime(s.end_ms)}, шаг{" "}
-                      {s.step_ms >= 1000 ? `${s.step_ms / 1000} с` : `${s.step_ms} мс`}
-                    </>
-                  )}
-                  <span className="sp">
-                    {frames} {plural(frames, "кадр", "кадра", "кадров")} ·{" "}
-                    <button type="button" onClick={() => onOpen(s.start_ms)}>показать</button>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p className="mag-hint" style={{ margin: "8px 0 0" }}>
-            Участков пока нет — нажмите «Нарезать» и выберите их на дорожке.
-          </p>
-        )}
-      </div>
-
-      <div className="mag-src-act">
-        <button className="mag-btn mag-btn-inline" type="button" onClick={() => onOpen()}>
-          {marking
-            ? (editable ? "Размечать" : "Смотреть разметку")
-            : editable
-              ? (video.segments.length ? "Нарезать ещё" : "Нарезать")
-              : "Смотреть"}
+    <div className="g-block">
+      <div className="g-block-h">
+        <h4>{video.file_name}</h4>
+        <span className="g-chip">нарезка</span>
+        <span className="g-sp" />
+        <button className="mag-btn mag-btn-inline" type="button" onClick={onOpen}>
+          {editable ? (video.segments.length ? "Нарезать ещё" : "Нарезать") : "Смотреть"}
         </button>
       </div>
+      <div className="g-block-b g-vcard">
+        <div className="g-vcard-nums">
+          <div className="g-stat"><b>{video.frames}</b><span>кадров нарезано</span></div>
+          <div className="g-stat s">
+            <b>{video.segments.length}</b>
+            <span>{plural(video.segments.length, "участок", "участка", "участков")}</span>
+          </div>
+        </div>
+        <div className="g-vcard-body">
+          <div className="g-rail">
+            <span className="g-rail-line" />
+            {video.segments.map((s, i) => (
+              <u key={i} style={{
+                left: `${(s.start_ms / duration) * 100}%`,
+                width: `${Math.max(0.6, ((s.end_ms - s.start_ms) / duration) * 100)}%`,
+              }} />
+            ))}
+            {[0, 0.25, 0.5, 0.75, 1].map((m) => (
+              <i key={m} className="major" style={{ left: `${m * 100}%` }} />
+            ))}
+          </div>
+          {video.segments.length === 0 && (
+            <p className="g-vcard-note">
+              Участков пока нет — нажмите «Нарезать» и выберите их на дорожке.
+            </p>
+          )}
+        </div>
+      </div>
+      <img src={`/api/tasks/${taskId}/videos/${video.id}/strip`} alt="" hidden />
     </div>
   );
 }
@@ -632,9 +637,15 @@ function describe(e: TaskEventItem): JSX.Element {
     case "images_added":
       return <>Загружено <b>{p.added}</b> изображений{p.skipped ? `, пропущено ${p.skipped}` : ""}</>;
     case "video_added":
-      return <>Добавлено видео <b>{p.file}</b></>;
+      return <>Добавлено видео <b>{p.file}</b>{p.mode === "annotate" ? " для разметки" : " для нарезки"}</>;
     case "video_cut":
       return <>Нарезано <b>{p.frames}</b> кадров из {p.file}, участков: {p.segments}</>;
+    case "video_annotation_closed":
+      return <>Разметка <b>{p.file}</b> закрыта: {p.frames} кадров, {p.boxes} объектов</>;
+    case "video_annotation_reopened":
+      return <>Разметка <b>{p.file}</b> открыта заново</>;
+    case "video_frames_dropped":
+      return <>Убрано <b>{p.removed}</b> кадров ролика {p.file}{p.kept ? `, оставлено принятых: ${p.kept}` : ""}</>;
     case "accepted":
       return <>Принято <b>{p.accepted}</b> кадров в датасет «{p.dataset}»</>;
     case "done":

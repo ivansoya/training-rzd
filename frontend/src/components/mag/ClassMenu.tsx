@@ -12,6 +12,8 @@ export default function ClassMenu({
   current,
   onPick,
   onDelete,
+  deleteLabel,
+  actions,
   onClose,
 }: {
   classes: LabelClass[];
@@ -20,6 +22,10 @@ export default function ClassMenu({
   onPick: (classIndex: number) => void;
   /** Есть только когда меню открыто на детекции, а не на плашке класса. */
   onDelete?: () => void;
+  /** Подпись у удаления: «детекцию», «объект», «трек» — что именно уйдёт. */
+  deleteLabel?: string;
+  /** Действия поверх смены класса: например, превратить объект в трек. */
+  actions?: { label: string; hint?: string; run: () => void }[];
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -86,9 +92,15 @@ export default function ClassMenu({
           ))
         )}
       </div>
+      {actions?.map((a) => (
+        <button key={a.label} type="button" className="mag-cmenu-act" onClick={a.run}>
+          {a.label}
+          {a.hint && <em>{a.hint}</em>}
+        </button>
+      ))}
       {onDelete && (
         <button type="button" className="mag-cmenu-del" onClick={onDelete}>
-          Удалить детекцию
+          Удалить {deleteLabel || "детекцию"}
         </button>
       )}
     </div>

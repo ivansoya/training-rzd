@@ -6,7 +6,7 @@
   grid-template-columns: 1fr auto auto;
   gap: 14px 24px;
   align-items: center;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--mag-edge);
   box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
   border-radius: 10px;
@@ -122,7 +122,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #fff;
+  color: var(--on-acc);
   font-size: 17px;
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.7);
 }
@@ -133,7 +133,7 @@
   bottom: 5px;
   font: 600 9px ui-monospace, Menlo, Consolas, monospace;
   background: rgba(0, 0, 0, 0.72);
-  color: #fff;
+  color: var(--on-acc);
   padding: 1px 5px;
   border-radius: 3px;
 }
@@ -169,7 +169,7 @@
   position: relative;
   height: 16px;
   border-radius: 4px;
-  background: #eceff3;
+  background: var(--hair);
   overflow: hidden;
   margin-top: 9px;
 }
@@ -240,7 +240,7 @@
   gap: 4px;
   font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
   background: rgba(29, 35, 41, 0.8);
-  color: #fff;
+  color: var(--on-acc);
   padding: 2px 6px;
   border: 0;
   border-radius: 3px;
@@ -402,7 +402,7 @@
 
 .mag-pl-time i {
   font-style: normal;
-  color: #6e7a87;
+  color: var(--dim);
 }
 
 .mag-pl-take svg {
@@ -462,7 +462,7 @@
 
 .mag-cut-seg b {
   font: 700 9.5px ui-monospace, Menlo, Consolas, monospace;
-  color: #fff;
+  color: var(--on-acc);
   padding: 2px 7px;
   border-radius: 0 0 4px 4px;
   white-space: nowrap;
@@ -687,7 +687,7 @@
   top: 0;
   bottom: 12px;
   width: 2px;
-  background: #fff;
+  background: var(--card);
   box-shadow: 0 0 5px rgba(255, 255, 255, 0.7);
   pointer-events: none;
 }
@@ -698,7 +698,7 @@
   padding: 5px 10px;
   background: #171c21;
   font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
-  color: #6e7a87;
+  color: var(--dim);
   flex-shrink: 0;
   cursor: default;
   user-select: none;
@@ -763,7 +763,7 @@
   font: 700 9px ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0.11em;
   text-transform: uppercase;
-  color: #6e7a87;
+  color: var(--dim);
   padding: 4px 9px 5px;
 }
 
@@ -806,7 +806,7 @@
    в своём слое, поэтому его длина не растягивает модалку. */
 .mag-cut-right {
   position: relative;
-  background: #fff;
+  background: var(--card);
   color: var(--mag-ink);
   width: 340px;
   box-sizing: border-box;
@@ -874,11 +874,11 @@
 .mag-seg-row input {
   min-width: 0;
   width: 68px;
-  border: 1px solid #cbd2da;
+  border: 1px solid var(--rule);
   border-radius: 7px;
   padding: 4px 7px;
   font: 600 12px ui-monospace, Menlo, Consolas, monospace;
-  background: #fff;
+  background: var(--card);
   color: var(--mag-ink);
 }
 
@@ -887,7 +887,7 @@
 }
 
 .mag-seg-row input:disabled {
-  background: #f4f6f8;
+  background: var(--sunk);
   color: var(--mag-muted);
 }
 
@@ -933,13 +933,13 @@
   justify-content: center;
   height: 84px;
   font-size: 11px;
-  color: #6e7a87;
+  color: var(--dim);
 }
 
 .mag-one-t {
   display: block;
   padding: 4px 6px;
-  background: #fff;
+  background: var(--card);
   font: 600 11px ui-monospace, Menlo, Consolas, monospace;
   color: var(--mag-ink);
 }
@@ -950,7 +950,7 @@
   right: 3px;
   background: rgba(20, 24, 28, 0.75);
   border-color: transparent;
-  color: #fff;
+  color: var(--on-acc);
 }
 
 .mag-cut-right h5 {
@@ -976,7 +976,7 @@
 }
 
 .mag-est-diff b.add {
-  color: #1a7f4b;
+  color: var(--done);
 }
 
 .mag-est-diff b.rm {
@@ -996,7 +996,7 @@
 }
 
 .mag-confirm {
-  background: #fff;
+  background: var(--card);
   color: var(--mag-ink);
   border-radius: 12px;
   padding: 20px 22px;

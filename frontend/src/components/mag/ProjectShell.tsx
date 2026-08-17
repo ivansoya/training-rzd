@@ -63,24 +63,38 @@ export default function ProjectShell() {
 
   const { project, stats, members } = detail;
   const tab = ({ isActive }: { isActive: boolean }) =>
-    isActive ? "mag-tab on" : "mag-tab";
+    isActive ? "g-ctx-link on" : "g-ctx-link";
 
   return (
-    <div className="mag-content">
-      <div className="mag-crumbs">
-        <Link to="/">Проекты</Link> / <b>{project.name}</b>
+    <>
+      {/* Второй уровень навигации: кто мы сейчас и что у него внутри.
+          Приклеен к верхней строке, поэтому «где я» видно на любой прокрутке. */}
+      <div className="g-ctx">
+        <Link to="/" className="g-ctx-back" title="К списку проектов">←</Link>
+        <span className="g-ctx-name">{project.name}</span>
+        {project.status === "importing" ? (
+          <span className="mag-importing"><i />импорт</span>
+        ) : (
+          <span className="g-ctx-code">{project.code}</span>
+        )}
+        <nav className="g-ctx-nav">
+          <NavLink to={`/projects/${project.code}`} end className={tab}>Обзор</NavLink>
+          <NavLink to={`/projects/${project.code}/tasks`} className={tab}>Таски</NavLink>
+          <NavLink to={`/projects/${project.code}/datasets`} className={tab}>
+            Датасеты <span>{stats.datasets}</span>
+          </NavLink>
+          <NavLink to={`/projects/${project.code}/classes`} className={tab}>
+            Классы <span>{stats.classes}</span>
+          </NavLink>
+          <NavLink to={`/projects/${project.code}/members`} className={tab}>
+            Участники <span>{members.length}</span>
+          </NavLink>
+        </nav>
       </div>
 
+    <div className="mag-content">
       <div className="mag-pass-strip">
         <div className="mag-pass-id">
-          <div className="mag-pass-title">
-            <h1>{project.name}</h1>
-            {project.status === "importing" ? (
-              <span className="mag-importing"><i />импорт</span>
-            ) : (
-              <span className="mag-code-badge">{project.code}</span>
-            )}
-          </div>
           <p>
             {project.description ? `${project.description} · ` : ""}
             создан {new Date(project.created_at).toLocaleDateString("ru-RU")}
@@ -110,29 +124,12 @@ export default function ProjectShell() {
         </button>
       </div>
 
-      <nav className="mag-tabs">
-        <NavLink to={`/projects/${project.code}`} end className={tab}>
-          Обзор
-        </NavLink>
-        <NavLink to={`/projects/${project.code}/datasets`} className={tab}>
-          Датасеты <span>{stats.datasets}</span>
-        </NavLink>
-        <NavLink to={`/projects/${project.code}/classes`} className={tab}>
-          Классы <span>{stats.classes}</span>
-        </NavLink>
-        <NavLink to={`/projects/${project.code}/members`} className={tab}>
-          Участники <span>{members.length}</span>
-        </NavLink>
-        <NavLink to={`/projects/${project.code}/tasks`} className={tab}>
-          Таски
-        </NavLink>
-      </nav>
-
       <Outlet context={{ detail, refresh } satisfies ProjectContext} />
 
       {exporting && (
         <ExportModal detail={detail} onClose={() => setExporting(false)} />
       )}
     </div>
+    </>
   );
 }

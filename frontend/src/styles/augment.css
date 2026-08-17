@@ -217,7 +217,7 @@
   height: 28px;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-acc);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -230,7 +230,7 @@
   top: 8px;
   font-size: 11px;
   background: rgba(0, 0, 0, 0.55);
-  color: #fff;
+  color: var(--on-acc);
   padding: 2px 7px;
   border-radius: 6px;
   pointer-events: none;

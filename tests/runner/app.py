@@ -137,6 +137,11 @@ def _run(name):
             break
 
     code = proc.wait()
+    # Сквозные тесты создают проекты и людей через браузер, а фикстур pytest у
+    # них нет. Убираем за ними здесь, иначе обещание «всё стирается в конце
+    # прогона» держалось бы только для половины наборов.
+    if suite["kind"] == "playwright":
+        _wipe_test_data()
     with _lock:
         _state[name] = {
             "status": "passed" if code == 0 else "failed",
@@ -149,6 +154,21 @@ def _run(name):
             "cases": _cases(name, suite),
             "finished": time.time(),
         }
+
+
+def _wipe_test_data():
+    """Стереть всё с меткой `test-`. Проекты уходят каскадом со всем содержимым."""
+    try:
+        import psycopg2
+
+        dsn = os.environ.get("TEST_DB_DSN", "postgresql://app:app@db:5432/app")
+        with psycopg2.connect(dsn) as conn:
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM projects WHERE name LIKE 'test-%%'")
+                cur.execute("DELETE FROM users WHERE login LIKE 'test-%%'")
+    except Exception as exc:  # noqa: BLE001
+        print(f"Уборка после сквозных не удалась: {exc}")
 
 
 def _cases(name, suite):
@@ -415,6 +435,8 @@ if __name__ == "__main__":
         import sample
 
         sample.ensure()
+        # Длинный ролик нужен перегонам: в коротком все кадры умещаются в один.
+        sample.ensure_long()
     except Exception as exc:  # noqa: BLE001
         print(f"Не удалось подготовить тестовый ролик: {exc}")
     app.run(host="0.0.0.0", port=8090, threaded=True)

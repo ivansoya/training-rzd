@@ -6,8 +6,11 @@ import {
   fmtFrameTime,
   frameToMs,
   hiddenRanges,
+  isHidden,
   keyAt,
   msToFrame,
+  normalizeRanges,
+  stateAt,
   trackEnd,
 } from "./trackMath";
 
@@ -16,8 +19,8 @@ import {
  *  видит одно, а в датасет уезжает другое. Числа здесь те же, что в
  *  tests/unit/test_track_math.py. */
 
-function key(frame_no: number, x: number, y = 0, visible = true) {
-  return { frame_no, geometry: { x, y, w: 10, h: 10 }, visible, source: "human" };
+function key(frame_no: number, x: number, y = 0) {
+  return { frame_no, geometry: { x, y, w: 10, h: 10 }, source: "human" };
 }
 
 function track(over: Partial<VideoTrack> = {}): VideoTrack {
@@ -29,6 +32,7 @@ function track(over: Partial<VideoTrack> = {}): VideoTrack {
     interpolate: true,
     export_step: 5,
     label: null,
+    hidden_ranges: [],
     keys: [key(100, 0), key(160, 60, 30)],
     ...over,
   };
@@ -56,10 +60,17 @@ describe("положение объекта на кадре", () => {
   });
 
   it("на заслонённом участке объекта нет", () => {
-    const t = track({ keys: [key(100, 0), key(120, 20, 0, false), key(140, 40), key(160, 60)] });
+    const t = track({ hidden_ranges: [[120, 140]] });
     expect(boxAt(t, 130)).toBeNull();
     expect(boxAt(t, 119)).not.toBeNull();
     expect(boxAt(t, 140)).not.toBeNull();
+  });
+
+  it("заслонённый объект всё равно где-то находится", () => {
+    // Редактор рисует его прерывистой рамкой — значит место знать надо.
+    const state = stateAt(track({ hidden_ranges: [[120, 140]] }), 130);
+    expect(state?.hidden).toBe(true);
+    expect(state?.geometry).toEqual({ x: 30, y: 15, w: 10, h: 10 });
   });
 
   it("у трека без ключей ничего нет", () => {
@@ -82,14 +93,24 @@ describe("жизнь трека", () => {
     expect(keyAt(track(), 101)).toBeNull();
   });
 
-  it("собирает заслонённые отрезки", () => {
-    const t = track({ keys: [key(100, 0), key(120, 20, 0, false), key(140, 40)] });
-    expect(hiddenRanges(t)).toEqual([[120, 140]]);
+  it("отрезок полуоткрыт", () => {
+    const t = track({ hidden_ranges: [[10, 20]] });
+    expect(isHidden(t, 10)).toBe(true);
+    expect(isHidden(t, 19)).toBe(true);
+    expect(isHidden(t, 20)).toBe(false);
   });
 
-  it("заслонённый хвост тянется до конца трека", () => {
-    const t = track({ keys: [key(100, 0), key(120, 20, 0, false)] });
-    expect(hiddenRanges(t)).toEqual([[120, 161]]);
+  it("отрезки подрезаются жизнью трека", () => {
+    const t = track({ hidden_ranges: [[50, 300]] });
+    expect(hiddenRanges(t)).toEqual([[100, 161]]);
+  });
+
+  it("пересекающиеся отрезки склеиваются", () => {
+    expect(normalizeRanges([[30, 40], [10, 20], [15, 25]])).toEqual([[10, 25], [30, 40]]);
+  });
+
+  it("пустые отрезки отбрасываются", () => {
+    expect(normalizeRanges([[10, 10], [20, 15]])).toEqual([]);
   });
 });
 
@@ -103,8 +124,8 @@ describe("сколько кадров уйдёт в проект", () => {
   });
 
   it("заслонённые кадры не считаются", () => {
-    const t = track({ keys: [key(100, 0), key(120, 20, 0, false), key(140, 40), key(160, 60)] });
-    // 100,105,110,115 + 140,145,150,155,160 — участок 120..135 выпал.
+    const t = track({ hidden_ranges: [[120, 140]] });
+    // 100,105,110,115 + 140,145,150,155,160 — участок 120..139 выпал.
     expect(exportCount(t)).toBe(9);
   });
 });

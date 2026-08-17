@@ -144,7 +144,7 @@
   border: 1px solid var(--accent);
   border-radius: 24px;
   background: var(--accent);
-  color: #fff;
+  color: var(--on-acc);
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
@@ -182,7 +182,7 @@
 .file-pick:hover:not(:disabled) {
   border-color: var(--accent);
   background: rgba(79, 140, 255, 0.12);
-  color: #fff;
+  color: var(--on-acc);
 }
 
 .file-pick:disabled {

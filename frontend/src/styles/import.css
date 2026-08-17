@@ -14,7 +14,7 @@
   font: 600 10px ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  background: #fff6f6;
+  background: color-mix(in srgb, var(--red) 8%, var(--card));
   color: var(--mag-red-dark);
   border: 1px solid #f3c9c9;
   padding: 2px 8px;
@@ -33,7 +33,7 @@
   display: flex;
   align-items: center;
   gap: 14px;
-  background: #fff;
+  background: var(--card);
   border: 1px solid #f3c9c9;
   border-left: 3px solid var(--mag-red);
   border-radius: 10px;
@@ -62,7 +62,7 @@
   grid-template-columns: 26px 1fr;
   gap: 14px;
   align-items: start;
-  background: #fff;
+  background: var(--card);
   border: 1px solid var(--mag-line);
   border-radius: 10px;
   padding: 14px 18px;
@@ -75,7 +75,7 @@
 }
 
 .mag-step.todo {
-  background: #fbfcfd;
+  background: var(--sunk);
 }
 
 .mag-step-num {
@@ -91,17 +91,17 @@
 
 .mag-step.done .mag-step-num {
   background: var(--mag-graphite);
-  color: #fff;
+  color: var(--on-acc);
 }
 
 .mag-step.now .mag-step-num {
   background: var(--mag-red);
-  color: #fff;
+  color: var(--on-acc);
 }
 
 .mag-step.todo .mag-step-num {
-  background: #eceff3;
-  color: #9aa4ad;
+  background: var(--hair);
+  color: var(--faint);
 }
 
 .mag-step-main {
@@ -155,7 +155,7 @@
 
 .mag-fact.warn,
 .mag-fact.warn b {
-  color: #a86a00;
+  color: var(--skip);
 }
 
 .mag-fact.bad,
@@ -179,7 +179,7 @@
   margin: 10px 0 0;
   padding: 10px 12px;
   list-style: none;
-  background: #fbfcfd;
+  background: var(--sunk);
   border: 1px solid var(--mag-line);
   border-radius: 8px;
   font-size: 12px;
@@ -210,7 +210,7 @@
 .mag-progress-track {
   height: 6px;
   border-radius: 4px;
-  background: #e8ebef;
+  background: var(--hair);
   overflow: hidden;
 }
 
@@ -256,7 +256,7 @@
 /* --- выбор архива --- */
 .mag-drop {
   margin-top: 12px;
-  border: 1px dashed #cbd2da;
+  border: 1px dashed var(--rule);
   border-radius: 9px;
   padding: 24px;
   text-align: center;
@@ -309,12 +309,12 @@
 .mag-classes input[type="text"] {
   width: 100%;
   box-sizing: border-box;
-  border: 1px solid #cbd2da;
+  border: 1px solid var(--rule);
   border-radius: 7px;
   padding: 6px 9px;
   font-family: inherit;
   font-size: 12.5px;
-  background: #fff;
+  background: var(--card);
   color: var(--mag-ink);
 }
 
@@ -327,14 +327,14 @@
 /* Класс без названия — та самая работа, ради которой человек здесь */
 .mag-classes input[type="text"].blank {
   border-color: var(--mag-red);
-  background: #fff6f6;
+  background: color-mix(in srgb, var(--red) 8%, var(--card));
 }
 
 .mag-classes input[type="color"] {
   width: 26px;
   height: 26px;
   padding: 0;
-  border: 1px solid #cbd2da;
+  border: 1px solid var(--rule);
   border-radius: 5px;
   background: none;
 }
@@ -361,7 +361,7 @@
   min-width: 54px;
   height: 5px;
   border-radius: 3px;
-  background: #eceff3;
+  background: var(--hair);
   overflow: hidden;
 }
 
@@ -377,7 +377,7 @@
 }
 
 .mag-cls-count .zero {
-  color: #9aa4ad;
+  color: var(--faint);
 }
 
 /* --- суперклассы --- */
@@ -390,7 +390,7 @@
 }
 
 .mag-sc-add input {
-  border: 1px solid #cbd2da;
+  border: 1px solid var(--rule);
   border-radius: 7px;
   padding: 7px 10px;
   font-family: inherit;

@@ -594,6 +594,19 @@ export interface TaskVideoItem {
   frames: number;
   /** Сколько объектов ведётся на размечаемом ролике. */
   tracks: number;
+  /** Когда разметку закрыли и она стала кадрами таски. null — ещё в работе. */
+  annotation_closed_at: string | null;
+  created_at: string;
+}
+
+/** Ролик, чья разметка ещё не стала кадрами: его работа невидима в счётчиках. */
+export interface PendingVideo {
+  video_id: string;
+  file_name: string;
+  frames: number;
+  boxes: number;
+  tracks?: number;
+  error?: string;
 }
 
 export interface TaskDetail extends TaskSummary {
@@ -601,7 +614,14 @@ export interface TaskDetail extends TaskSummary {
   can_work: boolean;
   is_admin: boolean;
   videos: TaskVideoItem[];
+  pending_videos: PendingVideo[];
   from_files: number;
+  /** Разбивка кадров по источникам: ключ — «files» или идентификатор ролика.
+   *  Считается на сервере, потому что клиент видит лишь первую страницу. */
+  by_source: Record<string, {
+    new?: number; annotated?: number; empty?: number; skipped?: number;
+    deleted?: number; accepted?: number; first_at?: string;
+  }>;
   classes: { class_index: number; name: string; color: string; annotations: number }[];
 }
 
@@ -683,10 +703,12 @@ export async function assignTask(id: string, assignee_id: string | null): Promis
 
 export async function getTaskImages(
   id: string,
-  params: { status?: string; limit?: number; offset?: number } = {}
+  params: { status?: string; limit?: number; offset?: number; source?: string } = {}
 ): Promise<{ matched: number; counts: TaskCounts; images: TaskImage[] }> {
   const q = new URLSearchParams();
   if (params.status) q.set("status", params.status);
+  // «files» — загруженные файлами, иначе идентификатор ролика.
+  if (params.source) q.set("source", params.source);
   if (params.limit) q.set("limit", String(params.limit));
   if (params.offset) q.set("offset", String(params.offset));
   const suffix = q.toString() ? `?${q}` : "";
@@ -792,12 +814,58 @@ export function videoFrameUrl(taskId: string, videoId: string, frameNo: number):
   return `/api/tasks/${taskId}/videos/${videoId}/frame?n=${frameNo}`;
 }
 
+/** Перегон: кусок ролика, объявленный сервером вместе со своими кадрами. */
+export interface ClipChunk {
+  n: number;
+  /** Номер первого кадра. Клиент его не вычисляет — он его читает. */
+  first: number;
+  count: number;
+}
+
+/** Ступень качества: исходное или уменьшенное, как у видеосервисов. */
+export interface ClipQuality {
+  id: string;
+  label: string;
+  height: number | null;
+}
+
+export interface ClipManifest {
+  /** Отпечаток таблицы кадров: с ним уезжает план при закрытии разметки. */
+  version: string;
+  /** Точное число кадров, а не прикидка по длительности и частоте. */
+  frame_count: number;
+  width: number;
+  height: number;
+  rate: [number, number];
+  chunk_frames: number;
+  chunks: ClipChunk[];
+  /** Сколько перегонов уже нарезано: остальные режутся по требованию. */
+  ready: number;
+  /** Что можно выбрать и что выбрано сейчас. */
+  qualities: ClipQuality[];
+  default_quality: string;
+  quality: string;
+  fps: number | null;
+  file_name: string;
+}
+
+export async function fetchClip(taskId: string, videoId: string): Promise<ClipManifest> {
+  return asJson(await fetch(`/api/tasks/${taskId}/videos/${videoId}/clip`));
+}
+
+export function chunkUrl(
+  taskId: string,
+  videoId: string,
+  chunkNo: number,
+  quality: string
+): string {
+  return `/api/tasks/${taskId}/videos/${videoId}/chunks/${chunkNo}?q=${quality}`;
+}
+
 /** Положение объекта, заданное рукой. Между ключевыми кадрами считается. */
 export interface TrackKey {
   frame_no: number;
   geometry: { x: number; y: number; w: number; h: number };
-  /** Объект есть, но заслонён: до следующего ключа в разметку не идёт. */
-  visible: boolean;
   source: string;
 }
 
@@ -809,6 +877,8 @@ export interface VideoTrack {
   interpolate: boolean;
   export_step: number;
   label: string | null;
+  /** Отрезки [от, до), где объект заслонён: он есть, но в разметку не идёт. */
+  hidden_ranges: [number, number][];
   keys: TrackKey[];
 }
 
@@ -869,6 +939,7 @@ export async function updateTrack(
     export_step: number;
     label: string | null;
     end_frame: number | null;
+    hidden_ranges: [number, number][];
   }>
 ): Promise<VideoTrack> {
   return asJson(await patch(`video-tracks/${trackId}`, body));
@@ -883,11 +954,20 @@ export async function putTrackKey(
   frameNo: number,
   body: {
     geometry?: { x: number; y: number; w: number; h: number };
-    visible?: boolean;
     source?: string;
   }
 ): Promise<VideoTrack> {
   return asJson(await put(`video-tracks/${trackId}/keys/${frameNo}`, body));
+}
+
+/** Перенести ключ на другой кадр. Одной операцией: «удалить и поставить»
+ *  оставляет трек без ключа между запросами. */
+export async function moveTrackKey(
+  trackId: string,
+  frameNo: number,
+  to: number
+): Promise<VideoTrack> {
+  return asJson(await patch(`video-tracks/${trackId}/keys/${frameNo}`, { to }));
 }
 
 export async function deleteTrackKey(
@@ -915,6 +995,43 @@ export interface MaterializePreview {
   updated_frames: number;
   first_frames: number[];
   error?: string;
+}
+
+/** Прогрев окна кадров: сервер распаковывает их одним проходом декодера.
+ *  Подряд идущие кадры примерно в восемьдесят раз дешевле одиночных. */
+export async function prefetchFrames(
+  taskId: string,
+  videoId: string,
+  from: number,
+  to: number
+): Promise<{ ready: number; decoded: number }> {
+  return asJson(
+    await post(`tasks/${taskId}/videos/${videoId}/frames/prefetch`, { from, to })
+  );
+}
+
+/** Закрыть разметку ролика: план становится обычными кадрами таски. */
+export async function closeVideoAnnotation(
+  taskId: string,
+  videoId: string
+): Promise<{ job_id: string; frames: number }> {
+  return asJson(await post(`tasks/${taskId}/videos/${videoId}/close-annotation`));
+}
+
+export async function reopenVideoAnnotation(
+  taskId: string,
+  videoId: string
+): Promise<{ reopened: boolean }> {
+  return asJson(await post(`tasks/${taskId}/videos/${videoId}/reopen-annotation`));
+}
+
+/** Убрать кадры ролика из таски, чтобы разметить его заново. Принятые в
+ *  датасет не трогаются — это данные проекта. */
+export async function dropVideoFrames(
+  taskId: string,
+  videoId: string
+): Promise<{ removed: number; kept_accepted: number }> {
+  return asJson(await del(`tasks/${taskId}/videos/${videoId}/frames`));
 }
 
 export async function previewMaterialize(

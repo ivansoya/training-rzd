@@ -45,7 +45,7 @@
   width: 38px;
   border: 1px solid var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--on-acc);
   border-radius: 8px;
   font-size: 18px;
   line-height: 1;
