@@ -631,7 +631,63 @@ def video_file(task_id, video_id):
         path = os.path.join(config.DATA_DIR, row.file_path)
         if not os.path.exists(path):
             return jsonify({"error": "Файл не найден."}), 404
-        return send_file(path, conditional=True)
+        resp = send_file(path, conditional=True)
+        # Ролик неизменен, пока существует: он загружен один раз и не
+        # перезаписывается. Без этого браузер переспрашивал сервер на каждой
+        # перемотке — а перемотка в нарезке это основное действие.
+        resp.headers["Cache-Control"] = "private, max-age=86400"
+        return resp
+    finally:
+        db.close()
+
+
+@bp.delete("/api/tasks/<task_id>/videos/<video_id>")
+def delete_video(task_id, video_id):
+    """Убрать ролик из таски вместе со всем, что из него нарезано.
+
+    Ролик живёт до закрытия таски именно затем, чтобы к нему возвращаться и
+    перевыбирать кадры. Значит и уйти он должен целиком: оставить кадры без
+    ролика — это оставить их без ответа на вопрос «откуда они».
+
+    Кадры, уже принятые в датасет, не трогаем: это данные проекта, а не
+    черновик таски. Их число возвращаем — человек должен знать, что осталось.
+    """
+    db, task, project, user, role, err = _resolve_task(task_id, "editor")
+    if err:
+        return err
+    try:
+        if not _may_work(task, user, role):
+            return jsonify({"error": "Это не ваша таска."}), 403
+        if task.status == "closed":
+            return jsonify({"error": "Таска закрыта — менять её нечем."}), 409
+        vid = _uuid_or_none(video_id)
+        row = db.get(TaskVideo, vid) if vid else None
+        if row is None or row.task_id != task.id:
+            return jsonify({"error": "Видео не найдено."}), 404
+
+        frames = db.execute(
+            select(Image).where(Image.source_video_id == row.id)
+        ).scalars().all()
+        base = config.image_base_dir(task.project_id, task.id)
+        removed, kept = 0, 0
+        for image in frames:
+            if image.dataset_id is not None:
+                kept += 1
+                continue
+            _drop_files(base, image.id)
+            db.delete(image)
+            removed += 1
+
+        path = os.path.join(config.DATA_DIR, row.file_path)
+        name = row.file_name
+        _log(db, task, user, "video_removed", file=name, removed=removed, kept=kept)
+        # Строку удаляем первой: по каскаду с ней уходят ступени, очередь и
+        # разметка ролика. Файлы — следом, когда база уже согласилась.
+        db.delete(row)
+        db.commit()
+        _drop_video_files(path)
+        video_index.forget(vid)
+        return jsonify({"removed": removed, "kept_accepted": kept, "file_name": name})
     finally:
         db.close()
 

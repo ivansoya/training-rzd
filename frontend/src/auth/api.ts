@@ -629,6 +629,18 @@ export function videoStripUrl(taskId: string, videoId: string): string {
   return `/api/tasks/${taskId}/videos/${videoId}/strip`;
 }
 
+/** Убрать ролик вместе со всем, что из него нарезано.
+ *
+ * Принятые в датасет кадры остаются: это данные проекта, а не черновик таски.
+ * Сколько осталось — в ответе.
+ */
+export async function deleteTaskVideo(
+  taskId: string,
+  videoId: string
+): Promise<{ removed: number; kept_accepted: number; file_name: string }> {
+  return asJson(await del(`tasks/${taskId}/videos/${videoId}`));
+}
+
 export function videoFileUrl(taskId: string, videoId: string): string {
   return `/api/tasks/${taskId}/videos/${videoId}/file`;
 }

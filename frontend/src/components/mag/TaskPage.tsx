@@ -10,6 +10,7 @@ import {
   reopenVideoAnnotation,
   setTaskStatus,
   uploadTaskImages,
+  deleteTaskVideo,
   uploadTaskVideo,
 } from "../../auth/api";
 import type {
@@ -27,7 +28,6 @@ import { plural } from "./ProjectsPage";
 import { SourceCard, VideoCard, buildSources } from "./TaskSources";
 import VideoAnnotator from "./VideoAnnotator";
 import VideoCutModal from "./VideoCutModal";
-import VideoModeModal from "./VideoModeModal";
 
 const NEXT: Record<TaskStatus, { to: TaskStatus; label: string; hint: string }[]> = {
   queued: [{ to: "in_progress", label: "Взять в работу", hint: "" }],
@@ -79,10 +79,13 @@ export default function TaskPage() {
   const [editing, setEditing] = useState<{ list: TaskImage[]; index: number } | null>(null);
   const [cutting, setCutting] = useState<{ video: TaskVideoItem; at?: number } | null>(null);
   const [annotating, setAnnotating] = useState<TaskVideoItem | null>(null);
-  const [pendingVideo, setPendingVideo] = useState<File | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
-  const videoRef = useRef<HTMLInputElement>(null);
+  // Два поля выбора файла на две вкладки: режим ролика решает вкладка, а не
+  // отдельный вопрос человеку. Из «Кадров» ролик грузится под нарезку, из
+  // «Видео» — под разметку.
+  const cutRef = useRef<HTMLInputElement>(null);
+  const annotateRef = useRef<HTMLInputElement>(null);
   const firstLoad = useRef(true);
 
   const load = useCallback(async () => {
@@ -94,11 +97,13 @@ export default function TaskPage() {
       ]);
       setTask(t);
       setImages(imgs.images);
-      // Пустая таска открывается на видео: загрузить ролик — единственное
-      // осмысленное действие, когда кадров ещё нет.
+      // Пустая таска открывается на «Кадрах»: и загрузка изображений, и
+      // добавление ролика под нарезку теперь там. Исключение — когда уже есть
+      // размечаемый ролик: его работа в своей вкладке.
       if (firstLoad.current) {
         firstLoad.current = false;
-        if (t.counts.total === 0) setTab(t.videos.length ? "videos" : "frames");
+        const annotate = t.videos.some((v) => v.mode === "annotate");
+        if (t.counts.total === 0 && annotate) setTab("videos");
       }
       setError(null);
     } catch (e) {
@@ -174,6 +179,52 @@ export default function TaskPage() {
     }
   }
 
+  /** Загрузить ролик. Режим не спрашиваем: вкладка уже ответила. */
+  async function onVideo(files: FileList | null, mode: "cut" | "annotate") {
+    const file = files?.[0];
+    if (!file || !taskId) return;
+    setUploadPct(0);
+    setError(null);
+    try {
+      await uploadTaskVideo(taskId, file, setUploadPct, mode);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setUploadPct(null);
+    }
+  }
+
+  /** Убрать ролик целиком. Ролик живёт до закрытия таски затем, чтобы к нему
+   *  возвращаться, — значит и уходит он вместе со всем, что из него нарезано. */
+  async function removeVideo(video: TaskVideoItem) {
+    if (!taskId) return;
+    const frames = video.frames;
+    // У размечаемого ролика кадры появляются только после «Закрыть разметку»,
+    // и уходят они вместе с ним — кроме принятых в датасет. Прилагательное
+    // склоняется вместе с существительным, поэтому формы заданы целиком.
+    const forms: [string, string, string] =
+      video.mode === "annotate"
+        ? ["кадр разметки", "кадра разметки", "кадров разметки"]
+        : ["нарезанный кадр", "нарезанных кадра", "нарезанных кадров"];
+    const ask = frames
+      ? `Убрать «${video.file_name}» и ${frames} ${plural(frames, ...forms)}? ` +
+        "Принятые в проект останутся."
+      : `Убрать «${video.file_name}»?`;
+    if (!window.confirm(ask)) return;
+    await guard(async () => {
+      const res = await deleteTaskVideo(taskId, video.id);
+      setNotice(
+        res.removed
+          ? `Ролик «${res.file_name}» убран вместе с ${res.removed} ` +
+            `${plural(res.removed, "кадром", "кадрами", "кадрами")}` +
+            (res.kept_accepted ? `, ${res.kept_accepted} осталось в проекте.` : ".")
+          : `Ролик «${res.file_name}» убран.`
+      );
+      await load();
+    });
+  }
+
   /** «Размечать» у блока: берём кадры именно этого источника. */
   async function openSource(sourceKey: string) {
     if (!taskId) return;
@@ -214,12 +265,15 @@ export default function TaskPage() {
 
   const editable = task.can_work && task.status !== "closed";
   const sources = buildSources(task);
+  // Во вкладке «Видео» только размечаемые: нарезка живёт в «Кадрах» как
+  // источник, а здесь — своя работа со своим редактором.
+  const annotateVideos = task.videos.filter((v) => v.mode === "annotate");
   const annotated = images.filter((i) => i.annotations > 0);
   const total = Math.max(1, task.counts.total);
   const percent = Math.round((task.counts.annotated / total) * 100);
   const counts: Record<Tab, string> = {
     frames: String(task.counts.total),
-    videos: String(task.videos.length),
+    videos: String(annotateVideos.length),
     progress: `${percent} %`,
     log: "",
   };
@@ -311,9 +365,18 @@ export default function TaskPage() {
               <div className="mag-head-actions">
                 <input ref={fileRef} type="file" accept="image/*" multiple hidden
                   onChange={(e) => onFiles(e.target.files)} />
+                <input ref={cutRef} type="file" accept="video/*" hidden
+                  onChange={(e) => {
+                    void onVideo(e.target.files, "cut");
+                    e.target.value = "";
+                  }} />
                 <button className="mag-btn mag-btn-inline" type="button"
                   onClick={() => fileRef.current?.click()}>
                   Загрузить изображения
+                </button>
+                <button className="mag-btn mag-btn-inline" type="button"
+                  onClick={() => cutRef.current?.click()}>
+                  Добавить видео
                 </button>
               </div>
             )}
@@ -322,13 +385,16 @@ export default function TaskPage() {
           {sources.length === 0 ? (
             <div className="g-empty">
               <b>Кадров пока нет</b>
-              Загрузите изображения или добавьте ролик во вкладке «Видео».
+              Загрузите изображения или добавьте видео — из него нарежутся кадры.
             </div>
           ) : (
             <div className="g-blocks">
               {sources.map((block) => (
                 <SourceCard key={block.key} taskId={task.id} block={block}
-                  editable={editable} onAnnotate={() => openSource(block.key)} />
+                  editable={editable}
+                  onAnnotate={() => openSource(block.key)}
+                  onCut={block.video ? () => setCutting({ video: block.video! }) : undefined}
+                  onDelete={block.video ? () => removeVideo(block.video!) : undefined} />
               ))}
             </div>
           )}
@@ -339,66 +405,60 @@ export default function TaskPage() {
       {tab === "videos" && (
         <div className="mag-card">
           <div className="mag-card-h">
-            <h4>Ролики · {task.videos.length}</h4>
+            <h4>Ролики · {annotateVideos.length}</h4>
             {editable && (
               <div className="mag-head-actions">
-                <input ref={videoRef} type="file" accept="video/*" hidden
+                <input ref={annotateRef} type="file" accept="video/*" hidden
                   onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    // Режим спрашиваем до отправки: он навсегда, а файл может
-                    // быть на гигабайты — переливать его заново обидно.
-                    if (f) setPendingVideo(f);
+                    void onVideo(e.target.files, "annotate");
                     e.target.value = "";
                   }} />
                 <button className="mag-btn mag-btn-inline" type="button"
-                  onClick={() => videoRef.current?.click()}>
+                  onClick={() => annotateRef.current?.click()}>
                   Добавить видео
                 </button>
               </div>
             )}
           </div>
 
-          {task.videos.length === 0 ? (
+          {annotateVideos.length === 0 ? (
             <div className="g-empty">
               <b>Роликов пока нет</b>
-              Добавьте видео — его можно нарезать на кадры или размечать целиком.
+              Здесь размечают само видео покадрово. Чтобы нарезать ролик на
+              кадры, добавьте его во вкладке «Кадры».
             </div>
           ) : (
             <div className="g-blocks">
-              {task.videos.map((v) =>
-                v.mode === "annotate" ? (
-                  <VideoCard
-                    key={v.id}
-                    taskId={task.id}
-                    video={v}
-                    pending={task.pending_videos.find((p) => p.video_id === v.id)}
-                    editable={editable}
-                    busy={busy}
-                    onOpen={() => setAnnotating(v)}
-                    onClose={() => closeVideo(v)}
-                    onReopen={() => guard(async () => {
-                      await reopenVideoAnnotation(task.id, v.id);
+              {annotateVideos.map((v) => (
+                <VideoCard
+                  key={v.id}
+                  taskId={task.id}
+                  video={v}
+                  pending={task.pending_videos.find((p) => p.video_id === v.id)}
+                  editable={editable}
+                  busy={busy}
+                  onOpen={() => setAnnotating(v)}
+                  onDelete={() => removeVideo(v)}
+                  onClose={() => closeVideo(v)}
+                  onReopen={() => guard(async () => {
+                    await reopenVideoAnnotation(task.id, v.id);
+                    await load();
+                  })}
+                  onDropFrames={() => {
+                    if (!window.confirm(
+                      `Убрать кадры «${v.file_name}» из таски? Принятые в проект останутся.`
+                    )) return;
+                    guard(async () => {
+                      const res = await dropVideoFrames(task.id, v.id);
+                      setNotice(
+                        `Убрано ${res.removed} ${plural(res.removed, "кадр", "кадра", "кадров")}` +
+                        (res.kept_accepted ? `, ${res.kept_accepted} осталось в проекте.` : ".")
+                      );
                       await load();
-                    })}
-                    onDropFrames={() => {
-                      if (!window.confirm(
-                        `Убрать кадры «${v.file_name}» из таски? Принятые в проект останутся.`
-                      )) return;
-                      guard(async () => {
-                        const res = await dropVideoFrames(task.id, v.id);
-                        setNotice(
-                          `Убрано ${res.removed} ${plural(res.removed, "кадр", "кадра", "кадров")}` +
-                          (res.kept_accepted ? `, ${res.kept_accepted} осталось в проекте.` : ".")
-                        );
-                        await load();
-                      });
-                    }}
-                  />
-                ) : (
-                  <CutVideoCard key={v.id} taskId={task.id} video={v} editable={editable}
-                    onOpen={() => setCutting({ video: v })} />
-                )
-              )}
+                    });
+                  }}
+                />
+              ))}
             </div>
           )}
         </div>
@@ -524,23 +584,6 @@ export default function TaskPage() {
         </p>
       )}
 
-      {pendingVideo && (
-        <VideoModeModal
-          fileName={pendingVideo.name}
-          onClose={() => setPendingVideo(null)}
-          onPick={(mode) => {
-            const file = pendingVideo;
-            setPendingVideo(null);
-            if (!taskId) return;
-            setUploadPct(0);
-            uploadTaskVideo(taskId, file, setUploadPct, mode)
-              .then(() => load())
-              .catch((err) => setError((err as Error).message))
-              .finally(() => setUploadPct(null));
-          }}
-        />
-      )}
-
       {cutting && (
         <VideoCutModal taskId={task.id} video={cutting.video} editable={editable}
           startAtMs={cutting.at} onClose={() => setCutting(null)} onDone={load} />
@@ -575,58 +618,6 @@ export default function TaskPage() {
 }
 
 /** Нарезаемый ролик: у него вопрос не «что размечено», а «что нарезано». */
-function CutVideoCard({
-  taskId, video, editable, onOpen,
-}: {
-  taskId: string;
-  video: TaskVideoItem;
-  editable: boolean;
-  onOpen: () => void;
-}) {
-  const duration = video.duration_ms || 1;
-  return (
-    <div className="g-block">
-      <div className="g-block-h">
-        <h4>{video.file_name}</h4>
-        <span className="g-chip">нарезка</span>
-        <span className="g-sp" />
-        <button className="mag-btn mag-btn-inline" type="button" onClick={onOpen}>
-          {editable ? (video.segments.length ? "Нарезать ещё" : "Нарезать") : "Смотреть"}
-        </button>
-      </div>
-      <div className="g-block-b g-vcard">
-        <div className="g-vcard-nums">
-          <div className="g-stat"><b>{video.frames}</b><span>кадров нарезано</span></div>
-          <div className="g-stat s">
-            <b>{video.segments.length}</b>
-            <span>{plural(video.segments.length, "участок", "участка", "участков")}</span>
-          </div>
-        </div>
-        <div className="g-vcard-body">
-          <div className="g-rail">
-            <span className="g-rail-line" />
-            {video.segments.map((s, i) => (
-              <u key={i} style={{
-                left: `${(s.start_ms / duration) * 100}%`,
-                width: `${Math.max(0.6, ((s.end_ms - s.start_ms) / duration) * 100)}%`,
-              }} />
-            ))}
-            {[0, 0.25, 0.5, 0.75, 1].map((m) => (
-              <i key={m} className="major" style={{ left: `${m * 100}%` }} />
-            ))}
-          </div>
-          {video.segments.length === 0 && (
-            <p className="g-vcard-note">
-              Участков пока нет — нажмите «Нарезать» и выберите их на дорожке.
-            </p>
-          )}
-        </div>
-      </div>
-      <img src={`/api/tasks/${taskId}/videos/${video.id}/strip`} alt="" hidden />
-    </div>
-  );
-}
-
 function describe(e: TaskEventItem): JSX.Element {
   const p = e.payload as Record<string, string | number>;
   switch (e.kind) {

@@ -526,6 +526,41 @@
 
 .g-block-b { padding: 14px; }
 
+/* У блока ролика две части: сам ролик с дорожкой участков и разбивка его
+   кадров по состояниям. Волосяная линия между ними нужна затем, чтобы это
+   читалось как «источник и что из него вышло», а не как одна длинная строка
+   цифр. */
+.g-block-b + .g-block-b { border-top: 1px solid var(--hair); }
+
+/* Корзина. Действие редкое и необратимое, поэтому оно не спорит за внимание с
+   «Нарезать» и «Размечать»: приглушённый значок, который краснеет под курсором. */
+.g-trash {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  flex-shrink: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted, #7a848d);
+  cursor: pointer;
+  transition: color 0.12s linear, border-color 0.12s linear, background 0.12s linear;
+}
+
+.g-trash:hover {
+  color: var(--mag-red, #e21a1a);
+  border-color: var(--rule, #e2e6e9);
+  background: var(--sunk, rgba(127, 127, 127, 0.08));
+}
+
+.g-trash:focus-visible {
+  outline: 2px solid var(--mag-red, #e21a1a);
+  outline-offset: 1px;
+}
+
 /* Карточка ролика: числа слева, время справа. Компоновка К4 — у разметки
    видео есть место во времени, и терять его в списке цифр жалко. */
 .g-vcard { display: grid; grid-template-columns: 190px 1fr; gap: 20px; }
