@@ -141,7 +141,71 @@ def wait_job(api, job_id, timeout=180):
     raise AssertionError(f"Задача {job_id} не завершилась за {timeout} с")
 
 
-__all__ = ["BASE_URL", "wait_job", "tag"]
+def clip_url(task_id, video_id):
+    return f"{BASE_URL}/api/tasks/{task_id}/videos/{video_id}"
+
+
+def wait_clip(api, task_id, video_id, quality=None, chunks=True, timeout=300):
+    """Ждём, пока ролик станет пригоден для разметки.
+
+    Готовность спрашивается у самого ролика, а не у номера задачи: подготовка
+    теперь не одна работа, а несколько (таблица кадров, копия ступени,
+    перегоны), и снаружи важно ровно одно — можно ли уже размечать.
+    """
+    deadline = time.time() + timeout
+    last = None
+    while time.time() < deadline:
+        res = api.get(clip_url(task_id, video_id) + "/clip",
+                      params={"q": quality} if quality else None)
+        assert res.status_code in (200, 202, 409), res.text
+        last = res.json()
+        if res.status_code == 409:
+            raise AssertionError(f"Ролик подготовить не удалось: {last}")
+        if res.status_code == 200:
+            if not chunks or last["state"]["chunks"] == "ready":
+                return last
+            if last["state"]["chunks"] == "error":
+                raise AssertionError(f"Перегоны не нарезались: {last['state']}")
+        time.sleep(0.5)
+    raise AssertionError(f"Ролик не подготовился за {timeout} с: {last}")
+
+
+def jobs_of(db, video_id, kind=None, chunk_no=None, statuses=None):
+    """Задачи очереди по этому ролику — тестам нужна не только выдача API,
+    но и то, сколько работы она за собой завела."""
+    sql = "SELECT kind, quality, chunk_no, status, attempts, error FROM video_jobs WHERE video_id = %s"
+    args = [video_id]
+    if kind is not None:
+        sql += " AND kind = %s"
+        args.append(kind)
+    if chunk_no is not None:
+        sql += " AND chunk_no = %s"
+        args.append(chunk_no)
+    if statuses is not None:
+        sql += " AND status = ANY(%s)"
+        args.append(list(statuses))
+    with db.cursor() as cur:
+        cur.execute(sql, args)
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+def assets_of(db, video_id):
+    """Ступени качества ролика: пути к копиям и готовность перегонов."""
+    with db.cursor() as cur:
+        cur.execute(
+            "SELECT quality, file_status, file_path, width, height,"
+            " chunks_status, chunks_ready, chunks_total, error"
+            " FROM video_assets WHERE video_id = %s ORDER BY quality",
+            (video_id,),
+        )
+        cols = [c[0] for c in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
+__all__ = [
+    "BASE_URL", "wait_job", "wait_clip", "clip_url", "jobs_of", "assets_of", "tag",
+]
 
 
 def pytest_configure(config):

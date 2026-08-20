@@ -38,6 +38,8 @@ from common.storage import translit_slug
 from datasets_svc import materialize
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
+from datasets_svc import video_index
+from datasets_svc import video_queue as queue
 
 bp = Blueprint("tasks", __name__)
 
@@ -535,6 +537,19 @@ def _drop_files(base, image_id):
             pass
 
 
+def _drop_video_files(path):
+    """Ролик и всё, что вокруг него наросло: копии ступеней, перегоны,
+    кинолента, распакованные кадры. Отсутствие файла — не ошибка."""
+    dirs, files = chunklib.leftovers(path)
+    for folder in dirs:
+        shutil.rmtree(folder, ignore_errors=True)
+    for name in [path] + files:
+        try:
+            os.remove(name)
+        except OSError:
+            pass
+
+
 def _close(db, task, user):
     """Убираем черновое: неразмеченные кадры и исходники видео."""
     drafts = db.execute(
@@ -551,17 +566,13 @@ def _close(db, task, user):
         select(TaskVideo).where(TaskVideo.task_id == task.id)
     ).scalars().all()
     for v in videos:
-        try:
-            os.remove(os.path.join(config.DATA_DIR, v.file_path))
-        except OSError:
-            pass
-        # Распакованные кадры размечаемого ролика — такой же черновик, как сам
-        # ролик: то, что было размечено, уже лежит в проекте отдельными файлами.
-        shutil.rmtree(
-            os.path.join(config.task_video_dir(task.project_id, task.id),
-                         f"{v.id}_frames"),
-            ignore_errors=True,
-        )
+        path = os.path.join(config.DATA_DIR, v.file_path)
+        # Ролик уносит с собой всё, что вокруг него наросло: перегоны, копии
+        # ступеней, киноленту, распакованные кадры. Раньше убирались только
+        # кадры, а перегоны и копии оставались на томе навсегда — и весят они
+        # больше самого исходника.
+        _drop_video_files(path)
+        video_index.forget(v.id)
         db.delete(v)
     _log(db, task, user, "closed", removed_images=removed, removed_videos=len(videos))
     return {"removed_images": removed, "removed_videos": len(videos)}
@@ -589,11 +600,16 @@ def video_strip(task_id, video_id):
             return jsonify({"error": "Видео не найдено."}), 404
         path = _strip_path(task, row.id)
         if not os.path.exists(path):
-            videolib.make_strip(
-                os.path.join(config.DATA_DIR, row.file_path), path, row.duration_ms
-            )
-        if not os.path.exists(path):
-            return jsonify({"error": "Лента недоступна."}), 404
+            # Клеить ленту здесь нельзя. На двадцатиминутном ролике это два
+            # десятка перемоток по исходнику — секунды в потоке, который в это
+            # время не отвечает никому, а браузер успевает оборвать соединение
+            # и показать значок битой картинки.
+            queue.enqueue(db, row.id, queue.KIND_STRIP)
+            return jsonify({
+                "status": "preparing",
+                "error": "Лента ещё готовится.",
+                "retry_after_ms": 1500,
+            }), 202
         resp = send_file(path, mimetype="image/jpeg", conditional=True)
         resp.headers["Cache-Control"] = "private, max-age=31536000, immutable"
         return resp
@@ -691,39 +707,6 @@ def upload_images(task_id):
         db.close()
 
 
-def _run_chunks_job(job_id, path, index, quality):
-    try:
-        made = chunklib.cut_all(
-            path, index, quality,
-            progress=lambda done, total: jobs.update(job_id, processed=done),
-            skip_existing=True,
-        )
-        jobs.update(job_id, status="done", processed=index["count"],
-                    result={"chunks": made})
-    except Exception as exc:  # noqa: BLE001
-        jobs.update(job_id, status="error", error=str(exc))
-
-
-def _start_chunking(path, index):
-    """Нарезать ролик на перегоны в фоне.
-
-    Один проход декодера на весь ролик: подряд идущие кадры дешевле добытых по
-    одному, а разметчику потом не приходится ждать нигде. Нарезка в пожатом
-    качестве весит вдвое меньше самого ролика.
-    """
-    # Ступень та же, что попросит клиент: у маленького ролика ступеней ниже
-    # исходной нет вовсе, и нарезать «720» значило бы готовить то, чего никто
-    # не спросит.
-    quality = chunklib.default_for(index["height"])
-    job_id = jobs.create(
-        "video-chunks", total=index["count"], message="Готовлю перегоны"
-    )
-    threading.Thread(
-        target=_run_chunks_job, args=(job_id, path, index, quality), daemon=True
-    ).start()
-    return job_id
-
-
 @bp.post("/api/tasks/<task_id>/videos")
 def upload_video(task_id):
     """Кладём исходник и отдаём его параметры — резать будем отдельным шагом."""
@@ -756,45 +739,38 @@ def upload_video(task_id):
             os.remove(path)
             return jsonify({"error": str(exc)}), 400
 
-        # Размечаемому ролику сразу строим таблицу кадров: демуксинг читает
-        # только заголовки пакетов и стоит доли секунды, зато даёт точное число
-        # кадров — контейнер о нём врёт или молчит.
-        index = None
-        frame_count = None
-        index_version = None
-        if mode == "annotate":
-            if not meta.get("fps"):
-                os.remove(path)
-                return jsonify({
-                    "error": "В видео нет частоты кадров — размечать его покадрово нельзя."
-                }), 400
-            try:
-                index = chunklib.ensure_index(path)
-            except chunklib.VideoError as exc:
-                os.remove(path)
-                return jsonify({"error": str(exc)}), 400
-            frame_count = index["count"]
-            index_version = index["version"]
+        # Частота нужна прямо сейчас: без неё покадровая разметка невозможна,
+        # и отказать надо на загрузке, а не через минуту фоновой работы.
+        # ``probe`` читает только заголовки, это дёшево.
+        if mode == "annotate" and not meta.get("fps"):
+            os.remove(path)
+            return jsonify({
+                "error": "В видео нет частоты кадров — размечать его покадрово нельзя."
+            }), 400
 
         row = TaskVideo(
             id=vid, task_id=task.id, file_name=file.filename,
             file_path=os.path.relpath(path, config.DATA_DIR),
             size_bytes=os.path.getsize(path), segments=[],
-            mode=mode, frame_count=frame_count, index_version=index_version,
-            created_by=user.id, **meta,
+            mode=mode, created_by=user.id, **meta,
         )
         db.add(row)
-        # Кинолента под таймлайн — сразу, пока файл горячий.
-        videolib.make_strip(path, _strip_path(task, vid), meta.get("duration_ms"))
         _log(db, task, user, "video_added", file=file.filename,
              duration_ms=meta.get("duration_ms"), mode=mode)
         db.commit()
-        # Перегоны готовятся в фоне: разметчик открывает ролик и не ждёт.
-        cut_job = _start_chunking(path, index) if index else None
+
+        # Дальше — только заявки в очередь. Раньше здесь строилась таблица
+        # кадров и клеилась кинолента, и загрузка держала поток gunicorn всё
+        # это время: на большом ролике — секунды, при нескольких загрузках
+        # разом — весь пул. Теперь тяжёлое делает воркер, а загрузка
+        # заканчивается ровно тогда, когда файл лёг на том.
+        queue.enqueue(db, row.id, queue.KIND_STRIP)
+        if mode == "annotate":
+            queue.enqueue(db, row.id, queue.KIND_INDEX)
         return jsonify({
             "id": str(vid), "file_name": row.file_name,
             "size_bytes": row.size_bytes, "mode": mode,
-            "frame_count": frame_count, "cut_job": cut_job, **meta,
+            "frame_count": None, "preparing": mode == "annotate", **meta,
         }), 201
     finally:
         db.close()

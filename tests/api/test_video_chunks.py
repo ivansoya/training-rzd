@@ -8,11 +8,12 @@
 попадёт в датасет. Здесь это падает тестом.
 """
 import io
+import time
 
 import av
 import pytest
 import sample
-from conftest import BASE_URL, wait_job
+from conftest import BASE_URL, wait_clip
 from PIL import Image
 
 
@@ -32,10 +33,9 @@ def clip(api, task, long_video_file):
         )
     assert res.status_code in (200, 201), res.text
     body = res.json()
-    # Нарезка идёт фоном; тесту нужна готовая, чтобы мерить не гонку.
-    assert body.get("cut_job"), "загрузка не запустила нарезку на перегоны"
-    job = wait_job(api, body["cut_job"])
-    assert job["status"] == "done", job.get("error")
+    # Подготовка идёт в воркере; тесту нужна готовая, чтобы мерить не гонку.
+    assert body.get("preparing"), "загрузка не поставила подготовку в очередь"
+    wait_clip(api, task["id"], body["id"])
     body["task_id"] = task["id"]
     return body
 
@@ -46,13 +46,20 @@ def get_clip(api, clip):
     return res.json()
 
 
-def get_chunk(api, clip, n, quality=None):
-    res = api.get(
-        f"{BASE_URL}/api/tasks/{clip['task_id']}/videos/{clip['id']}/chunks/{n}",
-        params={"q": quality} if quality else None,
-    )
-    assert res.status_code == 200, res.text
-    return res
+def get_chunk(api, clip, n, quality=None, timeout=180):
+    """Перегон — как его берёт браузер: «202» значит «ещё готовится», и на
+    него отвечают ожиданием, а не падением."""
+    deadline = time.time() + timeout
+    while True:
+        res = api.get(
+            f"{BASE_URL}/api/tasks/{clip['task_id']}/videos/{clip['id']}/chunks/{n}",
+            params={"q": quality} if quality else None,
+        )
+        if res.status_code != 202:
+            assert res.status_code == 200, res.text
+            return res
+        assert time.time() < deadline, f"перегон {n} не подготовился: {res.text}"
+        time.sleep(res.json().get("retry_after_ms", 700) / 1000)
 
 
 def decode(payload):

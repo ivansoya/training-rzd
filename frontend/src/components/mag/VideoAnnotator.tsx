@@ -28,6 +28,7 @@ import TrackLanes from "./TrackLanes";
 import type { LaneAction } from "./TrackLanes";
 import { useAutoLabel } from "./useAutoLabel";
 import { useClip, useClipFrame, usePlayback } from "./useClip";
+import type { Clip } from "./useClip";
 import {
   exportCount,
   fmtFrameTime,
@@ -74,6 +75,41 @@ function hk(id: HelpId) {
 }
 
 const GREY = { name: "", color: "#9aa4ae" };
+
+/** Что говорят человеку, пока ролик готовится.
+ *
+ * Названия работ — внутренние, и показывать их как есть нельзя: разметчику
+ * нечего делать со словом «chunkset». Ему нужно знать, что происходит и
+ * сколько осталось.
+ */
+const STAGE_TEXT: Record<string, string> = {
+  index: "Разбираю ролик на кадры",
+  strip: "Клею киноленту",
+  variant: "Готовлю ступень качества",
+  chunkset: "Нарезаю ролик на куски",
+  chunk: "Готовлю этот кусок",
+};
+
+/** Полоса подготовки ролика.
+ *
+ * Раньше на её месте была мигающая точка: тяжёлая работа шла на сервере, и
+ * узнать про неё было неоткуда. Теперь воркер отчитывается, куда дошёл, и
+ * ожидание перестаёт выглядеть как поломка.
+ */
+function PrepareNote({ clip }: { clip: Clip }) {
+  const stage = clip.progress?.kind || clip.preparing?.stage || "index";
+  const text = STAGE_TEXT[stage] || "Готовлю видео";
+  const total = clip.progress?.total || 0;
+  const done = clip.progress?.processed || 0;
+  const percent = total > 0 ? Math.min(100, Math.round((done / total) * 100)) : null;
+  return (
+    <span className="mag-ved-prepare">
+      <i className="mag-ved-prepare-dot" />
+      {text}
+      {percent !== null && <b>{percent}%</b>}
+    </span>
+  );
+}
 
 /** Что стоит за боксом на холсте: трек или одиночный бокс этого кадра. */
 type Item =
@@ -708,9 +744,21 @@ export default function VideoAnnotator({
         {closed && <span className="mag-ed-flag nul">разметка закрыта</span>}
         <span className="mag-ed-sp" />
         {(error || clip.error || shown.error) && (
-          <span className="mag-ed-err">{error || clip.error || shown.error}</span>
+          <span className="mag-ed-err">
+            {error || clip.error || shown.error}
+            {clip.error && (
+              // Бэкенд могли перезапустить под рукой. Раньше единственным
+              // выходом была перезагрузка страницы — вместе с несохранённым.
+              <button type="button" className="mag-ed-retry" onClick={clip.retry}>
+                Повторить
+              </button>
+            )}
+          </span>
         )}
-        {clip.loading && <span className="mag-ed-note">Читаю ролик…</span>}
+        {clip.preparing && <PrepareNote clip={clip} />}
+        {!clip.preparing && clip.loading && (
+          <span className="mag-ed-note">Читаю ролик…</span>
+        )}
         {plan && (
           <span className="mag-ved-plan">
             в таску: <b>{plan.frames}</b> кадров · {plan.boxes} объектов
@@ -1011,22 +1059,44 @@ export default function VideoAnnotator({
             </button>
             {qualityOpen && (
               <div className="mag-ved-quality-menu" role="menu">
-                {(clip.manifest?.qualities || []).map((q) => (
-                  <button
-                    key={q.id}
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={q.id === quality}
-                    className={q.id === quality ? "on" : undefined}
-                    onClick={() => {
-                      setQuality(q.id);
-                      setQualityOpen(false);
-                    }}
-                  >
-                    <span>{q.label}</span>
-                    <em>{q.height ? `${q.height}p` : ""}</em>
-                  </button>
-                ))}
+                {/* Ступени лестницы предлагаются только готовыми: у неготовой
+                    переключение означало бы пустой экран с полосой. Они
+                    доготавливаются сами и появляются здесь по мере готовности.
+                    «Исходное» — особая статья: его нарезают только по просьбе,
+                    поэтому оно в списке всегда, иначе попросить его было бы
+                    некому и оно не появилось бы никогда. */}
+                {(clip.manifest?.qualities || [])
+                  .filter((q) => q.ready || q.id === "src")
+                  .map((q) => (
+                    <button
+                      key={q.id}
+                      type="button"
+                      role="menuitemradio"
+                      aria-checked={q.id === quality}
+                      className={q.id === quality ? "on" : undefined}
+                      onClick={() => {
+                        setQuality(q.id);
+                        setQualityOpen(false);
+                      }}
+                    >
+                      <span>{q.label}</span>
+                      <em>{q.height ? `${q.height}p` : ""}</em>
+                    </button>
+                  ))}
+                {(clip.manifest?.qualities || [])
+                  .filter((q) => !q.ready && q.id !== "src")
+                  .map((q) => (
+                    <i key={q.id} className="mag-ved-quality-wait">
+                      {q.label}
+                      <b>
+                        {q.failed
+                          ? "не вышло"
+                          : q.chunks
+                            ? `${Math.round((q.prepared / q.chunks) * 100)}%`
+                            : "готовится"}
+                      </b>
+                    </i>
+                  ))}
               </div>
             )}
           </span>

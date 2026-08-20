@@ -300,7 +300,12 @@ def make_strip(video_path, dest_path, duration_ms):
         strip.paste(t, (x, 0))
         x += t.width
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-    strip.save(dest_path, "JPEG", quality=72)
+    # Через черновик: ленту могут клеить сразу двое — фоновая задача и запрос
+    # редактора, добравшегося до ролика раньше неё. Запись в общий файл дала
+    # бы на выходе половину одной картинки поверх половины другой.
+    tmp = f"{dest_path}.{os.getpid()}.part"
+    strip.save(tmp, "JPEG", quality=72)
+    os.replace(tmp, dest_path)
     return dest_path
 
 

@@ -33,6 +33,8 @@ from common.models import (
 from datasets_svc import materialize
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
+from datasets_svc import video_index
+from datasets_svc import video_queue as queue
 from datasets_svc import video_tracks as tracklib
 from datasets_svc.materialize import collect_plan
 from datasets_svc.task_routes import (
@@ -46,13 +48,18 @@ from datasets_svc.task_routes import (
 
 bp = Blueprint("video_annotation", __name__)
 
-# Сколько распакованных кадров держим на томе. Кадр 1920×1080 в JPEG — около
-# 200 КБ, так что несколько сотен на ролик стоят дешевле, чем повторное
-# декодирование при каждом возврате на уже виденный момент.
-# Кадр 1080p в полном качестве весит около 200 КБ. Окно ±120 кадров — это
-# почти по пять секунд в обе стороны на 25 к/с; кэша на полторы тысячи кадров
-# хватает на несколько таких окон, а стирается он вместе с роликом.
-FRAME_CACHE_PER_VIDEO = 1500
+# Сколько распакованных кадров держим на томе. Кадры эти нужны только
+# полуавтомату: он читает их файлами с общего тома.
+#
+# Потолок был в полторы тысячи, когда кадр доставали перемоткой по исходнику и
+# это стоило секунд — тогда кэш окупал любое место. Сейчас кадр берётся из
+# готового перегона за десятые доли секунды, и промах почти ничего не стоит, а
+# место стоит по-прежнему: на реальном ролике 1080p кадр весит около 840 КБ,
+# и полторы тысячи — это 1.2 ГБ на один ролик.
+#
+# Ста двадцати (ровно перегон) хватает на то, ради чего кэш и заведён: вернуться
+# к кадру, с которым только что работали.
+FRAME_CACHE_PER_VIDEO = 120
 # За один прогрев больше этого не распаковываем: запрос не должен висеть
 # минутами, а окно такого размера и не нужно.
 PREFETCH_MAX = 400
@@ -169,6 +176,47 @@ def _trim_cache(folder):
             pass
 
 
+def _grab(db, video, source, frame_no):
+    """Кадр по номеру — тот же, что уйдёт в разметку.
+
+    Сперва ищем его в готовом перегоне: тот лежит на диске, весит мегабайт и
+    разжимается целиком за миллисекунды. Перегоны нарезаны заранее, поэтому
+    попадание — обычный случай, а не удача.
+
+    Из исходника кадр берут только когда перегона ещё нет. На
+    двадцатиминутном ролике это перемотка к ближайшему опорному кадру и
+    декодирование вперёд — секунды, и всё это время поток занят. Именно так
+    полуавтомат и упирался в оборванные соединения.
+    """
+    index = video_index.get(db, video, source)
+    if index is not None:
+        chunk_no = chunklib.chunk_of(frame_no)
+        first = chunklib.chunk_bounds(chunk_no, index["count"])[0]
+        for quality in _ready_qualities(db, video.id):
+            path = chunklib.chunk_path(source, chunk_no, quality)
+            if os.path.exists(path):
+                try:
+                    return chunklib.grab_in(path, frame_no - first)
+                except chunklib.VideoError:
+                    # Перегон битый — не повод отказывать: возьмём из
+                    # исходника, а перегон перережут заново.
+                    break
+    return videolib.grab_frame(source, frame_no)
+
+
+def _ready_qualities(db, video_id):
+    """Ступени с готовыми перегонами, от крупной к мелкой.
+
+    Порядок важен: полуавтомат обводит объект по клику, и чем крупнее
+    картинка, тем точнее он попадает по краю.
+    """
+    ready = [
+        a.quality for a in queue.assets(db, video_id) if a.chunks_status == "ready"
+    ]
+    order = [chunklib.SOURCE] + [str(step) for step in chunklib.LADDER]
+    return sorted(ready, key=lambda q: order.index(q) if q in order else 99)
+
+
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/frame")
 def video_frame(task_id, video_id):
     """Точный кадр ролика по номеру — то же изображение, что уйдёт в датасет."""
@@ -190,8 +238,10 @@ def video_frame(task_id, video_id):
             if not os.path.exists(source):
                 return jsonify({"error": "Файл видео не найден."}), 404
             try:
-                image = videolib.grab_frame(source, frame_no)
+                image = _grab(db, video, source, frame_no)
             except videolib.VideoError as exc:
+                return jsonify({"error": str(exc)}), 400
+            except chunklib.VideoError as exc:
                 return jsonify({"error": str(exc)}), 400
             os.makedirs(folder, exist_ok=True)
             tmp = cached + ".part"
@@ -210,96 +260,116 @@ def video_frame(task_id, video_id):
 # --------------------------------------------------------------------------- #
 # Перегоны: видео кусками, разжимает их браузер
 # --------------------------------------------------------------------------- #
-# Пока перегон режется, второй запрос на него же должен ждать первой нарезки,
-# а не запускать свою: иначе два кодировщика молотят одно и то же.
-_cut_locks = {}
-_cut_locks_guard = threading.Lock()
-
-
-def _cut_lock(key):
-    with _cut_locks_guard:
-        lock = _cut_locks.get(key)
-        if lock is None:
-            lock = threading.Lock()
-            _cut_locks[key] = lock
-        return lock
+# Ничего тяжёлого здесь больше не происходит. Перегоны режет отдельный процесс
+# (``worker``), а веб-сервис только смотрит, готов ли файл, и ставит работу в
+# очередь, если нет. Так и задумано: перекодирование ролика — минуты счёта, и
+# пока оно шло внутри gunicorn, оно занимало поток, который в это время не
+# отвечал ни на список тасок, ни на сохранение бокса.
+#
+# Отсюда и «202»: неготовый перегон — это не ошибка и не повод держать
+# соединение. Клиенту говорят, что готовится и насколько, и он приходит снова.
+RETRY_AFTER_MS = 700
 
 
 def _video_file(video):
     return os.path.join(config.DATA_DIR, video.file_path)
 
 
-def _clip_index(db, video):
-    """Таблица кадров ролика; строится при первом обращении, если её ещё нет.
+def _preparing(db, video, quality=None, stage=None):
+    """Ответ «ещё готовится» — с тем, что об этом известно."""
+    progress = queue.progress_of(db, video.id)
+    body = {
+        "status": "preparing",
+        "stage": stage or (progress or {}).get("kind") or "index",
+        "retry_after_ms": RETRY_AFTER_MS,
+    }
+    if quality:
+        body["quality"] = quality
+    if progress:
+        body["processed"] = progress["processed"]
+        body["total"] = progress["total"]
+    resp = jsonify(body)
+    resp.headers["Retry-After"] = "1"
+    return resp, 202
 
-    Заодно чинит записи, загруженные до появления таблицы: точное число кадров
-    известно только отсюда — ``stream.frames`` у контейнера врёт или молчит.
+
+def _failed(message, quality=None):
+    """Работа не удалась, и повторять её рано. Клиент должен перестать просить,
+    а не долбить в надежде: именно так один битый ролик и клал сервис."""
+    body = {"status": "failed", "error": message}
+    if quality:
+        body["quality"] = quality
+    return jsonify(body), 409
+
+
+def _clip_index(db, video):
+    """Таблица кадров ролика, если она уже построена.
+
+    Строить здесь нельзя: демукс большого файла — это секунды в потоке,
+    который в это время не отвечает никому. Нет таблицы — ставим работу в
+    очередь и честно говорим, что ролик готовится.
     """
     path = _video_file(video)
     if not os.path.exists(path):
         return None, (jsonify({"error": "Файл видео не найден."}), 404)
-    try:
-        index = chunklib.ensure_index(path)
-    except chunklib.VideoError as exc:
-        return None, (jsonify({"error": str(exc)}), 400)
-    if video.frame_count != index["count"] or video.index_version != index["version"]:
-        video.frame_count = index["count"]
-        video.index_version = index["version"]
-        db.commit()
-    return index, None
+    index = video_index.get(db, video, path)
+    if index is not None:
+        return index, None
 
-
-# Какие ступени качества сейчас режутся: повторное открытие ролика не должно
-# заводить вторую такую же работу.
-_cutting = {}
-_cutting_guard = threading.Lock()
-
-
-def _run_quality_cut(job_id, source, index, quality):
-    try:
-        made = chunklib.cut_all(
-            source, index, quality,
-            progress=lambda done, total: jobs.update(job_id, processed=done),
-            skip_existing=True,
+    job = queue.enqueue(db, video.id, queue.KIND_INDEX)
+    if job is None:
+        failure = queue.last_failure(db, video.id, queue.KIND_INDEX)
+        return None, _failed(
+            (failure.error if failure else None)
+            or "Ролик не удалось разобрать на кадры."
         )
-        jobs.update(job_id, status="done", processed=index["count"],
-                    result={"chunks": made, "quality": quality})
-    except Exception as exc:  # noqa: BLE001
-        jobs.update(job_id, status="error", error=str(exc))
+    return None, _preparing(db, video, stage=queue.KIND_INDEX)
 
 
-def _ensure_cut(video, index, quality):
-    """Нарезать всю ступень в фоне, если её ещё нет.
+def _quality_state(db, video, index, quality):
+    """Готовность ступени: сколько перегонов уже лежит и что с ней делается."""
+    asset = queue.asset(db, video.id, quality)
+    return {
+        "quality": quality,
+        "ready": int(asset.chunks_ready) if asset else 0,
+        "total": chunklib.chunk_count(index["count"]),
+        "file": asset.file_status if asset else "pending",
+        "chunks": asset.chunks_status if asset else "pending",
+        "error": asset.error if asset else None,
+    }
 
-    Резать по одному перегону в момент запроса — худшее из возможного: каждый
-    переход через границу стоит полной нарезки, а в исходном разрешении это
-    шесть секунд. Первый же запрос ступени заводит работу на весь ролик, и
-    ждать приходится только этот первый перегон.
 
-    Заодно чинит ролики, загруженные до появления перегонов: у них нарезки нет
-    вовсе, и досоздать её больше некому.
+def _want_quality(db, video, index, quality):
+    """Заказать подготовку ступени, если её ещё нет.
+
+    Ступень готовится целиком и один раз: резать по перегону в момент запроса
+    — худшее из возможного, каждый переход через границу стоил бы полной
+    работы. Поэтому первое же обращение к качеству заводит подготовку всей
+    ступени, а ждать приходится только текущий перегон.
     """
-    source = _video_file(video)
-    total = chunklib.chunk_count(index["count"])
-    if chunklib.ready_count(source, total, quality) >= total:
-        return None
+    state = _quality_state(db, video, index, quality)
+    if state["chunks"] == "ready":
+        return state
 
-    key = (str(video.id), quality)
-    with _cutting_guard:
-        running = _cutting.get(key)
-        state = jobs.get(running) if running else None
-        if state and state.get("status") == "running":
-            return running
-        job_id = jobs.create(
-            "video-chunks", total=index["count"], message="Готовлю перегоны"
-        )
-        _cutting[key] = job_id
-    threading.Thread(
-        target=_run_quality_cut,
-        args=(job_id, source, index, quality),
-        daemon=True,
-    ).start()
-    return job_id
+    if quality == chunklib.SOURCE:
+        # У исходного копии нет — оно и есть оригинал. Режем из него самого.
+        queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=quality,
+                      total=index["count"])
+        return state
+
+    if state["file"] != "ready":
+        # Сперва копия, и только потом нарезка. Заказать оба разом нельзя:
+        # два медленных воркера взялись бы за них одновременно, и нарезка,
+        # не найдя копии, пошла бы самым дорогим путём — перекодированием
+        # оригинала. Ровно то, ради чего копия и делается.
+        if state["file"] != "building":
+            queue.enqueue(db, video.id, queue.KIND_VARIANT, quality=quality,
+                          total=index["count"])
+        return state
+
+    queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=quality,
+                  total=index["count"])
+    return state
 
 
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/clip")
@@ -320,14 +390,29 @@ def video_clip(task_id, video_id):
         if err:
             return err
         body = chunklib.manifest(index)
+        # Ответ подписан состоянием: тот же адрес отдаёт и готовый манифест, и
+        # «ещё готовится», и клиент не должен угадывать по набору полей.
+        body["status"] = "ready"
         quality = request.args.get("q") or body["default_quality"]
         if not chunklib.known(quality, index["height"]):
             quality = body["default_quality"]
         body["quality"] = quality
-        body["ready"] = chunklib.ready_count(
-            _video_file(video), len(body["chunks"]), quality
-        )
-        body["cut_job"] = _ensure_cut(video, index, quality)
+        # Каждая ступень идёт со своей готовностью. Предлагать выбор из
+        # неготового — обман: разметчик переключается и получает пустой экран
+        # с бесконечной полосой, потому что копии ещё нет.
+        states = {a.quality: a for a in queue.assets(db, video.id)}
+        total_chunks = chunklib.chunk_count(index["count"])
+        for item in body["qualities"]:
+            asset = states.get(item["id"])
+            item["ready"] = bool(asset and asset.chunks_status == "ready")
+            item["prepared"] = int(asset.chunks_ready) if asset else 0
+            item["chunks"] = total_chunks
+            item["failed"] = bool(
+                asset and (asset.chunks_status == "error" or asset.file_status == "error")
+            )
+        body["state"] = _want_quality(db, video, index, quality)
+        body["ready"] = body["state"]["ready"]
+        body["progress"] = queue.progress_of(db, video.id)
         body["fps"] = video.fps
         body["file_name"] = video.file_name
         return jsonify(body)
@@ -339,9 +424,9 @@ def video_clip(task_id, video_id):
 def video_chunk(task_id, video_id, chunk_no):
     """Перегон: кусок ролика в 120 кадров, который браузер разожмёт сам.
 
-    Обычно он уже нарезан фоновой задачей после загрузки. Если нет — режем
-    здесь и держим соединение: клиенту не нужна машина состояний «ещё не
-    готово», ему нужен обычный медленный запрос.
+    Обычно он уже нарезан фоновой работой. Если нет — заказываем его вне
+    очереди и отвечаем «готовится»: держать соединение, пока идёт нарезка,
+    значит занимать поток, нужный всем остальным.
     """
     db, task, project, user, role, video = _resolve_video(task_id, video_id)
     if db is None:
@@ -361,23 +446,40 @@ def video_chunk(task_id, video_id, chunk_no):
         source = _video_file(video)
         path = chunklib.chunk_path(source, chunk_no, quality)
         if not os.path.exists(path):
-            # Этот перегон режем прямо сейчас, а всю ступень — фоном: иначе
-            # каждый следующий переход стоил бы столько же.
-            _ensure_cut(video, index, quality)
-            with _cut_lock((str(video.id), quality, chunk_no)):
-                if not os.path.exists(path):
-                    try:
-                        chunklib.cut_chunk(source, index, chunk_no, quality)
-                    except chunklib.VideoError as exc:
-                        return jsonify({"error": str(exc)}), 500
+            state = _want_quality(db, video, index, quality)
+            broken = state["file"] == "error" or state["chunks"] == "error"
+            if broken and not queue.pending_count(db, video.id):
+                # Ступень не готовится и уже не будет: прошлая попытка упала,
+                # а новую заводить рано. Молчать и просить снова — это и есть
+                # тот самый бесконечный повтор, из-за которого один битый
+                # ролик клал сервис.
+                return _failed(
+                    state["error"] or f"Ступень {quality} подготовить не удалось.",
+                    quality,
+                )
+            # Этот перегон — вне очереди: на него смотрит живой человек, и он
+            # не должен ждать за фоновой подготовкой чужих ступеней.
+            job = queue.enqueue(db, video.id, queue.KIND_CHUNK,
+                                quality=quality, chunk_no=chunk_no)
+            if job is None:
+                failure = queue.last_failure(
+                    db, video.id, queue.KIND_CHUNK, quality, chunk_no
+                )
+                return _failed(
+                    (failure.error if failure else None)
+                    or f"Перегон {chunk_no} нарезать не удалось.",
+                    quality,
+                )
+            return _preparing(db, video, quality, stage=queue.KIND_CHUNK)
 
         resp = send_file(path, mimetype="video/mp4", conditional=True)
         # Какие кадры внутри — говорит сервер, а не считает клиент.
         resp.headers["X-Chunk-First"] = str(first)
         resp.headers["X-Chunk-Count"] = str(last - first + 1)
+        resp.headers["X-Chunk-Quality"] = quality
         resp.headers["X-Index-Version"] = index["version"]
         resp.headers["Access-Control-Expose-Headers"] = (
-            "X-Chunk-First, X-Chunk-Count, X-Index-Version"
+            "X-Chunk-First, X-Chunk-Count, X-Chunk-Quality, X-Index-Version"
         )
         # Перегон по номеру неизменен, пока жив ролик.
         resp.headers["Cache-Control"] = "private, max-age=86400, immutable"

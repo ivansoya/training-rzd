@@ -16,6 +16,18 @@ WIDTH, HEIGHT, FPS, FRAMES = 320, 240, 10, 30
 LONG_PATH = os.environ.get("TEST_SAMPLE_LONG", "/tmp/magistral-sample-300f.mp4")
 LONG_FPS, LONG_FRAMES = 25, 300
 
+# Высокий ролик — для ступеней качества. Лестница спускается до 480p и ниже не
+# идёт, поэтому у ролика 240 строк ступеней нет вовсе: он и так меньше самой
+# малой. Берём 768 строк — под него подходят обе ступени, 720 и 480, и видно,
+# что копия не сдвинула нумерацию кадров.
+#
+# Кадр рисуется в тех же 320×240 и растягивается: метка номера считается
+# `read_mark` в долях от 320×240, и рисовать её в других координатах значило бы
+# держать две согласованные арифметики вместо одной.
+TALL_PATH = os.environ.get("TEST_SAMPLE_TALL", "/tmp/magistral-sample-tall.mp4")
+TALL_WIDTH, TALL_HEIGHT = 1024, 768
+TALL_FPS, TALL_FRAMES = 25, 200
+
 # Номер кадра пишется на картинку двоичным кодом: девять крупных клеток,
 # светлая — единица. Нарисованные цифры этого не умеют — их надо распознавать,
 # а клетка переживает и перекодирование, и уменьшение вдвое, и читается
@@ -76,6 +88,43 @@ def ensure_long(path: str = LONG_PATH) -> str:
         x = 10 + (i * 8) % (WIDTH - 70)
         draw.rectangle([x, 150, x + 60, 210], fill=(220, 90, 40))
         container.mux(stream.encode(av.VideoFrame.from_image(canvas)))
+    container.mux(stream.encode())
+    container.close()
+    os.replace(tmp, path)
+    return path
+
+
+def ensure_tall(path: str = TALL_PATH) -> str:
+    """Ролик, которому есть куда уменьшаться: 1024×768, 200 кадров.
+
+    Нужен ступеням качества. На нём проверяется главное свойство копии: i-й
+    кадр копии — это i-й кадр оригинала. Номер читается с самой картинки,
+    поэтому сдвиг на кадр здесь падает тестом, а не всплывает через месяц
+    боксом на чужом кадре в датасете.
+    """
+    if os.path.exists(path) and os.path.getsize(path) > 0:
+        return path
+
+    import av
+    from PIL import Image, ImageDraw
+
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".part"
+    container = av.open(tmp, mode="w", format="mp4")
+    stream = container.add_stream("mpeg4", rate=TALL_FPS)
+    stream.width, stream.height = TALL_WIDTH, TALL_HEIGHT
+    stream.pix_fmt = "yuv420p"
+
+    for i in range(TALL_FRAMES):
+        canvas = Image.new("RGB", (WIDTH, HEIGHT), (18, 22, 28))
+        draw = ImageDraw.Draw(canvas)
+        _draw_mark(draw, i)
+        x = 10 + (i * 8) % (WIDTH - 70)
+        draw.rectangle([x, 150, x + 60, 210], fill=(220, 90, 40))
+        # Ближайший сосед, а не сглаживание: метка должна остаться резкой,
+        # иначе её съест перекодирование в 480p.
+        big = canvas.resize((TALL_WIDTH, TALL_HEIGHT), Image.NEAREST)
+        container.mux(stream.encode(av.VideoFrame.from_image(big)))
     container.mux(stream.encode())
     container.close()
     os.replace(tmp, path)

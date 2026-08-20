@@ -1,18 +1,16 @@
-"""Перегоны: индекс кадров ролика и нарезка его на куски для браузера.
+"""Перегоны: индекс кадров ролика, ступени качества и нарезка на куски.
 
 Раньше кадр приезжал в браузер картинкой: сервер декодировал JPEG и отдавал по
 номеру. На ролике 2688×1520 один прогрев окна ±120 кадров стоил около 120 МБ —
 вшестеро больше, чем весит весь ролик. Теперь клиент получает **перегон**:
 кусок видео в 120 кадров, перекодированный в H.264, и разжимает его сам.
 
-Две вещи делают это безопасным.
+Три вещи делают это безопасным и дешёвым.
 
 **Индекс.** При загрузке ролик проходится демуксером — читаются заголовки
 пакетов, картинка не разжимается, на часовом видео это доли секунды. Отсюда
 берётся точное число кадров (``stream.frames`` врёт или молчит), позиция
 каждого кадра во времени и список опорных кадров, по которым перематывают.
-Индекс живёт файлом рядом с роликом: девяносто тысяч чисел в строке БД никому
-не нужны — они не ищутся, не соединяются и читаются только целиком.
 
 **Номер кадра — не вычисление, а объявление.** Перегон отдаётся вместе с тем,
 какие кадры в нём лежат. Клиент не считает номер ни из времени, ни из
@@ -20,9 +18,18 @@
 Кадр приходит из индекса, и материализация потом достаёт из исходника кадр с
 тем же номером. Иначе на дробной частоте (у первого же реального ролика она
 25.033) две арифметики разъезжаются, и в датасет уходит соседний кадр.
+
+**Ступень качества — это файл, а не режим кодирования.** Из оригинала фоном
+делаются полные копии 1080p, 720p и 480p, и опорный кадр в копии стоит ровно
+на границе каждого перегона. Тогда перегон вырезается из копии
+перекладыванием пакетов — без разжатия и сжатия заново, за миллисекунды.
+Перекодировать приходится только «Исходное», и только когда его попросили.
+
+Модуль ничего не знает ни про базу, ни про Flask: на вход пути и словари, на
+выход пути и словари. Хранением занимаются ``video_index`` и ``video_queue``,
+а порядком работ — ``worker``.
 """
 import hashlib
-import json
 import os
 import threading
 from fractions import Fraction
@@ -36,21 +43,32 @@ CHUNK_FRAMES = 120
 # выбирает сам — на мелком объекте нужна вся резкость, на просмотре хватает
 # малого. Ступени выше исходника бессмысленны и в список не попадают.
 #
-# Замер на 2688×1520, перегон 120 кадров: исходное — 5.9 с и 2.7 МБ, половина
-# стороны — 2.3 с и 0.76 МБ. Поэтому по умолчанию берётся ступень поменьше, а
-# исходное готовится, только если его попросили.
-LADDER = [1080, 720, 540, 360]
+# Ниже 480p не спускаемся: на 360 разметчик перестаёт различать мелкие
+# объекты, а весь смысл ступеней — чтобы он мог работать, а не чтобы экономить
+# байты.
+LADDER = [1080, 720, 480]
 SOURCE = "src"
 DEFAULT_QUALITY = "720"
 
-# Чем меньше картинка, тем слабее жмём: на 360 артефакты видны сильнее, а
-# весит она всё равно копейки.
+# Копия ступени пишется так, чтобы опорный кадр стоял ровно на границе каждого
+# перегона, а B-кадров не было вовсе. Первое даёт нарезку перекладыванием
+# пакетов; второе делает порядок разжатия равным порядку показа, и n-й пакет
+# копии — это ровно n-й кадр ролика, без разбора таблицы времён.
+_VARIANT_X264 = (
+    f"keyint={CHUNK_FRAMES}:min-keyint={CHUNK_FRAMES}:scenecut=0:bframes=0"
+)
+
+
+# Чем меньше картинка, тем слабее жмём: на мелких ступенях артефакты видны
+# сильнее, а весят они всё равно копейки.
 def _crf(height):
     if height is None:
         return "20"
     if height >= 1080:
         return "22"
-    if height >= 540:
+    if height >= 720:
+        return "24"
+    if height >= 480:
         return "26"
     return "28"
 
@@ -62,6 +80,12 @@ def qualities(width, height):
         if height and step < height:
             out.append({"id": str(step), "label": f"{step}p", "height": step})
     return out
+
+
+def ladder_for(height):
+    """Ступени, которые имеет смысл готовить фоном. Исходного среди них нет:
+    оно и есть оригинал, копировать его незачем."""
+    return [str(step) for step in LADDER if height and step < height]
 
 
 def known(quality, height):
@@ -87,8 +111,8 @@ def _params(quality, width, height):
     return {"size": (w, h), "crf": _crf(target), "preset": "veryfast"}
 
 
-INDEX_SUFFIX = "_index.json"
 CHUNKS_SUFFIX = "_chunks"
+VARIANT_PREFIX = "_v"
 
 
 class VideoError(Exception):
@@ -155,7 +179,7 @@ def build_index(path):
     if not keys or keys[0] != 0:
         keys.insert(0, 0)
 
-    return {
+    index = {
         "count": len(pts),
         "pts": pts,
         "keys": keys,
@@ -164,11 +188,8 @@ def build_index(path):
         "width": width,
         "height": height,
     }
-
-
-def index_path(video_path):
-    base, _ = os.path.splitext(video_path)
-    return base + INDEX_SUFFIX
+    index["version"] = _version(index)
+    return index
 
 
 def _version(index):
@@ -180,16 +201,16 @@ def _version(index):
     return hashlib.sha1(body.encode()).hexdigest()[:16]
 
 
-def save_index(video_path, index):
-    """Записать индекс рядом с роликом.
+def pack_index(index):
+    """Ужать таблицу кадров для хранения.
 
     ``pts`` хранится разностями: подряд идущие кадры отличаются на постоянный
     шаг, и дельты сжимаются в разы лучше абсолютных значений.
     """
     deltas = [index["pts"][i] - index["pts"][i - 1] for i in range(1, index["count"])]
-    payload = {
+    return {
         "v": 1,
-        "version": _version(index),
+        "version": index["version"],
         "count": index["count"],
         "first_pts": index["pts"][0],
         "deltas": deltas,
@@ -199,27 +220,13 @@ def save_index(video_path, index):
         "width": index["width"],
         "height": index["height"],
     }
-    dest = index_path(video_path)
-    tmp = dest + ".part"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, separators=(",", ":"))
-    os.replace(tmp, dest)
-    return payload["version"]
 
 
-def load_index(video_path):
-    """Прочитать индекс. Нет файла — None: вызывающий решает, строить ли заново."""
-    path = index_path(video_path)
-    if not os.path.exists(path):
+def unpack_index(payload):
+    """Развернуть хранимую таблицу обратно. Чужая версия формата — None:
+    вызывающий решает, строить ли заново."""
+    if not payload or payload.get("v") != 1:
         return None
-    try:
-        with open(path, encoding="utf-8") as fh:
-            payload = json.load(fh)
-    except (OSError, ValueError):
-        return None
-    if payload.get("v") != 1:
-        return None
-
     pts = [int(payload["first_pts"])]
     for d in payload["deltas"]:
         pts.append(pts[-1] + int(d))
@@ -233,16 +240,6 @@ def load_index(video_path):
         "width": payload.get("width"),
         "height": payload.get("height"),
     }
-
-
-def ensure_index(video_path):
-    """Индекс ролика: с диска, а если его там нет — построить и положить."""
-    index = load_index(video_path)
-    if index is not None:
-        return index
-    built = build_index(video_path)
-    built["version"] = save_index(video_path, built)
-    return built
 
 
 # --------------------------------------------------------------------------- #
@@ -276,7 +273,7 @@ def _seek_key(index, frame_no):
 
 
 # --------------------------------------------------------------------------- #
-# Где лежат перегоны
+# Где что лежит
 # --------------------------------------------------------------------------- #
 def chunks_dir(video_path, quality=DEFAULT_QUALITY):
     base, _ = os.path.splitext(video_path)
@@ -287,13 +284,44 @@ def chunk_path(video_path, chunk_no, quality=DEFAULT_QUALITY):
     return os.path.join(chunks_dir(video_path, quality), f"{int(chunk_no)}.mp4")
 
 
-class _Writer:
-    """Один перегон в записи: контейнер, кодек и счётчик кадров."""
+def variant_path(video_path, quality):
+    """Полная копия ступени рядом с оригиналом."""
+    base, _ = os.path.splitext(video_path)
+    return f"{base}{VARIANT_PREFIX}{quality}.mp4"
 
-    def __init__(self, av, dest, rate, size, params, gop):
+
+def leftovers(video_path):
+    """Всё, что ролик за собой оставил, кроме себя самого.
+
+    Нужен уборке: перегоны и копии переживали удаление ролика и оставались на
+    томе навсегда, а весят они больше исходника.
+    """
+    base, _ = os.path.splitext(video_path)
+    dirs = [base + CHUNKS_SUFFIX, f"{base}_frames"]
+    files = [
+        f"{base}_strip.jpg",
+        # Индекс лежал файлом до переезда в базу; у старых роликов он ещё тут.
+        base + "_index.json",
+    ]
+    files += [variant_path(video_path, str(step)) for step in LADDER]
+    return dirs, sorted(set(files))
+
+
+# --------------------------------------------------------------------------- #
+# Запись
+# --------------------------------------------------------------------------- #
+class _Writer:
+    """Один перегон или одна копия в записи: контейнер, кодек и счётчик кадров."""
+
+    def __init__(self, av, dest, rate, size, params, gop, x264=None):
+        # Частота приводится к дроби: время кодека задаётся как 1/rate, и на
+        # обычном числе это выходит float, который PyAV не принимает. В бою
+        # сюда всегда приходит Fraction из индекса, но падать на целом числе
+        # из-за этого незачем.
+        rate = Fraction(rate)
         self.dest = dest
         # Имя черновика своё у каждого пишущего. Один и тот же перегон могут
-        # резать одновременно двое: фоновая нарезка после загрузки и запрос
+        # резать одновременно двое: фоновая нарезка ступени и запрос
         # редактора, добравшегося до этого места раньше неё. С общим именем
         # два кодировщика писали бы в один файл, и на выходе получался бы
         # мусор — перемежающиеся куски двух видео.
@@ -310,7 +338,7 @@ class _Writer:
         # мультиплексор при записи заголовка, и подмена его вручную роняет
         # запись пакетов с «неверным аргументом».
         self.stream.codec_context.time_base = 1 / rate
-        self.stream.options = {
+        options = {
             "crf": params["crf"],
             "preset": params["preset"],
             # Перегон целиком — одна группа кадров: опорный только первый,
@@ -318,6 +346,9 @@ class _Writer:
             # разжимается целиком.
             "g": str(gop),
         }
+        if x264:
+            options["x264-params"] = x264
+        self.stream.options = options
 
     def add(self, frame):
         out_frame = frame.reformat(
@@ -325,6 +356,14 @@ class _Writer:
         )
         out_frame.pts = self.written
         out_frame.time_base = self.stream.codec_context.time_base
+        # Тип кадра сбрасываем — и это не мелочь, а условие всей схемы.
+        # Кадр, декодированный из исходника, помнит, чем он был там. Опорному
+        # кадру libx264 верит буквально и делает опорным и в копии, поверх
+        # любого keyint. У первого же реального ролика опорные стояли через
+        # 50 кадров, копия наследовала их все, границы перегонов не совпадали
+        # с опорными — и вместо перекладывания пакетов за миллисекунды каждый
+        # перегон резался перекодированием по десять секунд.
+        out_frame.pict_type = "NONE"
         for packet in self.stream.encode(out_frame):
             self.out.mux(packet)
         self.written += 1
@@ -341,35 +380,135 @@ class _Writer:
             self.out.close()
         except Exception:  # noqa: BLE001
             pass
-        if os.path.exists(self.tmp):
-            os.remove(self.tmp)
+        try:
+            if os.path.exists(self.tmp):
+                os.remove(self.tmp)
+        except OSError:
+            pass
 
 
-# --------------------------------------------------------------------------- #
-# Нарезка
-# --------------------------------------------------------------------------- #
-def cut_all(video_path, index, quality=DEFAULT_QUALITY, progress=None, skip_existing=False):
-    """Нарезать ролик на перегоны целиком, одним проходом декодера.
+class _Remuxer:
+    """Перегон, собранный перекладыванием пакетов копии — без кодирования."""
 
-    Перегоны готовятся сразу после загрузки, фоновой задачей: разметчик потом
-    не ждёт нигде и никогда, а диск это стоит меньше самого ролика. Проход
-    один, потому что подряд идущие кадры декодируются на порядок дешевле, чем
-    добытые по одному с перемоткой.
+    def __init__(self, av, dest, template):
+        self.dest = dest
+        self.tmp = f"{dest}.{os.getpid()}.{threading.get_ident()}.part"
+        self.written = 0
+        self.base_pts = None
+        self.base_dts = None
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        self.out = av.open(
+            self.tmp, "w", format="mp4", options={"movflags": "+faststart"}
+        )
+        try:
+            self.stream = self.out.add_stream_from_template(template)
+        except AttributeError:  # PyAV до 12-й
+            self.stream = self.out.add_stream(template=template)
+
+    def add(self, packet):
+        # Время перегона начинается с нуля: браузер получает самостоятельный
+        # файл, а не кусок с чужими метками.
+        if self.base_pts is None:
+            self.base_pts = packet.pts
+            self.base_dts = packet.dts if packet.dts is not None else packet.pts
+        packet.pts = packet.pts - self.base_pts
+        if packet.dts is not None:
+            packet.dts = packet.dts - self.base_dts
+        packet.stream = self.stream
+        self.out.mux(packet)
+        self.written += 1
+
+    def finish(self):
+        self.out.close()
+        os.replace(self.tmp, self.dest)
+        return self.written
+
+    abort = _Writer.abort
+
+
+def _packets(container, stream):
+    """Пакеты дорожки без завершающего флаша.
+
+    Пакет без времени показа — это флаш демуксера, а не кадр: считать его
+    кадром значило бы сдвинуть нумерацию на единицу в самом конце ролика.
+    """
+    for packet in container.demux(stream):
+        if packet.pts is None:
+            continue
+        yield packet
+
+
+def grab_in(path, local_no):
+    """Кадр по порядку внутри готового файла — обычно внутри перегона.
+
+    Перегон это 120 кадров одной группой, поэтому «достать пятый» стоит
+    разжатия шести. Из двадцатиминутного исходника тот же кадр стоил бы
+    перемотки и декодирования от ближайшего опорного, а их там негусто.
     """
     av = _av()
+    try:
+        with av.open(path) as container:
+            if not container.streams.video:
+                raise VideoError("В файле нет видеодорожки.")
+            stream = container.streams.video[0]
+            stream.thread_type = "AUTO"
+            seen = 0
+            for frame in container.decode(stream):
+                if frame.pts is None:
+                    continue
+                if seen == local_no:
+                    return frame.to_image()
+                seen += 1
+    except VideoError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise VideoError(f"Не удалось прочитать кадр: {exc}") from exc
+    raise VideoError(f"В файле нет кадра {local_no}.")
+
+
+def frame_count_of(path):
+    """Сколько кадров в готовом файле. Считаем пакеты: разжимать незачем."""
+    av = _av()
+    try:
+        with av.open(path) as container:
+            if not container.streams.video:
+                return 0
+            stream = container.streams.video[0]
+            return sum(1 for _ in _packets(container, stream))
+    except Exception:  # noqa: BLE001
+        return 0
+
+
+# --------------------------------------------------------------------------- #
+# Копия ступени
+# --------------------------------------------------------------------------- #
+def make_variant(video_path, index, quality, dest_path, progress=None):
+    """Полная копия ролика в ступени качества.
+
+    Кадры переписываются один в один: i-й кадр копии — это i-й кадр
+    оригинала. Это не удобство, а условие: весь проект адресует кадры
+    номерами, и копия, потерявшая или продублировавшая хоть один, увела бы
+    разметку на соседний. Поэтому расхождение здесь — исключение, а не
+    предупреждение в лог.
+    """
+    av = _av()
+    if quality == SOURCE:
+        raise VideoError("У исходного качества копии нет — это сам ролик.")
     params = _params(quality, index["width"], index["height"])
-    size = params["size"]
     rate = Fraction(*index["rate"])
     total = index["count"]
     by_pts = {pts: no for no, pts in enumerate(index["pts"])}
 
     writer = None
-    current = -1
-    made = 0
     try:
+        writer = _Writer(
+            av, dest_path, rate, params["size"], params,
+            CHUNK_FRAMES, x264=_VARIANT_X264,
+        )
         with av.open(video_path) as src:
             istream = src.streams.video[0]
             istream.thread_type = "AUTO"
+            expected = 0
             for frame in src.decode(istream):
                 if frame.pts is None:
                     continue
@@ -377,13 +516,166 @@ def cut_all(video_path, index, quality=DEFAULT_QUALITY, progress=None, skip_exis
                 if frame_no is None:
                     # Кадра нет в индексе — значит индекс от другого файла.
                     continue
+                if frame_no != expected:
+                    raise VideoError(
+                        f"Кадры пришли не по порядку: ждали {expected}, "
+                        f"пришёл {frame_no}."
+                    )
+                writer.add(frame)
+                expected += 1
+                if progress and expected % CHUNK_FRAMES == 0:
+                    progress(expected, total)
+        if expected != total:
+            raise VideoError(
+                f"В копии {quality} оказалось {expected} кадров вместо {total}."
+            )
+        written = writer.finish()
+        writer = None
+    except VideoError:
+        if writer is not None:
+            writer.abort()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if writer is not None:
+            writer.abort()
+        raise VideoError(f"Не удалось сделать копию {quality}: {exc}") from exc
+
+    if progress:
+        progress(total, total)
+    return {
+        "path": dest_path,
+        "count": written,
+        "width": params["size"][0],
+        "height": params["size"][1],
+        "size_bytes": os.path.getsize(dest_path),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Нарезка перекладыванием: из готовой копии
+# --------------------------------------------------------------------------- #
+def _close_chunk(writer, chunk_no, total):
+    """Дописать перегон и сверить, сколько в него легло.
+
+    Перекладывание пакетов дешевле перекодирования на порядок, и именно
+    поэтому его надо проверять: ошибка здесь не падает, а тихо отдаёт перегон
+    не с тем числом кадров — то есть бокс на чужом кадре.
+    """
+    first, last = chunk_bounds(chunk_no, total)
+    want = last - first + 1
+    written = writer.written
+    if written != want:
+        writer.abort()
+        raise VideoError(
+            f"В перегоне {chunk_no} оказалось {written} кадров вместо {want}."
+        )
+    writer.finish()
+
+
+def cut_from_variant(variant_path_, total, dest_for, only=None, progress=None):
+    """Разложить копию на перегоны, перекладывая пакеты.
+
+    Копия писалась с опорным кадром на границе каждого перегона и без
+    B-кадров, поэтому n-й пакет — это ровно n-й кадр, а граница перегона — это
+    точка, с которой файл можно начать. Разжимать и сжимать заново нечего.
+
+    Выравнивание проверяется, а не предполагается: не оказалось опорного кадра
+    на границе — отказываемся, и вызывающий доделает перекодированием. Молча
+    отдать перегон, который браузер не сможет начать с начала, нельзя.
+    """
+    av = _av()
+    made = 0
+    writer = None
+    current = -1
+    try:
+        with av.open(variant_path_) as src:
+            istream = src.streams.video[0]
+            for n, packet in enumerate(_packets(src, istream)):
+                chunk_no = n // CHUNK_FRAMES
+                if only is not None and chunk_no > only:
+                    break
+                if chunk_no != current:
+                    if writer is not None:
+                        _close_chunk(writer, current, total)
+                        made += 1
+                        writer = None
+                    current = chunk_no
+                    if only is not None and chunk_no != only:
+                        continue
+                    if not packet.is_keyframe:
+                        raise VideoError(
+                            f"Копия не выровнена: на кадре {n} нет опорного."
+                        )
+                    writer = _Remuxer(av, dest_for(chunk_no), istream)
+                if writer is not None:
+                    writer.add(packet)
+                if progress and n and n % CHUNK_FRAMES == 0:
+                    progress(n, total)
+            if writer is not None:
+                _close_chunk(writer, current, total)
+                made += 1
+                writer = None
+    except VideoError:
+        if writer is not None:
+            writer.abort()
+        raise
+    except Exception as exc:  # noqa: BLE001
+        if writer is not None:
+            writer.abort()
+        raise VideoError(f"Не удалось разложить копию на перегоны: {exc}") from exc
+
+    if progress:
+        progress(total, total)
+    return made
+
+
+# --------------------------------------------------------------------------- #
+# Нарезка перекодированием: из оригинала или из копии
+# --------------------------------------------------------------------------- #
+def cut_all(video_path, index, quality, dest_for, progress=None,
+            skip_existing=False, positional=False):
+    """Нарезать ролик на перегоны целиком, одним проходом декодера.
+
+    Путь для «Исходного» и запасной для всего остального: перекладывание
+    пакетов дешевле на порядок, но оно требует выровненной копии, а её может
+    не оказаться.
+
+    ``positional`` — кадры считаются по порядку, а не ищутся в таблице времён.
+    Так режут копию: она писалась нами и заведомо содержит все кадры подряд.
+    """
+    av = _av()
+    params = _params(quality, index["width"], index["height"])
+    size = params["size"]
+    rate = Fraction(*index["rate"])
+    total = index["count"]
+    by_pts = None if positional else {pts: no for no, pts in enumerate(index["pts"])}
+
+    writer = None
+    current = -1
+    made = 0
+    seen = 0
+    try:
+        with av.open(video_path) as src:
+            istream = src.streams.video[0]
+            istream.thread_type = "AUTO"
+            for frame in src.decode(istream):
+                if frame.pts is None:
+                    continue
+                if by_pts is None:
+                    frame_no = seen
+                    seen += 1
+                else:
+                    frame_no = by_pts.get(frame.pts)
+                    if frame_no is None:
+                        # Кадра нет в индексе — значит индекс от другого файла.
+                        continue
                 chunk_no = frame_no // CHUNK_FRAMES
                 if chunk_no != current:
                     if writer is not None:
                         writer.finish()
                         made += 1
                     current = chunk_no
-                    dest = chunk_path(video_path, chunk_no, quality)
+                    dest = dest_for(chunk_no)
                     if skip_existing and os.path.exists(dest):
                         # Этот перегон уже нарезан — например, его успели
                         # попросить. Декодировать всё равно надо (кадры идут
@@ -391,10 +683,7 @@ def cut_all(video_path, index, quality=DEFAULT_QUALITY, progress=None, skip_exis
                         writer = None
                         continue
                     first, last = chunk_bounds(chunk_no, total)
-                    writer = _Writer(
-                        av, chunk_path(video_path, chunk_no, quality),
-                        rate, size, params, last - first + 1,
-                    )
+                    writer = _Writer(av, dest, rate, size, params, last - first + 1)
                 if writer is not None:
                     writer.add(frame)
                 if progress and frame_no % CHUNK_FRAMES == 0:
@@ -413,8 +702,8 @@ def cut_all(video_path, index, quality=DEFAULT_QUALITY, progress=None, skip_exis
     return made
 
 
-def cut_chunk(video_path, index, chunk_no, quality=DEFAULT_QUALITY):
-    """Один перегон — для «резкости» и для починки, если файл потерялся.
+def cut_chunk(video_path, index, chunk_no, quality, dest, positional=False):
+    """Один перегон перекодированием — для «Исходного» и для починки.
 
     Декодер перематывается на ближайший опорный кадр слева и крутится вперёд:
     кадры до начала перегона нужны, чтобы восстановить ссылочные, но в перегон
@@ -426,43 +715,68 @@ def cut_chunk(video_path, index, chunk_no, quality=DEFAULT_QUALITY):
     rate = Fraction(*index["rate"])
     first, last = chunk_bounds(chunk_no, index["count"])
     want = last - first + 1
-    dest = chunk_path(video_path, chunk_no, quality)
 
-    wanted = {index["pts"][n] for n in range(first, last + 1)}
-    stop_pts = index["pts"][last]
-    writer = _Writer(av, dest, rate, size, params, want)
+    writer = None
     try:
+        writer = _Writer(av, dest, rate, size, params, want)
         with av.open(video_path) as src:
             istream = src.streams.video[0]
             istream.thread_type = "AUTO"
-            try:
-                src.seek(
-                    int(index["pts"][_seek_key(index, first)]),
-                    stream=istream, backward=True, any_frame=False,
-                )
-            except Exception:  # noqa: BLE001
-                src.seek(0)
-            for frame in src.decode(istream):
-                if frame.pts is None:
-                    continue
-                if frame.pts in wanted:
-                    writer.add(frame)
-                if frame.pts >= stop_pts:
-                    break
+            if positional:
+                # Копия наша, кадры в ней подряд: перематываем на начало и
+                # считаем. Опорные в копии стоят на границах перегонов, так
+                # что перемотка всё равно попала бы туда же.
+                seen = 0
+                for frame in src.decode(istream):
+                    if frame.pts is None:
+                        continue
+                    if seen > last:
+                        break
+                    if seen >= first:
+                        writer.add(frame)
+                    seen += 1
+            else:
+                wanted = {index["pts"][n] for n in range(first, last + 1)}
+                stop_pts = index["pts"][last]
+                try:
+                    src.seek(
+                        int(index["pts"][_seek_key(index, first)]),
+                        stream=istream, backward=True, any_frame=False,
+                    )
+                except Exception:  # noqa: BLE001
+                    src.seek(0)
+                for frame in src.decode(istream):
+                    if frame.pts is None:
+                        continue
+                    if frame.pts in wanted:
+                        writer.add(frame)
+                    if frame.pts >= stop_pts:
+                        break
         written = writer.finish()
+        writer = None
+    except VideoError:
+        if writer is not None:
+            writer.abort()
+        raise
     except Exception as exc:  # noqa: BLE001
-        writer.abort()
+        if writer is not None:
+            writer.abort()
         raise VideoError(f"Не удалось нарезать перегон: {exc}") from exc
 
     if written != want:
-        if os.path.exists(dest):
+        try:
             os.remove(dest)
+        except OSError:
+            pass
         raise VideoError(
             f"В перегоне {chunk_no} оказалось {written} кадров вместо {want}."
         )
     return {"first": first, "count": want, "path": dest}
 
 
+# --------------------------------------------------------------------------- #
+# Манифест
+# --------------------------------------------------------------------------- #
 def manifest(index):
     """То, что клиент получает при открытии ролика.
 
@@ -492,11 +806,3 @@ def frame_ms(index, frame_no):
     time_base = Fraction(*index["time_base"])
     offset = index["pts"][frame_no] - index["pts"][0]
     return int(round(float(offset * time_base) * 1000))
-
-
-def ready_count(video_path, total_chunks, quality=DEFAULT_QUALITY):
-    """Сколько перегонов этой ступени уже лежит на диске."""
-    return sum(
-        1 for n in range(total_chunks)
-        if os.path.exists(chunk_path(video_path, n, quality))
-    )

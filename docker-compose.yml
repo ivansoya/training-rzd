@@ -62,6 +62,10 @@ services:
     build:
       context: ./backend
       dockerfile: datasets_svc/Dockerfile
+    # Имя образа задано явно: тот же образ берёт video-worker. Иначе compose
+    # собрал бы из одного Dockerfile два разных образа, и пересборка одного
+    # сервиса оставляла бы второй на старом коде.
+    image: yolo-datasets
     container_name: yolo-datasets
     restart: unless-stopped
     environment:
@@ -82,6 +86,44 @@ services:
       - ./:/hoststat:ro
     expose:
       - "5000"
+
+  # Воркер видео: тот же образ, другая команда. Всё тяжёлое — построение
+  # таблицы кадров, копии ступеней 1080p/720p/480p, нарезка на перегоны —
+  # делается здесь. Раньше это жило внутри `datasets` обычными потоками и
+  # занимало пул gunicorn: пятеро разметчиков на холодном ролике
+  # останавливали проект целиком, вместе со списком тасок и сохранением
+  # боксов. Кончится CPU тут — API останется отзывчивым, только видео будет
+  # готовиться дольше.
+  #
+  # Очередь лежит в базе, поэтому воркеров можно поднять несколько (или
+  # `docker compose up -d --scale video-worker=3`): задача берётся через
+  # FOR UPDATE SKIP LOCKED и достаётся ровно одному.
+  video-worker:
+    build:
+      context: ./backend
+      dockerfile: datasets_svc/Dockerfile
+    image: yolo-datasets
+    container_name: yolo-video-worker
+    command: ["python", "-m", "datasets_svc.worker"]
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
+      # Быстрые берут то, чего ждёт живой человек: таблицу кадров только что
+      # загруженного ролика и отдельный перегон. Медленный готовит ступени.
+      # Пулы не смешиваются — иначе запрос перегона встал бы за копией.
+      - VIDEO_FAST_WORKERS=2
+      - VIDEO_SLOW_WORKERS=1
+      # Как быстро подбираются работы, брошенные упавшим воркером.
+      # Дешёвый запрос раз в десять секунд; дольше держать ролик
+      # недорезанным незачем.
+      - VIDEO_WORKER_REAP=10
+    depends_on:
+      db:
+        condition: service_healthy
+      auth:
+        condition: service_started
+    volumes:
+      - yolo-data:/app/data
 
   augmentation:
     build:

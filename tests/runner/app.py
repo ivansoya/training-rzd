@@ -48,6 +48,14 @@ SUITES = {
                 "--json-report", f"--json-report-file={REPORT_DIR}/api.json"],
         "cwd": f"{ROOT}/tests/api",
     },
+    "load": {
+        "title": "Нагрузка",
+        "hint": "Отвечает ли API, пока воркер режет видео. Идёт после API-набора.",
+        "kind": "pytest",
+        "cmd": ["python3", "-m", "pytest", f"{ROOT}/tests/load", "-v", "--no-header",
+                "--json-report", f"--json-report-file={REPORT_DIR}/load.json"],
+        "cwd": f"{ROOT}/tests/load",
+    },
     "client": {
         "title": "Клиент",
         "hint": "Расчёт положения объекта в редакторе — тот же, что на сервере.",

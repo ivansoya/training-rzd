@@ -52,6 +52,20 @@ ANN_SOURCE_ENUM = sa.Enum("human", "model", name="annotation_source")
 # не меняется: «cut» — нарезаем кадры и размечаем их, «annotate» — размечаем
 # сам ролик по кадрам, а кадры появляются при сдаче таски.
 VIDEO_MODE_ENUM = sa.Enum("cut", "annotate", name="video_mode")
+# Готовность ступени качества: файла копии и набора перегонов.
+VIDEO_ASSET_STATUS_ENUM = sa.Enum(
+    "pending", "building", "ready", "error", name="video_asset_status"
+)
+# Что за работа над роликом. «index» — таблица кадров, без неё ролик не
+# открыть; «strip» — кинолента под таймлайн; «variant» — полная копия
+# ступени; «chunkset» — все перегоны ступени; «chunk» — один перегон,
+# которого прямо сейчас ждёт разметчик.
+VIDEO_JOB_KIND_ENUM = sa.Enum(
+    "index", "strip", "variant", "chunkset", "chunk", name="video_job_kind"
+)
+VIDEO_JOB_STATUS_ENUM = sa.Enum(
+    "queued", "running", "done", "error", name="video_job_status"
+)
 FRIENDSHIP_STATUS_ENUM = sa.Enum("pending", "accepted", name="friendship_status")
 INVITATION_STATUS_ENUM = sa.Enum(
     "pending", "accepted", "declined", name="invitation_status"
@@ -351,6 +365,137 @@ class TaskVideo(Base, AuditMixin):
     # кадры таски приводятся к нему, поэтому он перезаписывается целиком.
     # Одиночный кадр — участок длиной в миллисекунду.
     segments: Mapped[list | None] = mapped_column(JsonCol)
+    # Сама таблица кадров: {first_pts, deltas, keys, time_base, rate, …}.
+    # Раньше она лежала файлом рядом с роликом — «девяносто тысяч чисел в
+    # строке БД не ищутся и не соединяются». Это по-прежнему верно, но цена
+    # оказалась выше: каждый запрос перегона читал файл с тома и разворачивал
+    # дельты заново. Теперь таблица живёт здесь и разворачивается один раз на
+    # процесс (``video_index``), а том перестаёт быть носителем состояния.
+    frame_index: Mapped[dict | None] = mapped_column(JsonCol)
+
+
+class VideoAsset(Base, AuditMixin):
+    """Ступень качества ролика: полная копия и нарезанные из неё перегоны.
+
+    Копия — не украшение. Перегон, вырезанный из копии 480p, стоит
+    перекладывания пакетов: копия пишется с опорным кадром ровно на границе
+    каждого перегона, поэтому кусок берётся без разжатия и сжатия заново.
+    Из оригинала 2688×1520 тот же перегон стоил бы полного перекодирования.
+
+    Исходное качество копии не имеет — оно и есть оригинал; его перегоны
+    режутся перекодированием и только по требованию.
+    """
+
+    __tablename__ = "video_assets"
+    __table_args__ = (
+        sa.UniqueConstraint("video_id", "quality", name="uq_video_asset_quality"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="CASCADE"), nullable=False
+    )
+    # «src» или высота ступени строкой: «1080», «720», «480».
+    quality: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+
+    # Полная копия ступени. Путь хранится, а не вычисляется: файл появляется
+    # фоновой задачей, и по наличию пути в базе видно, что она дошла до конца.
+    file_status: Mapped[str] = mapped_column(
+        VIDEO_ASSET_STATUS_ENUM, nullable=False,
+        default="pending", server_default="pending",
+    )
+    file_path: Mapped[str | None] = mapped_column(sa.String(1024))
+    width: Mapped[int | None] = mapped_column(sa.Integer)
+    height: Mapped[int | None] = mapped_column(sa.Integer)
+    size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
+
+    # Перегоны этой ступени. Готовность — числом, а не обходом каталога:
+    # у часового ролика перегонов под тысячу, и `os.path.exists` по ним на
+    # каждый запрос стоил дороже самого ответа.
+    chunks_status: Mapped[str] = mapped_column(
+        VIDEO_ASSET_STATUS_ENUM, nullable=False,
+        default="pending", server_default="pending",
+    )
+    chunks_dir: Mapped[str | None] = mapped_column(sa.String(1024))
+    chunks_ready: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    chunks_total: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+class VideoJob(Base):
+    """Очередь тяжёлой работы над роликом.
+
+    Очередь лежит в базе, а не в памяти процесса, по трём причинам, и каждая
+    уже стоила крови. Она переживает перезапуск воркера — иначе ролик,
+    застигнутый рестартом, оставался бы недорезанным навсегда. Её видят все
+    процессы разом — иначе два воркера молотили бы одну и ту же ступень.
+    И у неё есть память об отказе — иначе битый ролик заводил бы новую нарезку
+    на каждое движение разметчика по таймлайну.
+
+    Взятие задачи — ``FOR UPDATE SKIP LOCKED``: воркеры не ждут друг друга и
+    не берут одно и то же.
+    """
+
+    __tablename__ = "video_jobs"
+    __table_args__ = (
+        # Повтор одной и той же работы отсекается на уровне базы, а не
+        # проверкой перед вставкой: между проверкой и вставкой помещается
+        # второй такой же запрос.
+        sa.Index(
+            "uq_video_job_active",
+            "video_id", "kind", "quality", "chunk_no",
+            unique=True,
+            postgresql_where=sa.text("status IN ('queued', 'running')"),
+        ),
+        sa.Index("ix_video_jobs_pick", "status", "priority", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(VIDEO_JOB_KIND_ENUM, nullable=False)
+    # Пустая строка и −1 значат «эта работа не про качество / не про перегон».
+    # Пустые значения вместо NULL нужны уникальному индексу: в PostgreSQL два
+    # NULL считаются разными, и повторы проходили бы насквозь.
+    quality: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="", server_default=""
+    )
+    chunk_no: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=-1, server_default="-1"
+    )
+    priority: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=50)
+    status: Mapped[str] = mapped_column(
+        VIDEO_JOB_STATUS_ENUM, nullable=False,
+        default="queued", server_default="queued",
+    )
+    attempts: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    # Докуда задача считается живой. Воркер продлевает срок, пока работает;
+    # просроченная возвращается в очередь — так падение воркера посреди
+    # нарезки не оставляет задачу в «running» навсегда.
+    lease_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    progress: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    total: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
 class VideoTrack(Base, AuditMixin):

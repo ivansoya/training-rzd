@@ -827,9 +827,35 @@ export interface ClipQuality {
   id: string;
   label: string;
   height: number | null;
+  /** Перегоны нарезаны целиком. Только такую ступень и предлагают выбрать. */
+  ready: boolean;
+  /** Сколько перегонов уже готово из скольких — для доли в меню. */
+  prepared: number;
+  chunks: number;
+  failed: boolean;
+}
+
+/** Готовность одной ступени: сколько перегонов лежит и что с ней делается. */
+export interface ClipQualityState {
+  quality: string;
+  ready: number;
+  total: number;
+  file: "pending" | "building" | "ready" | "error";
+  chunks: "pending" | "building" | "ready" | "error";
+  error: string | null;
+}
+
+/** Что сейчас делает воркер с этим роликом. */
+export interface ClipProgress {
+  kind: string;
+  quality: string | null;
+  status: string;
+  processed: number;
+  total: number;
 }
 
 export interface ClipManifest {
+  status: "ready";
   /** Отпечаток таблицы кадров: с ним уезжает план при закрытии разметки. */
   version: string;
   /** Точное число кадров, а не прикидка по длительности и частоте. */
@@ -839,8 +865,10 @@ export interface ClipManifest {
   rate: [number, number];
   chunk_frames: number;
   chunks: ClipChunk[];
-  /** Сколько перегонов уже нарезано: остальные режутся по требованию. */
+  /** Сколько перегонов выбранной ступени уже нарезано. */
   ready: number;
+  state: ClipQualityState;
+  progress: ClipProgress | null;
   /** Что можно выбрать и что выбрано сейчас. */
   qualities: ClipQuality[];
   default_quality: string;
@@ -849,8 +877,28 @@ export interface ClipManifest {
   file_name: string;
 }
 
-export async function fetchClip(taskId: string, videoId: string): Promise<ClipManifest> {
-  return asJson(await fetch(`/api/tasks/${taskId}/videos/${videoId}/clip`));
+/** Ролик ещё готовится. Это не ошибка: тяжёлую работу делает воркер, и пока
+ *  он не дошёл до конца, показывать нечего — но есть что сказать. */
+export interface ClipPreparing {
+  status: "preparing";
+  stage: string;
+  processed?: number;
+  total?: number;
+  retry_after_ms: number;
+}
+
+export type ClipAnswer = ClipManifest | ClipPreparing;
+
+export async function fetchClip(
+  taskId: string,
+  videoId: string,
+  quality?: string,
+  signal?: AbortSignal
+): Promise<ClipAnswer> {
+  const q = quality ? `?q=${encodeURIComponent(quality)}` : "";
+  return asJson(
+    await fetch(`/api/tasks/${taskId}/videos/${videoId}/clip${q}`, { signal })
+  );
 }
 
 export function chunkUrl(

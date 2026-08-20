@@ -5,10 +5,10 @@ import {
   cutVideo,
   estimateCut,
   videoFileUrl,
-  videoStripUrl,
 } from "../../auth/api";
 import type { CutEstimate, CutSegment, Segment, TaskVideoItem } from "../../auth/api";
 import { plural } from "./ProjectsPage";
+import VideoStrip from "./VideoStrip";
 
 const COLORS = ["#e21a1a", "#1f6feb", "#1a7f4b", "#8957e5", "#e8590c"];
 const STEPS_MS = [100, 250, 500, 1000, 2000, 5000];
@@ -626,10 +626,10 @@ export default function VideoCutModal({
                 setDrag(null);
               }}
             >
-              <img
+              <VideoStrip
                 className="mag-cut-strip"
-                src={videoStripUrl(taskId, video.id)}
-                alt=""
+                taskId={taskId}
+                videoId={video.id}
                 draggable={false}
                 style={{
                   width: `${(Math.max(1, duration) / view.span) * 100}%`,

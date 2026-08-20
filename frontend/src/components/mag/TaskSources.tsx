@@ -1,7 +1,7 @@
 import { plural } from "./ProjectsPage";
 import { fmtBytes, fmtTime } from "./VideoCutModal";
 import type { PendingVideo, TaskDetail, TaskVideoItem } from "../../auth/api";
-import { videoStripUrl } from "../../auth/api";
+import VideoStrip from "./VideoStrip";
 
 /** Блоки вкладки «Кадры» и карточки вкладки «Видео».
  *
@@ -85,8 +85,8 @@ export function SourceCard({
     <div className="g-block">
       <div className="g-block-h">
         {block.video && (
-          <img className="g-block-poster" alt=""
-            src={videoStripUrl(taskId, block.video.id)} />
+          <VideoStrip className="g-block-poster"
+            taskId={taskId} videoId={block.video.id} />
         )}
         <h4>{block.title}</h4>
         <span className={`g-chip ${mark.cls}`}>{mark.label}</span>
@@ -202,7 +202,7 @@ export function VideoCard({
         </div>
 
         <div className="g-vcard-body">
-          <img className="g-strip" src={videoStripUrl(taskId, video.id)} alt="" />
+          <VideoStrip className="g-strip" taskId={taskId} videoId={video.id} />
           <div className="g-rail">
             <span className="g-rail-line" />
             {/* Закрашено то, что уже стало кадрами: у нарезки — участки плана,
