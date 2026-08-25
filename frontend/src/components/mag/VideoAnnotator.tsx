@@ -485,10 +485,15 @@ export default function VideoAnnotator({
     [taskId, video.id]
   );
 
+  // Пространство разметки — пиксели источника. Канва считает координаты от
+  // размеров ролика, а показывать может ступень качества, которая мельче;
+  // сервер распаковывает кадр для полуавтомата в тех же размерах источника, но
+  // знать об этом клиенту незачем — он просто говорит, в чём считает.
   const auto = useAutoLabel(
     { video_id: video.id, frame_no: frame },
     { video_id: video.id, frame_no: Math.min(lastFrame, frame + 1) },
-    ensureFrame
+    ensureFrame,
+    video.width && video.height ? { w: video.width, h: video.height } : null
   );
 
   const clearAuto = useCallback(() => {

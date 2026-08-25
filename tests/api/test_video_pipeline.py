@@ -214,6 +214,29 @@ def test_кадр_распаковывается_и_на_границе_пере
     assert marks == [118, 119, 120, 121]
 
 
+def test_кадр_приходит_в_размерах_источника(api, tall):
+    """Кадр по номеру нужен полуавтомату, и размер у него не «примерно тот».
+
+    Точки клика приходят в пикселях источника: канва редактора считает
+    координаты от размеров ролика и не знает, какую ступень качества сейчас
+    показывают. Пока кадр брали из ближайшего готового перегона, SAM2 получал
+    1024×768 как 960×720 — и обводил то, что оказалось в этом месте, а не то,
+    что просили. Здесь это падает тестом.
+    """
+    body = wait_clip(api, tall["task_id"], tall["id"])
+    assert body["default_quality"] == "720", "ступень по умолчанию сменилась"
+
+    res = api.get(clip_url(tall["task_id"], tall["id"]) + "/frame", params={"n": 42})
+    assert res.status_code == 200, res.text
+    from PIL import Image
+    img = Image.open(io.BytesIO(res.content))
+    assert img.size == (sample.TALL_WIDTH, sample.TALL_HEIGHT)
+    # И то же самое — заголовками: клиенту нужен размер, а не догадка о нём.
+    assert res.headers.get("X-Frame-Width") == str(sample.TALL_WIDTH)
+    assert res.headers.get("X-Frame-Height") == str(sample.TALL_HEIGHT)
+    assert sample.read_mark(img) == 42
+
+
 # --------------------------------------------------------------------------- #
 # Уборка
 # --------------------------------------------------------------------------- #

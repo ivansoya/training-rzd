@@ -466,6 +466,54 @@ def grab_in(path, local_no):
     raise VideoError(f"В файле нет кадра {local_no}.")
 
 
+def grab_at(video_path, index, frame_no):
+    """Кадр источника по номеру — в разрешении источника и ровно тот самый.
+
+    Адрес берётся из таблицы кадров: у кадра есть своя метка времени, и её
+    сравнивают на равенство. Обратный пересчёт номера во время (``no / rate``)
+    на дробной частоте 25.033 уводит на соседний кадр, а для полуавтомата это
+    значит обводку по чужой картинке — незаметную глазу и потому особенно
+    обидную.
+
+    Стоимость — перемотка на ближайший опорный кадр слева и проход вперёд.
+    Опорные в исходнике стоят как поставил его кодировщик: на боевом ролике
+    (1920×1080, 20 минут) они идут через 50 кадров, и кадр обходится в 57-91 мс
+    — вровень с вырезкой из готового перегона. Дорого выйдет там, где опорные
+    редки, и это единственное, ради чего стоит держать перегоны ступени `src`.
+    """
+    av = _av()
+    frame_no = max(0, int(frame_no))
+    pts = index.get("pts") or []
+    if frame_no >= len(pts):
+        raise VideoError(f"В ролике нет кадра {frame_no}.")
+    want = pts[frame_no]
+    try:
+        with av.open(video_path) as container:
+            if not container.streams.video:
+                raise VideoError("В файле нет видеодорожки.")
+            stream = container.streams.video[0]
+            stream.thread_type = "AUTO"
+            try:
+                container.seek(
+                    int(pts[_seek_key(index, frame_no)]),
+                    stream=stream, backward=True, any_frame=False,
+                )
+            except Exception:  # noqa: BLE001
+                container.seek(0)
+            for frame in container.decode(stream):
+                if frame.pts is None:
+                    continue
+                if frame.pts == want:
+                    return frame.to_image()
+                if frame.pts > want:
+                    break
+    except VideoError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise VideoError(f"Не удалось прочитать кадр: {exc}") from exc
+    raise VideoError(f"Кадр {frame_no} в ролике не найден.")
+
+
 def frame_count_of(path):
     """Сколько кадров в готовом файле. Считаем пакеты: разжимать незачем."""
     av = _av()

@@ -14,6 +14,7 @@ import urllib.request
 
 import numpy as np
 
+from autolabel_svc import space as spacelib
 from common import config
 
 WEIGHTS_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/092824/"
@@ -126,9 +127,17 @@ class Sam2Runner:
         }
 
     # -- предсказание ------------------------------------------------------ #
-    def predict(self, image_path, image_id, prompts, want, refine) -> dict:
+    def predict(self, image_path, image_id, prompts, want, refine, space=None) -> dict:
+        """`space` — в каких пикселях говорит клиент.
+
+        Кадр видео и кадр редактора — это не всегда один и тот же размер, и
+        раньше обе стороны молча считали, что один. Теперь пространство
+        объявлено: подсказки переводятся в пиксели кадра, ответ — обратно.
+        """
         state = self._select(image_path, image_id)
         h, w = state["size"]
+        kx, ky = spacelib.factors(space, w, h)
+        prompts = spacelib.to_frame(prompts, kx, ky)
 
         points = prompts.get("points") or []
         coords = np.array([[p["x"], p["y"]] for p in points], dtype=np.float32) if points else None
@@ -169,7 +178,10 @@ class Sam2Runner:
         shape = {"type": "box", "box": rect, "score": score}
         if "polygon" in (want or []):
             shape["polygons"] = self._polygons(mask, int(refine.get("polygon_points", 0)))
-        return {"shapes": [shape], "width": int(w), "height": int(h)}
+        shape = spacelib.to_space(shape, kx, ky, space)
+        # Размер кадра отдаём всегда: по нему видно, в каких пикселях считала
+        # модель, и расхождение с `space` перестаёт быть догадкой.
+        return {"shapes": [shape], "width": int(w), "height": int(h), "space": space}
 
     # -- чистка маски ------------------------------------------------------ #
     def _clean(self, mask: np.ndarray, refine: dict) -> np.ndarray:

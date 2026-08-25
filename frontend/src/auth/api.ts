@@ -1175,11 +1175,21 @@ export async function warmAutoFrame(sessionId: string, ref: AutoFrameRef): Promi
   await asJson(await post(`auto/sessions/${sessionId}/warm`, ref));
 }
 
+/** В каких пикселях считает клиент. Для изображения это сам файл, для кадра
+ *  видео — размеры ролика: канва редактора рисует в них, а показывать может
+ *  ступень качества, которая мельче. Пространство объявляется, иначе сервер
+ *  примет чужие координаты за свои. */
+export interface AutoSpace {
+  w: number;
+  h: number;
+}
+
 export async function autoPredict(
   sessionId: string,
   ref: AutoFrameRef,
   prompts: { points?: AutoPoint[]; box?: { x: number; y: number; w: number; h: number } },
-  refine: AutoRefine
+  refine: AutoRefine,
+  space?: AutoSpace | null
 ): Promise<{ shapes: AutoShape[]; reason?: string }> {
   return asJson(
     await post(`auto/sessions/${sessionId}/predict`, {
@@ -1187,6 +1197,7 @@ export async function autoPredict(
       prompts,
       want: ["box", "polygon"],
       refine,
+      space: space || undefined,
     })
   );
 }

@@ -154,8 +154,15 @@ def _track_json(track, keys):
 # Кадр
 # --------------------------------------------------------------------------- #
 def _frame_dir(task, video_id):
-    return os.path.join(
-        config.task_video_dir(task.project_id, task.id), f"{video_id}_frames"
+    return config.task_video_frames_dir(task.project_id, task.id, video_id)
+
+
+def _frame_file(task, video, frame_no):
+    """Путь к распакованному кадру. Строится общим помощником: этот же файл
+    открывает autolabel_svc, и два своих склеивателя пути однажды разошлись
+    бы."""
+    return config.task_video_frame_file(
+        task.project_id, task.id, video.id, frame_no, video.width, video.height
     )
 
 
@@ -177,44 +184,45 @@ def _trim_cache(folder):
 
 
 def _grab(db, video, source, frame_no):
-    """Кадр по номеру — тот же, что уйдёт в разметку.
+    """Кадр в разрешении источника — тот же, что уйдёт в датасет.
 
-    Сперва ищем его в готовом перегоне: тот лежит на диске, весит мегабайт и
-    разжимается целиком за миллисекунды. Перегоны нарезаны заранее, поэтому
-    попадание — обычный случай, а не удача.
+    Разрешение здесь не удобство, а условие. По этому кадру работает
+    полуавтомат, а точки клика приходят в пикселях источника: канва редактора
+    считает координаты от ``video.width/height`` и не знает, какую ступень
+    качества сейчас показывают. Пока сюда отдавался кадр ближайшего готового
+    перегона, SAM2 получал 1280×720 и точку из 1920×1080 — модель обводила то,
+    что оказалось в двух третях пути к цели, и ответ возвращала в чужих
+    пикселях. Снаружи это выглядело как «модель вернула бесформенное тело».
 
-    Из исходника кадр берут только когда перегона ещё нет. На
-    двадцатиминутном ролике это перемотка к ближайшему опорному кадру и
-    декодирование вперёд — секунды, и всё это время поток занят. Именно так
-    полуавтомат и упирался в оборванные соединения.
+    Быстрый путь остался, но только тот, что не меняет размер: перегон ступени
+    ``src`` — это и есть источник, разложенный по кускам. Его готовят лишь по
+    просьбе, поэтому обычный случай — разжатие из самого файла: перемотка на
+    опорный кадр слева и проход вперёд. Боязнь, что это дорого, не оправдалась:
+    замер на боевом ролике (1920×1080, 20 минут, 29 150 кадров, опорные через
+    50) — 57-91 мс на кадр, то есть вровень с перегоном. Дорого было бы на
+    ролике с редкими опорными кадрами; там же и выручит ``src``.
     """
     index = video_index.get(db, video, source)
     if index is not None:
-        chunk_no = chunklib.chunk_of(frame_no)
-        first = chunklib.chunk_bounds(chunk_no, index["count"])[0]
-        for quality in _ready_qualities(db, video.id):
-            path = chunklib.chunk_path(source, chunk_no, quality)
+        asset = queue.asset(db, video.id, chunklib.SOURCE)
+        if asset is not None and asset.chunks_status == "ready":
+            chunk_no = chunklib.chunk_of(frame_no)
+            first = chunklib.chunk_bounds(chunk_no, index["count"])[0]
+            path = chunklib.chunk_path(source, chunk_no, chunklib.SOURCE)
             if os.path.exists(path):
                 try:
                     return chunklib.grab_in(path, frame_no - first)
                 except chunklib.VideoError:
                     # Перегон битый — не повод отказывать: возьмём из
                     # исходника, а перегон перережут заново.
-                    break
+                    pass
+        try:
+            return chunklib.grab_at(source, index, frame_no)
+        except chunklib.VideoError:
+            # Таблица кадров разошлась с файлом — пусть кадр найдёт videolib
+            # своим способом, по времени. Это хуже, но лучше отказа.
+            pass
     return videolib.grab_frame(source, frame_no)
-
-
-def _ready_qualities(db, video_id):
-    """Ступени с готовыми перегонами, от крупной к мелкой.
-
-    Порядок важен: полуавтомат обводит объект по клику, и чем крупнее
-    картинка, тем точнее он попадает по краю.
-    """
-    ready = [
-        a.quality for a in queue.assets(db, video_id) if a.chunks_status == "ready"
-    ]
-    order = [chunklib.SOURCE] + [str(step) for step in chunklib.LADDER]
-    return sorted(ready, key=lambda q: order.index(q) if q in order else 99)
 
 
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/frame")
@@ -232,7 +240,7 @@ def video_frame(task_id, video_id):
             return jsonify({"error": "Номер кадра должен быть неотрицательным."}), 400
 
         folder = _frame_dir(task, video.id)
-        cached = os.path.join(folder, f"{frame_no}.jpg")
+        cached = _frame_file(task, video, frame_no)
         if not os.path.exists(cached):
             source = os.path.join(config.DATA_DIR, video.file_path)
             if not os.path.exists(source):
@@ -252,6 +260,12 @@ def video_frame(task_id, video_id):
         resp = send_file(cached, mimetype="image/jpeg", conditional=True)
         # Кадр по номеру неизменен, пока существует ролик.
         resp.headers["Cache-Control"] = "private, max-age=86400"
+        # В каких пикселях этот кадр. Разметке полуавтоматом важно не «видимо
+        # тот же», а точный размер: по нему пересчитываются точки клика и
+        # обратно — обводка. Объявляем, а не оставляем догадываться.
+        if video.width and video.height:
+            resp.headers["X-Frame-Width"] = str(int(video.width))
+            resp.headers["X-Frame-Height"] = str(int(video.height))
         return resp
     finally:
         db.close()
@@ -998,7 +1012,7 @@ def prefetch_frames(task_id, video_id):
         os.makedirs(folder, exist_ok=True)
         missing = [
             n for n in range(start, end + 1)
-            if not os.path.exists(os.path.join(folder, f"{n}.jpg"))
+            if not os.path.exists(_frame_file(task, video, n))
         ]
         if not missing:
             return jsonify({"ready": end - start + 1, "decoded": 0})
@@ -1008,7 +1022,7 @@ def prefetch_frames(task_id, video_id):
             return jsonify({"error": "Файл видео не найден."}), 404
 
         def on_frame(frame_no, _time_ms, img):
-            path = os.path.join(folder, f"{frame_no}.jpg")
+            path = _frame_file(task, video, frame_no)
             tmp = path + ".part"
             img.convert("RGB").save(tmp, "JPEG", quality=88)
             os.replace(tmp, path)

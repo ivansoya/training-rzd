@@ -114,6 +114,30 @@ def task_video_dir(project_id, task_id):
     return os.path.join(task_dir(project_id, task_id), "video")
 
 
+def task_video_frames_dir(project_id, task_id, video_id):
+    """Распакованные кадры ролика.
+
+    Кладёт их datasets_svc, а читает ещё и autolabel_svc: путь строился в двух
+    местах по отдельности, и разойтись им было нечем помешать.
+    """
+    return os.path.join(task_video_dir(project_id, task_id), f"{video_id}_frames")
+
+
+def task_video_frame_file(project_id, task_id, video_id, frame_no,
+                          width=None, height=None):
+    """Файл распакованного кадра. Размер в имени — не украшение.
+
+    Кадр кэшируется в разрешении источника: по нему работает полуавтомат, и
+    координаты клика приходят в тех же пикселях. Прежде сюда клали кадр из
+    ближайшего готового перегона, то есть ступени качества, — под тем же
+    именем, и отличить одно от другого было нельзя. Размер в имени их разводит:
+    файлы прежней схемы просто не находятся и уходят с уборкой кэша.
+    """
+    folder = task_video_frames_dir(project_id, task_id, video_id)
+    size = f"@{int(width)}x{int(height)}" if width and height else ""
+    return os.path.join(folder, f"{int(frame_no)}{size}.jpg")
+
+
 def image_base_dir(project_id, task_id=None):
     """Корень, под которым лежат images/, thumbs/ и preview/ этого кадра."""
     return (

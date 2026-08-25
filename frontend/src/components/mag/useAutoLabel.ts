@@ -6,7 +6,13 @@ import {
   openAutoSession,
   warmAutoFrame,
 } from "../../auth/api";
-import type { AutoFrameRef, AutoPoint, AutoRefine, AutoShape } from "../../auth/api";
+import type {
+  AutoFrameRef,
+  AutoPoint,
+  AutoRefine,
+  AutoShape,
+  AutoSpace,
+} from "../../auth/api";
 
 /** Сессия полуавтоматической разметки на время жизни редактора.
  *
@@ -30,7 +36,12 @@ export function useAutoLabel(
   nextFrame?: AutoFrameRef | null,
   /** Кадр видео мог быть вытеснен из распакованного кэша. Редактор умеет его
    *  вернуть — запросить картинку кадра, — и передаёт сюда этот способ. */
-  ensureFrame?: (ref: AutoFrameRef) => Promise<void>
+  ensureFrame?: (ref: AutoFrameRef) => Promise<void>,
+  /** В каких пикселях редактор показывает точки клика. У изображения это оно
+   *  само, и объявлять нечего; у кадра видео — размеры ролика, тогда как
+   *  показывается ступень качества, которая мельче. Сервер пересчитает по
+   *  этому размеру подсказки и вернёт обводку в нём же. */
+  space?: AutoSpace | null
 ) {
   const [state, setState] = useState<AutoState>("starting");
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +63,8 @@ export function useAutoLabel(
   nextRef.current = nextFrame ?? null;
   const ensureRef = useRef(ensureFrame);
   ensureRef.current = ensureFrame;
+  const spaceRef = useRef(space ?? null);
+  spaceRef.current = space ?? null;
 
   useEffect(() => {
     mounted.current += 1;
@@ -185,7 +198,7 @@ export function useAutoLabel(
         let sid = session.current;
         let res;
         try {
-          res = await autoPredict(sid, ref, prompts, refine);
+          res = await autoPredict(sid, ref, prompts, refine, spaceRef.current);
         } catch (e) {
           const message = (e as Error).message;
           const code = (e as { code?: string }).code;
@@ -196,7 +209,7 @@ export function useAutoLabel(
             if (cacheKey) warmed.current.delete(cacheKey);
             await warmAutoFrame(sid, ref);
             if (cacheKey) warmed.current.add(cacheKey);
-            res = await autoPredict(sid, ref, prompts, refine);
+            res = await autoPredict(sid, ref, prompts, refine, spaceRef.current);
           } else if (/сесси/i.test(message)) {
             // Сессия могла умереть по молчанию или вместе с перезапуском
             // сервиса. Молча поднимаем новую и повторяем — разметчик не должен
@@ -204,7 +217,7 @@ export function useAutoLabel(
             sid = await reopen();
             await warmAutoFrame(sid, ref);
             if (cacheKey) warmed.current.add(cacheKey);
-            res = await autoPredict(sid, ref, prompts, refine);
+            res = await autoPredict(sid, ref, prompts, refine, spaceRef.current);
           } else {
             throw e;
           }

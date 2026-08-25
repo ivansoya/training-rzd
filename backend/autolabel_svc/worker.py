@@ -7,7 +7,7 @@
 
 Раннер обязан уметь:
     warm(image_path, image_id)                      — подготовить кадр
-    predict(image_path, image_id, prompts, want, refine)
+    predict(image_path, image_id, prompts, want, refine, space)
 
 и возвращать фигуры в едином виде: {"type", "box": [x, y, w, h], "polygon"?,
 "score"}. Бокс отдаёт любой раннер — даже тот, что внутри работает масками.
@@ -53,6 +53,7 @@ def worker_main(model, params, requests, results):
                     payload.get("prompts") or {},
                     payload.get("want") or ["box"],
                     payload.get("refine") or {},
+                    payload.get("space"),
                 )
             elif op == "info":
                 data = runner.info()

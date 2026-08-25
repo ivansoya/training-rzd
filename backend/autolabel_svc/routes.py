@@ -96,8 +96,10 @@ def _video_frame(db, user, data):
         frame_no = int(data.get("frame_no"))
     except (TypeError, ValueError):
         return None, None, (jsonify({"error": "Не указан кадр."}), 400)
-    path = os.path.join(
-        config.task_video_dir(project.id, task.id), f"{video.id}_frames", f"{frame_no}.jpg"
+    # Путь строит общий помощник: этот файл кладёт datasets_svc, и два своих
+    # склеивателя пути однажды разошлись бы — а разошлись бы они молча.
+    path = config.task_video_frame_file(
+        project.id, task.id, video.id, frame_no, video.width, video.height
     )
     if not os.path.exists(path):
         # Кадр вытеснили из кэша. Клиент умеет это чинить: запросит картинку
@@ -179,6 +181,10 @@ def predict(session_id):
                     "prompts": data.get("prompts") or {},
                     "want": data.get("want") or ["box"],
                     "refine": data.get("refine") or {},
+                    # В каких пикселях говорит клиент. Не «в каких примерно» —
+                    # редактор видео рисует в размерах источника, а показывать
+                    # при этом может ступень качества.
+                    "space": data.get("space"),
                 },
             )
         )
