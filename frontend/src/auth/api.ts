@@ -83,6 +83,7 @@ export interface ProjectDetail {
     size_bytes: number;
     datasets: number;
     classes: number;
+    tasks: number;
   };
   datasets: {
     id: string;
@@ -580,8 +581,24 @@ export interface CutSegment {
  *  «cut» — режем на кадры и размечаем их, «annotate» — размечаем сам ролик. */
 export type VideoMode = "cut" | "annotate";
 
+/** Готов ли ролик к работе и что с ним делают прямо сейчас. */
+export interface VideoPrepare {
+  /** Воркер сейчас чем-то занят по этому ролику. */
+  busy: boolean;
+  stage: string | null;
+  /** То же по-человечески: «нарезаю на куски». */
+  stage_text: string | null;
+  processed: number;
+  total: number;
+  /** Можно ли открывать редактор. У нарезки всегда да: участки выбирают по
+   *  самому файлу. У разметки — только когда есть таблица кадров и перегоны. */
+  ready: boolean;
+  error: string | null;
+}
+
 export interface TaskVideoItem {
   id: string;
+  prepare: VideoPrepare;
   file_name: string;
   duration_ms: number | null;
   fps: number | null;

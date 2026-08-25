@@ -1,6 +1,11 @@
 import { plural } from "./ProjectsPage";
 import { fmtBytes, fmtTime } from "./VideoCutModal";
-import type { PendingVideo, TaskDetail, TaskVideoItem } from "../../auth/api";
+import type {
+  PendingVideo,
+  TaskDetail,
+  TaskVideoItem,
+  VideoPrepare,
+} from "../../auth/api";
 import VideoStrip from "./VideoStrip";
 
 /** Блоки вкладки «Кадры» и карточки вкладки «Видео».
@@ -10,6 +15,34 @@ import VideoStrip from "./VideoStrip";
  * цифры. Во «Видео» вопрос другой: «что с роликом сделано и где» — тут
  * выигрывает шкала кадров, потому что у разметки видео есть место во времени.
  */
+
+/** Что делают с роликом прямо сейчас.
+ *
+ * Подготовка идёт на сервере и снаружи невидима: пока её не показывали,
+ * свежезагруженный ролик выглядел просто сломанным — открывается и ничего не
+ * показывает. Доля считается по той работе, что идёт, а не по ролику целиком:
+ * работ несколько, и общего знаменателя у них нет.
+ */
+export function PrepareLine({ prepare }: { prepare?: VideoPrepare }) {
+  if (!prepare) return null;
+  if (prepare.error) {
+    return <span className="g-prep bad">не удалось: {prepare.error}</span>;
+  }
+  if (!prepare.busy) {
+    return prepare.ready ? null : <span className="g-prep">готовится…</span>;
+  }
+  const pct =
+    prepare.total > 0
+      ? Math.min(100, Math.round((prepare.processed / prepare.total) * 100))
+      : null;
+  return (
+    <span className="g-prep">
+      <i />
+      {prepare.stage_text || "готовлю"}
+      {pct !== null && <b>{pct}%</b>}
+    </span>
+  );
+}
 
 /** Корзина. Действие редкое и с последствиями — ему хватает значка, а место
  *  в шапке блока дороже отдать тому, чем пользуются каждый день. */
@@ -150,6 +183,7 @@ export function SourceCard({
         <h4>{block.title}</h4>
         <span className="g-chip">{video ? "нарезка" : "изображения"}</span>
         <span className="g-sp" />
+        {video && <PrepareLine prepare={video.prepare} />}
         {block.counts.first_at && (
           <span className="g-when">
             {new Date(block.counts.first_at).toLocaleString("ru-RU", {
@@ -281,6 +315,7 @@ export function VideoCard({
         <span className={closed ? "g-chip done" : "g-chip mark"}>
           {closed ? "разметка закрыта" : "размечается"}
         </span>
+        <PrepareLine prepare={video.prepare} />
         <span className="g-sp" />
         {editable && !closed && (
           <button className="mag-btn mag-btn-inline" type="button"
@@ -295,7 +330,14 @@ export function VideoCard({
             Открыть заново
           </button>
         )}
-        <button className="mag-ghost mag-ghost-inline" type="button" onClick={onOpen}>
+        {/* Пока таблица кадров не построена, а перегоны не нарезаны, в
+            редакторе показывать нечего. Он бы честно написал «готовится», но
+            человек, нажавший кнопку и упёршийся в пустой экран, решит, что
+            сломалось. Проще не пускать. */}
+        <button className="mag-ghost mag-ghost-inline" type="button"
+          disabled={!video.prepare?.ready}
+          title={video.prepare?.ready ? undefined : "Ролик ещё готовится"}
+          onClick={onOpen}>
           {editable && !closed ? "Размечать" : "Смотреть"}
         </button>
         {editable && (

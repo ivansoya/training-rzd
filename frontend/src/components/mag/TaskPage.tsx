@@ -117,6 +117,18 @@ export default function TaskPage() {
     if (tab === "log" && taskId) getTaskEvents(taskId).then(setEvents).catch(() => {});
   }, [tab, taskId]);
 
+  // Пока с роликом что-то делают, таску переспрашиваем: подготовка идёт на
+  // сервере, и сама себя на экране она не обновит. Как только всё готово —
+  // опрос прекращается, иначе он шёл бы до закрытия вкладки.
+  const preparing = (task?.videos || []).some(
+    (v) => v.prepare && (v.prepare.busy || (!v.prepare.ready && !v.prepare.error))
+  );
+  useEffect(() => {
+    if (!preparing) return undefined;
+    const id = window.setInterval(() => { void load(); }, 2500);
+    return () => window.clearInterval(id);
+  }, [preparing, load]);
+
   const guard = useCallback(async (fn: () => Promise<void>) => {
     setBusy(true);
     setError(null);
@@ -342,7 +354,7 @@ export default function TaskPage() {
       </nav>
 
       {uploadPct !== null && (
-        <div className="mag-card">
+        <div className="mag-card mag-upload-card">
           <div className="mag-progress" style={{ marginTop: 0 }}>
             <div className="mag-progress-track">
               <i className={uploadPct >= 0.999 ? "indeterminate" : ""}

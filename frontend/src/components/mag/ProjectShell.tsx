@@ -79,7 +79,9 @@ export default function ProjectShell() {
         )}
         <nav className="g-ctx-nav">
           <NavLink to={`/projects/${project.code}`} end className={tab}>Обзор</NavLink>
-          <NavLink to={`/projects/${project.code}/tasks`} className={tab}>Таски</NavLink>
+          <NavLink to={`/projects/${project.code}/tasks`} className={tab}>
+            Таски <span>{stats.tasks ?? 0}</span>
+          </NavLink>
           <NavLink to={`/projects/${project.code}/datasets`} className={tab}>
             Датасеты <span>{stats.datasets}</span>
           </NavLink>

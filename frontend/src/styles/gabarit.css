@@ -14,91 +14,64 @@
  */
 
 /* ============================== ТОКЕНЫ ============================== */
+/* Тема одна — тёмная. Светлой и переключателя больше нет: разметку смотрят
+ * часами и вплотную, и светлый экран рядом с тёмным редактором кадров сбивал
+ * глаз на каждом переходе. Одна тема — вдвое меньше состояний, за которыми
+ * надо следить, и вдвое меньше мест, где что-то останется белым.
+ *
+ * Оттенок нейтральный, без синевы: холодный графит на больших площадях
+ * читается хуже и «отдаёт экраном». Контраст между слоями поднят — фон
+ * страницы почти чёрный, карточка заметно светлее, и слои различимы без
+ * рамок. */
 :root {
+  color-scheme: dark;
+
   /* Поверхности: от фона страницы к карточке и её внутренним линиям. */
-  --paper: #f1f3f4;
-  --card: #ffffff;
-  --sunk: #f7f8f9;
-  --rule: #e2e6e9;
-  --hair: #edf0f2;
+  --paper: #0c0d0e;
+  --card: #191b1d;
+  --sunk: #121314;
+  --rule: #32363a;
+  --hair: #232629;
 
   /* Текст: основной, приглушённый, служебный. */
-  --ink: #23282e;
-  --dim: #5d6873;
-  --faint: #8a949d;
+  --ink: #f3f5f6;
+  --dim: #a9b1b6;
+  --faint: #757c81;
 
-  /* Марка. */
-  --red: #e21a1a;
-  --red-hi: #c81616;
-  --red-in: #fdf3f3;
+  /* Марка. Фирменный #e21a1a на графите проваливается и перестаёт быть
+     акцентом, поэтому здесь он светлее. */
+  --red: #ff4d4d;
+  --red-hi: #ff6b6b;
+  --red-in: #2a1517;
 
-  /* Состояния разметки — те же четыре, что и в данных. */
-  --done: #1a7f4b;
-  --null: #1f6feb;
-  --skip: #b8860b;
-  --del: #c2410c;
+  /* Состояния разметки — те же четыре, что и в данных. Яркие: на почти
+     чёрном фоне приглушённые тонут и перестают различаться между собой. */
+  --done: #2ee07a;
+  --null: #6aa8ff;
+  --skip: #ffb02e;
+  --del: #ff8a5c;
+
+  /* Подсветка под цветными плашками: цвет должен светиться, а не лежать
+     пятном. Используется в предупреждениях и в сообщениях об успехе. */
+  --glow-done: 0 0 0 1px rgba(46, 224, 122, 0.35), 0 0 18px rgba(46, 224, 122, 0.16);
+  --glow-skip: 0 0 0 1px rgba(255, 176, 46, 0.38), 0 0 18px rgba(255, 176, 46, 0.18);
+  --glow-red: 0 0 0 1px rgba(255, 77, 77, 0.35), 0 0 18px rgba(255, 77, 77, 0.16);
+
+  /* Заливки под теми же цветами: тёмные, чтобы текст оставался светлым. */
+  --done-in: #0e2418;
+  --skip-in: #2a1e08;
+  --null-in: #101c2e;
 
   /* Текст на заливке акцентом. */
-  --on-acc: #ffffff;
+  --on-acc: #0c0d0e;
 
-  --shadow: 0 1px 2px rgba(35, 40, 46, 0.06), 0 8px 24px rgba(35, 40, 46, 0.05);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.5), 0 10px 30px rgba(0, 0, 0, 0.45);
 
   --radius-s: 3px;
   --radius: 5px;
   --radius-l: 7px;
 
   --mono: ui-monospace, Menlo, Consolas, "Liberation Mono", monospace;
-}
-
-/* Тёмные значения. Три состояния темы: «как в системе» не ставит на корень
- * ничего, поэтому основной случай — медиа-запрос, а стампы data-theme только
- * перебивают его в обе стороны. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --paper: #15191d;
-    --card: #1c2126;
-    --sunk: #181d22;
-    --rule: #2b3238;
-    --hair: #242a30;
-
-    --ink: #e8ecef;
-    --dim: #9aa4ae;
-    --faint: #6b757f;
-
-    /* Фирменный #e21a1a на графите проваливается и перестаёт быть акцентом. */
-    --red: #ff4d4d;
-    --red-hi: #ff6b6b;
-    --red-in: #2a1618;
-
-    --done: #3fbf7f;
-    --null: #5a9bff;
-    --skip: #d9a441;
-    --del: #f97b4f;
-
-    --on-acc: #15191d;
-
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
-  }
-}
-
-:root[data-theme="dark"] {
-  --paper: #15191d;
-  --card: #1c2126;
-  --sunk: #181d22;
-  --rule: #2b3238;
-  --hair: #242a30;
-  --ink: #e8ecef;
-  --dim: #9aa4ae;
-  --faint: #6b757f;
-  --red: #ff4d4d;
-  --red-hi: #ff6b6b;
-  --red-in: #2a1618;
-  --done: #3fbf7f;
-  --null: #5a9bff;
-  --skip: #d9a441;
-  --del: #f97b4f;
-  --on-acc: #15191d;
-  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4), 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
 /* ====================== МОСТЫ К НАКОПЛЕННОМУ CSS ====================== */
@@ -118,15 +91,10 @@
   color: var(--ink);
 }
 
-/* В тёмной теме бренд-панель входа не может быть цветом текста — она сама
- * поверхность. Возвращаем ей графит явно. */
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .mag {
-    --mag-graphite: #10141a;
-  }
-}
-:root[data-theme="dark"] .mag {
-  --mag-graphite: #10141a;
+/* Бренд-панель входа не может быть цветом текста — она сама поверхность.
+ * Возвращаем ей графит явно. */
+.mag {
+  --mag-graphite: #121416;
 }
 
 /* Редактор разметки тёмный всегда, в любой теме: кадр рассматривают на
@@ -134,53 +102,45 @@
 .mag-ed,
 .mag-cv,
 .mag-fs {
-  --ed-bg: #10141a;
-  --ed-chrome: #171c21;
-  --ed-panel: #1c2126;
-  --ed-edge: #2b3238;
-  --ed-btn: #242a30;
-  --ed-ink: #e8ecef;
-  --ed-dim: #9aa4ae;
-  --ed-faint: #6b757f;
+  --ed-bg: #0a0b0c;
+  --ed-chrome: #141618;
+  --ed-panel: #191b1d;
+  --ed-edge: #32363a;
+  --ed-btn: #232629;
+  --ed-ink: var(--ink);
+  --ed-dim: var(--dim);
+  --ed-faint: var(--faint);
 
-  --s-done: #3fbf7f;
-  --s-skip: #d9a441;
-  --s-null: #5a9bff;
-  --s-del: #ff4d4d;
+  --s-done: var(--done);
+  --s-skip: var(--skip);
+  --s-null: var(--null);
+  --s-del: var(--del);
 
-  /* Внутри редактора общие имена тоже тёмные — новые узлы пишутся уже на них. */
-  --paper: #10141a;
-  --card: #1c2126;
-  --sunk: #171c21;
-  --rule: #2b3238;
-  --hair: #242a30;
-  --ink: #e8ecef;
-  --dim: #9aa4ae;
-  --faint: #6b757f;
-  --red: #ff4d4d;
-  --red-hi: #ff6b6b;
-  --red-in: #2a1618;
-  --done: #3fbf7f;
-  --null: #5a9bff;
-  --skip: #d9a441;
-  --del: #f97b4f;
-  --on-acc: #10141a;
+  /* Общие имена внутри редактора не переопределяются: тема одна, и вторая
+     копия значений здесь однажды разъехалась бы с первой. Своё у редактора
+     только то, чего нет снаружи, — поверхности вокруг кадра. */
+  --paper: #0a0b0c;
+  --card: #191b1d;
+  --sunk: #121314;
 }
 
-/* Старое приложение на /tools остаётся тёмным — оно писалось под тёмный фон
- * с жёстко заданными цветами, и переключать его темой значило бы переписать
- * тысячу строк ради экрана, который и так доживает свой век. Палитру
- * пригоняем к общей: синий акцент уходит, красный приходит. */
+/* Старое приложение на /tools писалось под тёмный фон с жёстко заданными
+ * цветами. Переписывать его тысячу строк незачем — достаточно посадить его
+ * имена на общие токены, и оно поедет за палитрой само.
+ *
+ * Здесь же лежит фон страницы: `body { background: var(--bg) }` в common.css.
+ * Пока `--bg` был отдельным числом, вся «Магистраль» стояла на старом
+ * синеватом графите, сколько бы ни менялся `--paper`. */
 :root {
-  --bg: #10141a;
-  --panel: #1c2126;
-  --panel-2: #242a30;
-  --border: #2b3238;
-  --text: #e8ecef;
-  --muted: #9aa4ae;
-  --accent: #ff4d4d;
-  --danger: #ff4d4d;
-  --green: #3fbf7f;
+  --bg: var(--paper);
+  --panel: var(--card);
+  --panel-2: var(--hair);
+  --border: var(--rule);
+  --text: var(--ink);
+  --muted: var(--dim);
+  --accent: var(--red);
+  --danger: var(--red);
+  --green: var(--done);
 }
 
 /* ========================= ОБЩИЕ ПРИМИТИВЫ ========================= */
@@ -439,34 +399,6 @@
 
 /* Переключатель темы в верхней строке: три состояния, а не два — «как в
  * системе» тоже осознанный выбор, и он должен быть виден. */
-.g-theme {
-  display: flex;
-  gap: 1px;
-  margin-left: auto;
-  background: var(--hair);
-  border-radius: var(--radius);
-  padding: 2px;
-}
-
-.g-theme button {
-  border: 0;
-  background: none;
-  color: var(--faint);
-  font-size: 13px;
-  line-height: 1;
-  padding: 5px 8px;
-  border-radius: var(--radius-s);
-  cursor: pointer;
-}
-
-.g-theme button:hover { color: var(--ink); }
-
-.g-theme button.on {
-  background: var(--card);
-  color: var(--ink);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
-}
-
 /* Пустой экран — приглашение действовать, а не сообщение о пустоте. */
 .g-empty {
   text-align: center;
@@ -599,4 +531,351 @@
 @media (max-width: 780px) {
   .g-vcard { grid-template-columns: 1fr; }
   .g-vcard-nums { flex-direction: row; gap: 26px; flex-wrap: wrap; }
+}
+
+/* ==================== ПРАВКИ ЧИТАЕМОСТИ И РИТМА ==================== */
+
+/* Пустые разделы. Раньше текст, подпись и кнопка стояли вплотную: заголовок
+   лип к объяснению, объяснение к кнопке, и всё читалось одним комком. */
+.g-empty,
+.mag-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  line-height: 1.5;
+}
+
+/* Объяснение под заголовком — обычно голый текстовый узел, а не элемент.
+   Междуэлементный зазор такой не всегда цепляет, поэтому отступ задаём полем
+   у заголовка, а не только `gap`. */
+.g-empty b,
+.mag-empty b {
+  margin-bottom: 4px;
+}
+
+.g-empty button,
+.g-empty .mag-btn,
+.mag-empty button,
+.mag-empty .mag-btn {
+  margin-top: 4px;
+}
+
+/* Поля ввода. Светлая заливка на тёмном — это дыра в экране, а курсор в ней
+   не виден вовсе. */
+input,
+textarea,
+select {
+  color-scheme: dark;
+}
+
+.mag-field input,
+.mag-field textarea,
+.mag-field select,
+.mag input[type="text"],
+.mag input[type="search"],
+.mag input[type="email"],
+.mag input[type="password"],
+.mag input[type="number"],
+.mag textarea,
+.mag select {
+  background: var(--sunk);
+  border-color: var(--rule);
+  color: var(--ink);
+}
+
+.mag-field input::placeholder,
+.mag-field textarea::placeholder,
+.mag input::placeholder,
+.mag textarea::placeholder {
+  color: var(--faint);
+}
+
+.mag-field input:focus,
+.mag-field textarea:focus,
+.mag input:focus,
+.mag textarea:focus,
+.mag select:focus {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(255, 77, 77, 0.18);
+}
+
+/* Состояние таски. Цвета были заданы светлыми числами и на тёмном
+   превращались в белые пятна без всякого смысла. */
+.mag-tstate {
+  background: var(--sunk);
+  border-color: var(--rule);
+  color: var(--dim);
+}
+
+.mag-tstate i { background: var(--faint); }
+
+.mag-tstate.queued { background: var(--sunk); color: var(--dim); border-color: var(--rule); }
+.mag-tstate.queued i { background: var(--faint); }
+
+.mag-tstate.work { background: var(--red-in); color: var(--red); border-color: rgba(255, 77, 77, 0.45); }
+.mag-tstate.work i { background: var(--red); box-shadow: 0 0 8px rgba(255, 77, 77, 0.7); }
+
+.mag-tstate.done { background: var(--done-in); color: var(--done); border-color: rgba(46, 224, 122, 0.42); }
+.mag-tstate.done i { background: var(--done); box-shadow: 0 0 8px rgba(46, 224, 122, 0.7); }
+
+.mag-tstate.upd { background: var(--skip-in); color: var(--skip); border-color: rgba(255, 176, 46, 0.42); }
+.mag-tstate.upd i { background: var(--skip); box-shadow: 0 0 8px rgba(255, 176, 46, 0.7); }
+
+.mag-tstate.closed { background: var(--sunk); color: var(--faint); border-color: var(--hair); }
+.mag-tstate.closed i { background: var(--faint); }
+
+/* Подразделы таски. Полоска снизу у выбранного — единственное, что отличало
+   его от остальных, и на тёмном она пропадала. */
+.mag-tabs {
+  border-bottom-color: var(--rule);
+  gap: 4px;
+}
+
+/* Вкладки бывают и ссылками, и кнопками. У кнопки своя родная обводка и
+   серая заливка от браузера, а прежнее правило писалось под ссылки и гасить
+   их не умело — отсюда белая рамка и серый фон у подразделов таски.
+   Шрифт кнопке тоже не наследуется, его приходится задавать. */
+.mag-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--dim);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+
+.mag-tab:hover {
+  color: var(--ink);
+  background: var(--sunk);
+}
+
+.mag-tab.on {
+  color: var(--ink);
+  background: var(--card);
+  border-bottom-color: var(--red);
+}
+
+.mag-tab span,
+.g-ctx-nav a span {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 6px;
+  min-width: 18px;
+  text-align: center;
+  border-radius: 999px;
+  background: var(--hair);
+  color: var(--dim);
+  font: 600 10.5px var(--mono);
+}
+
+.mag-tab.on span,
+.g-ctx-nav a.on span {
+  background: var(--red-in);
+  color: var(--red);
+}
+
+/* Предупреждения и сообщения. Приглушённые цвета на почти чёрном тонули —
+   теперь они светятся, и полоса слева говорит о характере раньше текста. */
+.mag-ok-banner,
+.g-warn,
+.mag-error,
+.mag-hint {
+  border-radius: var(--radius-l);
+  line-height: 1.5;
+}
+
+.mag-ok-banner {
+  background: var(--done-in);
+  border: 1px solid rgba(46, 224, 122, 0.42);
+  border-left: 3px solid var(--done);
+  color: var(--done);
+  box-shadow: var(--glow-done);
+}
+
+.g-warn {
+  background: var(--skip-in);
+  border: 1px solid rgba(255, 176, 46, 0.42);
+  border-left: 3px solid var(--skip);
+  color: var(--skip);
+  box-shadow: var(--glow-skip);
+}
+
+.g-warn b { color: var(--ink); }
+
+.mag-error {
+  background: var(--red-in);
+  border: 1px solid rgba(255, 77, 77, 0.42);
+  border-left: 3px solid var(--red);
+  color: var(--red);
+  box-shadow: var(--glow-red);
+}
+
+/* Модальные окна. Прежняя подложка была полупрозрачным графитом: под ней
+   просвечивал интерфейс, и получалась каша. Теперь фон гасится почти в ноль,
+   а вокруг самого окна — красноватый ореол, который отделяет его от фона без
+   всякой рамки. */
+.mag-backdrop {
+  background: rgba(4, 5, 6, 0.86);
+  backdrop-filter: blur(3px);
+}
+
+.mag-modal,
+.mag-cut {
+  box-shadow:
+    0 0 0 1px rgba(255, 77, 77, 0.28),
+    0 0 40px rgba(255, 77, 77, 0.14),
+    0 30px 80px rgba(0, 0, 0, 0.7);
+}
+
+/* Окно нарезки. Оно было ниже, чем нужно: кадр ужимался, дорожка участков
+   оказывалась в щели, и попасть по границе мышью было тяжело. */
+.mag-cut {
+  width: 1320px;
+  min-height: min(860px, calc(100vh - 48px));
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.mag-cut-head { border-bottom-color: var(--rule); }
+.mag-cut-meta { color: var(--dim); }
+.mag-cut-btn {
+  background: var(--hair);
+  border-color: var(--rule);
+  color: var(--ink);
+}
+.mag-cut-left { background: var(--paper); }
+.mag-cut-stage video { max-height: 58vh; }
+
+/* Что делают с роликом прямо сейчас. Строка живёт в шапке блока рядом с
+   меткой: подготовка идёт на сервере, и без неё свежий ролик выглядит просто
+   сломанным — открывается и ничего не показывает. */
+.g-prep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--skip);
+  white-space: nowrap;
+}
+
+.g-prep i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--skip);
+  box-shadow: 0 0 8px rgba(255, 176, 46, 0.8);
+  animation: g-prep-pulse 1s ease-in-out infinite;
+}
+
+.g-prep b {
+  font: 600 11px var(--mono);
+  color: var(--ink);
+}
+
+.g-prep.bad { color: var(--red); }
+
+@keyframes g-prep-pulse {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
+}
+
+/* Недоступная кнопка должна выглядеть недоступной, а не просто не работать. */
+.mag-ghost:disabled,
+.mag-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Большие заглушки разделов — «нет тасок», «нет датасетов», «нет проектов».
+   Раньше это был просто центрированный текст: заголовок лип к объяснению,
+   объяснение к кнопке. Правку в `.g-empty` они не видели — у них свой класс. */
+.mag-empty-big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  line-height: 1.55;
+}
+
+.mag-empty-big h3 { margin: 0; }
+
+.mag-empty-big p {
+  margin: 0;
+  max-width: 52ch;
+}
+
+.mag-empty-big button,
+.mag-empty-big .mag-btn {
+  margin-top: 4px;
+}
+
+/* Карточка загрузки. Полоса шла на 460 px и обрывалась посреди карточки, а
+   снизу к ней вплотную прилипало следующее — вкладка со списком. */
+.mag-card > .mag-progress {
+  max-width: none;
+  width: 100%;
+}
+
+.mag-upload-card {
+  margin-bottom: 14px;
+}
+
+/* Строка «что делают с роликом». Точка, название работы и доля были выровнены
+   по середине коробок, а не по строке: у мелкого моноширинного процента своя
+   высота, и текст рядом с ним казался съехавшим вниз. */
+.g-prep,
+.mag-ved-prepare {
+  align-items: baseline;
+}
+
+.g-prep i,
+.mag-ved-prepare-dot {
+  align-self: center;
+  flex-shrink: 0;
+}
+
+/* Оценка нарезки — «сколько кадров добавится и сколько уйдёт». Цвета были
+   заданы светлыми числами: песочная рамка и коричневый текст на тёмном
+   становились нечитаемыми пятнами. */
+.mag-est {
+  background: var(--skip-in);
+  border-color: rgba(255, 176, 46, 0.42);
+  color: var(--skip);
+  box-shadow: var(--glow-skip);
+}
+
+.mag-est b,
+.mag-est strong { color: var(--ink); }
+
+.mag-est.bad {
+  background: var(--red-in);
+  border-color: rgba(255, 77, 77, 0.42);
+  color: var(--red);
+  box-shadow: var(--glow-red);
+}
+
+.mag-est-diff b.add { color: var(--done); }
+.mag-est-diff b.rm { color: var(--red); }
+
+/* Игла текущего кадра на ленте. Была цвета карточки с белым свечением —
+   то есть тёмной полоской на тёмном, которую приходилось искать. Красная
+   игла — то же, чем помечено «сейчас» во всём приложении. */
+.mag-cut-head-line {
+  background: var(--red);
+  box-shadow: 0 0 6px rgba(255, 77, 77, 0.9), 0 0 14px rgba(255, 77, 77, 0.45);
+}
+
+/* Кинолента окна рисуется на холст, а не приходит картинкой. */
+canvas.mag-cut-strip {
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0.62;
+  pointer-events: none;
+  transition: opacity 0.15s linear;
 }

@@ -89,6 +89,117 @@ function framesIn(s: Segment): number {
   return Math.max(0, Math.ceil((s.end_ms - s.start_ms) / Math.max(1, s.step_ms)));
 }
 
+/** Кинолента окна: настоящие кадры того промежутка, который сейчас виден.
+ *
+ * Общая лента приходит с сервера одной широкой картинкой на весь ролик — на
+ * общем плане этого хватает. Но при увеличении она просто растягивалась: сотня
+ * пикселей превращалась в тысячу, и разметчик видел мыло вместо кадров, хотя
+ * выбирает он именно по ним.
+ *
+ * Досылать нарезку с сервера незачем — сам ролик уже у клиента, им играет
+ * плеер. Поэтому кадры снимаются здесь: свой скрытый плеер перематывается по
+ * окну и рисует каждый кадр на холст. Плеер именно свой, а не общий с
+ * подсказкой под курсором: перемотка у элемента одна, и две очереди к ней
+ * отбирали бы кадры друг у друга.
+ */
+function WindowStrip({
+  src, from, span, className,
+}: {
+  src: string;
+  from: number;
+  span: number;
+  className?: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video || span <= 0) return undefined;
+
+    let live = true;
+    // Перемотка — это сеть и разжатие; на каждое движение колеса её затевать
+    // незачем. Ждём, пока окно устоится.
+    const timer = window.setTimeout(() => void fill(), 260);
+
+    async function seekTo(seconds: number): Promise<boolean> {
+      return new Promise((resolve) => {
+        if (!video) return resolve(false);
+        let done = false;
+        const finish = (ok: boolean) => {
+          if (done) return;
+          done = true;
+          video.removeEventListener("seeked", onSeeked);
+          window.clearTimeout(guard);
+          resolve(ok);
+        };
+        const onSeeked = () => finish(true);
+        // Перемотка может и не ответить — на битом месте или пока едут байты.
+        const guard = window.setTimeout(() => finish(false), 4000);
+        video.addEventListener("seeked", onSeeked);
+        try {
+          video.currentTime = seconds;
+        } catch {
+          finish(false);
+        }
+      });
+    }
+
+    async function fill() {
+      if (!live || !canvas || !video) return;
+      const box = canvas.getBoundingClientRect();
+      if (!box.width) return;
+      // Ширина плитки — компромисс: уже 80 px кадр перестаёт читаться, шире
+      // 130 их становится слишком мало, чтобы попасть по нужному месту.
+      const tileW = 104;
+      const tiles = Math.max(1, Math.round(box.width / tileW));
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.round(box.width * dpr);
+      canvas.height = Math.round(box.height * dpr);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.scale(dpr, dpr);
+      ctx.clearRect(0, 0, box.width, box.height);
+
+      const w = box.width / tiles;
+      for (let i = 0; i < tiles; i += 1) {
+        if (!live) return;
+        // Середина плитки, а не её край: кадр должен отвечать за тот кусок
+        // ленты, под которым он нарисован.
+        const ms = from + ((i + 0.5) / tiles) * span;
+        if (!(await seekTo(ms / 1000))) continue;
+        if (!live || !video.videoWidth) return;
+        // Кадр вписывается по высоте и обрезается по ширине — как `cover`:
+        // иначе на широком ролике между плитками зияли бы поля.
+        const scale = box.height / video.videoHeight;
+        const drawW = video.videoWidth * scale;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(i * w, 0, w, box.height);
+        ctx.clip();
+        ctx.drawImage(video, i * w + (w - drawW) / 2, 0, drawW, box.height);
+        ctx.restore();
+        setReady(true);
+      }
+    }
+
+    return () => {
+      live = false;
+      window.clearTimeout(timer);
+    };
+  }, [src, from, span]);
+
+  return (
+    <>
+      <video ref={videoRef} className="mag-peek" src={src} preload="auto" muted />
+      <canvas ref={canvasRef} className={className}
+        style={{ opacity: ready ? undefined : 0 }} />
+    </>
+  );
+}
+
 /** Снимок кадра из любого <video> того же origin. */
 function drawThumb(v: HTMLVideoElement, w: number): string | null {
   if (v.readyState < 2 || !v.videoWidth) return null;
@@ -626,16 +737,25 @@ export default function VideoCutModal({
                 setDrag(null);
               }}
             >
-              <VideoStrip
-                className="mag-cut-strip"
-                taskId={taskId}
-                videoId={video.id}
-                draggable={false}
-                style={{
-                  width: `${(Math.max(1, duration) / view.span) * 100}%`,
-                  marginLeft: `${-(view.start / view.span) * 100}%`,
-                }}
-              />
+              {/* На общем плане хватает ленты с сервера: она уже склеена и
+                  ничего не стоит. Стоит увеличить — и растянутая картинка
+                  превращается в мыло, поэтому кадры окна снимаются на месте
+                  из того же файла, которым играет плеер. */}
+              {zoomed ? (
+                <WindowStrip
+                  className="mag-cut-strip"
+                  src={videoFileUrl(taskId, video.id)}
+                  from={view.start}
+                  span={view.span}
+                />
+              ) : (
+                <VideoStrip
+                  className="mag-cut-strip"
+                  taskId={taskId}
+                  videoId={video.id}
+                  draggable={false}
+                />
+              )}
               {segs.map((s, i) => {
                 const color = COLORS[i % COLORS.length];
                 const active = selected === s.id;

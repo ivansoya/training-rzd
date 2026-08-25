@@ -20,6 +20,7 @@ from common.models import (
     ProjectInvitation,
     ProjectMember,
     Superclass,
+    Task,
     User,
 )
 
@@ -392,6 +393,13 @@ def project_detail(code):
                 "size_bytes": int(size_bytes),
                 "datasets": len(datasets_json),
                 "classes": len(classes_json),
+                # Закрытые не считаем: в перечне разделов число говорит
+                # «сколько работы», а закрытая таска работой уже не является.
+                "tasks": db.execute(
+                    select(func.count(Task.id)).where(
+                        Task.project_id == project.id, Task.status != "closed"
+                    )
+                ).scalar_one(),
             },
             "datasets": datasets_json,
             "classes": classes_json,

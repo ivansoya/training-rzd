@@ -327,6 +327,7 @@ def get_task(task_id):
         data["videos"] = [
             {
                 "id": str(v.id),
+                "prepare": _prepare_state(db, v),
                 "file_name": v.file_name,
                 "duration_ms": v.duration_ms,
                 "fps": v.fps,
@@ -535,6 +536,55 @@ def _drop_files(base, image_id):
             os.remove(os.path.join(base, sub, f"{image_id}.jpg"))
         except OSError:
             pass
+
+
+# Как называются работы на человеческом языке. Разметчику нечего делать со
+# словом «chunkset», ему нужно знать, что происходит.
+STAGE_TEXT = {
+    "index": "разбираю на кадры",
+    "strip": "клею киноленту",
+    "variant": "готовлю ступень качества",
+    "chunkset": "нарезаю на куски",
+    "chunk": "готовлю кусок",
+}
+
+
+def _prepare_state(db, video):
+    """Готов ли ролик к работе и что с ним делают прямо сейчас.
+
+    У нарезки требований нет: участки выбирают по самому файлу, а кинолента —
+    удобство. У разметки требования жёсткие: без таблицы кадров ролик не
+    открыть, а без перегонов нечего показывать. Пока их нет, пускать в
+    редактор нельзя — он честно скажет «готовится», но человек уже решит, что
+    сломалось.
+    """
+    progress = queue.progress_of(db, video.id)
+    stage = (progress or {}).get("kind")
+    state = {
+        "busy": progress is not None,
+        "stage": stage,
+        "stage_text": STAGE_TEXT.get(stage) if stage else None,
+        "processed": (progress or {}).get("processed", 0),
+        "total": (progress or {}).get("total", 0),
+        "ready": True,
+        "error": None,
+    }
+    if video.mode != "annotate":
+        return state
+
+    default = chunklib.default_for(video.height)
+    asset = queue.asset(db, video.id, default)
+    state["ready"] = bool(
+        video.frame_count and asset and asset.chunks_status == "ready"
+    )
+    if asset and (asset.chunks_status == "error" or asset.file_status == "error"):
+        state["ready"] = False
+        state["error"] = asset.error or "Подготовить ролик не удалось."
+    elif not state["ready"] and not state["busy"]:
+        failure = queue.last_failure(db, video.id, queue.KIND_INDEX)
+        if failure:
+            state["error"] = failure.error or "Ролик не удалось разобрать на кадры."
+    return state
 
 
 def _drop_video_files(path):
