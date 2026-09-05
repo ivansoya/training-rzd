@@ -15,6 +15,16 @@
 * Сплит назначается **детерминированно**: порядок внутри группы — по sha1
   от image_id, группа — самый редкий класс на кадре. Повторный экспорт того
   же набора даёт тот же train/val, а новые кадры не перетасовывают старые.
+
+Выгрузок две, и выбирает между ними человек в окне экспорта.
+
+* **Боксы** (`ann_type="bbox"`) — как было. Полигон сводится к своей
+  охватывающей рамке: объект упрощается, но не пропадает.
+* **Сегментация** (`ann_type="polygon"`) — строка YOLO-seg на объект. Боксы
+  сюда **не идут**: прямоугольник, записанный как контур, учил бы модель, что
+  объекты прямоугольные, и человек об этом не узнал бы. Пропущенные считаются
+  и показываются в плане отдельной строкой — отказ обязан быть виден до
+  выгрузки, а не обнаруживаться по недостаче в архиве.
 """
 import hashlib
 import json
@@ -27,6 +37,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request, send_file
+from sqlalchemy import func as sa_func
 from sqlalchemy import select
 
 from common import config, jobs
@@ -34,12 +45,19 @@ from common.auth import current_user
 from common.db import SessionLocal
 from common.models import Annotation, Dataset, Image, LabelClass, Project
 from common.storage import load_json, save_json, translit_slug
+from datasets_svc import polygon as polylib
 # Тот же разбор кода проекта и прав, что у остальных данных проекта.
 from datasets_svc.project_routes import _resolve
 
 bp = Blueprint("export", __name__)
 
 VAL_DEFAULT = 0.2
+# Что умеем выгружать. Ключ — то же слово, что в `annotations.ann_type`:
+# лишнее имя для одного и того же расходится при первой же правке.
+EXPORT_TYPES = ("bbox", "polygon")
+# Какие аннотации годятся для каждой выгрузки. Полигон в боксовую попадает
+# охватывающей рамкой; бокс в сегментацию не попадает никак.
+USABLE = {"bbox": ("bbox", "polygon"), "polygon": ("polygon",)}
 # Сплиты, которые считаются проставленными. Всё остальное («other» у кадров из
 # тасок) раскидывает сам экспорт.
 FIXED_SPLITS = ("train", "val", "test")
@@ -66,10 +84,14 @@ def _selection(data):
         ratio = float(ratio)
     except (TypeError, ValueError):
         ratio = VAL_DEFAULT
+    ann_type = data.get("ann_type", "bbox")
+    if ann_type not in EXPORT_TYPES:
+        ann_type = "bbox"
     return {
         "datasets": _uuids(data.get("datasets")),
         "classes": _uuids(data.get("classes")),
         "resplit": data.get("split_mode") == "resplit",
+        "ann_type": ann_type,
         # Крайние значения бессмысленны: при 0 нечем проверять, при 1 нечем учить.
         "val_ratio": min(max(ratio, 0.05), 0.5),
     }
@@ -145,6 +167,30 @@ def _line(export_id, geometry, width, height):
     return f"{export_id} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}\n"
 
 
+def _row_line(export_id, ann, width, height, want):
+    """Строка архива для одной аннотации, или None, если она сюда не идёт.
+
+    Одно место на оба вида выгрузки: пара «что за разметка» × «что просят»
+    решается здесь и больше нигде, иначе правило «бокс в сегментацию не идёт»
+    придётся помнить и предпросмотру, и сборке архива порознь.
+    """
+    kind = ann.ann_type or "bbox"
+    geometry = ann.geometry or {}
+    if want == "polygon":
+        # Бокс сюда не пускаем осознанно — см. шапку модуля.
+        if kind != "polygon":
+            return None
+        return polylib.to_line(export_id, geometry, width, height)
+    if kind == "polygon":
+        # Полигон боксом — его охватывающая рамка. Тот же расчёт, что показывает
+        # редактор, ставя подпись класса: разойдясь, они противоречили бы друг
+        # другу на одном экране.
+        geometry = polylib.bounds(polylib.parts_of(geometry))
+        if geometry is None:
+            return None
+    return _line(export_id, geometry, width, height)
+
+
 def _plan(db, project, sel):
     classes = []
     if sel["classes"]:
@@ -171,7 +217,12 @@ def _plan(db, project, sel):
 
     # Аннотации одним запросом через датасеты, а не списком id: список из ста
     # тысяч uuid в IN — уже не запрос, а поэма.
+    want = sel["ann_type"]
     anns = defaultdict(list)
+    # Разметка не того рода: она есть, класс подходит, но в эту выгрузку не
+    # идёт. Считаем отдельно от `dropped` — «отсеял фильтр классов» и «бокс в
+    # сегментацию не годится» человек чинит по-разному.
+    wrong_kind = 0
     if images and classes:
         rows = db.execute(
             select(Annotation)
@@ -179,11 +230,21 @@ def _plan(db, project, sel):
             .where(
                 Image.dataset_id.in_(sel["datasets"]),
                 Annotation.class_id.in_([c.id for c in classes]),
-                Annotation.ann_type == "bbox",
+                Annotation.ann_type.in_(USABLE[want]),
             )
         ).scalars().all()
         for ann in rows:
             anns[ann.image_id].append(ann)
+        wrong_kind = db.execute(
+            select(sa_func.count())
+            .select_from(Annotation)
+            .join(Image, Annotation.image_id == Image.id)
+            .where(
+                Image.dataset_id.in_(sel["datasets"]),
+                Annotation.class_id.in_([c.id for c in classes]),
+                Annotation.ann_type.not_in(USABLE[want]),
+            )
+        ).scalar() or 0
 
     # Кадр без разметки бывает двух родов, и в окне их надо разделить: один
     # отсеял фильтр классов, другого никогда не размечали.
@@ -245,7 +306,7 @@ def _plan(db, project, sel):
         # считалась по тому же, что уходит в файл, а не по тому, что в базе.
         lines, kinds = [], []
         for a in anns.get(img.id, []):
-            line = _line(export_id[a.class_id], a.geometry or {}, img.width, img.height)
+            line = _row_line(export_id[a.class_id], a, img.width, img.height, want)
             if line is None:
                 continue
             lines.append(line)
@@ -280,6 +341,20 @@ def _plan(db, project, sel):
             warnings.append("Обучающая часть пуста.")
     if no_size:
         warnings.append(f"Пропущено кадров без размеров: {no_size}.")
+    if wrong_kind:
+        # Называем и число, и причину: «пропущено 412» без объяснения читается
+        # как поломка выгрузки.
+        warnings.append(
+            f"В сегментацию не идут боксы: пропущено объектов {wrong_kind}. "
+            "Прямоугольник, записанный контуром, учил бы модель неверно."
+            if want == "polygon"
+            else f"Пропущено объектов неподходящего вида: {wrong_kind}."
+        )
+    if want == "polygon":
+        warnings.append(
+            "Сегментацию платформа выгружает, но пока не обучает: "
+            "в обучении только модели детекции."
+        )
     idle = [c.name for c in classes if not per_class[c.id]["annotations"]]
     if idle:
         shown = ", ".join(idle[:5]) + ("…" if len(idle) > 5 else "")
@@ -303,6 +378,8 @@ def _plan(db, project, sel):
         "annotations": counts["annotations"],
         "empty": empty_total,
         "dropped": dropped,
+        "wrong_kind": wrong_kind,
+        "ann_type": want,
         "unlabelled": unlabelled,
         "splits": {s: counts[s] for s in FIXED_SPLITS if counts[s]},
         "val_ratio": round(ratio, 4),
@@ -317,8 +394,13 @@ def _data_yaml(project, plan):
     """Ключ `path` намеренно не пишем: без него ultralytics считает пути от
     самого yaml, а с относительным `path` — от своей папки датасетов."""
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Вид разметки пишем комментарием, а не ключом: ultralytics выбирает задачу
+    # по модели, а не по yaml, и лишний ключ он бы просто не понял. Человеку же
+    # по строке labels/ не отличить бокс от контура.
+    kind = "сегментация" if plan.get("ann_type") == "polygon" else "боксы"
     lines = [
         f"# Магистраль ML · проект «{project.name}» · выгружено {stamp}",
+        f"# Разметка: {kind}",
         "train: images/train",
         "val: images/val",
     ]
@@ -455,12 +537,12 @@ def start_export(code):
         if project.status == "importing":
             return jsonify({"error": "Проект ещё импортируется."}), 409
         data = request.get_json(silent=True) or {}
-        # Формат и тип пока одни; проверяем явно, чтобы чужой запрос не получил
-        # молча yolo-боксы вместо того, что просил.
+        # Формат один; проверяем явно, чтобы чужой запрос не получил молча
+        # yolo вместо того, что просил.
         if data.get("format", "yolo") != "yolo":
             return jsonify({"error": "Пока поддерживается только формат YOLO."}), 400
-        if data.get("ann_type", "bbox") != "bbox":
-            return jsonify({"error": "Пока выгружаются только боксы."}), 400
+        if data.get("ann_type", "bbox") not in EXPORT_TYPES:
+            return jsonify({"error": "Выгружаются боксы или сегментация."}), 400
         sel = _selection(data)
         if not sel["datasets"]:
             return jsonify({"error": "Выберите хотя бы один датасет."}), 400

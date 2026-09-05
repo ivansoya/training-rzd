@@ -173,9 +173,15 @@ def export_frames(track: dict, keys: list[dict], last_frame: int | None = None) 
 def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None) -> dict:
     """Что именно материализуется при закрытии разметки ролика.
 
-    Возвращает ``{frame_no: [бокс, ...]}``. Бокс — словарь с ``class_id``,
-    геометрией и происхождением; из него потом получается обычная аннотация.
-    Одиночные боксы (не трековые) идут на свои кадры как есть.
+    Возвращает ``{frame_no: [фигура, ...]}``. Фигура — словарь с ``class_id``,
+    видом (``ann_type``), геометрией и происхождением; из него потом получается
+    обычная аннотация. Одиночная разметка (не трековая) идёт на свои кадры как
+    есть и бывает обеих форм — рамкой и контуром.
+
+    **Трек — всегда рамка.** Положение между ключами он считает сам, а посчитать
+    контур нечем, пока точки соседних ключей не сопоставлены друг с другом:
+    у колец разной длины нет очевидного соответствия вершин, и «интерполяция»
+    свелась бы к подмене одной фигуры другой.
     """
     by_frame: dict[int, list[dict]] = {}
 
@@ -188,6 +194,7 @@ def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None)
             exact = next((k for k in keys if k["frame_no"] == frame_no), None)
             by_frame.setdefault(frame_no, []).append({
                 "class_id": track["class_id"],
+                "ann_type": "bbox",
                 "geometry": geometry,
                 # Посчитанное положение — не работа человека, и помечать его
                 # как ручную разметку было бы неправдой в истории объекта.
@@ -198,6 +205,7 @@ def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None)
     for single in singles:
         by_frame.setdefault(int(single["frame_no"]), []).append({
             "class_id": single["class_id"],
+            "ann_type": single.get("ann_type") or "bbox",
             "geometry": dict(single["geometry"]),
             "source": single.get("source", "human"),
             "track_id": None,

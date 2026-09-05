@@ -379,6 +379,13 @@ export async function cancelImport(code: string): Promise<void> {
 // --- project datasets ---
 
 // Геометрия в пикселях исходного кадра — на превью пересчитывается в проценты.
+/** Объект разметки: бокс или полигон.
+ *
+ * `x/y/w/h` заполнены **всегда**, в том числе у полигона: это его охватывающая
+ * рамка по всем частям сразу. Так всё, что умеет только прямоугольники —
+ * счётчики, ленты кадров, просмотр, — продолжает работать, не зная о контурах,
+ * и показывает объект рамкой. Что это на самом деле, говорит `kind`.
+ */
 export interface Box {
   x: number;
   y: number;
@@ -387,6 +394,9 @@ export interface Box {
   class_index: number;
   name: string;
   color: string;
+  kind?: "bbox" | "polygon";
+  /** Кольца контура в пикселях изображения. У бокса их нет. */
+  parts?: [number, number][][];
 }
 
 export interface DatasetImage {
@@ -959,11 +969,21 @@ export interface VideoTrack {
   keys: TrackKey[];
 }
 
+/** Одиночная разметка кадра ролика: рамка или контур.
+ *
+ * `geometry` — как лежит в базе, `shape` — та же фигура в общем виде, которым
+ * говорят все экраны: `x/y/w/h` заполнены всегда, а `kind` и `parts` отличают
+ * контур. Рисуют и отправляют обратно именно `shape`. */
 export interface VideoSingleBox {
   id: string;
   frame_no: number;
   class_index: number | null;
-  geometry: { x: number; y: number; w: number; h: number };
+  geometry: Record<string, unknown>;
+  shape?: {
+    kind?: "bbox" | "polygon";
+    x: number; y: number; w: number; h: number;
+    parts?: [number, number][][];
+  };
   source: string;
 }
 
@@ -1054,11 +1074,24 @@ export async function deleteTrackKey(
   return asJson(await del(`video-tracks/${trackId}/keys/${frameNo}`));
 }
 
+/** Фигура кадра ролика на проводе. Ключ запроса остался «boxes», а под ним
+ *  теперь обе формы: одиночную разметку кадра размечают и рамкой, и контуром.
+ *  Трек — только рамка, у него своя ручка. */
+export interface SingleWire {
+  class_index: number;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  kind?: "bbox" | "polygon";
+  parts?: [number, number][][];
+}
+
 export async function saveFrameBoxes(
   taskId: string,
   videoId: string,
   frameNo: number,
-  boxes: { class_index: number; x: number; y: number; w: number; h: number }[]
+  boxes: SingleWire[]
 ): Promise<{ saved: number }> {
   return asJson(
     await put(`tasks/${taskId}/videos/${videoId}/frames/${frameNo}/boxes`, { boxes })
@@ -1202,9 +1235,16 @@ export async function autoPredict(
   );
 }
 
+/** Ключ запроса остался «boxes»: он давно в клиенте, в тестах и в сервере, а
+ *  под ним теперь идут обе фигуры. Что именно послали, говорит `kind`. */
 export async function saveAnnotations(
   imageId: string,
-  boxes: { class_index: number; x: number; y: number; w: number; h: number }[]
+  boxes: {
+    class_index: number;
+    x: number; y: number; w: number; h: number;
+    kind?: "bbox" | "polygon";
+    parts?: [number, number][][];
+  }[]
 ): Promise<{ saved: number; clamped: number; task_status: string }> {
   return asJson(
     await fetch(`/api/images/${imageId}/annotations`, {
@@ -1295,6 +1335,10 @@ export interface ExportPreview {
   empty: number;
   /** Отсеяно фильтром классов — разметка была, но не выбранная. */
   dropped: number;
+  /** Объектов не того рода: боксы при выгрузке сегментации. Отдельно от
+   *  `dropped` — эти два человек чинит по-разному. */
+  wrong_kind: number;
+  ann_type: "bbox" | "polygon";
   /** Кадры, которых никогда не касались: в выгрузку не идут по правилу. */
   unlabelled: number;
   splits: Record<string, number>;

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { imageThumbUrl } from "../../auth/api";
+import ShapeMini from "./ShapeMini";
+import type { MiniShape } from "./ShapeMini";
 
 /** Кинолента под кадром: превью с разметкой, обводка несёт состояние.
  *
@@ -8,13 +10,8 @@ import { imageThumbUrl } from "../../auth/api";
  * зависит от работы: при сплошной разметке важнее кадр, при выборочной — лента.
  */
 
-export interface FilmBox {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  color: string;
-}
+/** Фигура на превью — ровно то, что нужно слою разметки. */
+export type FilmBox = MiniShape;
 
 export interface FilmItem {
   id: string;
@@ -43,12 +40,17 @@ export default function FilmStrip({
   onPick,
   storageKey = "mag-film-h",
   onHeight,
+  grabHelp,
 }: {
   items: FilmItem[];
   index: number;
   onPick: (i: number) => void;
   storageKey?: string;
   onHeight?: (h: number) => void;
+  /** Метки справки для верхней кромки: что она делает, знает хозяин — у него
+   *  и лежит список всех подсказок редактора. Своей всплывашки у ленты нет:
+   *  вечные подсказки из интерфейса убраны. */
+  grabHelp?: Record<string, unknown>;
 }) {
   const [height, setHeight] = useState(() => stored(storageKey));
   const railRef = useRef<HTMLDivElement>(null);
@@ -106,7 +108,7 @@ export default function FilmStrip({
         onPointerDown={onGrabDown}
         onPointerMove={onGrabMove}
         onPointerUp={onGrabUp}
-        title="Потяните, чтобы изменить высоту ленты"
+        {...(grabHelp || {})}
         role="separator"
         aria-orientation="horizontal"
       />
@@ -121,18 +123,7 @@ export default function FilmStrip({
             title={im.title}
           >
             <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
-            {(im.boxes || []).map((b, k) => (
-              <i
-                key={k}
-                style={{
-                  left: `${(b.x / (im.width || 1)) * 100}%`,
-                  top: `${(b.y / (im.height || 1)) * 100}%`,
-                  width: `${(b.w / (im.width || 1)) * 100}%`,
-                  height: `${(b.h / (im.height || 1)) * 100}%`,
-                  ["--bc" as string]: b.color,
-                }}
-              />
-            ))}
+            <ShapeMini boxes={im.boxes || []} width={im.width} height={im.height} />
             <span className="mag-fs-n">{i + 1}</span>
           </button>
         ))}

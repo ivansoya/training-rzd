@@ -32,7 +32,7 @@ const FORMATS = [
 ];
 const TYPES = [
   { id: "bbox", label: "Боксы", ok: true },
-  { id: "polygon", label: "Сегменты", ok: false },
+  { id: "polygon", label: "Сегментация", ok: true },
   { id: "mask", label: "Маски", ok: false },
 ];
 const SOON = "Появится позже — такой разметки в проекте пока нет";
@@ -45,6 +45,7 @@ export default function ExportModal({ detail, onClose }: Props) {
   );
   const [pickedCls, setPickedCls] = useState<Set<string>>(new Set());
   const [resplit, setResplit] = useState(false);
+  const [annType, setAnnType] = useState<"bbox" | "polygon">("bbox");
   const [valRatio, setValRatio] = useState(0.2);
   const [preview, setPreview] = useState<ExportPreview | null>(null);
   const [pending, setPending] = useState(false);
@@ -76,8 +77,9 @@ export default function ExportModal({ detail, onClose }: Props) {
       classes: [...pickedCls],
       split_mode: resplit ? "resplit" : "keep",
       val_ratio: valRatio,
+      ann_type: annType,
     }),
-    [pickedDs, pickedCls, resplit, valRatio]
+    [pickedDs, pickedCls, resplit, valRatio, annType]
   );
 
   useEffect(() => {
@@ -246,9 +248,16 @@ export default function ExportModal({ detail, onClose }: Props) {
               <button
                 key={t.id}
                 type="button"
-                className={t.id === "bbox" ? "on" : ""}
+                className={t.id === annType ? "on" : ""}
                 disabled={!t.ok}
-                title={t.ok ? undefined : SOON}
+                title={
+                  t.ok
+                    ? t.id === "polygon"
+                      ? "Контур на объект. Боксы в такую выгрузку не идут"
+                      : "Рамка на объект. Контур сводится к охватывающей рамке"
+                    : SOON
+                }
+                onClick={() => t.ok && setAnnType(t.id as "bbox" | "polygon")}
               >
                 {t.label}
               </button>
@@ -321,9 +330,16 @@ export default function ExportModal({ detail, onClose }: Props) {
             )}
           </div>
           {preview &&
-            (preview.dropped > 0 || preview.unlabelled > 0 || preview.empty > 0) && (
+            (preview.dropped > 0 || preview.unlabelled > 0 || preview.empty > 0 ||
+             preview.wrong_kind > 0) && (
               <p className="mag-exp-hint">
                 {preview.dropped > 0 && `Отсеяно фильтром классов: ${preview.dropped}. `}
+                {/* Пропуск по роду разметки называем словами, а не числом:
+                    «пропущено 412» без причины читается как поломка. */}
+                {preview.wrong_kind > 0 &&
+                  (preview.ann_type === "polygon"
+                    ? `Боксов, не идущих в сегментацию: ${preview.wrong_kind}. `
+                    : `Объектов неподходящего вида: ${preview.wrong_kind}. `)}
                 {preview.unlabelled > 0 && `Без разметки: ${preview.unlabelled}. `}
                 {preview.empty > 0 && `Фоновых кадров «пусто»: ${preview.empty}.`}
               </p>

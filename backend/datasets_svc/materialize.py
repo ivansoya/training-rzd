@@ -25,6 +25,7 @@ from common.models import (
     VideoAnnotation,
     VideoTrack,
 )
+from datasets_svc import polygon as polylib
 from datasets_svc import video as videolib
 from datasets_svc import video_tracks as tracklib
 
@@ -58,6 +59,7 @@ def collect_plan(db, video):
             singles.append({
                 "frame_no": row.frame_no,
                 "class_id": row.class_id,
+                "ann_type": row.ann_type,
                 "geometry": row.geometry,
                 "source": row.source,
             })
@@ -185,12 +187,21 @@ def run_video(db, task, video, user_id, progress=None):
             continue
         for item in planned:
             geometry = item["geometry"]
+            ann_type = item.get("ann_type") or "bbox"
+            if ann_type == "polygon":
+                # Площадь контура — сумма площадей его частей: объект,
+                # разорванный надвое, занимает ровно столько, сколько занимают
+                # обе половины.
+                parts = polylib.parts_of(geometry)
+                area = sum(polylib.area(ring) for ring in parts)
+            else:
+                area = geometry["w"] * geometry["h"]
             db.add(Annotation(
                 image_id=image_id,
                 class_id=item["class_id"],
-                ann_type="bbox",
+                ann_type=ann_type,
                 geometry=geometry,
-                area=round(geometry["w"] * geometry["h"], 2),
+                area=round(area, 2),
                 source=item.get("source") or "human",
                 created_by=user_id,
             ))

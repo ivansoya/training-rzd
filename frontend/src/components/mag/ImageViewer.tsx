@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { imageFileUrl, imagePreviewUrl, saveAnnotations } from "../../auth/api";
 import type { DatasetImage, LabelClass } from "../../auth/api";
 import BoxCanvas from "./BoxCanvas";
-import type { CanvasBox, CanvasHandle } from "./BoxCanvas";
+import type { CanvasHandle, CanvasShape } from "./BoxCanvas";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
 
@@ -48,7 +48,7 @@ export default function ImageViewer({
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   // Разметка прямо из просмотра: увидел ошибку — исправил, не заводя таску.
   const [editing, setEditing] = useState(false);
-  const [boxes, setBoxes] = useState<CanvasBox[]>([]);
+  const [boxes, setBoxes] = useState<CanvasShape[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
   const [active, setActive] = useState<number | null>(null);
   const [tool, setTool] = useState<"select" | "box">("select");
@@ -81,8 +81,14 @@ export default function ImageViewer({
 
   useEffect(() => {
     setBoxes(
+      // Контур приходит вместе с рамкой; берём его целиком — просмотр обязан
+      // показывать то же, что редактор, иначе объект «меняет форму» при
+      // переходе между экранами.
       (image?.boxes || []).map((b) => ({
         class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
+        ...(b.kind === "polygon" && b.parts?.length
+          ? { kind: "polygon" as const, parts: b.parts }
+          : {}),
       }))
     );
     setSelected(null);
@@ -123,7 +129,7 @@ export default function ImageViewer({
     return () => clearTimeout(h);
   }, [boxes, flush]);
 
-  const edit = useCallback((next: CanvasBox[]) => {
+  const edit = useCallback((next: CanvasShape[]) => {
     setBoxes(next);
     dirty.current = true;
   }, []);

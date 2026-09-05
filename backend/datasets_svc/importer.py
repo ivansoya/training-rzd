@@ -12,12 +12,21 @@ the archive, and images go straight from the zip to their final name, so the
 volume never holds two copies of a 16 GB dataset.
 
 Rules agreed for the import:
-  * detection only — a label line is `class cx cy w h`, five values;
-  * an image is atomic — one bad line drops the image with all its boxes;
+  * two line shapes are accepted — `class cx cy w h` (five values, detection)
+    and `class x1 y1 x2 y2 ...` (an odd count of at least seven, segmentation);
+  * a file may hold both: converters routinely mix them, and refusing the
+    archive over that would be refusing data we can read;
+  * an image is atomic — one bad line drops the image with all its shapes;
   * coordinates up to TOLERANCE outside [0,1] are converter noise: clipped
     and counted, not rejected;
-  * a box with zero width or height is rejected;
+  * a box with zero width or height is rejected, as is a contour whose points
+    collapse to fewer than three;
   * an image without a label file is a negative example, not an error.
+
+A segmentation line is read as one contour and stays one contour. The bridge
+that export threads between the parts of a torn object is not detected and not
+unpicked on the way back: by then it is part of the outline, and guessing which
+stitch was ours would be guessing.
 """
 import io
 import os
@@ -27,6 +36,7 @@ from PIL import Image as PilImage
 
 from common import config
 from common.datasets import find_yaml_member, parse_yaml_config, split_of
+from datasets_svc import polygon as polylib
 
 # How far outside [0,1] a coordinate may land before we call it broken.
 # 0.001 of a 1920-wide frame is two pixels — rounding noise from a converter,
@@ -57,19 +67,30 @@ def _label_member_for(image_member):
 
 
 def _parse_label_text(text):
-    """Return (boxes, clipped, error). Boxes are normalized (cx, cy, w, h).
+    """Return (shapes, clipped, error).
+
+    A shape is ``{"t": "bbox"|"polygon", "c": class_index, "v": [...]}`` with
+    values still normalized. Dicts rather than bare tuples because the manifest
+    is written to disk between the two passes: a self-describing row survives
+    that round trip without a parallel schema to remember.
 
     error is set on the first unusable line — the caller drops the whole image.
     """
-    boxes = []
+    shapes = []
     clipped = 0
     for lineno, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line:
             continue
         parts = line.split()
-        if len(parts) != 5:
-            return None, 0, f"строка {lineno}: ожидалось 5 значений, получено {len(parts)}"
+        # What the line is, is decided by the module that writes such lines.
+        n = len(parts)
+        kind = polylib.line_kind(n)
+        if kind is None:
+            return None, 0, (
+                f"строка {lineno}: ожидалось 5 значений (бокс) или нечётное "
+                f"число от 7 (контур), получено {n}"
+            )
         try:
             class_index = int(float(parts[0]))
             coords = [float(p) for p in parts[1:]]
@@ -85,11 +106,22 @@ def _parse_label_text(text):
                 clipped += 1
                 c = min(max(c, 0.0), 1.0)
             fixed.append(c)
-        cx, cy, w, h = fixed
-        if w <= 0.0 or h <= 0.0:
-            return None, 0, f"строка {lineno}: вырожденный бокс ({w}×{h})"
-        boxes.append((class_index, cx, cy, w, h))
-    return boxes, clipped, None
+        if kind == "bbox":
+            _, _, w, h = fixed
+            if w <= 0.0 or h <= 0.0:
+                return None, 0, f"строка {lineno}: вырожденный бокс ({w}×{h})"
+            shapes.append({"t": "bbox", "c": class_index, "v": fixed})
+        else:
+            # Clipping to the frame edge can collapse points onto each other;
+            # from_line drops the duplicates, and what is left may no longer be
+            # a figure.
+            if polylib.from_line(fixed, 1.0, 1.0) is None:
+                return None, 0, (
+                    f"строка {lineno}: контур вырожден — меньше "
+                    f"{polylib.MIN_POINTS} различимых точек"
+                )
+            shapes.append({"t": "polygon", "c": class_index, "v": fixed})
+    return shapes, clipped, None
 
 
 def scan(zip_path, progress=None):
@@ -121,6 +153,10 @@ def scan(zip_path, progress=None):
 
         manifest = []
         counts = {}                 # class_index -> annotations found
+        # Boxes vs contours, shown on the class step: an archive that turned
+        # out to be segmentation is worth knowing about before the write pass,
+        # not after.
+        kinds = {"bbox": 0, "polygon": 0}
         splits = {"train": 0, "val": 0, "test": 0, "other": 0}
         annotations = 0
         clipped = 0
@@ -146,23 +182,25 @@ def scan(zip_path, progress=None):
             label_member = _label_member_for(member)
             if label_member is None or label_member not in label_members:
                 without_labels += 1
-                manifest.append({"image": member, "split": split_of(member), "boxes": []})
+                manifest.append({"image": member, "split": split_of(member), "shapes": []})
                 splits[split_of(member)] += 1
                 continue
 
             text = zf.read(label_member).decode("utf-8", "replace")
-            boxes, box_clipped, error = _parse_label_text(text)
+            shapes, shape_clipped, error = _parse_label_text(text)
             if error is not None:
                 _note(skipped, label_member, error)
                 continue
 
-            clipped += box_clipped
-            annotations += len(boxes)
-            for class_index, *_ in boxes:
-                counts[class_index] = counts.get(class_index, 0) + 1
+            clipped += shape_clipped
+            annotations += len(shapes)
+            for shape in shapes:
+                idx = class_of(shape)
+                counts[idx] = counts.get(idx, 0) + 1
+                kinds[shape.get("t", "bbox")] += 1
             split = split_of(member)
             splits[split] += 1
-            manifest.append({"image": member, "split": split, "boxes": boxes})
+            manifest.append({"image": member, "split": split, "shapes": shapes})
 
         if progress:
             progress(total, total)
@@ -187,6 +225,7 @@ def scan(zip_path, progress=None):
         "images_without_labels": without_labels,
         "splits": splits,
         "clipped": clipped,
+        "kinds": kinds,
         "skipped": len(skipped),
         "skipped_examples": skipped[:MAX_EXAMPLES],
         "classes": classes,
@@ -201,17 +240,40 @@ def _note(skipped, member, reason):
         skipped.append(None)  # counted only
 
 
-def to_pixels(box, width, height):
-    """YOLO normalized (cx, cy, w, h) -> COCO pixel {x, y, w, h}."""
-    _, cx, cy, w, h = box
+def to_pixels(shape, width, height):
+    """A parsed shape -> (ann_type, geometry, area) in image pixels.
+
+    Also accepts the flat ``[class, cx, cy, w, h]`` row the previous version
+    wrote, because the manifest sits on disk between scan and write: an import
+    started before an update is finished after it. The branch can go once no
+    such file can exist.
+    """
+    if isinstance(shape, dict):
+        kind, values = shape.get("t", "bbox"), shape.get("v") or []
+    else:
+        kind, values = "bbox", list(shape)[1:]
+
+    if kind == "polygon":
+        ring = polylib.from_line(values, width, height)
+        if ring is None:
+            return None
+        geometry = {"parts": [[[round(x, 2), round(y, 2)] for x, y in ring]]}
+        return "polygon", geometry, polylib.area(ring)
+
+    cx, cy, w, h = values
     pw = w * width
     ph = h * height
-    return {
+    return "bbox", {
         "x": round((cx - w / 2) * width, 2),
         "y": round((cy - h / 2) * height, 2),
         "w": round(pw, 2),
         "h": round(ph, 2),
     }, pw * ph
+
+
+def class_of(shape):
+    """Class index of a parsed shape, old flat rows included."""
+    return shape.get("c") if isinstance(shape, dict) else shape[0]
 
 
 def extract_image(zf, member, dest_path, thumb_path):

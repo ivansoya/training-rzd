@@ -34,6 +34,7 @@ from datasets_svc import materialize
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
 from datasets_svc import video_index
+from datasets_svc import shapes
 from datasets_svc import video_queue as queue
 from datasets_svc import video_tracks as tracklib
 from datasets_svc.materialize import collect_plan
@@ -113,6 +114,29 @@ def _writable(task, user, role, video):
         return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
     if video.mode != "annotate":
         return jsonify({"error": "Это видео загружено для нарезки на кадры."}), 409
+    return None
+
+
+def _no_contour(geometry):
+    """Отказ, если треку подсовывают контур. Иначе — None.
+
+    **Трек — всегда рамка.** Положение между ключевыми кадрами он считает сам,
+    а посчитать контур нечем: у колец разной длины нет очевидного соответствия
+    вершин, и «интерполяция» свелась бы к подмене одной фигуры другой — молча и
+    там, где проверить её уже нельзя.
+
+    Правило живёт здесь, а не только в интерфейсе. Интерфейс прячет кнопку, но
+    ручка открыта всем: без этой проверки контур дошёл бы до ``_clamp_box``,
+    получил бы «Рамка слишком мала» и оставил бы человека гадать, что не так с
+    его рамкой, которой он не рисовал.
+    """
+    if isinstance(geometry, dict) and (
+        geometry.get("parts") or geometry.get("kind") == "polygon"
+    ):
+        return jsonify({
+            "error": "Трек ведут рамкой: положение между ключами он считает сам, "
+                     "а контур посчитать нечем. Контур живёт на своём кадре."
+        }), 400
     return None
 
 
@@ -531,11 +555,18 @@ def video_annotations(task_id, video_id):
         singles = []
         for row in rows:
             if row.track_id is None:
+                wire = shapes.to_wire(row.ann_type, row.geometry)
+                if not wire:
+                    continue
                 singles.append({
                     "id": str(row.id),
                     "frame_no": row.frame_no,
                     "class_index": by_index.get(row.class_id),
+                    # Геометрию отдаём как есть — редактор кладёт её обратно
+                    # без изменений, — а рядом ту же фигуру в общем виде: по
+                    # ней рисуют и её же присылают на сохранение.
                     "geometry": row.geometry,
+                    "shape": wire,
                     "source": row.source,
                 })
             else:
@@ -601,6 +632,9 @@ def create_track(task_id, video_id):
             frame_no = int(data.get("frame_no"))
         except (TypeError, ValueError):
             return jsonify({"error": "Не указан кадр."}), 400
+        denied = _no_contour(data.get("geometry"))
+        if denied:
+            return denied
         geometry = _clamp_box(data.get("geometry") or {}, video.width or 0, video.height or 0)
         if geometry is None:
             return jsonify({"error": "Рамка слишком мала."}), 400
@@ -748,6 +782,9 @@ def put_key(track_id, frame_no):
         ).scalar_one_or_none()
 
         if "geometry" in data:
+            denied = _no_contour(data.get("geometry"))
+            if denied:
+                return denied
             geometry = _clamp_box(
                 data.get("geometry") or {}, video.width or 0, video.height or 0
             )
@@ -865,14 +902,19 @@ def put_frame_boxes(task_id, video_id, frame_no):
             ).scalars()
         }
         fresh = []
+        # Ключ запроса остался «boxes», а под ним теперь обе фигуры: одиночная
+        # разметка кадра ролика бывает и рамкой, и контуром. Трек — только
+        # рамка: положение между ключами там считается, а контур посчитать
+        # нечем, пока точки соседних ключей не сопоставлены друг с другом.
         for raw in (request.get_json(silent=True) or {}).get("boxes") or []:
             cls = by_index.get(raw.get("class_index"))
             if cls is None:
                 continue
-            geometry = _clamp_box(raw, video.width or 0, video.height or 0)
-            if geometry is None:
+            parsed = shapes.from_wire(raw, video.width or 0, video.height or 0)
+            if parsed is None:
                 continue
-            fresh.append((cls.id, geometry, raw.get("source") or "human"))
+            ann_type, geometry, _area = parsed
+            fresh.append((cls.id, ann_type, geometry, raw.get("source") or "human"))
 
         db.execute(
             VideoAnnotation.__table__.delete().where(
@@ -881,13 +923,13 @@ def put_frame_boxes(task_id, video_id, frame_no):
                 VideoAnnotation.frame_no == frame_no,
             )
         )
-        for class_id, geometry, source in fresh:
+        for class_id, ann_type, geometry, source in fresh:
             db.add(VideoAnnotation(
                 video_id=video.id,
                 track_id=None,
                 frame_no=frame_no,
                 class_id=class_id,
-                ann_type="bbox",
+                ann_type=ann_type,
                 geometry=geometry,
                 source=source,
                 created_by=user.id,

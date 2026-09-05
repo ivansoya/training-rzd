@@ -13,6 +13,7 @@ import {
   updateTrack,
   videoFrameUrl,
 } from "../../auth/api";
+import type { SingleWire } from "../../auth/api";
 import type {
   AutoRefine,
   LabelClass,
@@ -22,7 +23,11 @@ import type {
   VideoTrack,
 } from "../../auth/api";
 import BoxCanvas from "./BoxCanvas";
-import type { CanvasBox, CanvasHandle, CanvasPoint, CanvasPreview } from "./BoxCanvas";
+import type {
+  CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape,
+} from "./BoxCanvas";
+import * as poly from "./polygon";
+import type { Ring } from "./polygon";
 import ClassMenu from "./ClassMenu";
 import TrackLanes from "./TrackLanes";
 import type { LaneAction } from "./TrackLanes";
@@ -49,6 +54,7 @@ const HELP = {
   close: ["Esc", "Выйти из разметки"],
   select: ["V", "Выбор и правка"],
   box: ["B", "Бокс на этом кадре"],
+  polygon: ["P", "Контур на этом кадре. Замкнуть — клик по первой точке или Enter"],
   track: ["T", "Трек-бокс: объект, живущий во времени"],
   auto: ["A", "Полуавтомат: обвести объект по клику"],
   zoomIn: ["", "Приблизить"],
@@ -157,7 +163,11 @@ export default function VideoAnnotator({
   const [classes, setClasses] = useState<LabelClass[]>([]);
   const [active, setActive] = useState<number | null>(null);
   const [frame, setFrame] = useState(0);
-  const [tool, setTool] = useState<"select" | "box" | "track" | "auto">("select");
+  const [tool, setTool] =
+    useState<"select" | "box" | "polygon" | "track" | "auto">("select");
+  // Часть выбранного контура. Раздельного переноса частей в ролике нет: там
+  // правят кадр за кадром, и лишний тумблер в тесной панели дороже пользы.
+  const [selPart, setSelPart] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
   const [pickedTrack, setPickedTrack] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -167,7 +177,7 @@ export default function VideoAnnotator({
   const [menu, setMenu] = useState<{ i: number | null; x: number; y: number } | null>(null);
   const [laneMenu, setLaneMenu] = useState<LaneAction | null>(null);
   const [scale, setScale] = useState(1);
-  const [draft, setDraft] = useState<CanvasBox[] | null>(null);
+  const [draft, setDraft] = useState<CanvasShape[] | null>(null);
 
   const [autoPts, setAutoPts] = useState<CanvasPoint[]>([]);
   const [autoPrev, setAutoPrev] = useState<CanvasPreview | null>(null);
@@ -255,7 +265,7 @@ export default function VideoAnnotator({
   // --- что показано на кадре ----------------------------------------------- #
   const { items, boxes, dashed } = useMemo(() => {
     const its: Item[] = [];
-    const bs: CanvasBox[] = [];
+    const bs: CanvasShape[] = [];
     const dim = new Set<number>();
     for (const track of data?.tracks || []) {
       const state = stateAt(track, frame);
@@ -267,7 +277,10 @@ export default function VideoAnnotator({
     for (const single of data?.singles || []) {
       if (single.frame_no !== frame || single.class_index === null) continue;
       its.push({ kind: "single", box: single });
-      bs.push({ class_index: single.class_index, ...single.geometry });
+      // У одиночной разметки фигура приходит готовой: рамка или контур.
+      // Трек — всегда рамка, поэтому выше ветки нет.
+      const shape = (single.shape ?? single.geometry) as Omit<CanvasShape, "class_index">;
+      bs.push({ ...shape, class_index: single.class_index });
     }
     return { items: its, boxes: bs, dashed: dim };
   }, [data, frame]);
@@ -301,7 +314,7 @@ export default function VideoAnnotator({
   }, []);
 
   const saveSingles = useCallback(
-    (list: { class_index: number; x: number; y: number; w: number; h: number }[]) =>
+    (list: SingleWire[]) =>
       guard(async () => {
         await saveFrameBoxes(taskId, video.id, frame, list);
         await load();
@@ -309,13 +322,22 @@ export default function VideoAnnotator({
     [guard, taskId, video.id, frame, load]
   );
 
+  /** Одиночная фигура в том виде, в каком она уходит на сервер. */
+  const asWire = useCallback(
+    (s: { class_index: number | null; shape?: unknown; geometry: unknown }): SingleWire => ({
+      ...((s.shape ?? s.geometry) as Omit<SingleWire, "class_index">),
+      class_index: s.class_index as number,
+    }),
+    []
+  );
+
   const singlesAsList = useCallback(
-    () => singlesHere.map((s) => ({ class_index: s.class_index as number, ...s.geometry })),
-    [singlesHere]
+    () => singlesHere.map(asWire),
+    [singlesHere, asWire]
   );
 
   const commit = useCallback(
-    (next: CanvasBox[]) => {
+    (next: CanvasShape[]) => {
       if (frozen || active === null) return;
 
       if (next.length > boxes.length) {
@@ -340,8 +362,7 @@ export default function VideoAnnotator({
         const gone = items[boxes.findIndex((b, i) => !same(b, next[i]))] ?? items[items.length - 1];
         if (!gone) return;
         if (gone.kind === "track") removeTrackBox(gone.track);
-        else saveSingles(singlesHere.filter((s) => s.id !== gone.box.id)
-          .map((s) => ({ class_index: s.class_index as number, ...s.geometry })));
+        else saveSingles(singlesHere.filter((s) => s.id !== gone.box.id).map(asWire));
         return;
       }
 
@@ -362,8 +383,14 @@ export default function VideoAnnotator({
         saveSingles(
           singlesHere.map((s) =>
             s.id === item.box.id
-              ? { class_index: box.class_index, x: box.x, y: box.y, w: box.w, h: box.h }
-              : { class_index: s.class_index as number, ...s.geometry }
+              ? {
+                  class_index: box.class_index,
+                  x: box.x, y: box.y, w: box.w, h: box.h,
+                  ...(box.parts?.length
+                    ? { kind: "polygon" as const, parts: box.parts }
+                    : {}),
+                }
+              : asWire(s)
           )
         );
       }
@@ -373,10 +400,32 @@ export default function VideoAnnotator({
      saveSingles, singlesHere, singlesAsList]
   );
 
+  /** Замкнули контур: он ложится одиночной разметкой этого кадра.
+   *
+   *  Треком контур не становится. Трек считает положение между ключами, а
+   *  посчитать контур нечем, пока точки соседних ключей не сопоставлены друг с
+   *  другом: у колец разной длины нет очевидного соответствия вершин.
+   */
+  const onPolygon = useCallback(
+    (ring: Ring) => {
+      if (frozen || active === null) return;
+      const box = poly.bounds([ring]);
+      if (!box) return;
+      saveSingles([
+        ...singlesAsList(),
+        { class_index: active, kind: "polygon", parts: [ring], ...box },
+      ]);
+      // Замкнули — возвращаемся в выбор: следом идёт правка, а не второй
+      // контур. То же правило, что в разметчике кадров.
+      setTool("select");
+    },
+    [frozen, active, saveSingles, singlesAsList]
+  );
+
   /** Пока тянут рамку, холст сообщает о каждом её положении — начиная с
    *  нулевой на нажатии. Отправляем осевшее. */
   const onBoxes = useCallback(
-    (next: CanvasBox[]) => {
+    (next: CanvasShape[]) => {
       setDraft(next);
       window.clearTimeout(draftTimer.current);
       draftTimer.current = window.setTimeout(() => commit(next), 350);
@@ -504,7 +553,7 @@ export default function VideoAnnotator({
   useEffect(() => { clearAuto(); }, [frame, clearAuto]);
 
   const ask = useCallback(
-    async (points: CanvasPoint[], prompt: CanvasBox | null) => {
+    async (points: CanvasPoint[], prompt: CanvasShape | null) => {
       const shape = await auto.predict(
         { points, box: prompt ? { x: prompt.x, y: prompt.y, w: prompt.w, h: prompt.h } : undefined },
         refine
@@ -599,6 +648,7 @@ export default function VideoAnnotator({
         case "ArrowLeft": go(-step); break;
         case "KeyV": setTool("select"); break;
         case "KeyB": if (!frozen) setTool("box"); break;
+        case "KeyP": if (!frozen) setTool("polygon"); break;
         case "KeyT": if (!frozen) setTool("track"); break;
         case "KeyA": if (!frozen && auto.state === "ready") setTool("auto"); break;
         case "KeyK":
@@ -613,8 +663,7 @@ export default function VideoAnnotator({
             const item = items[selected];
             if (item?.kind === "track") removeTrackBox(item.track);
             else if (item) {
-              saveSingles(singlesHere.filter((s) => s.id !== item.box.id)
-                .map((s) => ({ class_index: s.class_index as number, ...s.geometry })));
+              saveSingles(singlesHere.filter((s) => s.id !== item.box.id).map(asWire));
             }
             setSelected(null);
           } else if (autoPrev || autoPts.length) clearAuto();
@@ -655,7 +704,7 @@ export default function VideoAnnotator({
         const track = await createTrack(taskId, video.id, {
           class_index: box.class_index as number,
           frame_no: box.frame_no,
-          geometry: box.geometry,
+          geometry: box.geometry as { x: number; y: number; w: number; h: number },
         });
         setPickedTrack(track.id);
         setTool("track");
@@ -666,7 +715,7 @@ export default function VideoAnnotator({
           box.frame_no,
           (data?.singles || [])
             .filter((s) => s.frame_no === box.frame_no && s.id !== box.id)
-            .map((s) => ({ class_index: s.class_index as number, ...s.geometry }))
+            .map(asWire)
         );
         await load();
       });
@@ -687,7 +736,7 @@ export default function VideoAnnotator({
             item.box.frame_no,
             (data?.singles || [])
               .filter((s) => s.frame_no === item.box.frame_no && s.id !== item.box.id)
-              .map((s) => ({ class_index: s.class_index as number, ...s.geometry }))
+              .map(asWire)
           );
         }
         setSelected(null);
@@ -827,8 +876,8 @@ export default function VideoAnnotator({
           </div>
           {singleFrames.length === 0 ? (
             <p className="mag-ed-objects-empty">
-              Одиночных объектов нет. Обведённое обычным боксом живёт на своём
-              кадре и появится здесь.
+              Одиночных объектов нет. Обведённое рамкой или контуром живёт на
+              своём кадре и появится здесь.
             </p>
           ) : (
             <div className="mag-ed-objects-list">
@@ -870,6 +919,9 @@ export default function VideoAnnotator({
           <button className={tool === "box" ? "mag-tool on" : "mag-tool"} type="button"
             disabled={frozen} onClick={() => setTool("box")}
             {...hk("box")}>▢</button>
+          <button className={tool === "polygon" ? "mag-tool on" : "mag-tool"} type="button"
+            disabled={frozen} onClick={() => setTool("polygon")}
+            {...hk("polygon")}>⬠</button>
           <button className={tool === "track" ? "mag-tool on" : "mag-tool"} type="button"
             disabled={frozen} onClick={() => setTool("track")}
             {...hk("track")}>◇</button>
@@ -989,14 +1041,22 @@ export default function VideoAnnotator({
             labelOf={labelOf}
             editable={!frozen && !shown.lagging}
             waiting={shown.lagging}
-            tool={tool === "track" ? "box" : tool}
+            // Полуавтомат стал перпендикулярным холсту: он говорит, чем
+            // рисуют, а не что получится. Здесь оба инструмента дают бокс,
+            // потому что полигонов в разметке ролика пока нет.
+            tool={
+              tool === "select" ? "select" : tool === "polygon" ? "polygon" : "box"
+            }
+            auto={tool === "auto"}
+            selectedPart={selPart}
+            onPolygon={onPolygon}
             autoMode="points"
             autoPoints={autoPts}
             autoPreview={autoPrev}
             activeClass={active}
             selected={selected}
             reserve={280}
-            onSelect={setSelected}
+            onSelect={(i, part) => { setSelected(i); setSelPart(part ?? null); }}
             onBoxes={onBoxes}
             onDrawn={() => setTool("select")}
             onScale={setScale}
@@ -1168,8 +1228,8 @@ export default function VideoAnnotator({
                 saveSingles(
                   singlesHere.map((s) =>
                     s.id === item.box.id
-                      ? { class_index: ci, ...s.geometry }
-                      : { class_index: s.class_index as number, ...s.geometry }
+                      ? { ...asWire(s), class_index: ci }
+                      : asWire(s)
                   )
                 );
               }
@@ -1194,15 +1254,26 @@ export default function VideoAnnotator({
           actions={
             menu.i !== null && items[menu.i]?.kind === "single"
               ? [
-                  {
-                    label: "Сделать треком",
-                    hint: "объект начнёт жить во времени",
-                    run: () => {
-                      const item = items[menu.i as number];
-                      if (item.kind === "single") toTrack(item.box);
-                      setMenu(null);
-                    },
-                  },
+                  (() => {
+                    const item = items[menu.i as number];
+                    // Трек ведут рамкой: положение между ключами он считает
+                    // сам, а посчитать контур нечем. Пункт оставляем на месте
+                    // и говорим причину — исчезнув, он заставил бы искать,
+                    // куда делся.
+                    const contour =
+                      item.kind === "single" && item.box.shape?.kind === "polygon";
+                    return {
+                      label: "Сделать треком",
+                      hint: contour
+                        ? "контуром нельзя: трек ведут рамкой"
+                        : "объект начнёт жить во времени",
+                      disabled: contour,
+                      run: () => {
+                        if (item.kind === "single" && !contour) toTrack(item.box);
+                        setMenu(null);
+                      },
+                    };
+                  })(),
                 ]
               : undefined
           }
@@ -1253,10 +1324,18 @@ export default function VideoAnnotator({
   );
 }
 
-function same(a: CanvasBox | undefined, b: CanvasBox | undefined): boolean {
+/** Одна ли это фигура — по тому, что человек мог подвинуть.
+ *
+ * У контура сравниваются сами точки, а не охватывающая рамка: вершину можно
+ * увести так, что рамка не дрогнет, и правка молча не сохранилась бы.
+ */
+function same(a: CanvasShape | undefined, b: CanvasShape | undefined): boolean {
   if (!a || !b) return false;
+  if (a.class_index !== b.class_index) return false;
+  if (a.parts || b.parts) {
+    return JSON.stringify(a.parts ?? null) === JSON.stringify(b.parts ?? null);
+  }
   return (
-    a.class_index === b.class_index &&
     Math.abs(a.x - b.x) < 0.01 && Math.abs(a.y - b.y) < 0.01 &&
     Math.abs(a.w - b.w) < 0.01 && Math.abs(a.h - b.h) < 0.01
   );

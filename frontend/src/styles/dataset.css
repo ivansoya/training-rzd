@@ -134,25 +134,6 @@
   outline-offset: 2px;
 }
 
-.mag-tile-box {
-  position: absolute;
-  border: 1.5px solid;
-  border-radius: 1px;
-  pointer-events: none;
-}
-
-.mag-tile-box b {
-  position: absolute;
-  left: -1.5px;
-  top: -1px;
-  transform: translateY(-100%);
-  font: 700 9px ui-monospace, Menlo, Consolas, monospace;
-  color: var(--on-acc);
-  padding: 1px 4px;
-  border-radius: 3px 3px 0 0;
-  white-space: nowrap;
-}
-
 .mag-tile-split,
 .mag-tile-n {
   position: absolute;

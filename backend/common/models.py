@@ -283,8 +283,14 @@ class Annotation(Base, AuditMixin):
     # Shape depends on ann_type:
     #   bbox    {x, y, w, h}                    (pixels, COCO convention)
     #   obb     {cx, cy, w, h, angle}
-    #   polygon {points: [[x, y], ...]}
+    #   polygon {parts: [[[x, y], ...], ...]}   (pixels; see below)
     #   mask    {rle: {size, counts}}           (COCO RLE)
+    #
+    # У полигона частей несколько, а не одна: объект бывает разорван — вагон
+    # за стойкой виден двумя половинами, — и обводка обязана показывать то же,
+    # что охватывает рамка. Части разъединены, отверстий среди них нет: SAM2
+    # отдаёт куски маски (RETR_EXTERNAL), а формат, в который мы выгружаем,
+    # отверстий не знает. Работа с ними — `datasets_svc/polygon.py`.
     geometry: Mapped[dict] = mapped_column(JsonCol, nullable=False)
     area: Mapped[float | None] = mapped_column(sa.Float)
     iscrowd: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)

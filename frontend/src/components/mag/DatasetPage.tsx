@@ -4,6 +4,7 @@ import { getClasses, getDataset, imageThumbUrl } from "../../auth/api";
 import type { DatasetDetail, DatasetImage, LabelClass } from "../../auth/api";
 import ImageViewer from "./ImageViewer";
 import { plural } from "./ProjectsPage";
+import ShapeMini from "./ShapeMini";
 
 const PAGE = 60;
 const SIZES = [
@@ -346,21 +347,24 @@ function Tile({
       title={`${image.file_name} · ${image.annotations} ${plural(image.annotations, "объект", "объекта", "объектов")}`}
     >
       <img src={imageThumbUrl(image.id)} alt={image.file_name} loading="lazy" decoding="async" />
-      {showBoxes &&
+      {showBoxes && (
+        <ShapeMini boxes={image.boxes} width={w} height={h} />
+      )}
+      {/* Подписи — вёрсткой поверх слоя: в SVG под `preserveAspectRatio="none"`
+          текст тянулся бы вместе с кадром. */}
+      {showBoxes && withLabels &&
         image.boxes.map((b, i) => (
-          <span
+          <b
             key={i}
-            className="mag-tile-box"
+            className="mag-tile-lb"
             style={{
               left: `${(b.x / w) * 100}%`,
               top: `${(b.y / h) * 100}%`,
-              width: `${(b.w / w) * 100}%`,
-              height: `${(b.h / h) * 100}%`,
-              borderColor: b.color,
+              background: b.color,
             }}
           >
-            {withLabels && <b style={{ background: b.color }}>{b.name}</b>}
-          </span>
+            {b.name}
+          </b>
         ))}
       <span className="mag-tile-split">{image.split === "other" ? "—" : image.split}</span>
       <span className={image.annotations ? "mag-tile-n" : "mag-tile-n zero"}>

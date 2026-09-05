@@ -36,6 +36,7 @@ from common.models import (
 )
 from common.storage import translit_slug
 from datasets_svc import materialize
+from datasets_svc import shapes
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
 from datasets_svc import video_index
@@ -59,8 +60,6 @@ STATUS_LABELS = {
     "updating": "изменение",
     "closed": "закрыто",
 }
-# Бокс тоньше этого — промах мышью, а не объект.
-MIN_BOX_PX = 2.0
 # Нетронутое вперёд, отложенное в конец — к нему возвращаются, когда основное
 # сделано. Забракованное в самом хвосте: из работы выпало, но видно до закрытия.
 QUEUE_ORDER = case(
@@ -73,36 +72,12 @@ QUEUE_ORDER = case(
 # лейбл-файл — штатный пример для YOLO, а не отсутствие работы.
 ACCEPTABLE = ("annotated", "empty")
 
-
-def _clamp_box(box, width, height):
-    """Загоняет бокс внутрь кадра.
-
-    Вылезший за край бокс при экспорте в YOLO даёт координату вне [0,1] —
-    ровно ту, которую мы отбраковываем на импорте. Чинить это на экспорте
-    поздно: там уже не видно, что человек имел в виду.
-    """
-    try:
-        x = float(box.get("x", 0))
-        y = float(box.get("y", 0))
-        w = float(box.get("w", 0))
-        h = float(box.get("h", 0))
-    except (TypeError, ValueError):
-        return None
-    # Отрицательные размеры — это протяжка справа налево; нормализуем.
-    if w < 0:
-        x, w = x + w, -w
-    if h < 0:
-        y, h = y + h, -h
-    x2 = min(x + w, float(width))
-    y2 = min(y + h, float(height))
-    x = max(0.0, min(x, float(width)))
-    y = max(0.0, min(y, float(height)))
-    w = x2 - x
-    h = y2 - y
-    if w < MIN_BOX_PX or h < MIN_BOX_PX:
-        return None
-    return {"x": round(x, 2), "y": round(y, 2),
-            "w": round(w, 2), "h": round(h, 2)}
+# Подрезка бокса и разбор фигуры переехали в `shapes`: разметка на проводе
+# теперь бывает двух видов, и держать её разбор в четырёх файлах порознь
+# значило бы развести их при первой правке. Имена оставлены прежними —
+# `video_routes` берёт подрезку отсюда.
+MIN_BOX_PX = shapes.MIN_BOX_PX
+_clamp_box = shapes.clamp_box
 
 
 # --------------------------------------------------------------------------- #
@@ -1109,11 +1084,11 @@ def task_images(task_id):
                 .join(LabelClass, LabelClass.id == Annotation.class_id)
                 .where(Annotation.image_id.in_(ids))
             ).all():
-                g = ann.geometry or {}
+                wire = shapes.to_wire(ann.ann_type, ann.geometry)
+                if not wire:
+                    continue
                 by_image[ann.image_id].append({
-                    "id": str(ann.id),
-                    "x": g.get("x", 0), "y": g.get("y", 0),
-                    "w": g.get("w", 0), "h": g.get("h", 0),
+                    "id": str(ann.id), **wire,
                     "class_index": idx, "name": name, "color": color,
                     "source": ann.source,
                 })
@@ -1186,28 +1161,37 @@ def save_annotations(image_id):
 
         fresh = []
         clamped = 0
+        # Ключ запроса остался «boxes»: он давно в клиенте и в тестах, а под
+        # ним теперь идут обе фигуры. Что именно пришло, говорит `kind`.
         for raw in data.get("boxes") or []:
             cls = by_index.get(raw.get("class_index"))
             if cls is None:
                 continue
-            geometry = _clamp_box(raw, width, height)
-            if geometry is None:
+            parsed = shapes.from_wire(raw, width, height)
+            if parsed is None:
                 continue
-            if (round(float(raw.get("w", 0)), 2) != geometry["w"]
-                    or round(float(raw.get("x", 0)), 2) != geometry["x"]):
+            ann_type, geometry, area = parsed
+            # Подрезку считаем только у боксов: у контура «сдвинулось ли что-то
+            # при подрезке» — вопрос к каждой точке, и складывать их в одно
+            # число значило бы отчитываться цифрой, которой нельзя верить.
+            if ann_type == "bbox" and (
+                round(float(raw.get("w", 0)), 2) != geometry["w"]
+                or round(float(raw.get("x", 0)), 2) != geometry["x"]
+            ):
                 clamped += 1
-            fresh.append((cls.id, geometry, raw.get("source") or "human"))
+            fresh.append((cls.id, ann_type, geometry, area,
+                          raw.get("source") or "human"))
 
         db.execute(
             Annotation.__table__.delete().where(Annotation.image_id == image.id)
         )
-        for class_id, geometry, source in fresh:
+        for class_id, ann_type, geometry, area, source in fresh:
             db.add(Annotation(
                 image_id=image.id,
                 class_id=class_id,
-                ann_type="bbox",
+                ann_type=ann_type,
                 geometry=geometry,
-                area=round(geometry["w"] * geometry["h"], 2),
+                area=area,
                 source=source,
                 created_by=user.id,
             ))

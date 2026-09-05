@@ -24,8 +24,17 @@ export default function ClassMenu({
   onDelete?: () => void;
   /** Подпись у удаления: «детекцию», «объект», «трек» — что именно уйдёт. */
   deleteLabel?: string;
-  /** Действия поверх смены класса: например, превратить объект в трек. */
-  actions?: { label: string; hint?: string; run: () => void }[];
+  /** Действия поверх смены класса: например, превратить объект в трек.
+   *
+   *  Недоступное действие остаётся в списке, а не исчезает: пропав, оно
+   *  заставило бы искать, куда делось, — а так подпись рядом объясняет, почему
+   *  сейчас нельзя. */
+  actions?: {
+    label: string;
+    hint?: string;
+    disabled?: boolean;
+    run: () => void;
+  }[];
   onClose: () => void;
 }) {
   const [query, setQuery] = useState("");
@@ -93,7 +102,13 @@ export default function ClassMenu({
         )}
       </div>
       {actions?.map((a) => (
-        <button key={a.label} type="button" className="mag-cmenu-act" onClick={a.run}>
+        <button
+          key={a.label}
+          type="button"
+          className={a.disabled ? "mag-cmenu-act off" : "mag-cmenu-act"}
+          disabled={a.disabled}
+          onClick={a.run}
+        >
           {a.label}
           {a.hint && <em>{a.hint}</em>}
         </button>

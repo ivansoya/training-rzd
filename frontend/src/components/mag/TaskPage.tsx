@@ -23,6 +23,7 @@ import type {
 } from "../../auth/api";
 import { pollJob } from "../../api";
 import AnnotationEditor from "./AnnotationEditor";
+import ShapeMini from "./ShapeMini";
 import { TaskState } from "./ProjectTasks";
 import { plural } from "./ProjectsPage";
 import { SourceCard, VideoCard, buildSources } from "./TaskSources";
@@ -541,15 +542,7 @@ export default function TaskPage() {
                     <button className="mag-tile" type="button" title={im.file_name}
                       onClick={() => setEditing({ list: annotated, index: i })}>
                       <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
-                      {im.boxes.map((b, k) => (
-                        <span key={k} className="mag-tile-box" style={{
-                          left: `${(b.x / (im.width || 1)) * 100}%`,
-                          top: `${(b.y / (im.height || 1)) * 100}%`,
-                          width: `${(b.w / (im.width || 1)) * 100}%`,
-                          height: `${(b.h / (im.height || 1)) * 100}%`,
-                          borderColor: b.color,
-                        }} />
-                      ))}
+                      <ShapeMini boxes={im.boxes} width={im.width} height={im.height} />
                       <span className={`mag-tile-mark ${im.task_status}`}>
                         {MARK[im.task_status] ?? im.annotations}
                       </span>

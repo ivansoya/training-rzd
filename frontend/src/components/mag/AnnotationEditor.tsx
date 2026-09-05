@@ -8,13 +8,78 @@ import {
 } from "../../auth/api";
 import type { ImageTaskStatus, LabelClass, TaskImage } from "../../auth/api";
 import BoxCanvas from "./BoxCanvas";
-import type { CanvasBox, CanvasHandle, CanvasPoint, CanvasPreview } from "./BoxCanvas";
+import type {
+  CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape,
+} from "./BoxCanvas";
+import * as poly from "./polygon";
+import type { Ring } from "./polygon";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
 import { useAutoLabel } from "./useAutoLabel";
 import type { AutoRefine } from "../../auth/api";
 
+/** Управление редактором: клавиша и что она делает.
+ *
+ * Тот же приём, что в разметчике видео, и по той же причине: один список на две
+ * задачи — подсветку самого элемента и панель со всеми сочетаниями. Держать их
+ * порознь значило бы, что однажды они разойдутся и подсказка начнёт врать про
+ * клавишу.
+ *
+ * Из интерфейса при этом убраны все вечные подсказки. Разметчик смотрит в кадр
+ * часами, и текст, который он прочитал в первый день, все остальные дни только
+ * отнимает у кадра место и внимание. Что делает кнопка — говорит наведение,
+ * когда справка включена; весь список — сама справка.
+ */
+const HELP = {
+  close: ["Esc", "Выйти из разметки"],
+  select: ["V", "Выбор и правка"],
+  box: ["B", "Рамка. Ещё раз B — залипание, рисовать подряд"],
+  polygon: ["P", "Контур. Замкнуть — клик по первой точке или Enter"],
+  polyOpts: ["", "Настройки контура: двигать ли его и части по отдельности"],
+  auto: ["A", "Полуавтомат: обвести объект по клику"],
+  autoOpts: ["", "Параметры полуавтомата"],
+  addPart: ["⇧P", "Следующий контур ляжет в выбранный объект"],
+  vertex: ["Alt", "Новая точка контура под курсором"],
+  del: ["Del", "Удалить объект, а при раздельных частях — часть"],
+  cls: ["1–9", "Класс для новых объектов"],
+  empty: ["E", "Кадр фоновый: объектов на нём нет"],
+  skip: ["S", "Отложить кадр"],
+  trash: ["X", "Забраковать кадр"],
+  next: ["Пробел", "Следующий кадр"],
+  step: ["← →", "Предыдущий и следующий кадр"],
+  zoomIn: ["", "Приблизить"],
+  zoomOut: ["", "Отдалить"],
+  fit: ["0", "Вписать кадр в окно"],
+  grid: ["", "Сетка на фоне"],
+  pan: ["Shift + протяжка", "Двигать полотно. Колесо — зум"],
+  strip: ["", "Кинолента таски. Потяните верхнюю кромку — изменить высоту"],
+} as const;
+
+type HelpId = keyof typeof HELP;
+
+/** Разметить элемент для справки: подсветится и покажет свою подсказку. */
+function hk(id: HelpId) {
+  const [key, text] = HELP[id];
+  return { "data-hk": key || undefined, "data-ht": text, "data-help": "" };
+}
+
 const GREY = { name: "", color: "#9aa4ae" };
+
+/** Бокс как кольцо из четырёх точек.
+ *
+ * Нужен, когда бокс присоединяют к объекту-контуру: объект после этого целиком
+ * полигональный, и его прямоугольная часть — честная запись того, что человек
+ * нарисовал рамкой. Обратно бокс уже не превратится, и это не потеря: рамка
+ * из четырёх точек и есть рамка.
+ */
+function boxRing(b: { x: number; y: number; w: number; h: number }): Ring {
+  return [
+    [b.x, b.y],
+    [b.x + b.w, b.y],
+    [b.x + b.w, b.y + b.h],
+    [b.x, b.y + b.h],
+  ];
+}
 
 export default function AnnotationEditor({
   code,
@@ -40,15 +105,41 @@ export default function AnnotationEditor({
   const [classes, setClasses] = useState<LabelClass[]>([]);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState<number | null>(null);
-  const [boxes, setBoxes] = useState<CanvasBox[]>([]);
+  const [boxes, setBoxes] = useState<CanvasShape[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
-  const [tool, setTool] = useState<"select" | "box" | "auto">("select");
+  // Какая часть выбранного объекта под рукой. У разорванного вагона половины
+  // лежат в разных местах кадра, и «подвинуть объект» — не то же, что
+  // «подвинуть эту половину».
+  const [selPart, setSelPart] = useState<number | null>(null);
+  // Тумблеры живут в настройках контура: они про привычку человека, а не про
+  // состояние холста, и переживают переключение инструментов.
+  //
+  // Двигать контуры по умолчанию **нельзя**. Контур правят по вершинам, а
+  // перенос целиком нужен редко и случается легко: промахнулся мимо вершины,
+  // повёл мышь — и вся обводка уехала с объекта, к которому её подгоняли.
+  // Отменить это нечем, кроме как обвести заново.
+  const [canMovePoly, setCanMovePoly] = useState(false);
+  const [splitParts, setSplitParts] = useState(false);
+  const [polyPanel, setPolyPanel] = useState(false);
+  // Инструмент говорит, ЧТО получится: рамка или контур. Полуавтомат — не
+  // четвёртый инструмент, а способ ввода поверх текущего, и живёт отдельным
+  // тумблером: «полуавтоматом по контурам» выражается двумя клавишами, а не
+  // новым режимом.
+  const [tool, setTool] = useState<"select" | "box" | "polygon">("select");
+  // Полуавтомат — не режим, а привычка: включив его однажды, к нему не
+  // возвращаются. Поэтому переключение инструментов его **не сбрасывает** —
+  // иначе на каждый переход «рамка → контур» приходилось бы включать заново.
+  // В «выборе» он просто ничего не делает: рисовать там нечем.
+  const [autoOn, setAutoOn] = useState(false);
   const [lock, setLock] = useState(false);
+  // Объект, к которому присоединится следующий замкнутый контур. Пусто —
+  // контур станет новым объектом.
+  const [addTo, setAddTo] = useState<number | null>(null);
   // Полуавтомат: набор точек и ещё не закреплённая детекция.
   const [autoMode, setAutoMode] = useState<"points" | "box">("points");
   const [autoPts, setAutoPts] = useState<CanvasPoint[]>([]);
   const [autoPrev, setAutoPrev] = useState<CanvasPreview | null>(null);
-  const [autoPrompt, setAutoPrompt] = useState<CanvasBox | null>(null);
+  const [autoPrompt, setAutoPrompt] = useState<CanvasShape | null>(null);
   // Индекс бокса, который сейчас уточняем: на закреплении он заменяется.
   const [replacing, setReplacing] = useState<number | null>(null);
   const [autoPanel, setAutoPanel] = useState(false);
@@ -58,11 +149,26 @@ export default function AnnotationEditor({
   // Что делать после закрепления: взяться за следующий объект или выйти в выбор.
   const [afterCommit, setAfterCommit] = useState<"new" | "select">("new");
   // i === null — меню открыто на плашке активного класса, а не на детекции.
-  const [menu, setMenu] = useState<{ i: number | null; x: number; y: number } | null>(null);
+  // `prev` — что было выбрано ДО правой кнопки: она сама меняет выделение, а
+  // «присоединить к выбранному» относится к прежнему объекту, не к этому.
+  const [menu, setMenu] = useState<{
+    i: number | null;
+    x: number;
+    y: number;
+    part?: number;
+    vertex?: number;
+    prev: number | null;
+  } | null>(null);
+  const pick = useCallback((i: number | null, part: number | null = null) => {
+    setSelected(i);
+    setSelPart(i === null ? null : part);
+  }, []);
+
   const [scale, setScale] = useState(1);
   const [filmH, setFilmH] = useState(164);
   const [saved, setSaved] = useState(true);
   const [grid, setGrid] = useState(true);
+  const [help, setHelp] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const canvas = useRef<CanvasHandle>(null);
@@ -85,9 +191,14 @@ export default function AnnotationEditor({
     setBoxes(
       (image?.boxes || []).map((b) => ({
         class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
+        ...(b.kind === "polygon" && b.parts?.length
+          ? { kind: "polygon" as const, parts: b.parts }
+          : {}),
       }))
     );
+    setAddTo(null);
     setSelected(null);
+    setSelPart(null);
     dirty.current = false;
     setSaved(true);
   }, [image?.id]);
@@ -142,7 +253,7 @@ export default function AnnotationEditor({
     return () => clearTimeout(h);
   }, [boxes, flush]);
 
-  const edit = useCallback((next: CanvasBox[]) => {
+  const edit = useCallback((next: CanvasShape[]) => {
     setBoxes(next);
     dirty.current = true;
   }, []);
@@ -223,13 +334,17 @@ export default function AnnotationEditor({
     }
   }, [image, readOnly, flush, onChanged, go, verdict]);
 
-  const pickBox = useCallback(() => {
+  /** Нажатие на инструмент: повторное нажатие включает залипание — им рисуют
+   *  подряд, не возвращаясь в выбор после каждого объекта. */
+  const pickTool = useCallback((want: "box") => {
     setTool((t) => {
-      if (t === "box") { setLock((l) => !l); return t; }
+      if (t === want) { setLock((l) => !l); return t; }
       setLock(false);
-      return "box";
+      return want;
     });
+    setAddTo(null);
   }, []);
+
 
   // --- полуавтоматическая разметка ---------------------------------------- #
 
@@ -237,6 +352,10 @@ export default function AnnotationEditor({
     image ? { image_id: image.id } : null,
     images[index + 1] ? { image_id: images[index + 1].id } : null
   );
+
+  /** Работает ли полуавтомат прямо сейчас. В «выборе» рисовать нечем, но сам
+   *  тумблер при этом не гаснет — он запомнен. */
+  const autoLive = autoOn && tool !== "select" && auto.state === "ready";
 
   const clearAuto = useCallback(() => {
     setAutoPts([]);
@@ -249,7 +368,7 @@ export default function AnnotationEditor({
   useEffect(() => { clearAuto(); }, [image?.id, clearAuto]);
 
   const ask = useCallback(
-    async (points: CanvasPoint[], prompt: CanvasBox | null) => {
+    async (points: CanvasPoint[], prompt: CanvasShape | null) => {
       const shape = await auto.predict(
         { points, box: prompt ? { x: prompt.x, y: prompt.y, w: prompt.w, h: prompt.h } : undefined },
         refine
@@ -264,21 +383,119 @@ export default function AnnotationEditor({
     [auto, refine, labelOf, active]
   );
 
-  /** Закрепление: детекция становится обычным боксом, как все остальные. */
+  /** Закрепление: детекция становится обычным объектом, как все остальные.
+   *
+   *  Чем именно — решает инструмент. Модель отдаёт и рамку, и куски маски
+   *  сразу, поэтому вопрос «а полигоном?» не задаётся: включён контур —
+   *  закрепляются все куски одним объектом, включён бокс — рамка.
+   */
   const commitAuto = useCallback(() => {
     if (!autoPrev || active === null) return;
-    const box: CanvasBox = {
-      class_index: active, x: autoPrev.x, y: autoPrev.y, w: autoPrev.w, h: autoPrev.h,
-    };
+    const rings = (autoPrev.polygons || []).filter((r) => r.length >= poly.MIN_POINTS);
+    const shape: CanvasShape =
+      tool === "polygon" && rings.length
+        ? {
+            class_index: active,
+            kind: "polygon",
+            parts: rings as Ring[],
+            ...(poly.bounds(rings as Ring[]) || autoPrev),
+          }
+        : {
+            class_index: active,
+            x: autoPrev.x, y: autoPrev.y, w: autoPrev.w, h: autoPrev.h,
+          };
     if (replacing !== null && boxes[replacing]) {
-      edit(boxes.map((b, i) => (i === replacing ? box : b)));
+      edit(boxes.map((b, i) => (i === replacing ? shape : b)));
       setSelected(replacing);
     } else {
-      edit([...boxes, box]);
+      edit([...boxes, shape]);
       setSelected(boxes.length);
     }
     clearAuto();
-  }, [autoPrev, active, replacing, boxes, edit, clearAuto]);
+  }, [autoPrev, active, replacing, boxes, edit, clearAuto, tool]);
+
+  /** Замкнули контур руками: он либо новый объект, либо ещё одна часть того,
+   *  к которому его просили присоединить. */
+  const onPolygon = useCallback(
+    (ring: Ring) => {
+      if (frozen || active === null) return;
+      const target = addTo !== null && boxes[addTo] ? addTo : null;
+      if (target !== null) {
+        const parts = [...(boxes[target].parts || []), ring];
+        edit(boxes.map((b, i) =>
+          i === target
+            ? { ...b, kind: "polygon" as const, parts, ...(poly.bounds(parts) || {}) }
+            : b
+        ));
+        setSelected(target);
+        setSelPart(parts.length - 1);
+        setTool("select");
+        // Присоединение — разовая просьба, а не режим: иначе следующий контур
+        // молча уехал бы в тот же объект.
+        setAddTo(null);
+        return;
+      }
+      const parts = [ring];
+      edit([...boxes, {
+        class_index: active, kind: "polygon" as const, parts,
+        ...(poly.bounds(parts) || { x: 0, y: 0, w: 0, h: 0 }),
+      }]);
+      setSelected(boxes.length);
+      setSelPart(0);
+      // Замкнули — возвращаемся в выбор **всегда**, даже при залипании.
+      // Готовый контур почти никогда не бывает готов с первого раза: следом
+      // идёт правка, а не второй контур. Залипание осталось у рамки, где
+      // объекты действительно рисуют подряд.
+      setTool("select");
+    },
+    [frozen, active, addTo, boxes, edit]
+  );
+
+  /** Влить объект `from` в объект `into`: части складываются, донор исчезает. */
+  const joinInto = useCallback(
+    (from: number, into: number) => {
+      const a = boxes[into];
+      const b = boxes[from];
+      if (!a || !b || from === into) return;
+      if (a.class_index !== b.class_index) {
+        setError("Соединять можно только объекты одного класса.");
+        return;
+      }
+      const parts = [
+        ...(a.parts || [boxRing(a)]),
+        ...(b.parts || [boxRing(b)]),
+      ];
+      const next = boxes
+        .map((s, i) =>
+          i === into
+            ? { ...a, kind: "polygon" as const, parts, ...(poly.bounds(parts) || {}) }
+            : s
+        )
+        .filter((_, i) => i !== from);
+      edit(next);
+      // Индекс выбранного мог сдвинуться: донор стоял раньше приёмника.
+      setSelected(into > from ? into - 1 : into);
+    },
+    [boxes, edit]
+  );
+
+  /** Убрать одну часть объекта. Последняя часть — это сам объект. */
+  const dropPart = useCallback(
+    (i: number, part: number) => {
+      const s = boxes[i];
+      if (!s?.parts?.length) return;
+      if (s.parts.length <= 1) {
+        edit(boxes.filter((_, k) => k !== i));
+        setSelected(null);
+        return;
+      }
+      const parts = poly.removePart(s.parts, part);
+      edit(boxes.map((b, k) =>
+        k === i ? { ...b, parts, ...(poly.bounds(parts) || {}) } : b
+      ));
+    },
+    [boxes, edit]
+  );
 
   const onAutoPoint = useCallback(
     (p: { x: number; y: number }, o: { shift: boolean; negative: boolean; onBox: number | null }) => {
@@ -347,21 +564,56 @@ export default function AnnotationEditor({
     [frozen, active, auto.state, autoPrev, commitAuto, ask]
   );
 
+  /** Полуавтомат перпендикулярен инструменту. Включая его из выбора, встаём
+   *  на бокс: рисовать он должен чем-то, а «чем» — это и есть инструмент. */
   const pickAuto = useCallback(() => {
-    setTool((t) => (t === "auto" ? "select" : "auto"));
-    setLock(false);
+    setAutoOn((v) => {
+      if (!v) setTool((t) => (t === "select" ? "box" : t));
+      return !v;
+    });
     clearAuto();
   }, [clearAuto]);
 
+  /** «Присоединить следующий контур к выбранному». Разовая просьба: холст
+   *  переходит в рисование, и первый же замкнутый контур ляжет в объект. */
+  const addContour = useCallback(() => {
+    if (frozen || selected === null || !boxes[selected]) return;
+    setAddTo(selected);
+    setTool("polygon");
+  }, [frozen, selected, boxes]);
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Клавиши молчат, пока человек печатает, — но флажок и ползунок это не
+      // печать. Прежде любой <input> глушил инструменты, и после клика по
+      // галке в панели V/B/P переставали работать до тех пор, пока не
+      // щёлкнешь мимо: молчаливо и необъяснимо.
+      const el = e.target as HTMLElement | null;
+      const tag = el?.tagName;
+      const typing =
+        tag === "TEXTAREA" ||
+        (tag === "INPUT" &&
+          !["checkbox", "radio", "range", "button", "submit"].includes(
+            (el as HTMLInputElement).type
+          ));
+      if (typing || el?.isContentEditable) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      // Shift+P — «присоединить контур к выбранному». Единственное сочетание с
+      // Shift, поэтому проверяем его до общего разбора, а не заводим ветку.
+      if (e.shiftKey) {
+        if (e.code === "KeyP" && !frozen) { addContour(); e.preventDefault(); }
+        return;
+      }
       switch (e.code) {
         case "Escape":
-          // Esc сначала отменяет начатое, и только потом закрывает редактор.
+          // Esc снимает начатое по одному слою за нажатие и только на дне
+          // закрывает редактор. Недорисованный контур в этот список не входит:
+          // его Escape холст перехватывает раньше, пока контур существует.
           if (autoPrev || autoPts.length) clearAuto();
+          else if (addTo !== null) setAddTo(null);
+          // Полуавтомат Esc не забывает: он запомнен, а не включён «сейчас».
+          // Забыв его тут, мы заставили бы включать заново после каждого
+          // выхода из инструмента — то есть постоянно.
           else if (tool !== "select") { setTool("select"); setLock(false); }
           else flush().then(onClose);
           break;
@@ -372,8 +624,16 @@ export default function AnnotationEditor({
           break;
         case "ArrowRight": go(1); break;
         case "ArrowLeft": go(-1); break;
-        case "KeyV": setTool("select"); setLock(false); break;
-        case "KeyB": if (!frozen) pickBox(); break;
+        case "KeyV":
+          setTool("select"); setLock(false); setAddTo(null);
+          break;
+        case "KeyB": if (!frozen) pickTool("box"); break;
+        case "KeyP":
+          // Без залипания: контур всё равно возвращает в выбор после
+          // замыкания, и второе нажатие P только заводило бы флаг, который
+          // ни на что не влияет.
+          if (!frozen) { setTool("polygon"); setAddTo(null); }
+          break;
         case "KeyA": if (!frozen && auto.state === "ready") pickAuto(); break;
         case "KeyE": if (!frozen) toggle("empty"); break;
         case "KeyS": if (!frozen) toggle("skipped"); break;
@@ -381,11 +641,23 @@ export default function AnnotationEditor({
         case "Digit0": canvas.current?.fit(); break;
         case "Delete":
         case "Backspace":
-          // Delete — про разметку: удаляет выбранный бокс. Незакреплённое
-          // выделение снимает Esc, иначе до боксов было бы не добраться.
+          // Delete — про разметку: удаляет выбранный объект. Незакреплённое
+          // выделение снимает Esc, иначе до объектов было бы не добраться.
+          // Когда части выделяются по отдельности, уходит выделенная часть —
+          // человек указал на неё, а не на объект; последняя часть и есть
+          // объект, и тогда уходит он.
           if (selected !== null && !frozen) {
-            edit(boxes.filter((_, i) => i !== selected));
-            setSelected(null);
+            const me = boxes[selected];
+            if (splitParts && selPart !== null && (me?.parts?.length || 0) > 1) {
+              const parts = poly.removePart(me.parts!, selPart);
+              edit(boxes.map((b, k) =>
+                k === selected ? { ...b, parts, ...(poly.bounds(parts) || {}) } : b
+              ));
+              setSelPart(null);
+            } else {
+              edit(boxes.filter((_, i) => i !== selected));
+              pick(null);
+            }
           } else if (autoPrev || autoPts.length) clearAuto();
           break;
         default: {
@@ -403,9 +675,78 @@ export default function AnnotationEditor({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [go, flush, onClose, selected, visible, tool, frozen, pickBox, toggle,
-      trash, boxes, edit, pickClass, auto.state, pickAuto, autoPrev, autoPts,
-      clearAuto, commitAuto]);
+  }, [go, flush, onClose, selected, selPart, splitParts, visible, tool, autoOn,
+      addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
+      pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto]);
+
+  /** Что можно сделать с объектом под правой кнопкой, кроме смены класса.
+   *
+   *  Действия появляются только когда им есть на чём сработать: пункт, который
+   *  ничего не сделает, хуже отсутствующего — по нему нажимают и ждут. */
+  function menuActions(m: {
+    i: number | null;
+    part?: number;
+    vertex?: number;
+    prev: number | null;
+  }) {
+    if (m.i === null || frozen) return undefined;
+    const i = m.i;
+    const me = boxes[i];
+    if (!me) return undefined;
+    const acts: { label: string; hint?: string; run: () => void }[] = [];
+
+    acts.push({
+      label: "Добавить контур",
+      hint: "⇧P",
+      run: () => {
+        setSelected(i);
+        setAddTo(i);
+        setTool("polygon");
+        setMenu(null);
+      },
+    });
+
+    const into = m.prev;
+    if (into !== null && into !== i && boxes[into]) {
+      const same = boxes[into].class_index === me.class_index;
+      acts.push({
+        label: "Присоединить к выбранному",
+        hint: same ? undefined : "другой класс",
+        run: () => {
+          if (same) joinInto(i, into);
+          else setError("Соединять можно только объекты одного класса.");
+          setMenu(null);
+        },
+      });
+    }
+
+    if (m.vertex !== undefined && m.part !== undefined && me.parts) {
+      const ring = me.parts[m.part];
+      const last = !ring || ring.length <= poly.MIN_POINTS;
+      acts.push({
+        label: "Убрать точку",
+        hint: last ? `нельзя: осталось ${poly.MIN_POINTS}` : undefined,
+        run: () => {
+          if (!last) {
+            const parts = poly.removeVertex(me.parts!, m.part!, m.vertex!);
+            edit(boxes.map((b, k) =>
+              k === i ? { ...b, parts, ...(poly.bounds(parts) || {}) } : b
+            ));
+          }
+          setMenu(null);
+        },
+      });
+    }
+
+    if (me.parts && me.parts.length > 1 && m.part !== undefined) {
+      acts.push({
+        label: "Убрать этот контур",
+        hint: `останется ${me.parts.length - 1}`,
+        run: () => { dropPart(i, m.part as number); setMenu(null); },
+      });
+    }
+    return acts;
+  }
 
   if (!image) return null;
 
@@ -414,7 +755,10 @@ export default function AnnotationEditor({
   const isDeleted = image.task_status === "deleted";
 
   return (
-    <div className="mag-ed" role="dialog" aria-modal="true" aria-label="Разметка">
+    <div
+      className={help ? "mag-ed help" : "mag-ed"}
+      role="dialog" aria-modal="true" aria-label="Разметка"
+    >
       <div className="mag-ed-head">
         <b>{taskName}</b>
         <span className="mag-ed-cnt">кадр {index + 1} из {images.length}</span>
@@ -423,11 +767,11 @@ export default function AnnotationEditor({
         {active !== null && (
           <button
             type="button"
-            className={tool === "auto" ? "mag-ed-active on" : "mag-ed-active"}
-            title="Сменить класс для новых объектов"
+            className={autoOn ? "mag-ed-active on" : "mag-ed-active"}
+            {...hk("cls")}
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              setMenu({ i: null, x: r.left, y: r.bottom + 6 });
+              setMenu({ i: null, x: r.left, y: r.bottom + 6, prev: selected });
             }}
           >
             <i style={{ background: labelOf(active).color }} />
@@ -450,7 +794,7 @@ export default function AnnotationEditor({
             type="button"
             disabled={frozen}
             onClick={() => toggle("empty")}
-            title="Объектов нет — фоновый кадр (E)"
+            {...hk("empty")}
           >
             Пусто
           </button>
@@ -459,7 +803,7 @@ export default function AnnotationEditor({
             type="button"
             disabled={frozen}
             onClick={() => toggle("skipped")}
-            title="Вернуться позже (S)"
+            {...hk("skip")}
           >
             Отложить
           </button>
@@ -468,7 +812,7 @@ export default function AnnotationEditor({
             type="button"
             disabled={readOnly}
             onClick={trash}
-            title={isDeleted ? "Вернуть кадр в работу (X)" : "Забраковать кадр (X)"}
+            {...hk("trash")}
           >
             {isDeleted ? "Вернуть" : "Удалить"}
           </button>
@@ -476,20 +820,54 @@ export default function AnnotationEditor({
             className="mag-ed-btn primary"
             type="button"
             onClick={() => go(1)}
-            title="Следующий кадр (Пробел)"
+            {...hk("next")}
           >
             Далее →
           </button>
         </span>
         <button
+          className={help ? "mag-ed-btn on" : "mag-ed-btn"}
+          type="button"
+          onClick={() => setHelp((v) => !v)}
+          aria-pressed={help}
+        >
+          справка
+        </button>
+        <button
           className="mag-ed-btn"
           type="button"
           onClick={() => flush().then(onClose)}
           aria-label="Закрыть"
+          {...hk("close")}
         >
           ✕
         </button>
       </div>
+
+      {/* Справка: гасим всё, оставляя светиться органы управления. Подсказки
+          по наведению вместо вечных всплывашек — они мешали работать. */}
+      {help && (
+        <>
+          <div className="mag-ed-dim" onClick={() => setHelp(false)} />
+          <div className="mag-ed-help">
+            <b>Управление</b>
+            <div className="mag-ed-help-list">
+              {Object.entries(HELP)
+                .filter(([, [key]]) => key)
+                .map(([id, [key, text]]) => (
+                  <div key={id}>
+                    <kbd>{key}</kbd>
+                    <span>{text}</span>
+                  </div>
+                ))}
+            </div>
+            <p>
+              Наведите на любую кнопку — покажет, что она делает. Щелчок мимо
+              закрывает справку.
+            </p>
+          </div>
+        </>
+      )}
 
       <div className="mag-ed-body">
         {/* Рейк: только вид и инструменты, решений по кадру здесь нет */}
@@ -497,8 +875,8 @@ export default function AnnotationEditor({
           <button
             className={tool === "select" ? "mag-tool on" : "mag-tool"}
             type="button"
-            onClick={() => { setTool("select"); setLock(false); }}
-            title="Выбор и правка — V"
+            onClick={() => { setTool("select"); setLock(false); setAddTo(null); }}
+            {...hk("select")}
           >
             ↖
           </button>
@@ -506,25 +884,50 @@ export default function AnnotationEditor({
             className={tool === "box" ? "mag-tool on" : "mag-tool"}
             type="button"
             disabled={frozen}
-            onClick={pickBox}
-            title="Новая рамка — B, ещё раз B — залипание"
+            onClick={() => pickTool("box")}
+            {...hk("box")}
           >
             ▢
             {tool === "box" && lock && <i className="mag-tool-lock" />}
           </button>
-          {/* Полуавтомат. До готовности модели кнопка приглушена и пульсирует:
-              первый подъём весов занимает десятки секунд. */}
+          <button
+            className={tool === "polygon" ? "mag-tool on" : "mag-tool"}
+            type="button"
+            disabled={frozen}
+            onClick={() => { setTool("polygon"); setAddTo(null); }}
+            {...hk("polygon")}
+          >
+            ⬠
+          </button>
+          {tool === "polygon" && (
+            <button
+              className={polyPanel ? "mag-tool on" : "mag-tool"}
+              type="button"
+              onClick={() => setPolyPanel((v) => !v)}
+              {...hk("polyOpts")}
+            >
+              ⚙
+            </button>
+          )}
+          {/* Полуавтомат стоит за чертой: он не четвёртый инструмент, а способ
+              ввода поверх текущего. До готовности модели кнопка приглушена и
+              пульсирует — первый подъём весов занимает десятки секунд. */}
+          <hr />
           <button
             className={
-              (tool === "auto" ? "mag-tool on" : "mag-tool") +
+              (autoOn ? "mag-tool on" : "mag-tool") +
               (auto.state === "starting" ? " warming" : "")
             }
             type="button"
             disabled={frozen || auto.state !== "ready"}
             onClick={pickAuto}
+            {...hk("auto")}
+            // Всплывашка остаётся только у неготовой кнопки, и это не
+            // подсказка, а диагноз: почему на неё нельзя нажать. Справка
+            // такого сказать не может — она про замысел, а не про состояние.
             title={
               auto.state === "ready"
-                ? "Полуавтоматическая разметка — A"
+                ? undefined
                 : auto.state === "error"
                   ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}`
                   : "Модель готовится…"
@@ -532,26 +935,26 @@ export default function AnnotationEditor({
           >
             ✨
           </button>
-          {tool === "auto" && (
+          {autoOn && (
             <button
               className={autoPanel ? "mag-tool on" : "mag-tool"}
               type="button"
               onClick={() => setAutoPanel((v) => !v)}
-              title="Параметры полуавтомата"
+              {...hk("autoOpts")}
             >
               ⚙
             </button>
           )}
           <hr />
-          <button className="mag-tool" type="button" title="Приблизить"
+          <button className="mag-tool" type="button" {...hk("zoomIn")}
             onClick={() => canvas.current?.zoomBy(1.3)}>
             +
           </button>
-          <button className="mag-tool" type="button" title="Отдалить"
+          <button className="mag-tool" type="button" {...hk("zoomOut")}
             onClick={() => canvas.current?.zoomBy(1 / 1.3)}>
             −
           </button>
-          <button className="mag-tool wide" type="button" title="Вписать в окно — 0"
+          <button className="mag-tool wide" type="button" {...hk("fit")}
             onClick={() => canvas.current?.fit()}>
             {Math.round(scale * 100)}%
           </button>
@@ -560,18 +963,47 @@ export default function AnnotationEditor({
             className={grid ? "mag-tool on" : "mag-tool"}
             type="button"
             onClick={() => setGrid((g) => !g)}
-            title="Сетка на фоне"
+            {...hk("grid")}
           >
             ▦
           </button>
-          <span className="mag-ed-hint-rail">
-            Shift — полотно<br />колесо — зум
-          </span>
         </div>
 
-        {/* Окошко параметров полуавтомата. Показываем только то, что влияет на
-            рамку: число точек контура на её границы не влияет вовсе. */}
-        {tool === "auto" && autoPanel && (
+        {/* Настройки контура. Тумблер здесь, а двигают части в «выборе»: это
+            привычка человека, а не режим — заведя её однажды, к ней не
+            возвращаются. */}
+        {tool === "polygon" && polyPanel && (
+          <div className="mag-auto-panel">
+            <h5>Контур</h5>
+            <label className="mag-auto-check">
+              <input
+                type="checkbox"
+                checked={canMovePoly}
+                onChange={(e) => {
+                  setCanMovePoly(e.target.checked);
+                  if (!e.target.checked) setSplitParts(false);
+                }}
+              />
+              <span>Двигать контуры</span>
+            </label>
+            <label className={canMovePoly ? "mag-auto-check" : "mag-auto-check off"}>
+              <input
+                type="checkbox"
+                disabled={!canMovePoly}
+                checked={splitParts}
+                onChange={(e) => {
+                  setSplitParts(e.target.checked);
+                  if (!e.target.checked) setSelPart(null);
+                }}
+              />
+              <span>Части по отдельности</span>
+            </label>
+          </div>
+        )}
+
+        {/* Окошко параметров полуавтомата. Показываем только то, что влияет
+            на результат при текущем инструменте. */}
+        {autoOn && autoPanel && (
           <div className="mag-auto-panel">
             <h5>Полуавтомат</h5>
             <label className="mag-auto-row">
@@ -621,6 +1053,22 @@ export default function AnnotationEditor({
               />
               <span>Закрывать дыры в объекте</span>
             </label>
+            {/* Число точек контура появляется только у контурного инструмента:
+                на границы рамки оно не влияет вовсе, и в боксовой работе это
+                был бы ползунок, который ничего не делает. */}
+            {tool === "polygon" && (
+              <label className="mag-auto-row">
+                <span>Точек в контуре</span>
+                <input
+                  type="range" min={8} max={200} step={4}
+                  value={refine.polygon_points ?? 64}
+                  onChange={(e) =>
+                    setRefine((r) => ({ ...r, polygon_points: Number(e.target.value) }))
+                  }
+                />
+                <b>{refine.polygon_points ?? 64}</b>
+              </label>
+            )}
             <label className="mag-auto-check">
               <input
                 type="checkbox"
@@ -657,18 +1105,25 @@ export default function AnnotationEditor({
           labelOf={labelOf}
           editable={!frozen}
           tool={tool}
+          auto={autoLive}
           autoMode={autoMode}
           autoPoints={autoPts}
           autoPreview={autoPrev}
           activeClass={active}
           selected={selected}
+          selectedPart={selPart}
+          splitParts={splitParts}
+          canMovePoly={canMovePoly}
           grid={grid}
           reserve={filmH + 92}
-          onSelect={setSelected}
+          onSelect={pick}
           onBoxes={edit}
           onDrawn={() => { if (!lock) setTool("select"); }}
+          onPolygon={onPolygon}
           onScale={setScale}
-          onContext={(i, x, y) => setMenu({ i, x, y })}
+          onContext={(i, x, y, at) =>
+            setMenu({ i, x, y, ...at, prev: selected })
+          }
           onAutoPoint={onAutoPoint}
           onAutoBox={onAutoBox}
           onAutoCommit={commitAuto}
@@ -730,10 +1185,10 @@ export default function AnnotationEditor({
           <h5>На кадре · {boxes.length}</h5>
           <div className="mag-ed-objs">
             {boxes.length === 0 ? (
-              <p className="mag-ed-hint">
+              <p className="mag-ed-objects-empty">
                 {isEmpty
                   ? "Кадр объявлен фоновым — объектов на нём нет."
-                  : "Нажмите B и протяните рамку по объекту."}
+                  : "На кадре пока ничего не обведено."}
               </p>
             ) : (
               boxes.map((b, i) => (
@@ -765,16 +1220,12 @@ export default function AnnotationEditor({
               ))
             )}
           </div>
-          <p className="mag-ed-keys">
-            <kbd>V</kbd> выбор <kbd>B</kbd> рамка <kbd>1–9</kbd> класс{" "}
-            <kbd>Del</kbd> удалить объект<br />
-            <kbd>E</kbd> пусто <kbd>S</kbd> отложить <kbd>X</kbd> забраковать{" "}
-            <kbd>Пробел</kbd> далее <kbd>0</kbd> вписать
-          </p>
+          
         </aside>
       </div>
 
       <FilmStrip
+        grabHelp={hk("strip")}
         items={images.map((im) => ({
           id: im.id,
           width: im.width,
@@ -794,6 +1245,8 @@ export default function AnnotationEditor({
           at={{ x: menu.x, y: menu.y }}
           current={menu.i === null ? active : boxes[menu.i]?.class_index ?? null}
           onPick={(ci) => { pickClass(ci, menu.i); setMenu(null); }}
+          deleteLabel="объект"
+          actions={menuActions(menu)}
           onDelete={
             menu.i === null || frozen
               ? undefined

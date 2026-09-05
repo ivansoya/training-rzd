@@ -4,8 +4,12 @@
 
    Холст и лента одни на редактор таски и на просмотр датасета, поэтому палитра
    объявлена и на них самих: они должны выглядеть одинаково под любой оболочкой.
-   Всё, что зависит от масштаба, делится на --z — иначе при зуме обводка
-   толстеет вместе с кадром. */
+
+   Разметка рисуется одним SVG поверх кадра и вне его трансформа, поэтому
+   размеры здесь везде обычные, экранные. Делить на масштаб больше не нужно и
+   нельзя: доли пикселя браузер округляет каждую грань по-своему, и на зуме 12
+   рамка в 0.167px мерцала, а якорь в 0.83px съезжал. Правило простое — в этом
+   файле не должно появиться ни одного деления на --z. */
 
 .mag-ed,
 .mag-viewer,
@@ -60,58 +64,250 @@
 .mag-cv.cur-grabbing { cursor: grabbing; }
 .mag-cv.cur-auto { cursor: crosshair; }
 
-/* --- полуавтоматическая разметка ---
-   Слой лежит поверх сцены и вне трансформа, поэтому размеры здесь обычные,
-   экранные: делить на масштаб нельзя — доли пикселя браузер округляет
-   по-разному, и точка вытягивается в овал с чёрной каймой вместо заливки. */
-.mag-cv-over {
+/* ===== Слой разметки =====
+   Один SVG поверх сцены и вне трансформа: объекты, якоря, вершины, подсказки
+   модели. Слой событий не ловит — их ловят только нарисованные фигуры, иначе
+   он забрал бы у сцены панораму. */
+.mag-cv-layer {
   position: absolute;
   inset: 0;
   pointer-events: none;
   z-index: 3;
+  overflow: visible;
 }
 
+/* Тело объекта: ловит клик и ничего не рисует. */
+.mag-cv-hit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: move;
+}
+
+/* Пока рисуют, курсор над готовым объектом остаётся прицелом: клик по нему
+   поставит точку, а не подхватит объект, и рука должна знать это заранее. */
+.mag-cv.cur-draw .mag-cv-hit,
+.mag-cv.cur-auto .mag-cv-hit {
+  cursor: inherit;
+}
+
+/* Двойная обводка. Тёмная подложка шире цветной линии ровно настолько, чтобы
+   выглядывать каймой: без неё рамка теряется то на белом небе, то на чёрном
+   вагоне, и это не вкус — это единственный способ читаться на любом кадре. */
+.mag-cv-hull {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.72);
+  stroke-width: 3.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.mag-cv-line {
+  fill: none;
+  stroke: var(--bc);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  transition: stroke-width 0.12s ease, filter 0.12s ease;
+}
+
+/* Габарит контура — пунктирная рамка по самым крайним его точкам. Пунктир
+   здесь, а не на самой обводке: обводка описывает форму и обязана быть точной,
+   а рамка описывает занятое место и должна отойти на второй план. У объекта из
+   нескольких частей она одна на все — по ней видно, что половины, разнесённые
+   по кадру, принадлежат одному целому. */
+.mag-cv-cage {
+  fill: none;
+  stroke: var(--bc);
+  stroke-width: 1;
+  stroke-dasharray: 6 5;
+  opacity: 0.5;
+  transition: opacity 0.12s ease;
+}
+
+.mag-cv-sh.on .mag-cv-cage {
+  opacity: 0.85;
+}
+
+/* Выбранный светится и чуть прибавляет в весе: на пёстром кадре одного
+   изменения заливки мало. */
+.mag-cv-sh.on .mag-cv-line {
+  stroke-width: 2;
+  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--bc) 75%, transparent));
+}
+
+/* Заслонённый: объект есть, но в разметку этот кадр не пойдёт. Подложку рвём
+   тем же пунктиром, что и линию: сплошная просвечивала бы в каждом промежутке,
+   и штрихи выглядели бы двухцветными. */
+.mag-cv-sh.occluded .mag-cv-line,
+.mag-cv-sh.occluded .mag-cv-hull {
+  stroke-dasharray: 7 5;
+}
+
+/* Тихая заливка цветом класса — у невыбранного. Она говорит «объект вот
+   тут» боковым зрением, не мешая смотреть на кадр. Выбранный заливку
+   отдаёт: под ним нужно видеть пиксели, ради которых всё и затевалось. */
+.mag-cv-sh .mag-cv-hit {
+  fill: color-mix(in srgb, var(--bc) 12%, transparent);
+  transition: fill 0.12s ease;
+}
+
+.mag-cv-sh.on .mag-cv-hit {
+  fill: transparent;
+}
+
+/* Выделенная часть объекта: у разорванного вагона надо видеть, которую
+   половину сейчас потянут. */
+.mag-cv-sh .mag-cv-hit.part-on {
+  fill: color-mix(in srgb, var(--bc) 22%, transparent);
+}
+
+.mag-cv-part {
+  fill: none;
+  stroke: var(--bc);
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 6px color-mix(in srgb, var(--bc) 85%, transparent));
+}
+
+/* Якорь бокса. Размер — HIT из overlay.ts: во что можно попасть, то и
+   нарисовано, без запаса и без обмана. Обводки нет: белая кайма на десяти
+   пикселях съедала половину якоря и превращала цвет класса в намёк. */
+.mag-cv-h {
+  fill: var(--bc);
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 1;
+  rx: 2;
+  pointer-events: all;
+  transition: transform 0.1s ease, fill 0.1s ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mag-cv-h:hover {
+  fill: var(--ed-ink);
+  transform: scale(1.25);
+}
+
+.mag-cv-h.tl, .mag-cv-h.br { cursor: nwse-resize; }
+.mag-cv-h.tr, .mag-cv-h.bl { cursor: nesw-resize; }
+.mag-cv-h.tc, .mag-cv-h.bc { cursor: ns-resize; }
+.mag-cv-h.lc, .mag-cv-h.rc { cursor: ew-resize; }
+
+/* Вершина контура — ромб. Тот же знак, что у ключевого кадра в дорожках
+   треков: «это положение поставил человек». */
+.mag-cv-v {
+  fill: var(--bc, var(--ed-ink));
+  stroke: rgba(0, 0, 0, 0.55);
+  stroke-width: 1;
+  pointer-events: all;
+  cursor: crosshair;
+  transition: transform 0.1s ease, fill 0.1s ease, opacity 0.12s ease;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.mag-cv-v:hover {
+  fill: var(--ed-ink);
+  transform: scale(1.35);
+}
+
+/* Вершина чужой части, когда части выделяются по отдельности: видно, что она
+   есть, но рука к ней не тянется. */
+.mag-cv-v.dim {
+  opacity: 0.35;
+}
+
+/* Пока держат Alt, вершины событий не ловят: под ним целятся в грань между
+   ними, и вершина, перехватившая нажатие, отняла бы вставку у самой частой
+   её цели — середины короткого ребра. */
+.mag-cv-layer.alt .mag-cv-v {
+  pointer-events: none;
+}
+
+/* Начальная точка рисуемого контура: в неё целятся, чтобы замкнуть. */
+.mag-cv-v.first {
+  fill: var(--ed-bg);
+  stroke: var(--bc);
+  stroke-width: 2.5;
+}
+
+/* Курсор подошёл — точка растёт навстречу и наливается цветом. Это ответ на
+   вопрос «куда нажать, чтобы замкнуть», данный до того, как он прозвучал. */
+.mag-cv-v.first.near {
+  fill: var(--bc);
+  stroke: var(--ed-ink);
+}
+
+/* Куда встанет вершина под Alt. Полая и мигает — она ещё не разметка. */
+.mag-cv-new {
+  fill: var(--ed-bg);
+  stroke: var(--bc);
+  stroke-width: 2.5;
+  pointer-events: none;
+  animation: mag-cv-pulse 1.1s ease-in-out infinite;
+}
+
+/* Усы к концам грани, которая разойдётся. Тонкие и приглушённые: они говорят
+   «вот сюда встроится», а не рисуют будущую форму. */
+.mag-cv-new-edge {
+  fill: none;
+  stroke: var(--bc);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+@keyframes mag-cv-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mag-cv-line, .mag-cv-h, .mag-cv-v, .mag-cv-cage,
+  .mag-cv-sh .mag-cv-hit { transition: none; }
+  .mag-cv-new { animation: none; opacity: 1; }
+}
+
+/* Рисуемый контур: цвет класса, но пунктиром и с открытым концом — он ещё не
+   объект. Цвет менять было бы неправдой: класс уже выбран. */
+.mag-cv-draft .mag-cv-line {
+  stroke-dasharray: 7 4;
+}
+
+/* --- полуавтоматическая разметка --- */
 .mag-cv-pt {
-  position: absolute;
-  width: 12px;
-  height: 12px;
-  margin: -6px 0 0 -6px;
-  box-sizing: border-box;
-  border-radius: 50%;
-  background: #2ee06a;
-  border: 2px solid #08120c;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 7px rgba(46, 224, 106, 0.8);
+  fill: #2ee06a;
+  stroke: #08120c;
+  stroke-width: 2;
+  filter: drop-shadow(0 0 4px rgba(46, 224, 106, 0.85));
 }
 
 /* Полая точка — «этого участка в объекте нет» */
 .mag-cv-pt.neg {
-  background: #14181c;
-  border-color: #ff5d5d;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.45), 0 0 7px rgba(255, 93, 93, 0.8);
+  fill: #14181c;
+  stroke: #ff5d5d;
 }
 
 .mag-cv-lasso {
-  position: absolute;
-  border: 2px dashed #ffd43b;
-  background: rgba(255, 212, 59, 0.12);
+  fill: rgba(255, 212, 59, 0.12);
+  stroke: #ffd43b;
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
 }
 
-/* Ещё не закреплённая детекция: рамка пунктиром, чтобы её нельзя было
-   спутать с обычным боксом. */
-.mag-cv-pre {
-  position: absolute;
-  border: 2px dashed var(--bc);
-  box-sizing: border-box;
-}
-
-.mag-cv-mask {
-  position: absolute;
-  overflow: visible;
-}
-
-/* non-scaling-stroke: контур растянут под кадр, но толщина остаётся 2 px */
-.mag-cv-mask polygon {
+/* Ещё не закреплённая детекция: пунктиром, чтобы её нельзя было спутать с
+   закреплённым объектом. */
+.mag-cv-pre rect {
   fill: none;
+  stroke: var(--bc);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+}
+
+.mag-cv-pre .mag-cv-mask {
+  fill: color-mix(in srgb, var(--bc) 18%, transparent);
+  stroke: var(--bc);
   stroke-width: 2;
   stroke-dasharray: 6 4;
 }
@@ -169,43 +365,184 @@
   height: 100%;
 }
 
-.mag-cv-box {
+/* ===== Справка =====
+   Один механизм на оба редактора — кадров и видео. Жил в video.css, пока был
+   только там; переехал сюда, когда разметчик кадров получил ту же справку.
+   Держать его в файле одного из двух означало бы, что правка для одного молча
+   меняет другой.
+
+   Устройство: включённая справка гасит экран, оставляя светиться органы
+   управления, а что делает каждый — говорит наведение. Вечных подсказок в
+   интерфейсе нет: текст, прочитанный в первый день, все остальные дни только
+   отнимает у кадра место. */
+.mag-ed-dim {
   position: absolute;
-  border: calc(2px / var(--z, 1)) solid var(--bc);
-  border-radius: calc(2px / var(--z, 1));
-  /* Невыбранный держит лёгкую заливку своего цвета: тонкая рамка на пёстром
-     кадре теряется, а заливка читается периферийным зрением. */
-  background: color-mix(in srgb, var(--bc) 15%, transparent);
-  cursor: move;
+  inset: 0;
+  z-index: 40;
+  background: rgba(6, 9, 12, 0.72);
 }
 
-/* Выбранный отдаёт заливку — под ним нужно видеть пиксели, — и светится */
-.mag-cv-box.on {
+/* Органы управления остаются над затемнением — в этом весь смысл справки:
+   видно, чем управляют, а не общий силуэт окна. */
+.mag-ed.help .mag-ed-head,
+.mag-ed.help .mag-ed-rail,
+.mag-ed.help .mag-ed-side {
+  position: relative;
+  z-index: 41;
+}
+
+.mag-ed.help [data-help] {
+  position: relative;
+  outline: 1px solid var(--red);
+  outline-offset: 2px;
+  border-radius: var(--radius-s);
+}
+
+/* Клавиша — прямо на элементе, мелко и в углу: подписи над кнопками в тесном
+   ряду наезжали бы друг на друга. */
+.mag-ed.help [data-hk]::after {
+  content: attr(data-hk);
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 5px);
+  transform: translateX(-50%);
+  padding: 2px 5px;
+  border-radius: 3px;
+  background: var(--red);
+  color: var(--on-acc);
+  font: 700 9px/1.4 var(--mono);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* Описание — по наведению: сразу все не поместились бы, да и не нужны все. */
+.mag-ed.help [data-help]:hover {
+  outline-width: 2px;
+  z-index: 42;
+}
+
+.mag-ed.help [data-help]:hover::before {
+  content: attr(data-ht);
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 7px);
+  transform: translateX(-50%);
+  max-width: 260px;
+  width: max-content;
+  padding: 7px 10px;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius);
+  background: var(--ed-panel);
+  color: var(--ed-ink);
+  font: 400 12px/1.45 var(--sans, inherit);
+  text-align: left;
+  white-space: normal;
+  z-index: 43;
+  pointer-events: none;
+}
+
+
+.mag-ed-help {
+  position: absolute;
+  z-index: 42;
+  right: 26px;
+  top: 74px;
+  width: 330px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px 16px;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius-l);
+  background: var(--ed-panel);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+
+.mag-ed-help b {
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ed-faint);
+}
+
+.mag-ed-help-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.mag-ed-help-list div {
+  display: grid;
+  /* Колонка клавиши тянется под самую длинную из них: при жёсткой ширине
+     «Shift + протяжка» вылезала за неё и наезжала на своё же описание. */
+  grid-template-columns: max-content 1fr;
+  gap: 9px 12px;
+  align-items: baseline;
+  font-size: 13px;
+  color: var(--ed-dim);
+}
+
+.mag-ed-help-list kbd {
+  justify-self: start;
+  padding: 3px 7px;
+  border: 1px solid var(--ed-edge);
+  border-radius: var(--radius-s);
+  background: var(--ed-btn);
+  color: var(--ed-ink);
+  font: 600 10.5px/1.3 var(--mono);
+  white-space: nowrap;
+}
+
+.mag-ed-help p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ed-faint);
+}
+
+/* ===== Разметка на превью =====
+   Один слой на киноленту, плитки таски и плитки датасета. Бокс — рамка,
+   контур — свои кольца: на плитке видно род объекта, а не только что он есть.
+   Заливка у контура плотнее рамочной: на сотне пикселей его форма сама по себе
+   уже не читается, а «это не рамка» читаться обязано. */
+.mag-shp {
+  position: absolute;
+  /* Фон гасим явно. Имя `.mag-mini` оказалось уже занято полоской в
+     taskpage.css — с её `background: var(--hair)`, — и чужой фон залил превью
+     сплошным серым. Имя сменили, а страховка осталась: слой поверх картинки
+     обязан быть прозрачным, чем бы его ни красили. */
   background: transparent;
-  box-shadow:
-    0 0 0 calc(1px / var(--z, 1)) rgba(255, 255, 255, 0.22),
-    0 0 calc(13px / var(--z, 1)) color-mix(in srgb, var(--bc) 70%, transparent);
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
 }
 
-.mag-cv-h {
-  --hs: calc(10px / var(--z, 1));
+.mag-shp-box {
+  fill: color-mix(in srgb, var(--bc) 20%, transparent);
+  stroke: var(--bc);
+  stroke-width: 1.5;
+}
+
+.mag-shp-poly {
+  fill: color-mix(in srgb, var(--bc) 38%, transparent);
+  stroke: var(--bc);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+/* Подпись класса на плитке датасета: вёрсткой, а не в SVG. */
+.mag-tile-lb {
   position: absolute;
-  width: var(--hs);
-  height: var(--hs);
-  background: var(--bc);
-  border: calc(1.5px / var(--z, 1)) solid #fff;
-  border-radius: calc(2px / var(--z, 1));
-  box-sizing: border-box;
+  transform: translateY(-100%);
+  color: #fff;
+  font: 700 9px ui-monospace, Menlo, Consolas, monospace;
+  padding: 1px 4px;
+  border-radius: 3px 3px 0 0;
+  white-space: nowrap;
+  pointer-events: none;
 }
-
-.mag-cv-h.tl { left: calc(var(--hs) / -2); top: calc(var(--hs) / -2); cursor: nwse-resize; }
-.mag-cv-h.tr { right: calc(var(--hs) / -2); top: calc(var(--hs) / -2); cursor: nesw-resize; }
-.mag-cv-h.bl { left: calc(var(--hs) / -2); bottom: calc(var(--hs) / -2); cursor: nesw-resize; }
-.mag-cv-h.br { right: calc(var(--hs) / -2); bottom: calc(var(--hs) / -2); cursor: nwse-resize; }
-.mag-cv-h.tc { left: 50%; margin-left: calc(var(--hs) / -2); top: calc(var(--hs) / -2); cursor: ns-resize; }
-.mag-cv-h.bc { left: 50%; margin-left: calc(var(--hs) / -2); bottom: calc(var(--hs) / -2); cursor: ns-resize; }
-.mag-cv-h.lc { top: 50%; margin-top: calc(var(--hs) / -2); left: calc(var(--hs) / -2); cursor: ew-resize; }
-.mag-cv-h.rc { top: 50%; margin-top: calc(var(--hs) / -2); right: calc(var(--hs) / -2); cursor: ew-resize; }
 
 /* ===== Кинолента ===== */
 .mag-fs {
@@ -285,20 +622,12 @@
   display: block;
 }
 
-/* Разметка прямо в ленте: видно не только пройден ли кадр, но и что на нём */
-.mag-fs-cell i {
-  position: absolute;
-  border: 1.5px solid var(--bc);
-  background: color-mix(in srgb, var(--bc) 22%, transparent);
-  border-radius: 1px;
-}
-
 /* Обводка несёт состояние. «Не тронут» — намеренно без обводки: кричать должно
    решение, а не то, до чего просто не дошли руки. */
 .mag-fs-cell.annotated { border-color: var(--s-done); }
 .mag-fs-cell.empty { border-color: var(--s-null); }
 .mag-fs-cell.skipped { border-color: var(--s-skip); }
-.mag-fs-cell.deleted { border-color: var(--s-del); opacity: 0.42; }
+.mag-fs-cell.deleted { border-color: var(--s-del); }
 
 .mag-fs-cell.deleted::after {
   content: "";
@@ -310,8 +639,43 @@
   );
 }
 
-/* Где мы сейчас — белым: этот цвет не занят ни одним состоянием */
-.mag-fs-cell.cur { outline: 2px solid #fff; outline-offset: 1px; opacity: 1; }
+/* Где мы сейчас.
+ *
+ * Было `outline` со смещением наружу — и это обрезалось: у ленты
+ * `overflow-x: auto` по горизонтали и `overflow-y: hidden` по вертикали,
+ * поэтому у первого кадра съедало левую грань, а у всех — верхнюю. Обводка,
+ * нарисованная **внутрь**, обрезаться не может в принципе.
+ *
+ * И цвет: белый кричал громче самой разметки. Текущий кадр отличается не
+ * цветом, а вниманием — остальные приглушены, этот в полную силу, и по нему
+ * идёт тонкая кайма марки. */
+.mag-fs-cell {
+  opacity: 0.62;
+  transition: opacity 0.12s ease, box-shadow 0.12s ease;
+}
+
+.mag-fs-cell:hover { opacity: 0.85; }
+
+.mag-fs-cell.cur { opacity: 1; }
+
+/* Кайма — отдельным слоем поверх превью, а не тенью на самой ячейке:
+   `box-shadow: inset` рисуется под содержимым, и картинка закрывала её
+   целиком. Вычисленный стиль при этом показывал тень на месте — измерять надо
+   было видимость, а не значение. */
+.mag-fs-cell.cur::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  box-shadow: inset 0 0 0 2px var(--mag-red, #ff4d4d);
+  pointer-events: none;
+  z-index: 2;
+}
+
+/* Забракованный приглушён сильнее прочих — у него своё правило, и оно должно
+   пережить общее. */
+.mag-fs-cell.deleted { opacity: 0.34; }
+.mag-fs-cell.deleted.cur { opacity: 0.72; }
 
 .mag-fs-n {
   position: absolute;
@@ -566,6 +930,14 @@
   margin-bottom: 8px;
   font-size: 12px;
   color: #cbd5e0;
+}
+
+/* Настройка, которую нечем включить, пока не включена та, от которой она
+   зависит. Гасим, но оставляем на месте: исчезнув, она заставила бы искать,
+   куда делась. */
+.mag-auto-check.off {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .mag-auto-row > span:first-child {

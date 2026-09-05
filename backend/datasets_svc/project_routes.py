@@ -28,6 +28,7 @@ from common.models import (
 )
 from common.storage import load_json, save_json, translit_slug
 from datasets_svc import importer
+from datasets_svc import shapes
 
 bp = Blueprint("projects", __name__)
 
@@ -310,16 +311,25 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
                 image.height = height
                 image.size_bytes = size_bytes
 
-                for box in entry["boxes"]:
-                    class_id = class_ids.get(box[0])
+                # `boxes` — манифест, записанный прежней версией: он лежит
+                # файлом между разбором архива и записью, и импорт, начатый до
+                # обновления, дописывается уже после него.
+                for shape in entry.get("shapes", entry.get("boxes") or []):
+                    class_id = class_ids.get(importer.class_of(shape))
                     if class_id is None:
                         orphan_boxes += 1
                         continue
-                    geometry, area = importer.to_pixels(box, width, height)
+                    parsed = importer.to_pixels(shape, width, height)
+                    if parsed is None:
+                        # Контур, от которого после пересчёта в пиксели ничего
+                        # не осталось. Кадр из-за одного объекта не роняем.
+                        orphan_boxes += 1
+                        continue
+                    ann_type, geometry, area = parsed
                     db.add(Annotation(
                         image_id=image.id,
                         class_id=class_id,
-                        ann_type="bbox",
+                        ann_type=ann_type,
                         geometry=geometry,
                         area=round(area, 2),
                         created_by=user_id,
@@ -570,10 +580,11 @@ def dataset_detail(code, dataset_id):
                 .join(LabelClass, LabelClass.id == Annotation.class_id)
                 .where(Annotation.image_id.in_(ids))
             ).all():
-                g = ann.geometry or {}
+                wire = shapes.to_wire(ann.ann_type, ann.geometry)
+                if not wire:
+                    continue
                 by_image[ann.image_id].append({
-                    "x": g.get("x", 0), "y": g.get("y", 0),
-                    "w": g.get("w", 0), "h": g.get("h", 0),
+                    **wire,
                     "class_index": idx, "name": name, "color": color,
                 })
 
