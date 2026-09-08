@@ -25,11 +25,13 @@ export default function MagShell({ children }: { children: ReactNode }) {
           <NavLink to="/" end className={nav}>
             Проекты
           </NavLink>
+          {/* Аугментации — единственное, что живёт и вне проектов: граф
+              принадлежит человеку, а не проекту, и правят его здесь. */}
+          <NavLink to="/augment" className={nav}>
+            Аугментации
+          </NavLink>
           <NavLink to="/account" className={nav}>
             Кабинет
-          </NavLink>
-          <NavLink to="/tools" className={nav}>
-            Инструменты
           </NavLink>
         </nav>
 

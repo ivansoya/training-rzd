@@ -11,7 +11,7 @@
 """
 import pytest
 
-from datasets_svc import shapes
+from common import shapes
 
 
 def square(x, y, side):

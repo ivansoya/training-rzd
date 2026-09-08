@@ -36,7 +36,7 @@ from PIL import Image as PilImage
 
 from common import config
 from common.datasets import find_yaml_member, parse_yaml_config, split_of
-from datasets_svc import polygon as polylib
+from common import polygon as polylib
 
 # How far outside [0,1] a coordinate may land before we call it broken.
 # 0.001 of a 1920-wide frame is two pixels — rounding noise from a converter,

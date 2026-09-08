@@ -1,71 +1,156 @@
-"""Standalone training runner, launched as a subprocess per training.
+"""Отдельный процесс, в котором идёт обучение.
 
-Running training in its own process means the parent (Flask) can terminate it
-immediately when the user stops/deletes a run — a plain thread running
-ultralytics cannot be interrupted mid-epoch.
+Процесс, а не поток, и это не перестраховка: прервать ultralytics посреди
+эпохи можно только сигналом всей группе процессов. Он же изолирует падение —
+нехватка видеопамяти уносит один ран, а не воркер со всей очередью.
 
-It reads the initial run state from ``--run-file`` and writes progress to both
-the persistent run file and a live file (read by the API).
+Состояние пишется в базу, а не в файл рядом с весами. Ради этого всё и
+затевалось: пока оно лежало в памяти одного процесса, у сервиса стоял один
+рабочий процесс, и тридцать две открытые вкладки останавливали раздел всем.
+
+Запись двухуровневая. Горячее (батчи, потери) — один короткий UPDATE не чаще
+раза в восемьсот миллисекунд: у батчей темп больше десяти в секунду, и писать
+каждый значило бы утопить базу на пустом месте. Холодное (конец эпохи) — своя
+строка плюс уведомление; его ждут открытые вкладки.
 """
 import argparse
-import json
 import os
 import time
 
+from sqlalchemy import select
 
-def _save(path, state):
-    if not path:
-        return
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(state, fh, ensure_ascii=False)
-    os.replace(tmp, path)
+# Каталоги ultralytics для конфигов и кэша — мимо тома с данными.
+os.environ.setdefault("YOLO_CONFIG_DIR", "/tmp/ultralytics")
+os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl")
+
+from common import config, gpu, live  # noqa: E402
+from common.db import SessionLocal  # noqa: E402
+from common.models import TrainEpoch, TrainRun, TrainSet, utcnow  # noqa: E402
+from training_svc import metrics as metrics_lib, trainer  # noqa: E402
+
+HOT_EVERY = 0.8
+
+
+def _peak_mb(device):
+    """Сколько видеопамяти держит этот процесс.
+
+    Берём резерв аллокатора, а не выделенное: соседу по карте мешает именно
+    резерв. И берём у torch, а не у nvidia-smi: в контейнере тот показывает
+    всю карту вместе с чужими задачами, и приписывать чужое своей — вернейший
+    способ раздуть оценку до полной карты и заблокировать её навсегда.
+    """
+    if str(device) == "cpu":
+        return None
+    try:
+        import torch
+
+        idx = int(str(device).split(":")[-1]) if ":" in str(device) else 0
+        return int(torch.cuda.max_memory_reserved(idx) // (1024 * 1024))
+    except Exception:
+        return None
+
+
+def _final_metrics(model, data_yaml, device, overrides, out_dir):
+    """Итоговая проверка лучших весов — и всё, что с неё можно снять.
+
+    Отдельным проходом, а не по ходу обучения: матрица ошибок считается лишь
+    при `plots=True`, и платить за неё каждой эпохой незачем — нужна она один
+    раз и по лучшей модели, а не по последней. После `model.train()` в
+    `model` уже лежат лучшие веса, поэтому проверять надо именно его.
+
+    Сбой разбора не роняет обучение: веса посчитаны, и терять их из-за
+    неудачной таблицы было бы обидно вдвойне. Причина в этом случае доедет
+    до экрана вместе с пустой таблицей.
+    """
+    grabbed = {}
+
+    def keep(validator):
+        grabbed["v"] = validator
+
+    try:
+        model.add_callback("on_val_end", keep)
+        with trainer.confusion_enabled():
+            model.val(
+                data=data_yaml,
+                device=device,
+                imgsz=overrides.get("imgsz", 640),
+                batch=overrides.get("batch", 16),
+                plots=True,       # ради счёта матрицы; рисование отключено
+                verbose=False,
+                project=out_dir,
+                name="val",
+                exist_ok=True,
+            )
+        validator = grabbed.get("v")
+        if validator is None:
+            return {"error": "Проверка не позвала обработчик — метрик нет."}
+        return metrics_lib.from_validator(validator)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": f"Метрики не собрались: {exc}"}
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--run-file", required=True)
-    ap.add_argument("--live-file", required=True)
-    ap.add_argument("--model-spec", required=True)
-    ap.add_argument("--data-yaml", required=True)
-    ap.add_argument("--project", required=True)
+    ap.add_argument("--run-id", required=True)
     args = ap.parse_args()
 
-    with open(args.run_file, "r", encoding="utf-8") as fh:
-        state = json.load(fh)
+    db = SessionLocal()
+    run = db.get(TrainRun, args.run_id)
+    if run is None:
+        raise SystemExit("Ран не найден.")
+    tset = db.get(TrainSet, run.set_id) if run.set_id else None
+    if tset is None or not tset.dir_path:
+        run.status = "error"
+        run.error = "Обучающий набор удалён — учиться не на чем."
+        run.finished_at = utcnow()
+        db.commit()
+        live.notify(db, "run", run.id, run.project_id, s="error")
+        db.close()
+        return
 
-    def save():
-        # Persist (data volume) + mirror to the live file the API streams from.
-        _save(args.run_file, state)
-        _save(args.live_file, state)
+    run.status = "running"
+    run.started_at = utcnow()
+    run.pid = os.getpid()
+    db.commit()
+    live.notify(db, "run", run.id, run.project_id, s="running")
 
-    def save_live():
-        # Hot path: only the container-local live file. Called per batch, so it
-        # must stay cheap — the persisted run file is updated at epoch borders.
-        _save(args.live_file, state)
-
-    state["status"] = "running"
-    state["message"] = "Идёт обучение"
-    state["phase"] = "train"
-    state["current_batch"] = 0
-    state["total_batches"] = None
-    state["val_batch"] = 0
-    state["val_total"] = None
-    state["batch_metrics"] = {}
-    save()
+    data_yaml = os.path.join(
+        config.DATA_DIR, tset.dir_path or "", "data.yaml"
+    )
+    out_dir = config.run_dir(run.project_id, run.id)
+    os.makedirs(out_dir, exist_ok=True)
 
     try:
-        from training_svc import trainer
         from ultralytics import YOLO
 
         trainer._disable_builtin_albumentations()
-        device = state.get("device", "cpu")
+        trainer.pin_memory_policy()
+        device = run.device
         is_cpu = str(device) == "cpu"
-        model = YOLO(args.model_spec)
 
-        def _loss_items(trn):
-            """Current per-component losses as {box_loss, cls_loss, dfl_loss}."""
+        # Веса — с тома; нет на томе — качаются, и это видно как отдельная
+        # фаза, а не как молчание перед первой эпохой.
+        fetched = {"last": 0.0}
+
+        def fetching(have, total):
+            now = time.time()
+            if now - fetched["last"] < HOT_EVERY:
+                return
+            fetched["last"] = now
+            run.phase = "weights"
+            run.val_batch = int(have // (1 << 20))
+            run.val_total = int(total // (1 << 20)) if total else None
+            run.lease_until = utcnow()
+            db.commit()
+
+        spec = trainer.resolve_weights(
+            run.base_weights_path or run.base_model, on_progress=fetching
+        )
+        model = YOLO(spec)
+
+        hot = {"last": 0.0, "epoch_started": time.time()}
+
+        def loss_items(trn):
             out = {}
             try:
                 tloss = getattr(trn, "tloss", None)
@@ -76,117 +161,175 @@ def main():
                 pass
             return out
 
-        # Per-iteration progress, mirroring YOLO's own console bar. ultralytics'
-        # documented extension point is the callback registry; we hook the
-        # train-epoch/-batch events instead of subclassing the trainer.
-        last_write = [0.0]
-
-        def _epoch_start(trn):
-            state["current_epoch"] = int(getattr(trn, "epoch", 0)) + 1
-            try:
-                state["total_batches"] = len(trn.train_loader)
-            except Exception:
-                state["total_batches"] = None
-            state["phase"] = "train"
-            state["current_batch"] = 0
-            state["batch_metrics"] = {}
-            state["epoch_started_at"] = time.time()
-            save()
-
-        def _batch_end(trn):
-            state["current_batch"] = int(state.get("current_batch", 0)) + 1
-            bm = _loss_items(trn)
-            if bm:
-                state["batch_metrics"] = bm
+        def hot_write(**fields):
+            """Короткий UPDATE по горячему пути. Возвращает «нас не сняли?»."""
             now = time.time()
-            elapsed = now - state.get("epoch_started_at", now)
-            if elapsed > 0:
-                state["batch_rate"] = state["current_batch"] / elapsed
-            # Throttle disk writes — batches can exceed 10/s.
-            if now - last_write[0] >= 0.3:
-                last_write[0] = now
-                save_live()
+            if now - hot["last"] < HOT_EVERY:
+                return True
+            hot["last"] = now
+            for key, value in fields.items():
+                setattr(run, key, value)
+            run.lease_until = utcnow()
+            db.commit()
+            db.refresh(run)
+            return not run.cancel_requested
 
-        # Validation runs after the training batches of each epoch. Surfacing its
-        # per-iteration progress makes the post-epoch pause explainable instead of
-        # the app seeming to hang. The validator shares the trainer's callbacks.
-        def _val_start(validator):
-            state["phase"] = "val"
-            state["val_batch"] = 0
+        def epoch_start(trn):
+            run.current_epoch = int(getattr(trn, "epoch", 0)) + 1
             try:
-                state["val_total"] = len(validator.dataloader)
+                run.total_batches = len(trn.train_loader)
             except Exception:
-                state["val_total"] = None
-            state["message"] = "Валидация эпохи"
-            save_live()
+                run.total_batches = None
+            run.phase = "train"
+            run.current_batch = 0
+            run.batch_metrics = {}
+            hot["epoch_started"] = time.time()
+            hot["last"] = 0.0
+            db.commit()
 
-        def _val_batch_end(validator):
-            state["val_batch"] = int(state.get("val_batch", 0)) + 1
-            now = time.time()
-            if now - last_write[0] >= 0.3:
-                last_write[0] = now
-                save_live()
+        def batch_end(trn):
+            run.current_batch = int(run.current_batch or 0) + 1
+            got = loss_items(trn)
+            alive = hot_write(
+                batch_metrics=got or run.batch_metrics, phase="train"
+            )
+            if not alive:
+                raise KeyboardInterrupt("Обучение сняли.")
 
-        def _cb(trn):
+        def val_start(validator):
+            run.phase = "val"
+            run.val_batch = 0
+            try:
+                run.val_total = len(validator.dataloader)
+            except Exception:
+                run.val_total = None
+            hot["last"] = 0.0
+            db.commit()
+
+        def val_batch_end(validator):
+            run.val_batch = int(run.val_batch or 0) + 1
+            hot_write(phase="val")
+
+        def fit_epoch_end(trn):
             epoch = int(getattr(trn, "epoch", 0)) + 1
             raw = getattr(trn, "metrics", None) or {}
-            metrics = {k: float(v) for k, v in raw.items()
-                       if isinstance(v, (int, float))}
-            metrics.update(_loss_items(trn))
-            row = {"epoch": epoch, **metrics}
-            state["current_epoch"] = epoch
-            if state.get("total_batches"):
-                state["current_batch"] = state["total_batches"]
-            state["message"] = "Идёт обучение"
-            if state["metrics"] and state["metrics"][-1]["epoch"] == epoch:
-                state["metrics"][-1] = row
+            metrics = {
+                k: float(v) for k, v in raw.items()
+                if isinstance(v, (int, float))
+            }
+            metrics.update(loss_items(trn))
+            row = db.get(TrainEpoch, (run.id, epoch))
+            seconds = time.time() - hot["epoch_started"]
+            if row is None:
+                db.add(TrainEpoch(
+                    run_id=run.id, epoch=epoch, metrics=metrics,
+                    lr=float(getattr(trn, "lr", {}).get("lr/pg0", 0) or 0)
+                    if isinstance(getattr(trn, "lr", None), dict) else None,
+                    seconds=seconds,
+                ))
             else:
-                state["metrics"].append(row)
-            save()
+                row.metrics = metrics
+                row.seconds = seconds
+            run.current_epoch = epoch
+            run.peak_vram_mb = _peak_mb(device) or run.peak_vram_mb
+            fitness = metrics.get("fitness")
+            if fitness is not None and (
+                run.best_fitness is None or fitness > run.best_fitness
+            ):
+                run.best_fitness = fitness
+                run.best_epoch = epoch
+            db.commit()
+            # Уведомление говорит, ЧТО изменилось; состояние вкладка дочитает
+            # сама. У NOTIFY предел восемь тысяч байт, и класть в него метрики
+            # значило бы однажды уронить транзакцию посреди эпохи.
+            live.notify(db, "run", run.id, run.project_id, e=epoch)
+            if run.gpu_lease_id:
+                gpu.beat(db, run.gpu_lease_id, run.peak_vram_mb)
 
-        model.add_callback("on_train_epoch_start", _epoch_start)
-        model.add_callback("on_train_batch_end", _batch_end)
-        model.add_callback("on_val_start", _val_start)
-        model.add_callback("on_val_batch_end", _val_batch_end)
-        model.add_callback("on_fit_epoch_end", _cb)
+        model.add_callback("on_train_epoch_start", epoch_start)
+        model.add_callback("on_train_batch_end", batch_end)
+        model.add_callback("on_val_start", val_start)
+        model.add_callback("on_val_batch_end", val_batch_end)
+        model.add_callback("on_fit_epoch_end", fit_epoch_end)
 
-        # Default DataLoader workers (used only if the user did not set one). On
-        # GPU keep fewer: with pin_memory too many can trigger "CUDA out of
-        # memory" in the pin-memory thread.
-        cpu = os.cpu_count() or 2
-        default_workers = min(8, cpu) if is_cpu else min(4, cpu)
-        overrides = dict(trainer.DISABLED_AUG)
-        overrides["workers"] = default_workers
-        # User-provided params (incl. an explicit `workers`) override the default.
-        overrides.update(trainer.filter_params(state.get("params", {})))
+        # Загрузчиков по умолчанию: на видеокарте меньше — при закреплённой
+        # памяти их избыток вызывает нехватку памяти в потоке закрепления.
+        cores = os.cpu_count() or 2
+        params = trainer.filter_params(run.params or {})
+        has_graph = bool(tset.graph_version_id or tset.val_graph_version_id)
+        overrides, aug_mode = trainer.aug_overrides(params, has_graph)
+        overrides["workers"] = min(8, cores) if is_cpu else min(4, cores)
+        overrides.update(trainer.train_overrides(params))
         overrides.update(
-            data=args.data_yaml, project=args.project, name="train",
-            exist_ok=True, device=device, plots=False,
-            verbose=False, augment=False, amp=not is_cpu, cache=False,
+            data=data_yaml, project=out_dir, name="train", exist_ok=True,
+            device=device, plots=False, verbose=False, augment=False,
+            amp=not is_cpu, cache=False,
         )
         results = model.train(**overrides)
 
-        best = os.path.join(args.project, "train", "weights", "best.pt")
+        best = os.path.join(out_dir, "train", "weights", "best.pt")
         if os.path.isfile(best):
-            state["has_weights"] = True
-            state["weights_path"] = best
+            run.weights_path = os.path.relpath(best, config.DATA_DIR)
+            run.weights_bytes = os.path.getsize(best)
         try:
-            state["summary"] = {
+            run.summary = {
                 k: float(v) for k, v in
                 (getattr(results, "results_dict", {}) or {}).items()
                 if isinstance(v, (int, float))
             }
         except Exception:
             pass
-        state["status"] = "done"
-        state["message"] = "Готово"
-        state["finished_at"] = time.time()
-        save()
+        # Сколько эпох прошло на самом деле: ранняя остановка по `patience`
+        # заканчивает раньше, и «30 из 100» на экране без объяснения
+        # выглядит как обрыв.
+        try:
+            done = int(getattr(model.trainer, "epoch", -1)) + 1
+            if done > 0:
+                run.summary = dict(run.summary or {}, epochs_done=done,
+                                   stopped_early=int(done < run.epochs))
+        except Exception:
+            pass
+        run.params = dict(run.params or {}, augment_mode=aug_mode,
+                          weights=os.path.basename(str(spec)))
+
+        # Итоговая проверка: метрики по классам, матрица ошибок и кривые.
+        # `model.validator` после обучения пуст — раньше отсюда и брали, и
+        # поэтому матрица всегда была пустой.
+        run.phase = "val"
+        run.val_batch = 0
+        db.commit()
+        final = _final_metrics(model, data_yaml, device, overrides, out_dir)
+        if final.get("error"):
+            run.per_class = {"rows": [], "totals": None, "error": final["error"]}
+        else:
+            run.per_class = final.get("per_class")
+            run.confusion = final.get("confusion")
+            run.curves = final.get("curves")
+            if final.get("summary"):
+                # Итоги проверки поверх, но не вместо: сколько эпох прошло и
+                # была ли ранняя остановка — знает только обучение.
+                run.summary = dict(run.summary or {}, **final["summary"])
+
+        run.peak_vram_mb = _peak_mb(device) or run.peak_vram_mb
+        run.status = "done"
+        run.finished_at = utcnow()
+        db.commit()
+        live.notify(db, "run", run.id, run.project_id, s="done")
+
+    except KeyboardInterrupt:
+        run.status = "stopped"
+        run.finished_at = utcnow()
+        db.commit()
+        live.notify(db, "run", run.id, run.project_id, s="stopped")
     except Exception as exc:  # noqa: BLE001
-        state["status"] = "error"
-        state["error"] = str(exc)
-        state["finished_at"] = time.time()
-        save()
+        run.status = "error"
+        run.error = str(exc)[:2000]
+        run.finished_at = utcnow()
+        db.commit()
+        live.notify(db, "run", run.id, run.project_id, s="error")
+        raise
+    finally:
+        db.close()
 
 
 if __name__ == "__main__":

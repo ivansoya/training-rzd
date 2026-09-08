@@ -1,0 +1,39 @@
+{
+  "name": "Граф внутри графа",
+  "note": "Блок вставлен дважды. Считается он как обычные узлы — просто с приставкой в номере.",
+  "base": 100,
+  "graphs": {
+    "v-inner": {
+      "v": 1,
+      "nodes": [
+        {"id": "in1", "type": "input", "params": {"name": "кадры"}},
+        {"id": "x2", "type": "multiply", "params": {"label": "Умножение", "times": 2}},
+        {"id": "o1", "type": "output", "params": {"name": "готово"}}
+      ],
+      "edges": [
+        {"from": "in1", "out": "out", "to": "x2", "in": "in"},
+        {"from": "x2", "out": "out", "to": "o1", "in": "in"}
+      ]
+    }
+  },
+  "doc": {
+    "v": 1,
+    "nodes": [
+      {"id": "s", "type": "source", "params": {"label": "Источник"}},
+      {"id": "g1", "type": "group", "params": {"label": "Блок А", "graph_id": "g-inner", "version_id": "v-inner"}},
+      {"id": "g2", "type": "group", "params": {"label": "Блок Б", "graph_id": "g-inner", "version_id": "v-inner"}},
+      {"id": "end", "type": "output", "params": {"label": "Выход"}}
+    ],
+    "edges": [
+      {"from": "s", "out": "out", "to": "g1", "in": "кадры"},
+      {"from": "g1", "out": "готово", "to": "g2", "in": "кадры"},
+      {"from": "g2", "out": "готово", "to": "end", "in": "in"}
+    ]
+  },
+  "expect": {
+    "outputs": 400,
+    "dropped": 0,
+    "multiplier": 4.0,
+    "nodes": 8
+  }
+}

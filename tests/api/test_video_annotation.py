@@ -8,13 +8,28 @@
 таски, а когда её закрывают отдельным действием. Дальше эти кадры — обычные
 кадры таски, и никто их не переписывает.
 """
-from conftest import BASE_URL, wait_job
+from conftest import BASE_URL, wait_clip, wait_job
 
 
-def test_видео_загружается_в_режиме_разметки(video):
+def test_видео_загружается_в_режиме_разметки(api, task, video):
+    """Разбор ролика уехал в отдельный воркер и стал асинхронным.
+
+    Сразу после загрузки сервис намеренно отвечает «готовлю»: число кадров
+    ещё неизвестно. Ждать готовности — дело теста, а не повод возвращать
+    выдуманное число из сервиса.
+    """
     assert video["mode"] == "annotate"
-    assert video["frame_count"] == 30
-    assert video["fps"] == 10.0
+    assert video["frame_count"] is None
+    assert video.get("preparing") is True
+
+    wait_clip(api, task["id"], video["id"])
+    res = api.get(f"{BASE_URL}/api/tasks/{task['id']}")
+    assert res.status_code == 200, res.text
+    ready = next(
+        v for v in res.json()["videos"] if v["id"] == video["id"]
+    )
+    assert ready["frame_count"] == 30
+    assert ready["fps"] == 10.0
 
 
 def test_видео_для_нарезки_остаётся_нарезкой(api, task, sample_video):

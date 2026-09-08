@@ -36,7 +36,7 @@ from common.models import (
 )
 from common.storage import translit_slug
 from datasets_svc import materialize
-from datasets_svc import shapes
+from common import shapes
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
 from datasets_svc import video_index

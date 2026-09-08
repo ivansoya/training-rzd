@@ -1,0 +1,1879 @@
+{
+  "errors": [],
+  "checks": [
+    {
+      "style": "studio",
+      "screen": "projects",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "overview",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "tasks",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "task",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "datasets",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "dataset",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "editor",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "classes",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "members",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "import",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "augments",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "graph",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "training",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "trainset",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "wizard",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "run",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "hardware",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "account",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "login",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "projects",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "overview",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "tasks",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "task",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "datasets",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "dataset",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "editor",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "classes",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "members",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "import",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "augments",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "graph",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "training",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "trainset",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "wizard",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "run",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "hardware",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "account",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "login",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "projects",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "overview",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "tasks",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "task",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "datasets",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "dataset",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "editor",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "classes",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "members",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "import",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "augments",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "graph",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "training",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "trainset",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "wizard",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "run",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "hardware",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "account",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "studio",
+      "screen": "login",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "projects",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "overview",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "tasks",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "task",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "datasets",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "dataset",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "editor",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "classes",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "members",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "import",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "augments",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "graph",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "training",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "trainset",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "wizard",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "run",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "hardware",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "account",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "login",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "projects",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "overview",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "tasks",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "task",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "datasets",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "dataset",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "editor",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "classes",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "members",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "import",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "augments",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "graph",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "training",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "trainset",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "wizard",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "run",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "hardware",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "account",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "login",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "projects",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "overview",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "tasks",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "task",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "datasets",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "dataset",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "editor",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "classes",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "members",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "import",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "augments",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "graph",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "training",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "trainset",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "wizard",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "run",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "hardware",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "account",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "terminal",
+      "screen": "login",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "projects",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "overview",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "tasks",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "task",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "datasets",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "dataset",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "editor",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "classes",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "members",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "import",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "augments",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "graph",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "training",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "trainset",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "wizard",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "run",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "hardware",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "account",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "login",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "projects",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "overview",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "tasks",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "task",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "datasets",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "dataset",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "editor",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "classes",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "members",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "import",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "augments",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "graph",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "training",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "trainset",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "wizard",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "run",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "hardware",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "account",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "login",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "projects",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "overview",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "tasks",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "task",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "datasets",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "dataset",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "editor",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "classes",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "members",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "import",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "augments",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "graph",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "training",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "trainset",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "wizard",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "run",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "hardware",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "account",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "orbit",
+      "screen": "login",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "projects",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "overview",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "tasks",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "task",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "datasets",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "dataset",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "editor",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "classes",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "members",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "import",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "augments",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "graph",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "training",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "trainset",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "wizard",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "run",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "hardware",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "account",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "login",
+      "palette": "graphite",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "projects",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "overview",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "tasks",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "task",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "datasets",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "dataset",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "editor",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "classes",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "members",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "import",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "augments",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "graph",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "training",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "trainset",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "wizard",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "run",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "hardware",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "account",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "login",
+      "palette": "slate",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "projects",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "overview",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "tasks",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "task",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "datasets",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "dataset",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "editor",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "classes",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "members",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "import",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "augments",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "graph",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "training",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "trainset",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "wizard",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "run",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "hardware",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "account",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    },
+    {
+      "style": "archive",
+      "screen": "login",
+      "palette": "red",
+      "options": 3,
+      "overflow": false
+    }
+  ],
+  "coordinates": [
+    {
+      "style": "studio",
+      "palette": "graphite",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "studio",
+      "palette": "graphite",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "studio",
+      "palette": "graphite",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "studio",
+      "palette": "slate",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "studio",
+      "palette": "slate",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "studio",
+      "palette": "slate",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "studio",
+      "palette": "red",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "studio",
+      "palette": "red",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "studio",
+      "palette": "red",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "graphite",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "graphite",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "graphite",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "slate",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "slate",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "slate",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "red",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "red",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "terminal",
+      "palette": "red",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "graphite",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "graphite",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "graphite",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "slate",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "slate",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "slate",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "red",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "red",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "orbit",
+      "palette": "red",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "graphite",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "graphite",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "graphite",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "slate",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "slate",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "slate",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "red",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "red",
+      "mode": "zoom",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    },
+    {
+      "style": "archive",
+      "palette": "red",
+      "mode": "pan",
+      "error": 0.00002441406246589395,
+      "canvasError": 0
+    }
+  ],
+  "contrasts": [
+    {
+      "id": "graphite",
+      "accent": 9.069774415213116,
+      "button": 9.83498702770197,
+      "text": 12.61315160555389,
+      "muted": 7.672783113694584
+    },
+    {
+      "id": "slate",
+      "accent": 7.312219197635271,
+      "button": 9.051360798026483,
+      "text": 10.331524899508228,
+      "muted": 7.225397394980895
+    },
+    {
+      "id": "red",
+      "accent": 4.750591567417936,
+      "button": 5.836695704044055,
+      "text": 12.572661136852302,
+      "muted": 8.033052132536982
+    }
+  ],
+  "oldPaletteFallback": "red"
+}

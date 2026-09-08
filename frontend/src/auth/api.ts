@@ -6,6 +6,9 @@ export interface AuthUser {
   email: string;
   login: string;
   display_name: string;
+  // Право на железо: по нему открывается раздел «Железо». Роли в проекте про
+  // данные, а это про машину, и смешивать их нельзя.
+  is_staff: boolean;
   created_at: string;
 }
 
@@ -275,6 +278,7 @@ export async function declineInvitation(id: string): Promise<void> {
 
 export type ImportStatus =
   | "none"
+  | "uploading"
   | "scanning"
   | "classes"
   | "writing"
@@ -303,6 +307,8 @@ export interface ImportState {
   status: ImportStatus;
   job_id?: string;
   error?: string;
+  // Недокачанный архив: тот же файл, выбранный заново, продолжится с места.
+  upload?: { id: string; name?: string; size?: number; received?: number };
   archive?: { name: string; size_bytes: number; upload_seconds: number };
   report?: ImportReport;
   result?: {
@@ -328,37 +334,118 @@ export async function getImport(code: string): Promise<ImportState> {
   return asJson(await fetch(`/api/projects/${encodeURIComponent(code)}/import`));
 }
 
-// Streams the archive with an upload-progress callback; the scan that follows
-// is a background job polled through /api/jobs.
-export function uploadArchive(
-  code: string,
-  file: File,
-  onProgress: (pct: number) => void
-): Promise<{ job_id: string }> {
+// Архив уходит кусками по 16 МБ, каждый — отдельным коротким запросом.
+// Одним запросом на 16 ГБ он не доезжал: сервер после последнего байта ещё
+// минуты копирует файл, ответа нет, и прокси по дороге отдаёт 500, хотя на
+// сервере всё дописалось. Сорвавшийся кусок шлётся заново; после обрыва тот
+// же файл продолжается с места разрыва — сервер помнит, сколько дошло.
+const CHUNK_RETRIES = 6;
+
+function putChunk(
+  url: string,
+  blob: Blob,
+  onSent: (bytes: number) => void
+): Promise<{ received: number }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `/api/projects/${encodeURIComponent(code)}/import`);
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(e.loaded / e.total);
-    };
+    xhr.open("PUT", url);
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
+    xhr.upload.onprogress = (e) => onSent(e.loaded);
     xhr.onload = () => {
-      let data: { job_id?: string; error?: string } = {};
+      let data: { received?: number; error?: string } = {};
       try {
         data = JSON.parse(xhr.responseText);
       } catch {
         /* ignore */
       }
-      if (xhr.status >= 200 && xhr.status < 300 && data.job_id) {
-        resolve({ job_id: data.job_id });
+      if (xhr.status >= 200 && xhr.status < 300 && typeof data.received === "number") {
+        resolve({ received: data.received });
       } else {
-        reject(new ApiError(data.error || `HTTP ${xhr.status}`));
+        reject(
+          Object.assign(new ApiError(data.error || `HTTP ${xhr.status}`), {
+            status: xhr.status,
+            received: data.received,
+          })
+        );
       }
     };
-    xhr.onerror = () => reject(new ApiError("Не удалось передать архив."));
-    const form = new FormData();
-    form.append("file", file);
-    xhr.send(form);
+    xhr.onerror = () =>
+      reject(Object.assign(new ApiError("Связь с сервером прервалась."), { status: 0 }));
+    xhr.send(blob);
   });
+}
+
+const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Повторяем то, что могло сорваться по дороге: обрыв, 5xx, таймаут. Отказ
+// сервера по смыслу (4xx) повторять бессмысленно — он повторится.
+function retriable(status: number | undefined): boolean {
+  return status === undefined || status === 0 || status >= 500 || status === 408 || status === 429;
+}
+
+export async function uploadArchive(
+  code: string,
+  file: File,
+  onProgress: (pct: number) => void
+): Promise<{ job_id: string }> {
+  const base = `/api/projects/${encodeURIComponent(code)}/import/upload`;
+  const start = await asJson<{
+    upload_id: string;
+    chunk_bytes: number;
+    received: number;
+    size: number;
+  }>(
+    await fetch(base, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name: file.name, size: file.size }),
+    })
+  );
+
+  let offset = start.received;
+  const chunk = Math.max(1 << 20, start.chunk_bytes);
+  while (offset < file.size) {
+    const end = Math.min(file.size, offset + chunk);
+    let attempt = 0;
+    for (;;) {
+      try {
+        const got = await putChunk(
+          `${base}/${start.upload_id}?offset=${offset}`,
+          file.slice(offset, end),
+          (sent) => onProgress(Math.min(1, (offset + sent) / file.size))
+        );
+        offset = got.received;
+        break;
+      } catch (e) {
+        const err = e as ApiError & { status?: number; received?: number };
+        // Сервер знает больше нас — сколько байт лежит на самом деле.
+        if (err.status === 409 && typeof err.received === "number") {
+          offset = err.received;
+          break;
+        }
+        attempt += 1;
+        if (!retriable(err.status) || attempt >= CHUNK_RETRIES) throw err;
+        await pause(Math.min(15000, 1000 * 2 ** (attempt - 1)));
+      }
+    }
+  }
+  onProgress(1);
+
+  let attempt = 0;
+  for (;;) {
+    const res = await fetch(`${base}/${start.upload_id}/finish`, { method: "POST" }).catch(
+      () => null
+    );
+    if (res && (res.ok || (res.status < 500 && res.status !== 408 && res.status !== 429))) {
+      return asJson(res);
+    }
+    attempt += 1;
+    if (attempt >= CHUNK_RETRIES) {
+      if (res) return asJson(res);
+      throw new ApiError("Связь с сервером прервалась на последнем шаге.");
+    }
+    await pause(Math.min(15000, 1000 * 2 ** (attempt - 1)));
+  }
 }
 
 export async function commitImport(
@@ -429,7 +516,8 @@ export interface DatasetDetail {
 
 export interface DatasetQuery {
   split?: string;
-  class_index?: number | null;
+  /** Номера классов: кадр подходит, если есть хоть один из них. */
+  classes?: number[];
   empty?: boolean;
   sort?: "name" | "objects";
   limit?: number;
@@ -443,9 +531,7 @@ export async function getDataset(
 ): Promise<DatasetDetail> {
   const q = new URLSearchParams();
   if (params.split) q.set("split", params.split);
-  if (params.class_index !== null && params.class_index !== undefined) {
-    q.set("class_index", String(params.class_index));
-  }
+  if (params.classes?.length) q.set("classes", params.classes.join(","));
   if (params.empty) q.set("empty", "1");
   if (params.sort) q.set("sort", params.sort);
   if (params.limit) q.set("limit", String(params.limit));
@@ -1333,14 +1419,14 @@ export interface ExportPreview {
   annotations: number;
   /** Кадры «пусто»: уходят с пустым .txt как фоновые примеры. */
   empty: number;
-  /** Отсеяно фильтром классов — разметка была, но не выбранная. */
+  /** Разметка выбранных классов есть, но не того рода — не идут. */
   dropped: number;
   /** Объектов не того рода: боксы при выгрузке сегментации. Отдельно от
    *  `dropped` — эти два человек чинит по-разному. */
   wrong_kind: number;
   ann_type: "bbox" | "polygon";
-  /** Кадры, которых никогда не касались: в выгрузку не идут по правилу. */
-  unlabelled: number;
+  /** Кадры без разметки: идут в выгрузку фоном, с пустым файлом. */
+  background: number;
   splits: Record<string, number>;
   val_ratio: number;
   warnings: string[];

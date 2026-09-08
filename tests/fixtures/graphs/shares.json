@@ -1,0 +1,38 @@
+{
+  "name": "Доли и брошенная ветка",
+  "note": "Разделитель по долям 60/30/10; третья ветка никуда не ведёт — эти кадры выброшены осознанно, и их надо посчитать, а не потерять молча.",
+  "base": 1000,
+  "doc": {
+    "v": 1,
+    "nodes": [
+      {"id": "s", "type": "source", "params": {"label": "Источник"}},
+      {"id": "cut", "type": "split_share", "params": {"label": "Разделитель потока", "branches": 3, "shares": [60, 30, 10]}},
+      {"id": "a", "type": "flow", "params": {"label": "Туман", "ops": []}},
+      {"id": "b", "type": "flow", "params": {"label": "Шум", "ops": []}},
+      {"id": "o", "type": "merge", "params": {"label": "Слияние", "inputs": 2}},
+      {"id": "end", "type": "output", "params": {"label": "Выход"}}
+    ],
+    "edges": [
+      {"from": "s", "out": "out", "to": "cut", "in": "in"},
+      {"from": "cut", "out": "o0", "to": "a", "in": "in"},
+      {"from": "cut", "out": "o1", "to": "b", "in": "in"},
+      {"from": "a", "out": "out", "to": "o", "in": "i0"},
+      {"from": "b", "out": "out", "to": "o", "in": "i1"},
+      {"from": "o", "out": "out", "to": "end", "in": "in"}
+    ]
+  },
+  "expect": {
+    "outputs": 900,
+    "dropped": 100,
+    "multiplier": 0.9,
+    "nodes": 6,
+    "edges": {
+      "s:out->cut:in": 1000,
+      "cut:o0->a:in": 600,
+      "cut:o1->b:in": 300,
+      "a:out->o:i0": 600,
+      "b:out->o:i1": 300,
+      "o:out->end:in": 900
+    }
+  }
+}

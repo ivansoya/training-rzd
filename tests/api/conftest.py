@@ -182,7 +182,9 @@ def jobs_of(db, video_id, kind=None, chunk_no=None, statuses=None):
         sql += " AND chunk_no = %s"
         args.append(chunk_no)
     if statuses is not None:
-        sql += " AND status = ANY(%s)"
+        # Колонка — перечисление postgres, и сравнивать её с массивом текста
+        # без приведения нельзя: «operator does not exist». Приводим явно.
+        sql += " AND status = ANY(%s::video_job_status[])"
         args.append(list(statuses))
     with db.cursor() as cur:
         cur.execute(sql, args)

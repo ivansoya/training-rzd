@@ -1,0 +1,171 @@
+{
+  "errors": [],
+  "geometry": [
+    {
+      "size": {
+        "width": 1440,
+        "height": 900
+      },
+      "layout": "a",
+      "ratioError": 9.539072038933227e-7,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 642,
+      "mediaHeight": 468
+    },
+    {
+      "size": {
+        "width": 1440,
+        "height": 900
+      },
+      "layout": "b",
+      "ratioError": 0.000008523695874451676,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 575,
+      "mediaHeight": 419
+    },
+    {
+      "size": {
+        "width": 1440,
+        "height": 900
+      },
+      "layout": "c",
+      "ratioError": 0.000003442893867111607,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 533,
+      "mediaHeight": 389
+    },
+    {
+      "size": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": "a",
+      "ratioError": 0.00003100198412697708,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 494,
+      "mediaHeight": 360
+    },
+    {
+      "size": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": "b",
+      "ratioError": 0,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 432,
+      "mediaHeight": 315
+    },
+    {
+      "size": {
+        "width": 1366,
+        "height": 768
+      },
+      "layout": "c",
+      "ratioError": 0.0000015236470014556858,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 402,
+      "mediaHeight": 293
+    },
+    {
+      "size": {
+        "width": 1920,
+        "height": 1080
+      },
+      "layout": "a",
+      "ratioError": 0.00002135692239857434,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 889,
+      "mediaHeight": 648
+    },
+    {
+      "size": {
+        "width": 1920,
+        "height": 1080
+      },
+      "layout": "b",
+      "ratioError": 0.0000022358693059221224,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 821,
+      "mediaHeight": 599
+    },
+    {
+      "size": {
+        "width": 1920,
+        "height": 1080
+      },
+      "layout": "c",
+      "ratioError": 0.000025891287973811572,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 780,
+      "mediaHeight": 569
+    },
+    {
+      "size": {
+        "width": 390,
+        "height": 844
+      },
+      "layout": "a",
+      "ratioError": 0.00005472798481287455,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 358,
+      "mediaHeight": 261
+    },
+    {
+      "size": {
+        "width": 390,
+        "height": 844
+      },
+      "layout": "b",
+      "ratioError": 0.00005472798481287455,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 358,
+      "mediaHeight": 261
+    },
+    {
+      "size": {
+        "width": 390,
+        "height": 844
+      },
+      "layout": "c",
+      "ratioError": 0.00005472798481287455,
+      "xError": 0,
+      "yError": 0,
+      "pageOverflow": false,
+      "mediaWidth": 358,
+      "mediaHeight": 261
+    }
+  ],
+  "checks": [
+    "Zoom alignment",
+    "Loading edit guard",
+    "Error retry",
+    "Readonly guard",
+    "Object tabs",
+    "Class search",
+    "Local key insertion",
+    "Help dialog"
+  ]
+}

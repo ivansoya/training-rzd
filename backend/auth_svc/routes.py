@@ -39,6 +39,10 @@ def user_json(user: User) -> dict:
         "email": user.email,
         "login": user.login,
         "display_name": user.display_name,
+        # Право на железо, а не на данные: по нему открывается раздел «Железо».
+        # Ролей в проекте для этого не хватает — администратор своего проекта
+        # не должен снимать чужое обучение с карты.
+        "is_staff": bool(user.is_staff),
         "created_at": user.created_at.isoformat(),
     }
 

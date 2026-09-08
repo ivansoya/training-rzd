@@ -1,0 +1,555 @@
+/* Редактор графа аугментаций.
+ *
+ * Холст читается как путевая схема: провод — это путь, по которому идут кадры,
+ * и толщина провода растёт с их числом. Куда уходит основная масса, видно
+ * раньше, чем прочитаны цифры, — а это единственное, что в графе надо видеть
+ * боковым зрением.
+ *
+ * Библиотека даёт только механику холста. Вид узлов, гнёзда и провода — свои,
+ * поэтому её переменные --xy-* переопределяются здесь на токены «Габарита», а
+ * не побеждаются специфичностью: иначе каждое обновление ломало бы вид.
+ */
+@import "@xyflow/react/dist/style.css";
+
+.g-graph {
+  --xy-background-color: var(--sunk);
+  --xy-node-background-color: var(--card);
+  --xy-node-border: 1px solid var(--rule);
+  --xy-node-color: var(--ink);
+  --xy-node-boxshadow-hover: none;
+  --xy-node-boxshadow-selected: 0 0 0 1px var(--red);
+  --xy-edge-stroke: #4a5157;
+  --xy-edge-stroke-selected: var(--red);
+  --xy-handle-background-color: var(--rule);
+  --xy-handle-border-color: var(--card);
+  --xy-selection-background-color: rgba(255, 77, 77, 0.06);
+  --xy-selection-border: 1px dashed var(--red);
+  --xy-controls-button-background-color: var(--card);
+  --xy-controls-button-background-color-hover: var(--hair);
+  --xy-controls-button-color: var(--dim);
+  --xy-controls-button-border-color: var(--rule);
+  --xy-minimap-background-color: var(--paper);
+  --xy-attribution-background-color: transparent;
+
+  position: absolute;
+  inset: 0;
+}
+
+.g-ged {
+  position: absolute;
+  inset: 0;
+  top: 82px;                 /* верхняя строка + строка проекта */
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr) 250px;
+  background: var(--paper);
+}
+.g-ged > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ============================== ПАЛИТРА ============================== */
+.g-pal {
+  border-right: 1px solid var(--hair);
+  background: var(--sunk);
+  overflow: auto;
+  padding-bottom: 20px;
+}
+
+.g-pal-search {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding: 10px;
+  background: var(--sunk);
+  border-bottom: 1px solid var(--hair);
+}
+
+.g-pal-search input {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-s);
+  background: var(--paper);
+  color: var(--ink);
+  font-weight: 400;
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+
+.g-pal h4 {
+  margin: 14px 12px 6px;
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.g-pal-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 12px;
+  border: 0;
+  background: none;
+  color: var(--dim);
+  font-weight: 400;
+  font-size: 12.5px;
+  line-height: 1.35;
+  text-align: left;
+  cursor: grab;
+}
+
+.g-pal-item:hover {
+  background: var(--hair);
+  color: var(--ink);
+}
+
+.g-pal-item::before {
+  content: "";
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--rule);
+  flex: none;
+}
+.g-pal-item.k-light::before { background: var(--skip); }
+.g-pal-item.k-noise::before { background: var(--null); }
+.g-pal-item.k-weather::before { background: #7ec8ff; }
+.g-pal-item.k-geometry::before { background: var(--done); }
+.g-pal-item.k-flow::before { background: var(--red); }
+.g-pal-item.k-block::before { background: #b48cff; }
+
+.g-pal-item.off {
+  color: var(--faint);
+  cursor: not-allowed;
+}
+.g-pal-item.off::after {
+  content: "нет в версии";
+  margin-left: auto;
+  font: 400 9.5px/1 var(--mono);
+  color: var(--faint);
+}
+
+/* =============================== ХОЛСТ =============================== */
+.g-canvas {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  background: var(--sunk);
+}
+
+.g-canvas-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--hair);
+  background: var(--card);
+  flex: none;
+}
+
+.g-canvas-top .ttl {
+  font-weight: 700;
+  font-size: 13.5px;
+}
+
+.g-canvas-top .ver {
+  font: 400 11px/1 var(--mono);
+  color: var(--dim);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-s);
+  padding: 4px 7px;
+  font-variant-numeric: tabular-nums;
+}
+
+.g-canvas-top .sp {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Кнопки и выпадающий список в шапке не переносятся: «Сохранить версию» в две
+   строки делает шапку вдвое выше и сбивает всю посадку холста. */
+.g-canvas-top .mag-btn,
+.g-canvas-top .mag-ghost,
+.g-canvas-top select {
+  white-space: nowrap;
+  padding: 7px 12px;
+  font-size: 12.5px;
+}
+
+.g-canvas-top select {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--card);
+  color: var(--ink);
+  max-width: 190px;
+}
+
+.g-canvas-body {
+  position: relative;
+  flex: 1;
+}
+
+/* ================================ УЗЕЛ =============================== */
+.g-node {
+  position: relative;
+  width: 176px;
+  border-radius: var(--radius);
+  background: var(--card);
+  border: 1px solid var(--rule);
+  padding: 9px 11px 10px 13px;
+  box-shadow: var(--shadow);
+}
+
+.g-node::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  border-radius: var(--radius) 0 0 var(--radius);
+  background: var(--rule);
+}
+.g-node.k-light::before { background: var(--skip); }
+.g-node.k-noise::before { background: var(--null); }
+.g-node.k-weather::before { background: #7ec8ff; }
+.g-node.k-geometry::before { background: var(--done); }
+.g-node.k-flow::before { background: var(--red); }
+.g-node.k-source::before { background: var(--done); }
+.g-node.k-output::before { background: var(--done); }
+.g-node.k-block::before { background: #b48cff; }
+
+.g-node.bad {
+  border-color: var(--red);
+  box-shadow: var(--glow-red);
+}
+
+/* Наши типы узлов зовутся input, output и group — ровно как встроенные типы
+   библиотеки. Её собственные правила .react-flow__node-output цеплялись к
+   этим трём карточкам и рисовали вокруг них вторую рамку, а заодно были
+   единственным на весь холст правилом подсветки выделения: выбранным выглядел
+   только «Выход», остальные узлы молчали. Снимаем чужой вид со всех и рисуем
+   свой — одинаковый для любого узла. */
+.g-graph .react-flow__node-input,
+.g-graph .react-flow__node-output,
+.g-graph .react-flow__node-group,
+.g-graph .react-flow__node-default {
+  width: auto;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: left;
+  font-size: inherit;
+  color: inherit;
+}
+
+.g-graph .react-flow__node:hover .g-node {
+  border-color: var(--dim);
+}
+.g-graph .react-flow__node.selected .g-node,
+.g-graph .react-flow__node:focus-visible .g-node {
+  border-color: var(--red);
+  box-shadow: 0 0 0 1px var(--red), var(--shadow);
+}
+
+.g-node-title {
+  font-weight: 700;
+  font-size: 12.5px;
+  line-height: 1.25;
+  color: var(--ink);
+  padding-right: 22px;
+}
+
+.g-node-why {
+  margin-top: 3px;
+  font: 400 10.5px/1.35 var(--mono);
+  color: var(--faint);
+}
+
+.g-node-mult {
+  position: absolute;
+  right: 9px;
+  top: 8px;
+  font: 700 11px/1 var(--mono);
+  color: var(--red);
+  font-variant-numeric: tabular-nums;
+}
+
+.g-node-total {
+  margin-top: 6px;
+  font: 700 15px/1 var(--mono);
+  color: var(--done);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Глаз: посмотреть, что вышло именно здесь. */
+.g-eye {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+}
+.g-eye:hover { color: var(--ink); }
+.g-eye.on { color: var(--red); }
+
+/* Гнёзда. Своя точка на каждое: у разделителя их несколько, и попадать в них
+   надо мышью, а не наугад. */
+.g-graph .react-flow__handle {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  background: var(--rule);
+  border: 1px solid var(--card);
+}
+.g-graph .react-flow__handle:hover {
+  background: var(--red);
+}
+.g-graph .react-flow__handle-left { left: -5px; }
+.g-graph .react-flow__handle-right { right: -5px; }
+
+.g-port-name {
+  position: absolute;
+  font: 400 9px/1 var(--mono);
+  color: var(--faint);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* =============================== ПРОВОД ============================== */
+.g-wire-plate {
+  fill: var(--paper);
+  stroke: var(--hair);
+}
+
+/* Крестик у выбранного провода. Клавиша Delete работает и без него, но по
+   одному холсту не догадаться, что провод вообще можно убрать. */
+/* Слой подписей библиотека кладёт под узлы, и крестик короткого провода
+   прятался под соседней карточкой. Поднимаем весь слой: он всё равно
+   pointer-events: none, ловит мышь только сам крестик. */
+.g-graph .react-flow__edgelabel-renderer {
+  z-index: 1200;
+}
+
+.g-wire-kill {
+  position: absolute;
+  pointer-events: all;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--red);
+  border-radius: 50%;
+  background: var(--paper);
+  color: var(--red);
+  font: 700 12px/1 var(--mono);
+  cursor: pointer;
+}
+.g-wire-kill:hover {
+  background: var(--red);
+  color: var(--paper);
+}
+
+.g-wire-text {
+  fill: var(--dim);
+  font: 400 10.5px/1 var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-anchor: middle;
+  dominant-baseline: middle;
+  pointer-events: none;
+}
+
+/* ============================= ИНСПЕКТОР ============================= */
+.g-insp {
+  border-left: 1px solid var(--hair);
+  background: var(--card);
+  overflow: auto;
+  padding: 12px;
+}
+
+.g-insp-name {
+  font-weight: 700;
+  font-size: 13.5px;
+}
+
+.g-insp-why {
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+  margin: 4px 0 14px;
+}
+
+.g-field { margin-bottom: 13px; }
+
+.g-field .k {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 5px;
+  gap: 8px;
+}
+
+.g-field .k span { color: var(--dim); font-size: 12px; }
+
+.g-field .k b {
+  font: 700 11.5px/1 var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.g-field input[type="range"] {
+  width: 100%;
+  accent-color: var(--red);
+}
+
+.g-field .pair {
+  display: flex;
+  gap: 6px;
+}
+
+.g-field .hint {
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.4;
+  margin-top: 5px;
+}
+
+.g-sw {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.g-sw span { color: var(--dim); font-size: 12px; }
+
+.g-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+.g-kv span { color: var(--faint); }
+.g-kv b {
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================== ПРЕВЬЮ =============================== */
+.g-peek {
+  border-top: 1px solid var(--hair);
+  background: var(--card);
+  padding: 10px 12px 12px;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  flex: none;
+}
+
+.g-peek figure { margin: 0; }
+.g-peek figcaption {
+  margin-top: 5px;
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+
+.g-peek img,
+.g-peek .blank {
+  display: block;
+  width: 150px;
+  height: 94px;
+  object-fit: contain;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-s);
+  background: var(--paper);
+}
+
+.g-peek .blank {
+  display: grid;
+  place-items: center;
+  color: var(--faint);
+  font-size: 11px;
+  text-align: center;
+  padding: 6px;
+}
+
+.g-peek .side { color: var(--dim); font-size: 12px; }
+.g-peek .side .row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 7px;
+  flex-wrap: wrap;
+}
+
+/* =========================== СПИСОК ГРАФОВ =========================== */
+.g-graphs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+}
+
+.g-graph-card {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--card);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.g-graph-card:hover { border-color: var(--rule); }
+
+.g-graph-card .name { font-weight: 700; font-size: 14px; }
+.g-graph-card .desc {
+  color: var(--dim);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.g-graph-card .foot {
+  margin-top: auto;
+  padding-top: 8px;
+  display: flex;
+  gap: 14px;
+  align-items: baseline;
+  font: 400 11px/1 var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.g-graph-card .foot b {
+  color: var(--red);
+  font-weight: 700;
+}
+
+/* Полоса «живая связь занята» — её видно всем, кто на неё попал. */
+.g-live-note {
+  padding: 7px 14px;
+  background: var(--skip-in);
+  color: var(--skip);
+  font-size: 12.5px;
+  box-shadow: inset 0 -1px 0 rgba(255, 176, 46, 0.3);
+}

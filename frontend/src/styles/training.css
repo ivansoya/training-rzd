@@ -1,0 +1,664 @@
+/* Раздел обучения: наборы, мастер сборки, раны и их метрики.
+ *
+ * Экран сканируют, а не читают сверху вниз, поэтому состояние закодировано и
+ * формой, и числом: полоса, плашка, цвет. Что требует внимания, читается
+ * боковым зрением, а подробности — по наведению.
+ */
+
+.t-tabs {
+  display: flex;
+  gap: 16px;
+  border-bottom: 1px solid var(--hair);
+  margin-bottom: 18px;
+}
+
+.t-tab {
+  padding: 8px 0;
+  color: var(--faint);
+  font-size: 13px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.t-tab.on {
+  color: var(--ink);
+  box-shadow: inset 0 -2px 0 var(--red);
+}
+.t-tab b {
+  margin-left: 6px;
+  font: 400 11px/1 var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================== СПИСКИ ============================== */
+.t-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.t-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--card);
+  color: inherit;
+  text-decoration: none;
+}
+.t-row:hover { border-color: var(--rule); }
+
+.t-row .name {
+  font-weight: 700;
+  font-size: 13.5px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.t-row .meta {
+  margin-top: 4px;
+  color: var(--faint);
+  font-size: 12px;
+}
+.t-row .meta b {
+  color: var(--dim);
+  font-weight: 400;
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.t-row .right {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.t-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 100px;
+  padding: 3px 9px;
+  font-weight: 700;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.t-pill i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.t-pill.run { background: var(--null-in); color: var(--null); }
+.t-pill.wait { background: var(--skip-in); color: var(--skip); }
+.t-pill.ok { background: var(--done-in); color: var(--done); }
+.t-pill.bad { background: var(--red-in); color: var(--red); }
+.t-pill.idle { background: var(--hair); color: var(--dim); }
+
+/* Полоса прогресса в строке списка: она же и объяснение, чего ждём. */
+.t-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--hair);
+  overflow: hidden;
+  margin-top: 8px;
+}
+.t-bar i {
+  display: block;
+  height: 100%;
+  background: var(--null);
+}
+.t-bar i.done { background: var(--done); }
+
+/* ============================== МАСТЕР ============================== */
+.t-rail {
+  display: flex;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-s);
+  overflow: hidden;
+  margin-bottom: 18px;
+}
+.t-rail div {
+  flex: 1;
+  padding: 9px 12px;
+  font-size: 12.5px;
+  color: var(--faint);
+  border-right: 1px solid var(--hair);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.t-rail div:last-child { border-right: 0; }
+.t-rail div b { font: 700 10.5px/1 var(--mono); }
+.t-rail .done { color: var(--dim); }
+.t-rail .done b { color: var(--done); }
+.t-rail .now { color: var(--ink); background: var(--hair); }
+.t-rail .now b { color: var(--red); }
+
+.t-wiz {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 18px;
+  align-items: start;
+}
+
+.t-choices {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.t-choice {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-s);
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 10px;
+  cursor: pointer;
+  text-align: left;
+  background: none;
+  color: inherit;
+  font: inherit;
+}
+.t-choice.on {
+  border-color: var(--red);
+  background: var(--red-in);
+}
+.t-choice .dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--rule);
+  margin-top: 2px;
+}
+.t-choice.on .dot {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 3px var(--paper), inset 0 0 0 9px var(--red);
+}
+/* Заголовок и объяснение — строками, а не подряд: инлайновые span слипались
+   в «РамкиПолигон сводится…», и прочитать это было нельзя. */
+.t-choice .t {
+  display: block;
+  font-weight: 700;
+  font-size: 12.5px;
+}
+.t-choice .d {
+  display: block;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+  margin-top: 3px;
+}
+
+.t-pick {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.t-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--hair);
+  border-radius: 100px;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  color: var(--dim);
+  background: none;
+  cursor: pointer;
+}
+.t-chip.on {
+  border-color: var(--red);
+  color: var(--ink);
+  background: var(--red-in);
+}
+.t-chip span {
+  font: 400 10.5px/1 var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.t-side {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-s);
+  padding: 12px;
+  background: var(--sunk);
+}
+.t-side + .t-side { margin-top: 12px; }
+
+.t-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+  font-size: 12.5px;
+}
+.t-kv span { color: var(--faint); }
+.t-kv b {
+  font-family: var(--mono);
+  font-weight: 400;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.t-split {
+  display: flex;
+  height: 8px;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 10px 0 6px;
+  background: var(--hair);
+}
+.t-split i { display: block; height: 100%; }
+
+.t-legend {
+  display: flex;
+  gap: 14px;
+  font-size: 11.5px;
+  color: var(--faint);
+  flex-wrap: wrap;
+}
+.t-legend b {
+  color: var(--ink);
+  font-family: var(--mono);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+}
+.t-legend u {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  margin-right: 5px;
+}
+
+.t-warn {
+  margin-top: 12px;
+  border-radius: var(--radius-s);
+  padding: 9px 11px;
+  background: var(--skip-in);
+  color: var(--skip);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 0 0 1px rgba(255, 176, 46, 0.38);
+}
+.t-warn + .t-warn { margin-top: 8px; }
+
+table.t-cls {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+table.t-cls th {
+  text-align: right;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--hair);
+  font: 700 10px/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--faint);
+}
+table.t-cls th:first-child { text-align: left; }
+table.t-cls td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--hair);
+  text-align: right;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+table.t-cls td:first-child {
+  text-align: left;
+  color: var(--ink);
+  font-variant-numeric: normal;
+}
+table.t-cls tr.thin td { color: var(--skip); }
+
+/* =============================== РАН ================================ */
+.t-run {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 18px;
+  align-items: start;
+}
+
+.t-run-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.t-run-head h2 { margin: 0; font-size: 18px; }
+
+.t-run-sub {
+  color: var(--faint);
+  font-size: 12px;
+  margin: 6px 0 16px;
+}
+.t-run-sub b {
+  color: var(--dim);
+  font-weight: 400;
+  font-family: var(--mono);
+}
+
+.t-bars { display: grid; gap: 9px; margin-bottom: 18px; }
+.t-barrow {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) 110px;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+}
+.t-barrow .k { color: var(--faint); }
+.t-barrow .v {
+  font-family: var(--mono);
+  color: var(--dim);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.t-barrow .bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--hair);
+  overflow: hidden;
+}
+.t-barrow .bar i { display: block; height: 100%; background: var(--null); }
+.t-barrow .bar i.e { background: var(--red); }
+
+.t-card {
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-s);
+  background: var(--sunk);
+  padding: 12px;
+}
+.t-card + .t-card { margin-top: 14px; }
+
+.t-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 16px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+.t-card-head .leg {
+  margin-left: auto;
+  display: flex;
+  gap: 14px;
+  font-size: 11.5px;
+  color: var(--dim);
+}
+.t-card-head .leg u {
+  display: inline-block;
+  width: 12px;
+  height: 2px;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+.t-card-head .leg b {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.t-card svg { display: block; width: 100%; height: auto; }
+.t-scroll { overflow-x: auto; }
+
+/* Отключённая кнопка обязана выглядеть отключённой. Приглушённый акцент
+   читается как «нажми меня», и человек жмёт — и ничего не происходит. */
+.t-wiz .mag-btn:disabled,
+.t-wiz .mag-ghost:disabled {
+  background: var(--hair);
+  border-color: var(--hair);
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+/* Почему кнопка не нажимается — строкой под ней, а не только подсказкой при
+   наведении: подсказку не найдут, а вопрос возникнет сразу. */
+.t-why-not {
+  margin-top: 8px;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+  text-align: right;
+}
+
+/* ===== Просмотр образца собранного набора ===== */
+.s-view {
+  width: min(1200px, 94vw);
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.s-view-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--hair);
+  font-size: 13px;
+}
+.s-view-top .sp { flex: 1; }
+/* `.mag-ghost` по умолчанию во всю ширину — в строке заголовка это растянуло
+   бы «Закрыть» на весь просмотрщик. */
+.s-view-top button { width: auto; margin-top: 0; flex: none; }
+.s-view-top b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40%;
+}
+
+.s-view-tag {
+  font: 600 11px/1 var(--mono);
+  color: var(--dim);
+  background: var(--hair);
+  border-radius: 4px;
+  padding: 4px 7px;
+}
+.s-view-tag.alt { color: var(--red); }
+
+.s-view-pos {
+  font: 600 11.5px/1 var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.s-view-body {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  min-height: 0;
+  background: var(--sunk);
+}
+
+.s-view-frame {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Обёртка по размеру картинки: `inline-block` ужимается по содержимому,
+   поэтому слой разметки внутри неё накрывает именно кадр. Растянутый по
+   ячейке слой уводил рамки влево и делал их шире кадра. */
+.s-view-shot {
+  position: relative;
+  display: inline-block;
+  line-height: 0;
+  max-width: 100%;
+}
+.s-view-shot img {
+  max-width: 100%;
+  max-height: calc(92vh - 150px);
+  width: auto;
+  height: auto;
+  display: block;
+}
+.s-view-shot .mag-shp {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.s-view-arr {
+  flex: none;
+  width: 38px;
+  height: 74px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.s-view-arr:hover:not(:disabled) { color: var(--ink); border-color: var(--dim); }
+.s-view-arr:disabled { opacity: 0.35; cursor: default; }
+
+.s-view-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--hair);
+}
+.s-view-ops span {
+  font: 600 11px/1 var(--mono);
+  color: var(--dim);
+  background: var(--hair);
+  border-radius: 4px;
+  padding: 4px 7px;
+}
+
+/* ===== Метрики по классам ===== */
+.t-cls-table th button {
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+.t-cls-table th button.on { color: var(--red); }
+
+/* Число с полоской: доля читается боковым зрением, точное значение — рядом. */
+.t-num {
+  position: relative;
+  display: inline-block;
+  min-width: 62px;
+  padding: 2px 5px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.t-num i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--done) 26%, transparent);
+  z-index: 0;
+}
+.t-num::after { content: ""; }
+.t-cls-table td .t-num { z-index: 1; }
+
+.t-dash { color: var(--faint); }
+.t-unmeasured td { opacity: 0.55; }
+.t-totals td {
+  border-top: 1px solid var(--rule);
+  font-weight: 700;
+}
+
+/* ===== Форма запуска обучения ===== */
+/* Секции, а не одна простыня полей: «сколько учить», «когда остановиться»,
+   «чем искажать» — три разных решения, и читаться они должны раздельно. */
+.t-form-section { margin-top: 16px; }
+.t-form-section > .g-label { margin-bottom: 8px; }
+.t-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px 12px;
+}
+.t-form-grid .mag-field { margin: 0; }
+.t-form-grid .mag-field label {
+  font-size: 11.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.t-form-hint {
+  margin: 6px 0 0;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+.t-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  cursor: pointer;
+  margin-top: 8px;
+}
+.t-check input { margin: 0; }
+details.t-fold { margin-top: 14px; }
+details.t-fold > summary {
+  cursor: pointer;
+  font-size: 12.5px;
+  color: var(--faint);
+  list-style: none;
+  user-select: none;
+}
+details.t-fold > summary::before { content: "▸ "; }
+details.t-fold[open] > summary::before { content: "▾ "; }
+details.t-fold > summary::-webkit-details-marker { display: none; }
+details.t-fold > .t-form-grid { margin-top: 10px; }
+.t-form-note {
+  margin-top: 8px;
+  border-radius: var(--radius-s);
+  padding: 8px 10px;
+  background: var(--sunk);
+  border: 1px solid var(--hair);
+  font-size: 12px;
+  color: var(--faint);
+}
+.t-form-note b { color: var(--ink); font-weight: 600; }
+.t-form-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+}
+.mag-modal.t-modal-wide { width: min(760px, calc(100vw - 32px)); }
+
+/* Предпросмотр в пути: подпись рядом с заголовком, а не спиннер посреди —
+   старые числа остаются на экране, пока не придут новые. */
+.t-computing {
+  color: var(--faint);
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: 0;
+  animation: t-blink 1.2s ease-in-out infinite;
+}
+@keyframes t-blink {
+  50% { opacity: 0.45; }
+}
+.t-bg-row td { color: var(--faint); font-style: italic; }

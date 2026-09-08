@@ -1,11 +1,17 @@
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
+import ProjectGallery from "./ProjectGallery";
 import { useProject } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
 
-// Обзор: состояние проекта и разметки по классам. Всё остальное живёт
-// в своих вкладках, поэтому здесь ничего не режется по месту.
+// Обзор: состояние проекта, разметка по классам и все его кадры одной сеткой.
+//
+// Кадры — второй вкладкой, а не отдельным разделом: это тот же обзор, только
+// глазами. Вкладка живёт в адресе (`?view=frames`), поэтому на неё можно дать
+// ссылку и она переживает перезагрузку.
 export default function ProjectOverview() {
   const { detail } = useProject();
+  const [search, setSearch] = useSearchParams();
+  const view = search.get("view") === "frames" ? "frames" : "summary";
   const { project, datasets, classes, my_role } = detail;
   const isAdmin = my_role === "admin";
   const importing = project.status === "importing";
@@ -43,7 +49,44 @@ export default function ProjectOverview() {
     );
   }
 
+  const tabs = (
+    <div className="mag-vtabs" role="tablist">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={view === "summary"}
+        className={view === "summary" ? "on" : ""}
+        onClick={() => setSearch({})}
+      >
+        Сводка
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={view === "frames"}
+        className={view === "frames" ? "on" : ""}
+        onClick={() => setSearch({ view: "frames" })}
+      >
+        Все кадры <span>{detail.stats.images.toLocaleString("ru-RU")}</span>
+      </button>
+    </div>
+  );
+
+  if (view === "frames") {
+    return (
+      <>
+        {tabs}
+        <ProjectGallery
+          datasets={datasets.map((d) => ({ id: d.id, name: d.name }))}
+          role={my_role}
+        />
+      </>
+    );
+  }
+
   return (
+    <>
+    {tabs}
     <div className="mag-card">
       <div className="mag-card-h">
         <h4>Разметки по классам</h4>
@@ -76,5 +119,6 @@ export default function ProjectOverview() {
         </div>
       )}
     </div>
+    </>
   );
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { pollJob } from "../../api";
+import { pollJob } from "../../api/jobs";
 import {
   exportDownloadUrl,
   getClasses,
@@ -330,17 +330,17 @@ export default function ExportModal({ detail, onClose }: Props) {
             )}
           </div>
           {preview &&
-            (preview.dropped > 0 || preview.unlabelled > 0 || preview.empty > 0 ||
+            (preview.dropped > 0 || preview.background > 0 || preview.empty > 0 ||
              preview.wrong_kind > 0) && (
               <p className="mag-exp-hint">
-                {preview.dropped > 0 && `Отсеяно фильтром классов: ${preview.dropped}. `}
+                {preview.dropped > 0 && `Разметка не того рода, не идут: ${preview.dropped}. `}
                 {/* Пропуск по роду разметки называем словами, а не числом:
                     «пропущено 412» без причины читается как поломка. */}
                 {preview.wrong_kind > 0 &&
                   (preview.ann_type === "polygon"
                     ? `Боксов, не идущих в сегментацию: ${preview.wrong_kind}. `
                     : `Объектов неподходящего вида: ${preview.wrong_kind}. `)}
-                {preview.unlabelled > 0 && `Без разметки: ${preview.unlabelled}. `}
+                {preview.background > 0 && `Без разметки, идут фоном: ${preview.background}. `}
                 {preview.empty > 0 && `Фоновых кадров «пусто»: ${preview.empty}.`}
               </p>
             )}

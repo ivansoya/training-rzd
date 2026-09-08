@@ -1,0 +1,44 @@
+{
+  "name": "Вагоны · общий",
+  "note": "Тот же граф, что на макете: умножение, стрелка 65/35, слияние и оригиналы отдельным проводом.",
+  "base": 1040,
+  "doc": {
+    "v": 1,
+    "nodes": [
+      {"id": "src", "type": "source", "params": {"label": "Источник"}},
+      {"id": "mul", "type": "multiply", "params": {"label": "Умножение", "times": 3}},
+      {"id": "prob", "type": "split_prob", "params": {"label": "Вероятностный", "branches": 2, "weights": [65, 35]}},
+      {"id": "night", "type": "flow", "params": {"label": "Ночная съёмка", "ops": []}},
+      {"id": "rain", "type": "flow", "params": {"label": "Дождь, затем смаз", "ops": []}},
+      {"id": "mrg", "type": "merge", "params": {"label": "Слияние", "inputs": 2}},
+      {"id": "out", "type": "output", "params": {"label": "Выход"}},
+      {"id": "orig", "type": "output", "params": {"label": "Оригиналы"}}
+    ],
+    "edges": [
+      {"from": "src", "out": "out", "to": "mul", "in": "in"},
+      {"from": "src", "out": "out", "to": "orig", "in": "in"},
+      {"from": "mul", "out": "out", "to": "prob", "in": "in"},
+      {"from": "prob", "out": "o0", "to": "night", "in": "in"},
+      {"from": "prob", "out": "o1", "to": "rain", "in": "in"},
+      {"from": "night", "out": "out", "to": "mrg", "in": "i0"},
+      {"from": "rain", "out": "out", "to": "mrg", "in": "i1"},
+      {"from": "mrg", "out": "out", "to": "out", "in": "in"}
+    ]
+  },
+  "expect": {
+    "outputs": 4160,
+    "dropped": 0,
+    "multiplier": 4.0,
+    "nodes": 8,
+    "edges": {
+      "src:out->mul:in": 1040,
+      "src:out->orig:in": 1040,
+      "mul:out->prob:in": 3120,
+      "prob:o0->night:in": 2028,
+      "prob:o1->rain:in": 1092,
+      "night:out->mrg:i0": 2028,
+      "rain:out->mrg:i1": 1092,
+      "mrg:out->out:in": 3120
+    }
+  }
+}

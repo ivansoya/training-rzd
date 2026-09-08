@@ -1,0 +1,635 @@
+{
+  "errors": [],
+  "results": [
+    {
+      "active": "studio/projects",
+      "h1": "Ваши проекты",
+      "overflow": false,
+      "broken": 0,
+      "body": 1431
+    },
+    {
+      "active": "studio/overview",
+      "h1": "Варан",
+      "overflow": false,
+      "broken": 0,
+      "body": 1499
+    },
+    {
+      "active": "studio/tasks",
+      "h1": "Таски",
+      "overflow": false,
+      "broken": 0,
+      "body": 1496
+    },
+    {
+      "active": "studio/task",
+      "h1": "Работа захвата",
+      "overflow": false,
+      "broken": 0,
+      "body": 1598
+    },
+    {
+      "active": "studio/datasets",
+      "h1": "Датасеты",
+      "overflow": false,
+      "broken": 0,
+      "body": 1269
+    },
+    {
+      "active": "studio/dataset",
+      "h1": "датасет_тест",
+      "overflow": false,
+      "broken": 0,
+      "body": 1354
+    },
+    {
+      "active": "studio/editor",
+      "h1": "Разметка видео",
+      "overflow": false,
+      "broken": 0,
+      "body": 2230
+    },
+    {
+      "active": "studio/classes",
+      "h1": "Классы",
+      "overflow": false,
+      "broken": 0,
+      "body": 1274
+    },
+    {
+      "active": "studio/members",
+      "h1": "Участники",
+      "overflow": false,
+      "broken": 0,
+      "body": 1262
+    },
+    {
+      "active": "studio/import",
+      "h1": "Импорт датасета",
+      "overflow": false,
+      "broken": 0,
+      "body": 1129
+    },
+    {
+      "active": "studio/augments",
+      "h1": "Аугментации",
+      "overflow": false,
+      "broken": 0,
+      "body": 1364
+    },
+    {
+      "active": "studio/graph",
+      "h1": "Дневная съёмка",
+      "overflow": false,
+      "broken": 0,
+      "body": 1323
+    },
+    {
+      "active": "studio/training",
+      "h1": "Обучение",
+      "overflow": false,
+      "broken": 0,
+      "body": 1517
+    },
+    {
+      "active": "studio/trainset",
+      "h1": "Варан / базовый",
+      "overflow": false,
+      "broken": 0,
+      "body": 1528
+    },
+    {
+      "active": "studio/wizard",
+      "h1": "Новый обучающий набор",
+      "overflow": false,
+      "broken": 0,
+      "body": 1118
+    },
+    {
+      "active": "studio/run",
+      "h1": "baseline-04",
+      "overflow": false,
+      "broken": 0,
+      "body": 1358
+    },
+    {
+      "active": "studio/hardware",
+      "h1": "Оборудование",
+      "overflow": false,
+      "broken": 0,
+      "body": 1268
+    },
+    {
+      "active": "studio/account",
+      "h1": "Кабинет",
+      "overflow": false,
+      "broken": 0,
+      "body": 1110
+    },
+    {
+      "active": "studio/login",
+      "h1": "От кадрак модели.",
+      "overflow": false,
+      "broken": 0,
+      "body": 1047
+    },
+    {
+      "active": "terminal/projects",
+      "h1": "Ваши проекты",
+      "overflow": false,
+      "broken": 0,
+      "body": 1430
+    },
+    {
+      "active": "terminal/overview",
+      "h1": "Варан",
+      "overflow": false,
+      "broken": 0,
+      "body": 1499
+    },
+    {
+      "active": "terminal/tasks",
+      "h1": "Таски",
+      "overflow": false,
+      "broken": 0,
+      "body": 1496
+    },
+    {
+      "active": "terminal/task",
+      "h1": "Работа захвата",
+      "overflow": false,
+      "broken": 0,
+      "body": 1598
+    },
+    {
+      "active": "terminal/datasets",
+      "h1": "Датасеты",
+      "overflow": false,
+      "broken": 0,
+      "body": 1269
+    },
+    {
+      "active": "terminal/dataset",
+      "h1": "датасет_тест",
+      "overflow": false,
+      "broken": 0,
+      "body": 1354
+    },
+    {
+      "active": "terminal/editor",
+      "h1": "Разметка видео",
+      "overflow": false,
+      "broken": 0,
+      "body": 2230
+    },
+    {
+      "active": "terminal/classes",
+      "h1": "Классы",
+      "overflow": false,
+      "broken": 0,
+      "body": 1274
+    },
+    {
+      "active": "terminal/members",
+      "h1": "Участники",
+      "overflow": false,
+      "broken": 0,
+      "body": 1262
+    },
+    {
+      "active": "terminal/import",
+      "h1": "Импорт датасета",
+      "overflow": false,
+      "broken": 0,
+      "body": 1129
+    },
+    {
+      "active": "terminal/augments",
+      "h1": "Аугментации",
+      "overflow": false,
+      "broken": 0,
+      "body": 1364
+    },
+    {
+      "active": "terminal/graph",
+      "h1": "Дневная съёмка",
+      "overflow": false,
+      "broken": 0,
+      "body": 1323
+    },
+    {
+      "active": "terminal/training",
+      "h1": "Обучение",
+      "overflow": false,
+      "broken": 0,
+      "body": 1517
+    },
+    {
+      "active": "terminal/trainset",
+      "h1": "Варан / базовый",
+      "overflow": false,
+      "broken": 0,
+      "body": 1528
+    },
+    {
+      "active": "terminal/wizard",
+      "h1": "Новый обучающий набор",
+      "overflow": false,
+      "broken": 0,
+      "body": 1118
+    },
+    {
+      "active": "terminal/run",
+      "h1": "baseline-04",
+      "overflow": false,
+      "broken": 0,
+      "body": 1358
+    },
+    {
+      "active": "terminal/hardware",
+      "h1": "Оборудование",
+      "overflow": false,
+      "broken": 0,
+      "body": 1268
+    },
+    {
+      "active": "terminal/account",
+      "h1": "Кабинет",
+      "overflow": false,
+      "broken": 0,
+      "body": 1110
+    },
+    {
+      "active": "terminal/login",
+      "h1": "От кадрак модели.",
+      "overflow": false,
+      "broken": 0,
+      "body": 1047
+    },
+    {
+      "active": "orbit/projects",
+      "h1": "Ваши проекты",
+      "overflow": false,
+      "broken": 0,
+      "body": 1431
+    },
+    {
+      "active": "orbit/overview",
+      "h1": "Варан",
+      "overflow": false,
+      "broken": 0,
+      "body": 1499
+    },
+    {
+      "active": "orbit/tasks",
+      "h1": "Таски",
+      "overflow": false,
+      "broken": 0,
+      "body": 1496
+    },
+    {
+      "active": "orbit/task",
+      "h1": "Работа захвата",
+      "overflow": false,
+      "broken": 0,
+      "body": 1598
+    },
+    {
+      "active": "orbit/datasets",
+      "h1": "Датасеты",
+      "overflow": false,
+      "broken": 0,
+      "body": 1269
+    },
+    {
+      "active": "orbit/dataset",
+      "h1": "датасет_тест",
+      "overflow": false,
+      "broken": 0,
+      "body": 1354
+    },
+    {
+      "active": "orbit/editor",
+      "h1": "Разметка видео",
+      "overflow": false,
+      "broken": 0,
+      "body": 2230
+    },
+    {
+      "active": "orbit/classes",
+      "h1": "Классы",
+      "overflow": false,
+      "broken": 0,
+      "body": 1274
+    },
+    {
+      "active": "orbit/members",
+      "h1": "Участники",
+      "overflow": false,
+      "broken": 0,
+      "body": 1262
+    },
+    {
+      "active": "orbit/import",
+      "h1": "Импорт датасета",
+      "overflow": false,
+      "broken": 0,
+      "body": 1129
+    },
+    {
+      "active": "orbit/augments",
+      "h1": "Аугментации",
+      "overflow": false,
+      "broken": 0,
+      "body": 1364
+    },
+    {
+      "active": "orbit/graph",
+      "h1": "Дневная съёмка",
+      "overflow": false,
+      "broken": 0,
+      "body": 1323
+    },
+    {
+      "active": "orbit/training",
+      "h1": "Обучение",
+      "overflow": false,
+      "broken": 0,
+      "body": 1517
+    },
+    {
+      "active": "orbit/trainset",
+      "h1": "Варан / базовый",
+      "overflow": false,
+      "broken": 0,
+      "body": 1528
+    },
+    {
+      "active": "orbit/wizard",
+      "h1": "Новый обучающий набор",
+      "overflow": false,
+      "broken": 0,
+      "body": 1118
+    },
+    {
+      "active": "orbit/run",
+      "h1": "baseline-04",
+      "overflow": false,
+      "broken": 0,
+      "body": 1358
+    },
+    {
+      "active": "orbit/hardware",
+      "h1": "Оборудование",
+      "overflow": false,
+      "broken": 0,
+      "body": 1268
+    },
+    {
+      "active": "orbit/account",
+      "h1": "Кабинет",
+      "overflow": false,
+      "broken": 0,
+      "body": 1110
+    },
+    {
+      "active": "orbit/login",
+      "h1": "От кадрак модели.",
+      "overflow": false,
+      "broken": 0,
+      "body": 1047
+    },
+    {
+      "active": "archive/projects",
+      "h1": "Ваши проекты",
+      "overflow": false,
+      "broken": 0,
+      "body": 1431
+    },
+    {
+      "active": "archive/overview",
+      "h1": "Варан",
+      "overflow": false,
+      "broken": 0,
+      "body": 1499
+    },
+    {
+      "active": "archive/tasks",
+      "h1": "Таски",
+      "overflow": false,
+      "broken": 0,
+      "body": 1496
+    },
+    {
+      "active": "archive/task",
+      "h1": "Работа захвата",
+      "overflow": false,
+      "broken": 0,
+      "body": 1598
+    },
+    {
+      "active": "archive/datasets",
+      "h1": "Датасеты",
+      "overflow": false,
+      "broken": 0,
+      "body": 1269
+    },
+    {
+      "active": "archive/dataset",
+      "h1": "датасет_тест",
+      "overflow": false,
+      "broken": 0,
+      "body": 1354
+    },
+    {
+      "active": "archive/editor",
+      "h1": "Разметка видео",
+      "overflow": false,
+      "broken": 0,
+      "body": 2230
+    },
+    {
+      "active": "archive/classes",
+      "h1": "Классы",
+      "overflow": false,
+      "broken": 0,
+      "body": 1274
+    },
+    {
+      "active": "archive/members",
+      "h1": "Участники",
+      "overflow": false,
+      "broken": 0,
+      "body": 1262
+    },
+    {
+      "active": "archive/import",
+      "h1": "Импорт датасета",
+      "overflow": false,
+      "broken": 0,
+      "body": 1129
+    },
+    {
+      "active": "archive/augments",
+      "h1": "Аугментации",
+      "overflow": false,
+      "broken": 0,
+      "body": 1364
+    },
+    {
+      "active": "archive/graph",
+      "h1": "Дневная съёмка",
+      "overflow": false,
+      "broken": 0,
+      "body": 1323
+    },
+    {
+      "active": "archive/training",
+      "h1": "Обучение",
+      "overflow": false,
+      "broken": 0,
+      "body": 1517
+    },
+    {
+      "active": "archive/trainset",
+      "h1": "Варан / базовый",
+      "overflow": false,
+      "broken": 0,
+      "body": 1528
+    },
+    {
+      "active": "archive/wizard",
+      "h1": "Новый обучающий набор",
+      "overflow": false,
+      "broken": 0,
+      "body": 1118
+    },
+    {
+      "active": "archive/run",
+      "h1": "baseline-04",
+      "overflow": false,
+      "broken": 0,
+      "body": 1358
+    },
+    {
+      "active": "archive/hardware",
+      "h1": "Оборудование",
+      "overflow": false,
+      "broken": 0,
+      "body": 1268
+    },
+    {
+      "active": "archive/account",
+      "h1": "Кабинет",
+      "overflow": false,
+      "broken": 0,
+      "body": 1110
+    },
+    {
+      "active": "archive/login",
+      "h1": "От кадрак модели.",
+      "overflow": false,
+      "broken": 0,
+      "body": 1047
+    }
+  ],
+  "contrastResults": [
+    {
+      "id": "graphite",
+      "text": 12.61315160555389,
+      "muted": 7.672783113694584,
+      "button": 9.83498702770197,
+      "secondary": 7.673547018195281,
+      "dark": true
+    },
+    {
+      "id": "slate",
+      "text": 10.331524899508228,
+      "muted": 7.225397394980895,
+      "button": 9.051360798026483,
+      "secondary": 6.9690749266371155,
+      "dark": true
+    },
+    {
+      "id": "carbon",
+      "text": 12.99176905732022,
+      "muted": 7.970761769826957,
+      "button": 12.190028581797744,
+      "secondary": 7.426261874819696,
+      "dark": true
+    },
+    {
+      "id": "cobalt",
+      "text": 12.533816443109888,
+      "muted": 8.140910646268308,
+      "button": 8.820635299147103,
+      "secondary": 8.351035387122277,
+      "dark": true
+    },
+    {
+      "id": "petrol",
+      "text": 11.47307125679827,
+      "muted": 7.536108920969371,
+      "button": 8.065622779776582,
+      "secondary": 8.024717265260852,
+      "dark": true
+    },
+    {
+      "id": "cacao",
+      "text": 12.046357483173924,
+      "muted": 7.492357620353079,
+      "button": 8.948053135025923,
+      "secondary": 7.185171993155714,
+      "dark": true
+    },
+    {
+      "id": "aubergine",
+      "text": 12.903421897480664,
+      "muted": 8.258347351124026,
+      "button": 10.45481414346936,
+      "secondary": 7.531498392893417,
+      "dark": true
+    },
+    {
+      "id": "acid",
+      "text": 11.960334722306447,
+      "muted": 7.806991553244936,
+      "button": 11.782898990546759,
+      "secondary": 6.9946772716990635,
+      "dark": true
+    },
+    {
+      "id": "plum",
+      "text": 11.906968687568869,
+      "muted": 7.803408016781646,
+      "button": 9.25789045360403,
+      "secondary": 6.826096194352672,
+      "dark": true
+    },
+    {
+      "id": "wine",
+      "text": 11.64940790651561,
+      "muted": 7.634576164955937,
+      "button": 9.527232188448936,
+      "secondary": 7.301126565673853,
+      "dark": true
+    },
+    {
+      "id": "indigo",
+      "text": 12.069480953930748,
+      "muted": 7.678025473110657,
+      "button": 9.286596229990183,
+      "secondary": 6.0559495324928365,
+      "dark": true
+    },
+    {
+      "id": "spruce",
+      "text": 10.977716556575519,
+      "muted": 7.549286229775186,
+      "button": 8.27313759878465,
+      "secondary": 8.228154416914593,
+      "dark": true
+    }
+  ]
+}

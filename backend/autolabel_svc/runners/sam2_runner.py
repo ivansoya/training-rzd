@@ -39,9 +39,8 @@ DETAIL_ORDER = {"subpart": 0, "part": 1, "object": 2}
 # даёт 0,6. Явные уровни остаются для случая, когда человек знает лучше.
 DETAIL_AUTO = "auto"
 # Сколько кусков маски отдавать контуром и с какой доли от крупнейшего они
-# перестают быть шумом обводки.
-MAX_PARTS = 24
-PART_MIN_SHARE = 0.002
+# перестают быть шумом обводки — общее с аугментациями, см. common.contours.
+from common.contours import MAX_PARTS, PART_MIN_SHARE  # noqa: F401,E402
 
 
 def ensure_weights(name: str) -> str:
@@ -215,31 +214,10 @@ class Sam2Runner:
     def _polygons(mask: np.ndarray, max_points: int):
         """Все куски маски, а не только крупнейший.
 
-        Объект часто распадается на несколько областей — заслонён стойкой,
-        виден двумя половинами. Бокс охватывает их все, и контур обязан
-        показывать то же самое, иначе рамка и обводка противоречат друг другу.
+        Сам разбор — в ``common.contours``: обводку снимает ещё и сборка
+        обучающего набора, и один и тот же вагон обязан выглядеть одинаково
+        до и после аугментации.
         """
-        import cv2
+        from common.contours import polygons_from_mask
 
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return []
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:MAX_PARTS]
-        biggest = cv2.contourArea(contours[0]) or 1.0
-        out = []
-        for contour in contours:
-            # Крохи в доли процента от главного куска — это шум обводки.
-            if cv2.contourArea(contour) < biggest * PART_MIN_SHARE:
-                continue
-            if max_points and len(contour) > max_points:
-                # Подбираем допуск, пока точек не станет достаточно мало.
-                perimeter = cv2.arcLength(contour, True)
-                eps = 0.001
-                while eps < 0.2:
-                    approx = cv2.approxPolyDP(contour, eps * perimeter, True)
-                    if len(approx) <= max_points:
-                        contour = approx
-                        break
-                    eps *= 1.6
-            out.append([[int(p[0][0]), int(p[0][1])] for p in contour])
-        return out
+        return polygons_from_mask(mask, max_points)

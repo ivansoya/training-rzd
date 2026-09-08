@@ -29,9 +29,8 @@ COPY common ./common
 COPY training_svc ./training_svc
 
 EXPOSE 5000
-# One worker (video/inference state lives in-memory and must be shared) with a
-# large thread pool so slow streaming/thumbnail requests are served in parallel
-# instead of blocking each other. Shared state is guarded by locks in routes.py.
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "1", "--threads", "32", \
-     "--timeout", "1800", "--access-logfile", "-", "--error-logfile", "-", \
-     "training_svc.app:app"]
+# Два рабочих процесса и много потоков. Раньше стоял один — состояние жило в
+# его памяти, и второй процесс отвечал бы «не найдено» на половину запросов.
+# Теперь состояние в базе, и потолок мест живой связи считается отсюда:
+# GUNICORN_THREADS минус запас под обычные запросы (см. common/live.py).
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "2", "--threads", "48",      "--timeout", "1800", "--access-logfile", "-", "--error-logfile", "-",      "training_svc.app:app"]

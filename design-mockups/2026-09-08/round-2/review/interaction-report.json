@@ -1,0 +1,2099 @@
+{
+  "checks": [
+    {
+      "name": "Create project locally",
+      "ok": true
+    },
+    {
+      "name": "Project filter visually hides results",
+      "ok": true
+    },
+    {
+      "name": "Split filter changes gallery",
+      "ok": true
+    },
+    {
+      "name": "Unlabeled filter empty state",
+      "ok": true
+    },
+    {
+      "name": "Create class locally",
+      "ok": true
+    },
+    {
+      "name": "Readonly disables class edits",
+      "ok": true
+    },
+    {
+      "name": "Retry restores screen",
+      "ok": true
+    },
+    {
+      "name": "Skipped archive files dialog",
+      "ok": true
+    },
+    {
+      "name": "Import class mapping",
+      "ok": true
+    },
+    {
+      "name": "Wizard reaches review",
+      "ok": true
+    },
+    {
+      "name": "Graph drag",
+      "ok": true
+    },
+    {
+      "name": "Graph historical version locks controls",
+      "ok": true
+    },
+    {
+      "name": "Run tab 0",
+      "ok": true
+    },
+    {
+      "name": "Run tab 1",
+      "ok": true
+    },
+    {
+      "name": "Run tab 2",
+      "ok": true
+    },
+    {
+      "name": "Run tab 3",
+      "ok": true
+    },
+    {
+      "name": "Responsive layouts",
+      "ok": true,
+      "detail": []
+    },
+    {
+      "name": "Canvas coordinates across 4 styles × 12 palettes × 3 modes",
+      "ok": true,
+      "detail": {
+        "maxError": 0.000030273437488403943,
+        "maxCanvasError": 0
+      }
+    },
+    {
+      "name": "Catalog index",
+      "ok": true
+    },
+    {
+      "name": "Catalog palettes",
+      "ok": true
+    },
+    {
+      "name": "Catalog screens",
+      "ok": true
+    },
+    {
+      "name": "No JavaScript errors",
+      "ok": true,
+      "detail": []
+    }
+  ],
+  "errors": [],
+  "responsive": [
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "projects",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "overview",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "tasks",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "task",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "datasets",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "dataset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "editor",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "classes",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "members",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "import",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "augments",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "graph",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "training",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "trainset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "wizard",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "run",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "hardware",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "account",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "studio",
+      "screen": "login",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "projects",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "overview",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "tasks",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "task",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "datasets",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "dataset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "editor",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "classes",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "members",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "import",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "augments",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "graph",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "training",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "trainset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "wizard",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "run",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "hardware",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "account",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "terminal",
+      "screen": "login",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "projects",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "overview",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "tasks",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "task",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "datasets",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "dataset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "editor",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "classes",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "members",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "import",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "augments",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "graph",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "training",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "trainset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "wizard",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "run",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "hardware",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "account",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "orbit",
+      "screen": "login",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "projects",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "overview",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "tasks",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "task",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "datasets",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "dataset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "editor",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "classes",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "members",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "import",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "augments",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "graph",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "training",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "trainset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "wizard",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "run",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "hardware",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "account",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 1366,
+      "style": "archive",
+      "screen": "login",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "studio",
+      "screen": "projects",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "studio",
+      "screen": "overview",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "studio",
+      "screen": "dataset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "studio",
+      "screen": "editor",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "studio",
+      "screen": "graph",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "studio",
+      "screen": "run",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "terminal",
+      "screen": "projects",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "terminal",
+      "screen": "overview",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "terminal",
+      "screen": "dataset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "terminal",
+      "screen": "editor",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "terminal",
+      "screen": "graph",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "terminal",
+      "screen": "run",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "orbit",
+      "screen": "projects",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "orbit",
+      "screen": "overview",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "orbit",
+      "screen": "dataset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "orbit",
+      "screen": "editor",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "orbit",
+      "screen": "graph",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "orbit",
+      "screen": "run",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "archive",
+      "screen": "projects",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "archive",
+      "screen": "overview",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "archive",
+      "screen": "dataset",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "archive",
+      "screen": "editor",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "archive",
+      "screen": "graph",
+      "overflow": 0,
+      "broken": 0
+    },
+    {
+      "size": 430,
+      "style": "archive",
+      "screen": "run",
+      "overflow": 0,
+      "broken": 0
+    }
+  ],
+  "coordinates": [
+    {
+      "style": "studio",
+      "palette": "graphite",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "graphite",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "graphite",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "slate",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "slate",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "slate",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "carbon",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "carbon",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "carbon",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "cobalt",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "cobalt",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "cobalt",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "petrol",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "petrol",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "petrol",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "cacao",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "cacao",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "cacao",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "aubergine",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "aubergine",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "aubergine",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "acid",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "acid",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "acid",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "plum",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "plum",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "plum",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "wine",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "wine",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "wine",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "indigo",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "indigo",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "indigo",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "spruce",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "spruce",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "studio",
+      "palette": "spruce",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "graphite",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "graphite",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "graphite",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "slate",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "slate",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "slate",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "carbon",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "carbon",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "carbon",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "cobalt",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "cobalt",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "cobalt",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "petrol",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "petrol",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "petrol",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "cacao",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "cacao",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "cacao",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "aubergine",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "aubergine",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "aubergine",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "acid",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "acid",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "acid",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "plum",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "plum",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "plum",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "wine",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "wine",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "wine",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "indigo",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "indigo",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "indigo",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "spruce",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "spruce",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "terminal",
+      "palette": "spruce",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "graphite",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "graphite",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "graphite",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "slate",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "slate",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "slate",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "carbon",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "carbon",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "carbon",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "cobalt",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "cobalt",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "cobalt",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "petrol",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "petrol",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "petrol",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "cacao",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "cacao",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "cacao",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "aubergine",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "aubergine",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "aubergine",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "acid",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "acid",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "acid",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "plum",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "plum",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "plum",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "wine",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "wine",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "wine",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "indigo",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "indigo",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "indigo",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "spruce",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "spruce",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "orbit",
+      "palette": "spruce",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "graphite",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "graphite",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "graphite",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "slate",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "slate",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "slate",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "carbon",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "carbon",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "carbon",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "cobalt",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "cobalt",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "cobalt",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "petrol",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "petrol",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "petrol",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "cacao",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "cacao",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "cacao",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "aubergine",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "aubergine",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "aubergine",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "acid",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "acid",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "acid",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "plum",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "plum",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "plum",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "wine",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "wine",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "wine",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "indigo",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "indigo",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "indigo",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "spruce",
+      "mode": "fit",
+      "error": 0.000030273437488403943,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "spruce",
+      "mode": "zoom",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    },
+    {
+      "style": "archive",
+      "palette": "spruce",
+      "mode": "pan",
+      "error": 0.00002441406240905053,
+      "aspectError": 0.000009300595238181941,
+      "canvasError": 0,
+      "sibling": true
+    }
+  ]
+}

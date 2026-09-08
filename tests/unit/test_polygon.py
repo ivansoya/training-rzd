@@ -6,7 +6,7 @@
 """
 import pytest
 
-from datasets_svc.polygon import (
+from common.polygon import (
     MIN_POINTS,
     area,
     bounds,

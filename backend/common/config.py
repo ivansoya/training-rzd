@@ -12,21 +12,11 @@ DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 # drive Docker stores its data on. Falls back to DATA_DIR when unset.
 HOST_STAT_PATH = os.environ.get("HOST_STAT_PATH")
 
-UPLOADED_DIR = os.path.join(DATA_DIR, "uploaded")
-AUGMENTED_DIR = os.path.join(DATA_DIR, "augmented")
-CONFIGS_FILE = os.path.join(DATA_DIR, "configs.json")
-AUG_META_FILE = os.path.join(DATA_DIR, "augmented.json")
-# Maps an uploaded dataset's ASCII folder id -> {display_name, created_at}.
-DATASETS_META_FILE = os.path.join(DATA_DIR, "datasets.json")
-TRAININGS_DIR = os.path.join(DATA_DIR, "trainings")
-# Maps a training run id -> {display_name}: the user-facing name of a trained
-# model. Kept out of the run state so renames never race the training runner,
-# which rewrites run.json from its own in-memory copy while a run is active.
-TRAIN_META_FILE = os.path.join(DATA_DIR, "trainings.json")
+# Свои модели: .pt и .yaml, которые человек принёс сам. Единственное, что
+# пережило удаление старого приложения на /tools, — заменить их нечем, а
+# обучению они нужны как основа.
 MODELS_DIR = os.path.join(DATA_DIR, "models")
 MODELS_FILE = os.path.join(DATA_DIR, "models.json")
-INFERENCE_DIR = os.path.join(DATA_DIR, "inference")
-VIDEOS_DIR = os.path.join(DATA_DIR, "videos")
 
 # Data of the new site's projects. Binaries only — everything queryable about
 # them (classes, splits, annotations) lives in PostgreSQL. Images are named by
@@ -72,13 +62,16 @@ AUTOLABEL_DIR = os.path.join(DATA_DIR, "_autolabel")
 def auto_weights_dir(model):
     return os.path.join(AUTOLABEL_DIR, model)
 
+# Веса сети, которая считает признаки кадров для умного деления. Тем же
+# способом, что и веса полуавтомата: на томе, а не в образе.
+EMBED_DIR = os.path.join(DATA_DIR, "_embed")
+
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".webp", ".tif", ".tiff"}
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v"}
-BASE_CONFIG_ID = "base"
 
 _ALL_DIRS = (
-    UPLOADED_DIR, AUGMENTED_DIR, TRAININGS_DIR, MODELS_DIR, INFERENCE_DIR,
-    VIDEOS_DIR, JOBS_DIR, TMP_DIR, EXPORTS_DIR, PROJECTS_DIR, AUTOLABEL_DIR,
+    MODELS_DIR, JOBS_DIR, TMP_DIR, EXPORTS_DIR, PROJECTS_DIR, AUTOLABEL_DIR,
+    EMBED_DIR,
 )
 
 
@@ -88,6 +81,55 @@ def project_dir(project_id):
 
 def project_images_dir(project_id):
     return os.path.join(project_dir(project_id), "images")
+
+
+# Обучающие наборы, обучения и проверки лежат внутри проекта, а не общей
+# кучей: удаление проекта тогда уносит их одним движением, а место, занятое
+# проектом, считается одним обходом каталога.
+def project_trainsets_dir(project_id):
+    return os.path.join(project_dir(project_id), "trainsets")
+
+
+def trainset_dir(project_id, set_id):
+    return os.path.join(project_trainsets_dir(project_id), str(set_id))
+
+
+def trainset_manifest(project_id, set_id):
+    """Построчный список образцов набора.
+
+    Файлом, а не строками в базе: набор из ста тысяч кадров при графе ×6 —
+    это шестьсот тысяч строк, которые ни с чем не соединяются и живут ровно
+    столько же, сколько папка рядом.
+    """
+    return os.path.join(trainset_dir(project_id, set_id), "manifest.jsonl")
+
+
+def trainset_report(project_id, set_id):
+    return os.path.join(trainset_dir(project_id, set_id), "report.json")
+
+
+def project_runs_dir(project_id):
+    return os.path.join(project_dir(project_id), "runs")
+
+
+def run_dir(project_id, run_id):
+    return os.path.join(project_runs_dir(project_id), str(run_id))
+
+
+def check_videos_dir(project_id):
+    return os.path.join(project_dir(project_id), "checkvideos")
+
+
+def check_video_file(project_id, video_id, ext=".mp4"):
+    return os.path.join(check_videos_dir(project_id), f"{video_id}{ext}")
+
+
+def project_checks_dir(project_id):
+    return os.path.join(project_dir(project_id), "checks")
+
+
+def check_dir(project_id, check_id):
+    return os.path.join(project_checks_dir(project_id), str(check_id))
 
 
 def project_thumbs_dir(project_id):
@@ -148,11 +190,3 @@ def image_base_dir(project_id, task_id=None):
 def ensure_dirs():
     for d in _ALL_DIRS:
         os.makedirs(d, exist_ok=True)
-
-
-def kind_dir(kind):
-    if kind == "uploaded":
-        return UPLOADED_DIR
-    if kind == "augmented":
-        return AUGMENTED_DIR
-    return None

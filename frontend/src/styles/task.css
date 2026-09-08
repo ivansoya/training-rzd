@@ -187,18 +187,11 @@
   margin-bottom: 5px;
 }
 
-.mag-seg {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border: 1px solid;
-  border-radius: 5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
-  color: var(--mag-ink);
-}
+/* Отрезок таймлайна жил здесь под именем `.mag-seg` и ничем не пользовался,
+   зато сталкивался с переключателем `.mag-seg` со страницы датасета: `task.css`
+   грузится позже, и абсолютное позиционирование выигрывало. Переключатель
+   растягивался во всю ширину, перехватывал щелчки и рисовал полосы поперёк
+   страницы. Правило удалено; переключатель теперь зовётся `.mag-switch`. */
 
 .mag-ticks {
   display: flex;

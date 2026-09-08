@@ -258,7 +258,8 @@
   border: 1px solid var(--rule);
   border-radius: 8px;
   padding: 6px 14px;
-  font: 600 13px inherit;
+  font-weight: 600;
+  font-size: 13px;
   font-family: inherit;
   color: var(--mag-ink);
   cursor: pointer;
@@ -466,11 +467,11 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: var(--panel-2);
-  border: 1px solid var(--border);
+  background: var(--hair);
+  border: 1px solid var(--rule);
   border-radius: 999px;
   padding: 5px 12px 5px 5px;
-  color: var(--text);
+  color: var(--ink);
   font-size: 13px;
   font-weight: 600;
   font-family: inherit;
@@ -478,7 +479,7 @@
 }
 
 .user-chip:hover {
-  border-color: var(--accent);
+  border-color: var(--red);
 }
 
 .user-chip .mag-ava {
@@ -1090,4 +1091,65 @@
   .mag-topnav {
     display: none;
   }
+}
+
+/* --- Добавлено разделами аугментаций и обучения. Имена те же `mag-*`, потому
+   что это те же примитивы страницы, просто раньше их не было нужно. --- */
+
+/* Заголовок страницы раздела: тот же вес, что у названия проекта в паспорте. */
+.mag-h1 {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: -0.01em;
+}
+
+/* Ряд полей в одну строку: три числа гиперпараметров рядом читаются как одно
+   решение, а столбиком — как три отдельных вопроса. */
+.mag-field-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+/* Подвал модалки вне двухколоночной: та задаёт свой, а одноколоночной нужен
+   свой такой же. */
+.mag-modal-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+/* Ввод одной строкой прямо в списке: имя нового графа спрашивается там, где
+   на него смотрят, а не в отдельном окне. */
+.mag-inline-form {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.mag-inline-form input {
+  flex: 1;
+  max-width: 380px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 9px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--card);
+  color: var(--ink);
+}
+
+.mag-field select {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: inherit;
+  background: var(--card);
+  color: var(--ink);
 }

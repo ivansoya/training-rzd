@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { pollJob } from "../../api";
+import { pollJob } from "../../api/jobs";
 import {
   cancelImport,
   commitImport,
@@ -133,8 +133,14 @@ export default function ImportWizard() {
       await follow(job_id, "Читаю разметку");
     } catch (e) {
       setUploadPct(null);
+      // Ответ мог потеряться по дороге, а на сервере архив уже разбирается:
+      // тогда верить надо серверу, а не ошибке.
+      const next = await refresh().catch(() => null);
+      if (next?.status === "scanning" && next.job_id) {
+        await follow(next.job_id, "Читаю разметку");
+        return;
+      }
       setError((e as Error).message);
-      await refresh();
     }
   }
 
@@ -246,14 +252,24 @@ export default function ImportWizard() {
                   }}
                 />
                 <button className="mag-btn" onClick={() => fileInput.current?.click()}>
-                  Выбрать архив
+                  {state.upload?.name ? "Выбрать архив снова" : "Выбрать архив"}
                 </button>
-                <p>Пока только детекция — пять значений в строке разметки.</p>
+                {state.status === "uploading" && state.upload?.name ? (
+                  <p>
+                    Загрузка «{state.upload.name}» оборвалась на{" "}
+                    {Math.round(
+                      ((state.upload.received ?? 0) / Math.max(1, state.upload.size ?? 1)) * 100
+                    )}{" "}
+                    %. Выберите тот же файл — она продолжится с этого места.
+                  </p>
+                ) : (
+                  <p>Архив уходит кусками: обрыв связи не начинает загрузку заново.</p>
+                )}
               </div>
             ) : (
               <Progress
                 pct={uploadPct >= 0.999 ? null : uploadPct}
-                label={uploadPct >= 0.999 ? "Архив передаётся на сервер…" : "Передаю архив"}
+                label={uploadPct >= 0.999 ? "Запускаю разбор архива…" : "Передаю архив"}
               />
             )}
           </div>

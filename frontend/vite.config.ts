@@ -12,6 +12,11 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:8080",
         changeOrigin: false,
+        // Живая связь — ответ, который молчит секундами. Таймауты прокси
+        // на такой ответ — это обрыв каждые пятнадцать секунд и
+        // «http proxy error: ECONNRESET» в терминале.
+        timeout: 0,
+        proxyTimeout: 0,
       },
     },
   },

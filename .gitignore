@@ -4,6 +4,7 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+design-mockup/
 backend/data/
 dataset_test/
 .claude

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import { pollJob } from "../../api";
+import { pollJob } from "../../api/jobs";
 import {
   cutVideo,
   estimateCut,

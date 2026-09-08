@@ -70,6 +70,48 @@ FRIENDSHIP_STATUS_ENUM = sa.Enum("pending", "accepted", name="friendship_status"
 INVITATION_STATUS_ENUM = sa.Enum(
     "pending", "accepted", "declined", name="invitation_status"
 )
+# Вид разметки в обучающем наборе. Своё перечисление, а не ANN_TYPE_ENUM:
+# «obb» и «mask» в набор не пойдут никогда, и запрещать это должна база, а не
+# комментарий рядом с проверкой.
+TRAIN_SET_KIND_ENUM = sa.Enum("bbox", "polygon", name="train_set_kind")
+# «deleting» ставится до того, как воркер тронет папку: список видит
+# удаление сразу, а не после того, как оно удалось или не удалось.
+TRAIN_SET_STATUS_ENUM = sa.Enum(
+    "draft", "queued", "building", "ready", "error", "deleting",
+    name="train_set_status",
+)
+# Чем поделили набор на обучающую и проверочную части. «balanced» — случайно,
+# но с оглядкой на редкие классы; «smart» — по группам похожих кадров.
+SPLIT_MODE_ENUM = sa.Enum(
+    "manual", "random", "balanced", "smart", name="split_mode"
+)
+# Работа очереди подготовки данных. «embed» считает признаки кадров и потому
+# уезжает на видеокарту — её берёт воркер обучения, а не воркер подготовки:
+# torch стоит в одном образе, а не в двух.
+DATAPREP_KIND_ENUM = sa.Enum(
+    "build_set", "embed", "delete_set", name="dataprep_job_kind"
+)
+DATAPREP_STATUS_ENUM = sa.Enum(
+    "queued", "running", "done", "error", "cancelled", name="dataprep_job_status"
+)
+TRAIN_TASK_ENUM = sa.Enum("detect", "segment", name="train_task")
+# Жизнь обучения. «waiting_gpu» отделено от «queued» нарочно: человеку нужно
+# знать, ждёт ли он своей очереди вообще или конкретно памяти на карте —
+# во втором случае помогает уменьшить батч, в первом ничего не помогает.
+TRAIN_RUN_STATUS_ENUM = sa.Enum(
+    "queued", "waiting_gpu", "preparing", "running", "stopping",
+    "done", "error", "stopped", name="train_run_status",
+)
+CHECK_STATUS_ENUM = sa.Enum(
+    "queued", "waiting_gpu", "running", "done", "error", "stopped",
+    name="model_check_status",
+)
+# Бронь памяти на карте. «denied» — отказ навсегда (карт нет вовсе, а работа
+# без карты не идёт); «queued» — ждём, места сейчас нет.
+GPU_LEASE_STATUS_ENUM = sa.Enum(
+    "queued", "held", "released", "expired", "denied", "cancelled",
+    name="gpu_lease_status",
+)
 
 
 def utcnow() -> datetime:
@@ -103,6 +145,13 @@ class User(Base, AuditMixin):
     password_hash: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     display_name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
+    # Право на железо, а не на данные. Ролей в проекте для этого не хватает:
+    # администратор своего проекта не должен снимать чужое обучение с карты.
+    # Один бит, а не справочник глобальных ролей — право пока ровно одно, и
+    # машинерию под него пришлось бы объяснять на пустом месте.
+    is_staff: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
     # Set when the confirmation link from the registration email is opened;
     # login is refused while it is NULL.
     email_confirmed_at: Mapped[datetime | None] = mapped_column(
@@ -290,7 +339,7 @@ class Annotation(Base, AuditMixin):
     # за стойкой виден двумя половинами, — и обводка обязана показывать то же,
     # что охватывает рамка. Части разъединены, отверстий среди них нет: SAM2
     # отдаёт куски маски (RETR_EXTERNAL), а формат, в который мы выгружаем,
-    # отверстий не знает. Работа с ними — `datasets_svc/polygon.py`.
+    # отверстий не знает. Работа с ними — `common/polygon.py`.
     geometry: Mapped[dict] = mapped_column(JsonCol, nullable=False)
     area: Mapped[float | None] = mapped_column(sa.Float)
     iscrowd: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False)
@@ -702,3 +751,643 @@ class AuthSession(Base):
     )
 
     user: Mapped[User] = relationship()
+
+
+# =========================================================================== #
+# Видеокарты: одна на всех, и делят её три контейнера
+# =========================================================================== #
+class GpuDevice(Base):
+    """Карта, какой её увидел процесс, у которого есть torch и доступ к железу.
+
+    Строка в базе, а не опрос драйвера на каждый запрос, по двум причинам.
+    Карту делят ``training-worker``, ``autolabel`` и (через заказ признаков)
+    ``dataprep`` — у них нет общей памяти, а решать про допуск они обязаны
+    согласованно. И HTTP-сервис карт вообще не видит: он читает эту таблицу,
+    поэтому экран железа отвечает даже когда воркер лежит, и честно пишет,
+    как давно карта отзывалась.
+    """
+
+    __tablename__ = "gpu_devices"
+    __table_args__ = (
+        sa.UniqueConstraint("host", "device_index", name="uq_gpu_device_slot"),
+        sa.Index("ix_gpu_devices_live", "enabled"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    host: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    device_index: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    # Настоящий ключ железки. Переставили карты местами — номер поменялся, а
+    # это нет, и накопленные потолки остались при своей карте.
+    uuid_str: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
+    name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
+    total_mb: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    # Неприкосновенный запас: сколько памяти не раздавать никогда. Ставит
+    # человек, перезапуск контейнера это не сбрасывает.
+    reserved_mb: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=1024, server_default="1024"
+    )
+    # Постоянная бронь полуавтомата. Колонкой, а не строкой брони на сессию:
+    # сессии SAM2 приходят и уходят десятками в час, а память процесс держит
+    # всё время, пока жив хоть один его воркер.
+    sam2_reserve_mb: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    # Сколько тяжёлых задач пускать на карту. Два обучения по памяти влезут, но
+    # станут вдвое медленнее каждое, и оба человека решат, что сервер сломался.
+    max_heavy: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=1, server_default="1"
+    )
+    enabled: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=True, server_default=sa.true()
+    )
+    seen_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class GpuLease(Base):
+    """Бронь памяти на карте.
+
+    Строка, а не счётчик у карты: счётчик нельзя просрочить. Процесс, убитый
+    посреди обучения, унёс бы память навсегда, и карта осталась бы занятой
+    призраком. У строки есть ``lease_until``, и через срок аренды она
+    возвращается сама — тот же приём, что у ``VideoJob``, и там он уже
+    доказал, что работает.
+    """
+
+    __tablename__ = "gpu_leases"
+    __table_args__ = (
+        sa.Index("ix_gpu_leases_held", "device_id", "status"),
+        sa.Index("ix_gpu_leases_queue", "queue_priority", "created_at"),
+        sa.Index("ix_gpu_leases_ref", "ref_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    # Пусто у брони, которая ещё стоит в очереди, и у работы на процессоре.
+    device_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("gpu_devices.id", ondelete="CASCADE")
+    )
+    holder: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    kind: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    # На что бронь: ран обучения, проверка модели, работа очереди подготовки.
+    ref_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="SET NULL")
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    want_mb: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    granted_mb: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    peak_mb: Mapped[int | None] = mapped_column(sa.Integer)
+    status: Mapped[str] = mapped_column(
+        GPU_LEASE_STATUS_ENUM, nullable=False,
+        default="queued", server_default="queued",
+    )
+    queue_priority: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=50, server_default="50"
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # Почему стоим. Текст готов к показу человеку целиком: «карта 0: свободно
+    # 2,1 ГБ из нужных 6,4». Молчаливое ожидание — худший ответ из возможных.
+    reason: Mapped[str | None] = mapped_column(sa.String(200))
+    # Подпись задачи для чужих глаз в очереди: «Обучение «Вагоны · ночь v3»».
+    title: Mapped[str | None] = mapped_column(sa.String(160))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    granted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    released_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class GpuUsageHint(Base):
+    """Сколько памяти на самом деле съела такая же работа в прошлый раз.
+
+    Оценка до запуска — догадка, и первая догадка всегда мимо. Замер по ходу
+    превращает её в знание: следующая такая же тройка (модель, размер входа,
+    батч) просит не по формуле, а по факту.
+
+    ``high_mb`` растёт мгновенно и оседает медленно, и асимметрия нарочная:
+    недооценка стоит нехватки памяти посреди трёхчасового обучения,
+    переоценка — минут ожидания. Хвост дороже середины.
+    """
+
+    __tablename__ = "gpu_usage_hints"
+
+    kind: Mapped[str] = mapped_column(sa.String(32), primary_key=True)
+    # sha1 от того, что определяет расход: модель, задача, размер входа, батч.
+    signature: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    samples: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    high_mb: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    last_mb: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+# =========================================================================== #
+# Графы аугментаций: принадлежат человеку, подключаются к проекту ссылкой
+# =========================================================================== #
+class AugGraph(Base, AuditMixin):
+    """Граф аугментаций из личной библиотеки.
+
+    Принадлежит человеку, а не проекту: удачный граф переносят из проекта в
+    проект, и копия разошлась бы с оригиналом на первой же правке. В проект
+    он попадает ссылкой (``project_aug_graphs``).
+
+    Владелец может исчезнуть, а граф — нет: на его версии ссылаются собранные
+    наборы, и обещание «набор откроет то, чем его собрали» должно пережить
+    удаление учётной записи. Поэтому ``owner_id`` обнуляется, а не каскадит.
+    """
+
+    __tablename__ = "aug_graphs"
+    __table_args__ = (
+        sa.UniqueConstraint("owner_id", "name", name="uq_aug_graph_name"),
+        sa.Index("ix_aug_graphs_owner", "owner_id", "archived_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    name: Mapped[str] = mapped_column(sa.String(160), nullable=False)
+    description: Mapped[str | None] = mapped_column(sa.Text)
+    # Текущая версия. Ссылка в обратную сторону, поэтому внешний ключ
+    # создаётся отдельным ALTER: иначе две таблицы ссылаются друг на друга и
+    # ни одну нельзя создать первой.
+    head_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid,
+        sa.ForeignKey("aug_graph_versions.id", ondelete="SET NULL", use_alter=True,
+                      name="fk_aug_graph_head"),
+    )
+    archived_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class AugGraphVersion(Base, AuditMixin):
+    """Снимок графа. После создания не меняется — правка рождает следующую.
+
+    Версия адресуема, поэтому на неё ставится внешний ключ, и правило «версию,
+    на которой учились, удалить нельзя» становится делом базы, а не обещанием
+    кода. Историей внутри одной строки этого не добиться.
+
+    ``digest`` уникален внутри графа нарочно: «сохранить» жмут рефлекторно, и
+    без отпечатка за вечер накопится тридцать одинаковых версий, после чего
+    запись «набор собран версией 7» перестанет что-либо значить. Считается по
+    приведённому документу без координат узлов: подвинули узел мышью — смысл
+    не поменялся.
+    """
+
+    __tablename__ = "aug_graph_versions"
+    __table_args__ = (
+        sa.UniqueConstraint("graph_id", "version", name="uq_aug_version_no"),
+        sa.UniqueConstraint("graph_id", "digest", name="uq_aug_version_digest"),
+        sa.Index("ix_aug_versions_graph", "graph_id", "version"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    graph_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graphs.id", ondelete="CASCADE"), nullable=False
+    )
+    version: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    doc: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    digest: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    # Что посчитано по графу заранее: во сколько раз он множит поток и сколько
+    # в нём узлов. Список графов показывает «×6», не разворачивая документ.
+    stats: Mapped[dict | None] = mapped_column(JsonCol)
+    # Имена гнёзд, когда граф вставляют в другой граф одним блоком.
+    port_names: Mapped[dict | None] = mapped_column(
+        JsonCol, nullable=False, default=lambda: {"in": [], "out": []},
+        server_default='{"in": [], "out": []}',
+    )
+    note: Mapped[str | None] = mapped_column(sa.String(255))
+
+
+class AugGraphUse(Base):
+    """Ребро «эта версия вставляет в себя вот этот граф блоком».
+
+    Отдельной таблицей, а не разбором документов, ради трёх вещей, каждая из
+    которых иначе стоит обхода всех графов сразу: запрет колец обходом по
+    рёбрам, ответ «граф нельзя убрать, его вставляет такой-то» и выборка всех
+    вложенных версий одним запросом. ``RESTRICT`` не даёт блоку исчезнуть
+    из-под того, кто на него ссылается.
+    """
+
+    __tablename__ = "aug_graph_uses"
+    __table_args__ = (
+        sa.UniqueConstraint("version_id", "used_version_id", name="uq_aug_use"),
+        sa.Index("ix_aug_uses_used", "used_graph_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    version_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    used_graph_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graphs.id", ondelete="RESTRICT"), nullable=False
+    )
+    used_version_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="RESTRICT"),
+        nullable=False,
+    )
+
+
+class ProjectAugGraph(Base, AuditMixin):
+    """Граф, подключённый к проекту. Именно ссылка, а не копия."""
+
+    __tablename__ = "project_aug_graphs"
+
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    graph_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graphs.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+# =========================================================================== #
+# Обучающие наборы
+# =========================================================================== #
+class TrainSet(Base, AuditMixin):
+    """Собранный набор: папка на томе плюс её паспорт.
+
+    ``spec`` — снимок всего, что человек выбрал в мастере. Снимком, а не
+    колонками, потому что параметры мастера будут расти, а набор живёт вечно:
+    собранное год назад обязано читаться сегодня. Колонками вынесено ровно то,
+    по чему ищут и сортируют, и то, что держит ссылочную целостность.
+
+    Кадры набора построчно здесь не лежат: набор из ста тысяч кадров при графе
+    ×6 — это шестьсот тысяч строк, которые ни с чем не соединяются, дублируют
+    содержимое папки и живут ровно столько же, сколько она. Их место —
+    ``manifest.jsonl`` рядом с файлами. А вот деление в базе нужно, и оно про
+    исходный кадр: см. ``TrainSetSplit``.
+    """
+
+    __tablename__ = "train_sets"
+    __table_args__ = (
+        sa.UniqueConstraint("project_id", "name", name="uq_train_set_name"),
+        sa.Index("ix_train_sets_project", "project_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    kind: Mapped[str] = mapped_column(TRAIN_SET_KIND_ENUM, nullable=False)
+    status: Mapped[str] = mapped_column(
+        TRAIN_SET_STATUS_ENUM, nullable=False,
+        default="draft", server_default="draft",
+    )
+    spec: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    split_mode: Mapped[str] = mapped_column(SPLIT_MODE_ENUM, nullable=False)
+    val_ratio: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    # Одно зерно на весь набор: и на деление, и на вероятностные развилки
+    # графа. Одно число, которое человек видит и может переписать, — этого
+    # достаточно, чтобы пересобрать точно так же.
+    seed: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    graph_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="RESTRICT")
+    )
+    val_graph_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="RESTRICT")
+    )
+    counts: Mapped[dict | None] = mapped_column(JsonCol)
+    size_bytes: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=0, server_default="0"
+    )
+    # Сколько байт легло жёсткими ссылками, то есть места не заняло. Без этой
+    # строки «набор весит 40 ГБ» пугает впустую.
+    hardlinked_bytes: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=0, server_default="0"
+    )
+    dir_path: Mapped[str | None] = mapped_column(sa.String(1024))
+    built_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class TrainSetSplit(Base):
+    """Куда попал ИСХОДНЫЙ кадр — в обучение или в проверку.
+
+    Строка на кадр, а не на образец: сто тысяч вместо шестисот. Нужна трижды,
+    и каждый раз по делу: отчёт «класс → обучение/проверка» без чтения тома,
+    следующий набор с тем же делением и проверка «кадр из val не оказался в
+    train» без разбора манифеста.
+    """
+
+    __tablename__ = "train_set_splits"
+    __table_args__ = (sa.Index("ix_set_splits_split", "set_id", "split"),)
+
+    set_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("train_sets.id", ondelete="CASCADE"), primary_key=True
+    )
+    image_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("images.id", ondelete="CASCADE"), primary_key=True
+    )
+    split: Mapped[str] = mapped_column(SPLIT_ENUM, nullable=False)
+    # Группа, которой кадр обязан своим местом: номер кластера у умного
+    # деления, самый редкий класс у обычного. Нужна, чтобы объяснить решение.
+    group_key: Mapped[str | None] = mapped_column(sa.String(64))
+
+
+class ImageEmbedding(Base):
+    """Признаки кадра: вектор, по которому кадры сходятся в группы.
+
+    Хранится байтами, а не массивом чисел, потому что косинус мы в базе не
+    считаем — вся близость считается одним умножением матриц в питоне, и
+    индекс по вектору не нужен вовсе. Нужно только быстро отдать вектора
+    выбранных кадров: сто тысяч по 768 байт — это 77 МБ одним запросом.
+
+    Модель в ключе: сменим её — старые вектора не мешают и не требуют уборки.
+    Кадр не меняется, поэтому вектор считается один раз и живёт вечно; второе
+    деление того же проекта после этого мгновенно.
+    """
+
+    __tablename__ = "image_embeddings"
+    __table_args__ = (sa.Index("ix_image_emb_model", "model"),)
+
+    image_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("images.id", ondelete="CASCADE"), primary_key=True
+    )
+    model: Mapped[str] = mapped_column(sa.String(48), primary_key=True)
+    dim: Mapped[int] = mapped_column(sa.SmallInteger, nullable=False)
+    vector: Mapped[bytes] = mapped_column(sa.LargeBinary, nullable=False)
+    # Длина вектора ДО нормализации: по ней видно пустые и вырожденные кадры.
+    norm: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+class DataprepJob(Base):
+    """Очередь подготовки данных. Полная калька с ``VideoJob``.
+
+    Та же аренда, тот же ``FOR UPDATE SKIP LOCKED``, те же попытки и та же
+    память об отказе — приёмы уже проверены на видео, и заводить для них
+    второй свод правил незачем. Своя таблица, а не общая с видео: у той своя
+    цель и свой набор работ, и сращивание потребовало бы ссылки, которую база
+    не проверит.
+
+    ``cancel_requested`` — колонка, а не множество в памяти процесса: воркер
+    живёт в отдельном контейнере, и послать ему что-либо, кроме записи в базу,
+    нечем.
+    """
+
+    __tablename__ = "dataprep_jobs"
+    __table_args__ = (
+        sa.Index(
+            "uq_dataprep_job_active", "kind", "target_id",
+            unique=True,
+            postgresql_where=sa.text("status IN ('queued', 'running')"),
+        ),
+        sa.Index("ix_dataprep_jobs_pick", "status", "priority", "created_at"),
+        sa.Index("ix_dataprep_jobs_project", "project_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    kind: Mapped[str] = mapped_column(DATAPREP_KIND_ENUM, nullable=False)
+    # На что работа: набор, пачка кадров под признаки. Без внешнего ключа —
+    # цель разного рода, и база такую ссылку всё равно не проверит.
+    target_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False)
+    payload: Mapped[dict | None] = mapped_column(JsonCol)
+    priority: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=50, server_default="50"
+    )
+    status: Mapped[str] = mapped_column(
+        DATAPREP_STATUS_ENUM, nullable=False,
+        default="queued", server_default="queued",
+    )
+    attempts: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    lease_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    progress: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    total: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    stage: Mapped[str | None] = mapped_column(sa.String(24))
+    # То же самое по-человечески: «считаю признаки», «складываю кадры».
+    stage_text: Mapped[str | None] = mapped_column(sa.String(160))
+    cancel_requested: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    worker_id: Mapped[str | None] = mapped_column(sa.String(64))
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    created_by: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+
+
+# =========================================================================== #
+# Обучение
+# =========================================================================== #
+class TrainRun(Base, AuditMixin):
+    """Обучение: что запустили, чем, где и чем кончилось.
+
+    Состояние живёт в базе, а не в файле рядом с весами, ровно потому, что его
+    обязан видеть любой процесс gunicorn. Пока оно лежало в памяти одного
+    процесса, у сервиса стоял ``--workers 1``, и тридцать две открытые вкладки
+    останавливали раздел всем.
+
+    Набор удерживается ``RESTRICT``: обещание «повторить обучение ровно на том
+    же» без набора превращается в слова.
+    """
+
+    __tablename__ = "train_runs"
+    __table_args__ = (
+        sa.Index("ix_train_runs_project", "project_id", "created_at"),
+        sa.Index("ix_train_runs_set", "set_id"),
+        sa.Index(
+            "ix_train_runs_pick", "status", "created_at",
+            postgresql_where=sa.text("status IN ('queued', 'waiting_gpu')"),
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # Набор можно удалить, обучение при этом остаётся: веса и метрики уже
+    # посчитаны. Пока ключ был RESTRICT, удаление падало после того, как
+    # папка уже снесена, — и набор висел «готовым» без файлов.
+    set_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("train_sets.id", ondelete="SET NULL"), nullable=True
+    )
+    name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    base_model: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    base_weights_path: Mapped[str | None] = mapped_column(sa.String(1024))
+    task: Mapped[str] = mapped_column(TRAIN_TASK_ENUM, nullable=False)
+    params: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    device: Mapped[str] = mapped_column(sa.String(32), nullable=False)
+    status: Mapped[str] = mapped_column(
+        TRAIN_RUN_STATUS_ENUM, nullable=False,
+        default="queued", server_default="queued",
+    )
+    queue_reason: Mapped[str | None] = mapped_column(sa.String(200))
+    epochs: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    current_epoch: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    phase: Mapped[str | None] = mapped_column(sa.String(8))
+    current_batch: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    total_batches: Mapped[int | None] = mapped_column(sa.Integer)
+    val_batch: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    val_total: Mapped[int | None] = mapped_column(sa.Integer)
+    # Потери на лету. Перезаписывается по батчам, поэтому колонкой, а не
+    # строкой в истории: истории по батчам никто не читает.
+    batch_metrics: Mapped[dict | None] = mapped_column(JsonCol)
+    summary: Mapped[dict | None] = mapped_column(JsonCol)
+    # Матрица ошибок сырыми числами и точки кривых. Своими числами, а не
+    # картинками ultralytics: два обучения обязаны ложиться на одну ось, а
+    # картинкой этого не сделать.
+    confusion: Mapped[dict | None] = mapped_column(JsonCol)
+    curves: Mapped[dict | None] = mapped_column(JsonCol)
+    # Метрики по классам: точность, полнота, F1 и обе mAP на каждый класс.
+    # Отдельной колонкой, а не внутри `summary`: тот — плоский набор чисел
+    # по всему набору, и складывать в него таблицу значило бы заставить
+    # каждого читателя разбираться, что там лежит на этот раз.
+    per_class: Mapped[dict | None] = mapped_column(JsonCol)
+    best_epoch: Mapped[int | None] = mapped_column(sa.Integer)
+    best_fitness: Mapped[float | None] = mapped_column(sa.Float)
+    weights_path: Mapped[str | None] = mapped_column(sa.String(1024))
+    weights_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
+    gpu_lease_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("gpu_leases.id", ondelete="SET NULL")
+    )
+    peak_vram_mb: Mapped[int | None] = mapped_column(sa.Integer)
+    lease_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    worker_id: Mapped[str | None] = mapped_column(sa.String(64))
+    pid: Mapped[int | None] = mapped_column(sa.Integer)
+    cancel_requested: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class TrainEpoch(Base):
+    """Строка на эпоху.
+
+    Строками, а не массивом внутри рана: график тянут во время обучения, и
+    переписывать массив из трёхсот эпох на каждой эпохе — это квадрат записей.
+    Вставка стоит одинаково всегда.
+
+    ``metrics`` — как отдал ultralytics. Колонками это честно не описать:
+    набор ключей разный у детекции и сегментации и меняется между версиями,
+    так что схема начала бы врать на половине ранов.
+    """
+
+    __tablename__ = "train_epochs"
+
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("train_runs.id", ondelete="CASCADE"), primary_key=True
+    )
+    epoch: Mapped[int] = mapped_column(sa.Integer, primary_key=True)
+    metrics: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    lr: Mapped[float | None] = mapped_column(sa.Float)
+    # Сколько шла эпоха. «Осталось примерно» считается по факту, а не по
+    # догадке: первая эпоха всегда медленнее остальных.
+    seconds: Mapped[float | None] = mapped_column(sa.Float)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+
+
+# =========================================================================== #
+# Проверка моделей на роликах
+# =========================================================================== #
+class CheckVideo(Base, AuditMixin):
+    """Проверочный ролик проекта.
+
+    Своя полка, а не ролики тасок: те удаляются вместе с закрытой таской, и
+    сравнить две модели на одном ролике через месяц стало бы нечем.
+    """
+
+    __tablename__ = "check_videos"
+    __table_args__ = (sa.Index("ix_check_videos_project", "project_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    file_path: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    thumb_path: Mapped[str | None] = mapped_column(sa.String(1024))
+    duration_ms: Mapped[int | None] = mapped_column(sa.Integer)
+    fps: Mapped[float | None] = mapped_column(sa.Float)
+    width: Mapped[int | None] = mapped_column(sa.Integer)
+    height: Mapped[int | None] = mapped_column(sa.Integer)
+    frame_count: Mapped[int | None] = mapped_column(sa.Integer)
+    size_bytes: Mapped[int] = mapped_column(
+        sa.BigInteger, nullable=False, default=0, server_default="0"
+    )
+
+
+class ModelCheck(Base, AuditMixin):
+    """Прогон обученной модели по ролику."""
+
+    __tablename__ = "model_checks"
+    __table_args__ = (
+        sa.Index(
+            "uq_check_active", "run_id", "video_id",
+            unique=True,
+            postgresql_where=sa.text(
+                "status IN ('queued', 'waiting_gpu', 'running')"
+            ),
+        ),
+        sa.Index("ix_model_checks_project", "project_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("train_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("check_videos.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(
+        CHECK_STATUS_ENUM, nullable=False, default="queued", server_default="queued"
+    )
+    params: Mapped[dict | None] = mapped_column(JsonCol)
+    processed_frames: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    total_frames: Mapped[int | None] = mapped_column(sa.Integer)
+    output_path: Mapped[str | None] = mapped_column(sa.String(1024))
+    output_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
+    stats: Mapped[dict | None] = mapped_column(JsonCol)
+    gpu_lease_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("gpu_leases.id", ondelete="SET NULL")
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    worker_id: Mapped[str | None] = mapped_column(sa.String(64))
+    pid: Mapped[int | None] = mapped_column(sa.Integer)
+    cancel_requested: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))

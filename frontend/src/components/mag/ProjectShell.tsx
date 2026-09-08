@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router
 import { getProject } from "../../auth/api";
 import type { ProjectDetail } from "../../auth/api";
 import ExportModal from "./ExportModal";
+import { LiveProvider } from "../../live/LiveProvider";
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} Б`;
@@ -66,7 +67,10 @@ export default function ProjectShell() {
     isActive ? "g-ctx-link on" : "g-ctx-link";
 
   return (
-    <>
+    // Живая связь — одна на вкладку и на весь проект: она приносит «изменился
+    // такой-то ран», а строку экран дочитывает сам. Соединение на каждое
+    // обучение занимало бы поток сервера на всё время прогона.
+    <LiveProvider code={project.code}>
       {/* Второй уровень навигации: кто мы сейчас и что у него внутри.
           Приклеен к верхней строке, поэтому «где я» видно на любой прокрутке. */}
       <div className="g-ctx">
@@ -87,6 +91,12 @@ export default function ProjectShell() {
           </NavLink>
           <NavLink to={`/projects/${project.code}/classes`} className={tab}>
             Классы <span>{stats.classes}</span>
+          </NavLink>
+          <NavLink to={`/projects/${project.code}/aug`} className={tab}>
+            Аугментации
+          </NavLink>
+          <NavLink to={`/projects/${project.code}/training`} className={tab}>
+            Обучение
           </NavLink>
           <NavLink to={`/projects/${project.code}/members`} className={tab}>
             Участники <span>{members.length}</span>
@@ -132,6 +142,6 @@ export default function ProjectShell() {
         <ExportModal detail={detail} onClose={() => setExporting(false)} />
       )}
     </div>
-    </>
+    </LiveProvider>
   );
 }

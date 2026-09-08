@@ -2,7 +2,9 @@
 
 Весь смысл — в `_plan`: он один раз считает, что войдёт в выгрузку, и им же
 пользуются предпросмотр («сколько получится») и джоба («сложи это в zip»).
-Разойтись они не могут по построению.
+Разойтись они не могут по построению. Сам отбор кадров и деление считает
+`common.selection` — тот же код, которым мастер собирает обучающий набор:
+одинаковые галочки обязаны давать одинаковое содержимое и в архиве, и в наборе.
 
 Три правила, вокруг которых всё вертится:
 
@@ -26,41 +28,30 @@
   и показываются в плане отдельной строкой — отказ обязан быть виден до
   выгрузки, а не обнаруживаться по недостаче в архиве.
 """
-import hashlib
 import json
 import os
 import threading
 import time
-import uuid
 import zipfile
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 from flask import Blueprint, jsonify, request, send_file
-from sqlalchemy import func as sa_func
 from sqlalchemy import select
 
 from common import config, jobs
+from common import selection as sel_lib
 from common.auth import current_user
 from common.db import SessionLocal
-from common.models import Annotation, Dataset, Image, LabelClass, Project
+from common.models import Dataset, Project
 from common.storage import load_json, save_json, translit_slug
-from datasets_svc import polygon as polylib
 # Тот же разбор кода проекта и прав, что у остальных данных проекта.
 from datasets_svc.project_routes import _resolve
 
 bp = Blueprint("export", __name__)
 
-VAL_DEFAULT = 0.2
-# Что умеем выгружать. Ключ — то же слово, что в `annotations.ann_type`:
-# лишнее имя для одного и того же расходится при первой же правке.
-EXPORT_TYPES = ("bbox", "polygon")
-# Какие аннотации годятся для каждой выгрузки. Полигон в боксовую попадает
-# охватывающей рамкой; бокс в сегментацию не попадает никак.
-USABLE = {"bbox": ("bbox", "polygon"), "polygon": ("polygon",)}
-# Сплиты, которые считаются проставленными. Всё остальное («other» у кадров из
-# тасок) раскидывает сам экспорт.
-FIXED_SPLITS = ("train", "val", "test")
+# Что умеем выгружать — одно перечисление на выгрузку и на мастер.
+EXPORT_TYPES = sel_lib.EXPORT_TYPES
 # Кадров между обновлениями прогресса: чаще — лишние записи на том.
 PACK_BATCH = 25
 
@@ -68,250 +59,45 @@ PACK_BATCH = 25
 # --------------------------------------------------------------------------- #
 # План выгрузки
 # --------------------------------------------------------------------------- #
-def _uuids(raw):
-    out = []
-    for item in raw or []:
-        try:
-            out.append(uuid.UUID(str(item)))
-        except (ValueError, AttributeError):
-            continue
-    return out
-
-
 def _selection(data):
-    ratio = data.get("val_ratio", VAL_DEFAULT)
-    try:
-        ratio = float(ratio)
-    except (TypeError, ValueError):
-        ratio = VAL_DEFAULT
-    ann_type = data.get("ann_type", "bbox")
-    if ann_type not in EXPORT_TYPES:
-        ann_type = "bbox"
-    return {
-        "datasets": _uuids(data.get("datasets")),
-        "classes": _uuids(data.get("classes")),
-        "resplit": data.get("split_mode") == "resplit",
-        "ann_type": ann_type,
-        # Крайние значения бессмысленны: при 0 нечем проверять, при 1 нечем учить.
-        "val_ratio": min(max(ratio, 0.05), 0.5),
-    }
-
-
-def _bucket_key(image_id):
-    return hashlib.sha1(str(image_id).encode()).hexdigest()
-
-
-def _assign(rows, group_of, ratio):
-    """Раскидать кадры по train/val внутри каждой группы редкости."""
-    groups = defaultdict(list)
-    for img in rows:
-        groups[group_of.get(img.id, "")].append(img)
-
-    out = {}
-    for key in sorted(groups):
-        bunch = sorted(groups[key], key=lambda i: _bucket_key(i.id))
-        n = len(bunch)
-        k = int(round(n * ratio))
-        # Класс из трёх кадров должен попасть в проверку хотя бы одним — ради
-        # этого стратификация и затевалась. Пропорцию это слегка искажает.
-        if n >= 2 and ratio > 0 and k == 0:
-            k = 1
-        if n >= 2 and k >= n:
-            k = n - 1
-        for i, img in enumerate(bunch):
-            out[img.id] = "val" if i < k else "train"
-    return out
-
-
-def _unique_name(taken, file_name, fallback_ext=".jpg"):
-    """Имя внутри сплита. Одинаковые file_name в базе уже встречаются — на
-    диске они разведены по uuid, а в архиве столкнулись бы."""
-    base, ext = os.path.splitext(os.path.basename(file_name or "image"))
-    # Имя без расширения — берём его у файла на диске, иначе .jpg в архиве
-    # оказался бы подписью к чужим байтам.
-    ext = ext or fallback_ext or ".jpg"
-    candidate = base + ext
-    n = 2
-    while candidate.lower() in taken:
-        candidate = f"{base}_{n}{ext}"
-        n += 1
-    taken.add(candidate.lower())
-    return candidate
-
-
-def _line(export_id, geometry, width, height):
-    """Пиксельный бокс (COCO) → строка YOLO, или None, если от бокса ничего
-    не осталось.
-
-    Режем по углам, а не по готовым центру и размеру: подрезав их порознь,
-    можно получить четыре числа внутри [0,1], которые вместе всё равно
-    описывают бокс, торчащий за край кадра.
-    """
-    try:
-        x = float(geometry.get("x", 0))
-        y = float(geometry.get("y", 0))
-        w = float(geometry.get("w", 0))
-        h = float(geometry.get("h", 0))
-    except (TypeError, ValueError):
-        return None
-    x1 = min(max(x, 0.0), width)
-    y1 = min(max(y, 0.0), height)
-    x2 = min(max(x + w, 0.0), width)
-    y2 = min(max(y + h, 0.0), height)
-    if x2 - x1 <= 0 or y2 - y1 <= 0:
-        return None
-    cx = (x1 + x2) / 2 / width
-    cy = (y1 + y2) / 2 / height
-    nw = (x2 - x1) / width
-    nh = (y2 - y1) / height
-    return f"{export_id} {cx:.6f} {cy:.6f} {nw:.6f} {nh:.6f}\n"
-
-
-def _row_line(export_id, ann, width, height, want):
-    """Строка архива для одной аннотации, или None, если она сюда не идёт.
-
-    Одно место на оба вида выгрузки: пара «что за разметка» × «что просят»
-    решается здесь и больше нигде, иначе правило «бокс в сегментацию не идёт»
-    придётся помнить и предпросмотру, и сборке архива порознь.
-    """
-    kind = ann.ann_type or "bbox"
-    geometry = ann.geometry or {}
-    if want == "polygon":
-        # Бокс сюда не пускаем осознанно — см. шапку модуля.
-        if kind != "polygon":
-            return None
-        return polylib.to_line(export_id, geometry, width, height)
-    if kind == "polygon":
-        # Полигон боксом — его охватывающая рамка. Тот же расчёт, что показывает
-        # редактор, ставя подпись класса: разойдясь, они противоречили бы друг
-        # другу на одном экране.
-        geometry = polylib.bounds(polylib.parts_of(geometry))
-        if geometry is None:
-            return None
-    return _line(export_id, geometry, width, height)
+    """Выбор из окна выгрузки. Умолчание — «уважать проставленные половины»:
+    так эта ручка вела себя с самого начала, и менять её молча нельзя."""
+    raw = dict(data or {})
+    raw["split_mode"] = (
+        "resplit" if raw.get("split_mode") == "resplit" else "keep"
+    )
+    return sel_lib.parse(raw)
 
 
 def _plan(db, project, sel):
-    classes = []
-    if sel["classes"]:
-        classes = db.execute(
-            select(LabelClass)
-            .where(
-                LabelClass.project_id == project.id,
-                LabelClass.id.in_(sel["classes"]),
-            )
-            .order_by(LabelClass.class_index)
-        ).scalars().all()
-    export_id = {c.id: i for i, c in enumerate(classes)}
+    """Что войдёт в архив при текущем выборе.
 
-    images = []
-    if sel["datasets"]:
-        images = db.execute(
-            select(Image)
-            .where(
-                Image.project_id == project.id,
-                Image.dataset_id.in_(sel["datasets"]),
-            )
-            .order_by(Image.file_name)
-        ).scalars().all()
-
-    # Аннотации одним запросом через датасеты, а не списком id: список из ста
-    # тысяч uuid в IN — уже не запрос, а поэма.
-    want = sel["ann_type"]
-    anns = defaultdict(list)
-    # Разметка не того рода: она есть, класс подходит, но в эту выгрузку не
-    # идёт. Считаем отдельно от `dropped` — «отсеял фильтр классов» и «бокс в
-    # сегментацию не годится» человек чинит по-разному.
-    wrong_kind = 0
-    if images and classes:
-        rows = db.execute(
-            select(Annotation)
-            .join(Image, Annotation.image_id == Image.id)
-            .where(
-                Image.dataset_id.in_(sel["datasets"]),
-                Annotation.class_id.in_([c.id for c in classes]),
-                Annotation.ann_type.in_(USABLE[want]),
-            )
-        ).scalars().all()
-        for ann in rows:
-            anns[ann.image_id].append(ann)
-        wrong_kind = db.execute(
-            select(sa_func.count())
-            .select_from(Annotation)
-            .join(Image, Annotation.image_id == Image.id)
-            .where(
-                Image.dataset_id.in_(sel["datasets"]),
-                Annotation.class_id.in_([c.id for c in classes]),
-                Annotation.ann_type.not_in(USABLE[want]),
-            )
-        ).scalar() or 0
-
-    # Кадр без разметки бывает двух родов, и в окне их надо разделить: один
-    # отсеял фильтр классов, другого никогда не размечали.
-    labelled = set()
-    if images:
-        labelled = set(db.execute(
-            select(Annotation.image_id)
-            .join(Image, Annotation.image_id == Image.id)
-            .where(Image.dataset_id.in_(sel["datasets"]))
-        ).scalars())
-
-    kept, no_size, dropped, unlabelled = [], 0, 0, 0
-    for img in images:
-        if not anns.get(img.id) and img.task_status != "empty":
-            if img.id in labelled:
-                dropped += 1
-            else:
-                unlabelled += 1
-            continue
-        if not img.width or not img.height:
-            no_size += 1
-            continue
-        kept.append(img)
-
-    # Группа кадра — самый редкий его класс: раскидывая группы по отдельности,
-    # мы не даём редкому классу целиком уехать в одну половину.
-    per_class_images = Counter()
-    for img in kept:
-        for cid in {a.class_id for a in anns.get(img.id, [])}:
-            per_class_images[cid] += 1
-    group_of = {}
-    for img in kept:
-        cids = {a.class_id for a in anns.get(img.id, [])}
-        group_of[img.id] = (
-            str(min(cids, key=lambda c: (per_class_images[c], export_id[c])))
-            if cids else "~background"  # фон — своя группа, делится отдельно
-        )
-
-    if sel["resplit"]:
-        fixed, floating, ratio = {}, kept, sel["val_ratio"]
-    else:
-        fixed = {i.id: i.split for i in kept if i.split in FIXED_SPLITS}
-        floating = [i for i in kept if i.id not in fixed]
-        train = sum(1 for s in fixed.values() if s == "train")
-        val = sum(1 for s in fixed.values() if s == "val")
-        # Пропорция, которая уже сложилась в проекте; нет ни одной — берём свою.
-        ratio = val / (train + val) if train + val else VAL_DEFAULT
-
-    split_of = dict(fixed)
-    split_of.update(_assign(floating, group_of, ratio))
+    Отбор и деление считает ``common.selection`` — тот же код, которым мастер
+    собирает обучающий набор. Здесь остаётся только то, что специфично для
+    архива: имена файлов внутри сплитов и таблица по классам.
+    """
+    picked = sel_lib.gather(db, project, sel)
+    split_of, ratio, warnings = sel_lib.assign(picked, sel)
+    want = picked.ann_type
 
     items, taken = [], defaultdict(set)
     counts = Counter()
     per_class = defaultdict(Counter)
     empty_total = 0
-    for img in kept:
+    for img in picked.images:
         split = split_of.get(img.id, "train")
         # Класс каждой уцелевшей строки — чтобы табличка «класс → train/val»
-        # считалась по тому же, что уходит в файл, а не по тому, что в базе.
+        # считалась по тому, что уходит в файл, а не по тому, что в базе.
         lines, kinds = [], []
-        for a in anns.get(img.id, []):
-            line = _row_line(export_id[a.class_id], a, img.width, img.height, want)
+        for a in picked.anns.get(img.id, []):
+            line = sel_lib.row_line(
+                picked.export_id[a.class_id], a, img.width, img.height, want
+            )
             if line is None:
                 continue
             lines.append(line)
             kinds.append(a.class_id)
-        name = _unique_name(
+        name = sel_lib.unique_name(
             taken[split], img.file_name, os.path.splitext(img.file_path)[1]
         )
         items.append({
@@ -331,31 +117,31 @@ def _plan(db, project, sel):
         for cid in kinds:
             per_class[cid]["annotations"] += 1
 
-    warnings = []
     if not items:
         warnings.append("В выгрузку не попадает ни одного кадра.")
     else:
         if not counts["val"]:
-            warnings.append("Проверочная часть пуста — качество измерить будет нечем.")
+            warnings.append(
+                "Проверочная часть пуста — качество измерить будет нечем."
+            )
         if not counts["train"]:
             warnings.append("Обучающая часть пуста.")
-    if no_size:
-        warnings.append(f"Пропущено кадров без размеров: {no_size}.")
-    if wrong_kind:
+    if picked.no_size:
+        warnings.append(f"Пропущено кадров без размеров: {picked.no_size}.")
+    if picked.wrong_kind:
         # Называем и число, и причину: «пропущено 412» без объяснения читается
         # как поломка выгрузки.
         warnings.append(
-            f"В сегментацию не идут боксы: пропущено объектов {wrong_kind}. "
-            "Прямоугольник, записанный контуром, учил бы модель неверно."
+            f"В сегментацию не идут боксы: пропущено объектов "
+            f"{picked.wrong_kind}. Прямоугольник, записанный контуром, учил бы "
+            "модель неверно."
             if want == "polygon"
-            else f"Пропущено объектов неподходящего вида: {wrong_kind}."
+            else f"Пропущено объектов неподходящего вида: {picked.wrong_kind}."
         )
-    if want == "polygon":
-        warnings.append(
-            "Сегментацию платформа выгружает, но пока не обучает: "
-            "в обучении только модели детекции."
-        )
-    idle = [c.name for c in classes if not per_class[c.id]["annotations"]]
+    idle = [
+        c.name for c in picked.classes
+        if not per_class[c.id]["annotations"]
+    ]
     if idle:
         shown = ", ".join(idle[:5]) + ("…" if len(idle) > 5 else "")
         warnings.append(f"Классы без разметки в выгрузке: {shown}")
@@ -363,7 +149,7 @@ def _plan(db, project, sel):
     return {
         "classes": [
             {
-                "export_id": export_id[c.id],
+                "export_id": picked.export_id[c.id],
                 "class_index": c.class_index,
                 "name": c.name,
                 "train": per_class[c.id]["train"],
@@ -371,17 +157,17 @@ def _plan(db, project, sel):
                 "test": per_class[c.id]["test"],
                 "annotations": per_class[c.id]["annotations"],
             }
-            for c in classes
+            for c in picked.classes
         ],
         "items": items,
         "images": len(items),
         "annotations": counts["annotations"],
         "empty": empty_total,
-        "dropped": dropped,
-        "wrong_kind": wrong_kind,
+        "dropped": picked.dropped,
+        "wrong_kind": picked.wrong_kind,
         "ann_type": want,
-        "unlabelled": unlabelled,
-        "splits": {s: counts[s] for s in FIXED_SPLITS if counts[s]},
+        "background": picked.background,
+        "splits": {s: counts[s] for s in sel_lib.FIXED_SPLITS if counts[s]},
         "val_ratio": round(ratio, 4),
         "warnings": warnings,
     }

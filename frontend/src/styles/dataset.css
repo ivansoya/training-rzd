@@ -56,14 +56,14 @@
   color: var(--on-acc);
 }
 
-.mag-seg {
+.mag-switch {
   display: inline-flex;
   border: 1px solid var(--rule);
   border-radius: 8px;
   overflow: hidden;
 }
 
-.mag-seg button {
+.mag-switch button {
   border: 0;
   background: var(--card);
   padding: 6px 12px;
@@ -74,11 +74,11 @@
   cursor: pointer;
 }
 
-.mag-seg button + button {
+.mag-switch button + button {
   border-left: 1px solid var(--rule);
 }
 
-.mag-seg button.on {
+.mag-switch button.on {
   background: var(--mag-graphite);
   color: var(--on-acc);
 }
@@ -344,4 +344,189 @@
   .mag-filters-sp {
     margin-left: 0;
   }
+}
+
+/* ===================================================================== */
+/* Общая сетка кадров: датасет, все кадры проекта и собранный набор.      */
+/* Имена здесь нарочно свои, а не «покороче»: `.mag-seg` уже однажды      */
+/* столкнулся с одноимённым правилом из другого набора стилей, и виноватой */
+/* выглядела разметка страницы.                                           */
+/* ===================================================================== */
+
+/* Вкладки внутри раздела: «Сводка» и «Все кадры» в обзоре проекта. */
+.mag-vtabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid var(--hair);
+}
+.mag-vtabs button {
+  border: 0;
+  background: none;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--mag-muted);
+  padding: 8px 12px;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  cursor: pointer;
+}
+.mag-vtabs button:hover { color: var(--ink); }
+.mag-vtabs button.on {
+  color: var(--ink);
+  border-bottom-color: var(--red);
+}
+.mag-vtabs button span {
+  margin-left: 6px;
+  font: 600 11px/1 var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Пометка на плитке: из какого датасета кадр или путь образца по графу. */
+.mag-tile-note {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  max-width: calc(100% - 56px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--on-acc);
+  background: rgba(29, 35, 41, 0.78);
+}
+/* Часть набора уезжает наверх, чтобы не спорить с пометкой за угол. */
+.mag-tile:has(.mag-tile-note) .mag-tile-split { top: 5px; bottom: auto; }
+
+/* Выбор датасетов — рядом кнопок, а не списком: их единицы. */
+.mag-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.mag-chips button {
+  border: 1px solid var(--rule);
+  border-radius: 20px;
+  background: var(--card);
+  color: var(--mag-muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.mag-chips button:hover { border-color: var(--dim); color: var(--ink); }
+.mag-chips button.on {
+  background: var(--mag-graphite);
+  border-color: var(--mag-graphite);
+  color: var(--on-acc);
+}
+
+/* ===== Выбор классов ===== */
+.mag-pick { position: relative; }
+
+.mag-pick-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 6px 11px;
+  cursor: pointer;
+}
+.mag-pick-btn:hover { border-color: var(--dim); }
+.mag-pick-btn.on { border-color: var(--red); }
+.mag-pick-arr { color: var(--faint); font-size: 9px; }
+
+.mag-pick-dots { display: inline-flex; gap: 2px; }
+.mag-pick-dots i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: block;
+}
+
+.mag-pick-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 5px);
+  left: 0;
+  width: 280px;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.mag-pick-head {
+  display: flex;
+  gap: 6px;
+  padding: 8px;
+  border-bottom: 1px solid var(--hair);
+}
+.mag-pick-head button {
+  flex: 1;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: none;
+  color: var(--mag-muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  padding: 5px;
+  cursor: pointer;
+}
+.mag-pick-head button:disabled { opacity: 0.4; cursor: default; }
+.mag-pick-head button:not(:disabled):hover { color: var(--ink); border-color: var(--dim); }
+
+.mag-pick-list { max-height: 320px; overflow: auto; padding: 4px; }
+
+.mag-pick-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.mag-pick-row:hover { background: var(--hair); }
+.mag-pick-row input { accent-color: var(--red); cursor: pointer; }
+.mag-pick-row i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex: none;
+}
+.mag-pick-row .nm {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mag-pick-row .ct {
+  font: 600 11px/1 var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Предупреждение сборки: не ошибка, но прочитать надо. */
+.mag-note {
+  margin-top: 10px;
+  padding: 9px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--skip) 12%, var(--card));
+  border: 1px solid color-mix(in srgb, var(--skip) 35%, transparent);
 }

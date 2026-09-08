@@ -27,8 +27,8 @@ from common.models import (
     Superclass,
 )
 from common.storage import load_json, save_json, translit_slug
-from datasets_svc import importer
-from datasets_svc import shapes
+from datasets_svc import importer, upload
+from common import shapes
 
 bp = Blueprint("projects", __name__)
 
@@ -150,20 +150,9 @@ def start_import(code):
         if not file.filename or not file.filename.lower().endswith(".zip"):
             return jsonify({"error": "Нужен .zip архив."}), 400
 
-        project_id = project.id
-        existing = _state(project_id)
-        if existing and existing.get("status") in ("scanning", "writing"):
-            return jsonify({"error": "Импорт уже идёт."}), 409
-        # Второй архив в проект пока не поддержан: его class_index столкнётся с
-        # уже заведёнными классами. Отказываем явно, а не падаем на записи.
-        if db.execute(
-            select(func.count()).select_from(LabelClass)
-            .where(LabelClass.project_id == project_id)
-        ).scalar_one():
-            return jsonify({
-                "error": "В проекте уже есть классы. Импорт второго архива "
-                         "появится позже — вместе со сверкой классов."
-            }), 409
+        blocked = _import_blocked(db, project)
+        if blocked:
+            return blocked
 
         os.makedirs(config.TMP_DIR, exist_ok=True)
         fd, zip_path = tempfile.mkstemp(suffix=".zip", dir=config.TMP_DIR)
@@ -175,22 +164,143 @@ def start_import(code):
             "size_bytes": os.path.getsize(zip_path),
             "upload_seconds": round(time.time() - started, 1),
         }
+        job_id = _begin_scan(db, project, zip_path, archive_info)
+        return jsonify({"job_id": job_id}), 202
+    finally:
+        db.close()
 
-        project.status = "importing"
-        db.commit()
 
-        job_id = jobs.create("import-scan", message="Подготовка")
-        _save_state(project_id, {
-            "status": "scanning",
-            "archive": archive_info,
-            "zip_path": zip_path,
-            "job_id": job_id,
+def _import_blocked(db, project):
+    """Почему в проект нельзя грузить архив, или ``None``."""
+    existing = _state(project.id)
+    if existing and existing.get("status") in ("scanning", "writing"):
+        return jsonify({"error": "Импорт уже идёт."}), 409
+    # Второй архив в проект пока не поддержан: его class_index столкнётся с
+    # уже заведёнными классами. Отказываем явно, а не падаем на записи.
+    if db.execute(
+        select(func.count()).select_from(LabelClass)
+        .where(LabelClass.project_id == project.id)
+    ).scalar_one():
+        return jsonify({
+            "error": "В проекте уже есть классы. Импорт второго архива "
+                     "появится позже — вместе со сверкой классов."
+        }), 409
+    return None
+
+
+def _begin_scan(db, project, zip_path, archive_info, upload_id=None):
+    """Архив на месте — запустить разбор. Возвращает номер работы.
+
+    Номер загрузки пишется сюда же, одной записью: разбор маленького архива
+    кончается за миллисекунды, и вторая запись состояния следом успевала бы
+    затереть его «classes» обратно на «scanning».
+    """
+    project.status = "importing"
+    db.commit()
+    job_id = jobs.create("import-scan", message="Подготовка")
+    _save_state(project.id, {
+        "status": "scanning",
+        "archive": archive_info,
+        "zip_path": zip_path,
+        "job_id": job_id,
+        # Ради повторного «finish» после потерянного ответа.
+        **({"upload": {"id": upload_id}} if upload_id else {}),
+    })
+    threading.Thread(
+        target=_run_scan_job,
+        args=(job_id, project.id, zip_path, archive_info),
+        daemon=True,
+    ).start()
+    return job_id
+
+
+# --------------------------------------------------------------------------- #
+# Import: кусочная загрузка архива (см. upload.py, почему не одним запросом)
+# --------------------------------------------------------------------------- #
+@bp.post("/api/projects/<code>/import/upload")
+def begin_upload(code):
+    db, project, err = _resolve(code, "admin")
+    if err:
+        return err
+    try:
+        blocked = _import_blocked(db, project)
+        if blocked:
+            return blocked
+        data = request.get_json(silent=True) or {}
+        name = str(data.get("name") or "")
+        try:
+            size = int(data.get("size"))
+        except (TypeError, ValueError):
+            size = 0
+        if not name.lower().endswith(".zip") or size <= 0:
+            return jsonify({"error": "Нужен .zip архив."}), 400
+        up = upload.begin(_state(project.id), name, size)
+        _save_state(project.id, {
+            "status": "uploading",
+            "upload": up,
+            "started": time.time(),
         })
-        threading.Thread(
-            target=_run_scan_job,
-            args=(job_id, project_id, zip_path, archive_info),
-            daemon=True,
-        ).start()
+        return jsonify({
+            "upload_id": up["id"],
+            "chunk_bytes": upload.CHUNK_BYTES,
+            "received": up["received"],
+            "size": up["size"],
+        })
+    finally:
+        db.close()
+
+
+@bp.put("/api/projects/<code>/import/upload/<upload_id>")
+def put_chunk(code, upload_id):
+    db, project, err = _resolve(code, "admin")
+    if err:
+        return err
+    try:
+        state = _state(project.id) or {}
+        up = state.get("upload")
+        if state.get("status") != "uploading" or not up or up["id"] != upload_id:
+            return jsonify({"error": "Эта загрузка уже не идёт."}), 410
+        try:
+            offset = int(request.args.get("offset", "0"))
+        except ValueError:
+            return jsonify({"error": "Позиция куска не число."}), 400
+        try:
+            received = upload.receive(up, offset, request.stream)
+        except upload.UploadError as exc:
+            return jsonify({"error": str(exc), "received": exc.received}), exc.status
+        up["received"] = received
+        _save_state(project.id, state)
+        return jsonify({"received": received})
+    finally:
+        db.close()
+
+
+@bp.post("/api/projects/<code>/import/upload/<upload_id>/finish")
+def finish_upload(code, upload_id):
+    db, project, err = _resolve(code, "admin")
+    if err:
+        return err
+    try:
+        state = _state(project.id) or {}
+        # Повтор после потерянного ответа: разбор уже идёт — отвечаем тем же.
+        if (
+            state.get("status") == "scanning"
+            and (state.get("upload") or {}).get("id") == upload_id
+        ):
+            return jsonify({"job_id": state.get("job_id")}), 202
+        up = state.get("upload")
+        if state.get("status") != "uploading" or not up or up["id"] != upload_id:
+            return jsonify({"error": "Эта загрузка уже не идёт."}), 410
+        try:
+            zip_path = upload.finish(up)
+        except upload.UploadError as exc:
+            return jsonify({"error": str(exc), "received": exc.received}), exc.status
+        archive_info = {
+            "name": up["name"],
+            "size_bytes": up["size"],
+            "upload_seconds": round(time.time() - float(state.get("started") or time.time()), 1),
+        }
+        job_id = _begin_scan(db, project, zip_path, archive_info, up["id"])
         return jsonify({"job_id": job_id}), 202
     finally:
         db.close()
@@ -204,7 +314,7 @@ def get_import(code):
     try:
         state = _state(project.id) or {"status": "none"}
         # zip_path is a server detail; the wizard never needs it.
-        return jsonify({k: v for k, v in state.items() if k != "zip_path"})
+        return jsonify({k: v for k, v in state.items() if k not in ("zip_path", "started")})
     finally:
         db.close()
 
@@ -222,6 +332,7 @@ def cancel_import(code):
                 os.remove(zip_path)
             except OSError:
                 pass
+        upload.discard(state.get("upload"))
         for path in (_manifest_file(project.id), config.project_import_file(project.id)):
             try:
                 os.remove(path)
@@ -487,6 +598,179 @@ def list_datasets(code):
         db.close()
 
 
+def _wanted_classes(project_id, db, raw):
+    """Номера классов из запроса → их id в проекте.
+
+    Список, а не одно значение: «покажи кадры, где есть вагон или столб» —
+    обычный вопрос, а до 08.09.2026 фильтр брал ровно один класс, и такой
+    вопрос приходилось задавать в два захода и складывать глазами.
+    """
+    numbers = []
+    for piece in (raw or "").split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        try:
+            numbers.append(int(piece))
+        except ValueError:
+            continue
+    if not numbers:
+        return []
+    return list(db.execute(
+        select(LabelClass.id).where(
+            LabelClass.project_id == project_id,
+            LabelClass.class_index.in_(numbers),
+        )
+    ).scalars())
+
+
+def _image_query(db, project, *, dataset_ids, split, class_ids, only_empty):
+    """Запрос кадров проекта под общий набор фильтров."""
+    q = select(Image).where(Image.project_id == project.id)
+    if dataset_ids:
+        q = q.where(Image.dataset_id.in_(dataset_ids))
+    if split:
+        q = q.where(Image.split == split)
+    if only_empty:
+        q = q.where(~Image.id.in_(select(Annotation.image_id)))
+    if class_ids:
+        # Кадр подходит, если на нём есть хоть один из выбранных классов.
+        q = q.where(
+            Image.id.in_(
+                select(Annotation.image_id)
+                .where(Annotation.class_id.in_(class_ids))
+            )
+        )
+    return q
+
+
+def _ordered(q, order):
+    if order == "objects":
+        # Кадры с аномальным числом объектов — первые кандидаты на проверку.
+        counts = (
+            select(Annotation.image_id.label("iid"), func.count().label("n"))
+            .group_by(Annotation.image_id)
+            .subquery()
+        )
+        return (
+            q.outerjoin(counts, counts.c.iid == Image.id)
+            .order_by(func.coalesce(counts.c.n, 0).desc(), Image.file_name)
+        )
+    return q.order_by(Image.file_name, Image.id)
+
+
+def _shapes_by_image(db, ids):
+    """Геометрия пачкой: отдельный запрос на кадр — это шестьдесят поездок."""
+    by_image = {i: [] for i in ids}
+    if not ids:
+        return by_image
+    for ann, idx, name, color in db.execute(
+        select(Annotation, LabelClass.class_index, LabelClass.name, LabelClass.color)
+        .join(LabelClass, LabelClass.id == Annotation.class_id)
+        .where(Annotation.image_id.in_(ids))
+    ).all():
+        wire = shapes.to_wire(ann.ann_type, ann.geometry)
+        if not wire:
+            continue
+        by_image[ann.image_id].append({
+            **wire, "class_index": idx, "name": name, "color": color,
+        })
+    return by_image
+
+
+def _image_row(img, boxes, dataset=None):
+    row = {
+        "id": str(img.id),
+        "file_name": img.file_name,
+        "split": img.split,
+        "width": img.width,
+        "height": img.height,
+        "size_bytes": img.size_bytes,
+        "annotations": len(boxes),
+        "boxes": boxes,
+    }
+    if dataset is not None:
+        row["dataset_id"] = str(dataset.id)
+        row["dataset_name"] = dataset.name
+    return row
+
+
+@bp.get("/api/projects/<code>/images")
+def project_images(code):
+    """Кадры всего проекта разом, с пометкой, из какого они датасета.
+
+    Отдельная ручка, а не «датасет со звёздочкой»: у проекта нет ни одного
+    паспорта датасета, зато есть свой — какие датасеты вообще выбирать. Ходить
+    за кадрами по одному датасету, когда смотрят все, значило бы склеивать
+    страницы на клиенте и врать в счётчике.
+    """
+    db, project, err = _resolve(code)
+    if err:
+        return err
+    try:
+        picked = [
+            d for d in db.execute(
+                select(Dataset).where(Dataset.project_id == project.id)
+                .order_by(Dataset.created_at)
+            ).scalars()
+        ]
+        by_id = {d.id: d for d in picked}
+        raw = (request.args.get("datasets") or "").strip()
+        chosen = []
+        for piece in raw.split(","):
+            row = _get_by_uuid(db, Dataset, piece.strip()) if piece.strip() else None
+            if row is not None and row.project_id == project.id:
+                chosen.append(row.id)
+
+        split = request.args.get("split") or None
+        only_empty = request.args.get("empty") == "1"
+        order = request.args.get("sort", "name")
+        class_ids = _wanted_classes(project.id, db, request.args.get("classes"))
+        try:
+            limit = min(max(int(request.args.get("limit", 60)), 1), 200)
+            offset = max(int(request.args.get("offset", 0)), 0)
+        except ValueError:
+            limit, offset = 60, 0
+
+        q = _image_query(
+            db, project, dataset_ids=chosen, split=split,
+            class_ids=class_ids, only_empty=only_empty,
+        )
+        matched = db.execute(
+            select(func.count()).select_from(q.subquery())
+        ).scalar_one()
+        images = db.execute(_ordered(q, order).limit(limit).offset(offset)).scalars().all()
+        by_image = _shapes_by_image(db, [i.id for i in images])
+
+        splits = dict(db.execute(
+            select(Image.split, func.count(Image.id))
+            .where(Image.project_id == project.id)
+            .group_by(Image.split)
+        ).all())
+        per_dataset = dict(db.execute(
+            select(Image.dataset_id, func.count(Image.id))
+            .where(Image.project_id == project.id)
+            .group_by(Image.dataset_id)
+        ).all())
+        return jsonify({
+            "datasets": [
+                {"id": str(d.id), "name": d.name, "identifier": d.identifier,
+                 "images": per_dataset.get(d.id, 0)}
+                for d in picked
+            ],
+            "splits": splits,
+            "total": sum(splits.values()),
+            "matched": matched,
+            "my_role": _role(db, project),
+            "images": [
+                _image_row(img, by_image[img.id], by_id.get(img.dataset_id))
+                for img in images
+            ],
+        })
+    finally:
+        db.close()
+
+
 @bp.get("/api/projects/<code>/datasets/<dataset_id>")
 def dataset_detail(code, dataset_id):
     db, project, err = _resolve(code)
@@ -526,67 +810,31 @@ def dataset_detail(code, dataset_id):
         ).all()
 
         split = request.args.get("split")
-        class_index = request.args.get("class_index")
         only_empty = request.args.get("empty") == "1"
         order = request.args.get("sort", "name")
-        limit = min(int(request.args.get("limit", 60)), 200)
-        offset = int(request.args.get("offset", 0))
+        try:
+            limit = min(max(int(request.args.get("limit", 60)), 1), 200)
+            offset = max(int(request.args.get("offset", 0)), 0)
+        except ValueError:
+            limit, offset = 60, 0
+        # `class_index` — прежнее имя на один класс; понимаем оба, потому что
+        # ссылку с ним человек мог сохранить.
+        wanted = request.args.get("classes")
+        if not wanted and request.args.get("class_index"):
+            wanted = request.args.get("class_index")
+        class_ids = _wanted_classes(project.id, db, wanted)
 
-        q = select(Image).where(Image.dataset_id == dataset.id)
-        if split:
-            q = q.where(Image.split == split)
-        if only_empty:
-            q = q.where(~Image.id.in_(select(Annotation.image_id)))
-        if class_index is not None and class_index != "":
-            # «Покажи все кадры с этим классом» — основной способ проверить,
-            # как размечен конкретный класс.
-            q = q.where(
-                Image.id.in_(
-                    select(Annotation.image_id)
-                    .join(LabelClass, LabelClass.id == Annotation.class_id)
-                    .where(
-                        LabelClass.project_id == project.id,
-                        LabelClass.class_index == int(class_index),
-                    )
-                )
-            )
+        q = _image_query(
+            db, project, dataset_ids=[dataset.id], split=split,
+            class_ids=class_ids, only_empty=only_empty,
+        )
         matched = db.execute(
             select(func.count()).select_from(q.subquery())
         ).scalar_one()
-
-        if order == "objects":
-            # Кадры с аномальным числом объектов — первые кандидаты на проверку.
-            counts = (
-                select(Annotation.image_id.label("iid"), func.count().label("n"))
-                .group_by(Annotation.image_id)
-                .subquery()
-            )
-            q = (
-                q.outerjoin(counts, counts.c.iid == Image.id)
-                .order_by(func.coalesce(counts.c.n, 0).desc(), Image.file_name)
-            )
-        else:
-            q = q.order_by(Image.file_name)
+        q = _ordered(q, order)
 
         images = db.execute(q.limit(limit).offset(offset)).scalars().all()
-
-        # Геометрия приходит вместе со списком: отдельный запрос на кадр — это
-        # шестьдесят запросов на страницу.
-        ids = [i.id for i in images]
-        by_image = {i: [] for i in ids}
-        if ids:
-            for ann, idx, name, color in db.execute(
-                select(Annotation, LabelClass.class_index, LabelClass.name, LabelClass.color)
-                .join(LabelClass, LabelClass.id == Annotation.class_id)
-                .where(Annotation.image_id.in_(ids))
-            ).all():
-                wire = shapes.to_wire(ann.ann_type, ann.geometry)
-                if not wire:
-                    continue
-                by_image[ann.image_id].append({
-                    **wire,
-                    "class_index": idx, "name": name, "color": color,
-                })
+        by_image = _shapes_by_image(db, [i.id for i in images])
 
         return jsonify({
             "dataset": {
@@ -608,17 +856,7 @@ def dataset_detail(code, dataset_id):
             "matched": matched,
             "my_role": _role(db, project),
             "images": [
-                {
-                    "id": str(img.id),
-                    "file_name": img.file_name,
-                    "split": img.split,
-                    "width": img.width,
-                    "height": img.height,
-                    "size_bytes": img.size_bytes,
-                    "annotations": len(by_image[img.id]),
-                    "boxes": by_image[img.id],
-                }
-                for img in images
+                _image_row(img, by_image[img.id]) for img in images
             ],
         })
     finally:

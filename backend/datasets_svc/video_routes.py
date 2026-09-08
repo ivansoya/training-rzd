@@ -34,7 +34,7 @@ from datasets_svc import materialize
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
 from datasets_svc import video_index
-from datasets_svc import shapes
+from common import shapes
 from datasets_svc import video_queue as queue
 from datasets_svc import video_tracks as tracklib
 from datasets_svc.materialize import collect_plan

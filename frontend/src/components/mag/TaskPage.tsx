@@ -21,7 +21,7 @@ import type {
   TaskStatus,
   TaskVideoItem,
 } from "../../auth/api";
-import { pollJob } from "../../api";
+import { pollJob } from "../../api/jobs";
 import AnnotationEditor from "./AnnotationEditor";
 import ShapeMini from "./ShapeMini";
 import { TaskState } from "./ProjectTasks";

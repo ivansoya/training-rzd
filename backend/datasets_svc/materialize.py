@@ -25,7 +25,7 @@ from common.models import (
     VideoAnnotation,
     VideoTrack,
 )
-from datasets_svc import polygon as polylib
+from common import polygon as polylib
 from datasets_svc import video as videolib
 from datasets_svc import video_tracks as tracklib
 

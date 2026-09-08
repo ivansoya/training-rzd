@@ -1,8 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
-import App from "./App";
 import AccountPage from "./components/auth/AccountPage";
+import AugGraphEditor from "./components/aug/AugGraphEditor";
+import AugGraphList from "./components/aug/AugGraphList";
+import HardwarePage from "./components/hardware/HardwarePage";
+import ProjectAug from "./components/aug/ProjectAug";
+import TrainingHome from "./components/training/TrainingHome";
+import TrainRunPage from "./components/training/TrainRunPage";
+import TrainSetWizard from "./components/training/TrainSetWizard";
 import AuthGate from "./components/auth/AuthGate";
 import ConfirmPage from "./components/auth/ConfirmPage";
 import DatasetPage from "./components/mag/DatasetPage";
@@ -16,11 +22,8 @@ import ProjectShell from "./components/mag/ProjectShell";
 import ProjectTasks from "./components/mag/ProjectTasks";
 import ProjectsPage from "./components/mag/ProjectsPage";
 import TaskPage from "./components/mag/TaskPage";
+import TrainSetView from "./components/training/TrainSetView";
 import "./styles/common.css";
-import "./styles/datasets.css";
-import "./styles/augment.css";
-import "./styles/train.css";
-import "./styles/inference.css";
 import "./styles/auth.css";
 import "./styles/import.css";
 import "./styles/project.css";
@@ -30,12 +33,14 @@ import "./styles/taskpage.css";
 import "./styles/editor.css";
 import "./styles/video.css";
 import "./styles/export.css";
+import "./styles/graph.css";
+import "./styles/training.css";
 // Последним: «Габарит» переопределяет накопленные наборы переменных своими
 // токенами, поэтому подключается после всех, кого переопределяет.
 import "./styles/gabarit.css";
 
-// Новый сайт («Магистраль»: проекты, кабинет) — главный. Старое приложение
-// живёт отдельно на /tools за тем же входом и напрямую не связано с новым.
+// Один сайт. Старое приложение на /tools удалено вместе со своими файловыми
+// датасетами: всё, что оно умело, живёт теперь внутри проектов.
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <BrowserRouter>
@@ -69,7 +74,40 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="classes" element={<ProjectClasses />} />
                   <Route path="members" element={<ProjectMembers />} />
                   <Route path="tasks" element={<ProjectTasks />} />
+                  <Route path="aug" element={<ProjectAug />} />
+                  <Route path="training" element={<TrainingHome />} />
+                  {/* Датасет и собранный набор — тоже разделы проекта: без
+                      этого на них пропадали и строка разделов, и паспорт
+                      проекта, и уйти отсюда было некуда. */}
+                  <Route path="datasets/:datasetId" element={<DatasetPage />} />
+                  <Route path="trainsets/:setId" element={<TrainSetView />} />
                 </Route>
+                <Route
+                  path="/projects/:code/training/new"
+                  element={
+                    <MagShell>
+                      <TrainSetWizard />
+                    </MagShell>
+                  }
+                />
+                <Route
+                  path="/projects/:code/training/runs/:runId"
+                  element={
+                    <MagShell>
+                      <div className="mag-content">
+                        <TrainRunPage />
+                      </div>
+                    </MagShell>
+                  }
+                />
+                <Route
+                  path="/hardware"
+                  element={
+                    <MagShell>
+                      <HardwarePage />
+                    </MagShell>
+                  }
+                />
                 <Route
                   path="/projects/:code/tasks/:taskId"
                   element={
@@ -86,11 +124,21 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                     </MagShell>
                   }
                 />
+                {/* Аугментации живут вне проектов: граф принадлежит
+                    человеку, а прогон — проекту. */}
                 <Route
-                  path="/projects/:code/datasets/:datasetId"
+                  path="/augment"
                   element={
                     <MagShell>
-                      <DatasetPage />
+                      <AugGraphList />
+                    </MagShell>
+                  }
+                />
+                <Route
+                  path="/augment/:graphId"
+                  element={
+                    <MagShell>
+                      <AugGraphEditor />
                     </MagShell>
                   }
                 />
@@ -102,7 +150,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                     </MagShell>
                   }
                 />
-                <Route path="/tools" element={<App />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
               </Routes>
             </AuthGate>
