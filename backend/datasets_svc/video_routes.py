@@ -769,9 +769,12 @@ def put_key(track_id, frame_no):
     try:
         video = db.get(TaskVideo, track.video_id)
         data = request.get_json(silent=True) or {}
-        if frame_no < track.start_frame:
+        extending = data.get("extend") is True
+        if extending and (frame_no > _last_frame(video) or "geometry" not in data):
+            return jsonify({"error": "Для расширения нужен кадр внутри видео и рамка."}), 400
+        if not extending and frame_no < track.start_frame:
             return jsonify({"error": "Кадр раньше появления объекта."}), 400
-        if track.end_frame is not None and frame_no > track.end_frame:
+        if not extending and track.end_frame is not None and frame_no > track.end_frame:
             return jsonify({"error": "Кадр позже исчезновения объекта."}), 400
 
         row = db.execute(
@@ -835,6 +838,10 @@ def put_key(track_id, frame_no):
             db.add(row)
         row.geometry = geometry
         row.source = data.get("source") or "human"
+        if extending:
+            track.start_frame = min(track.start_frame, frame_no)
+            if track.end_frame is not None:
+                track.end_frame = max(track.end_frame, frame_no)
         db.commit()
 
         keys = db.execute(

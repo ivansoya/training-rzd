@@ -1,249 +1,104 @@
-import { useCallback, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import type { VideoTrack } from "../../auth/api";
-import { hiddenRanges, keyAt, stateAt, trackEnd } from "./trackMath";
-
-/** Дорожки объектов под кадром: жизнь трека, ключи, заслонённые куски.
- *
- * Перенос таймлайна вниз нужен ровно затем, чтобы видеть время всех объектов
- * разом: где они появляются, где пересекаются, где кто заслонён. Дорожка
- * одного объекта такого не показывает.
- *
- * Жесты — основной путь, потому что мышью здесь и работают:
- *   клик по дорожке        — встать на кадр
- *   протяжка ромба         — перенести ключ
- *   протяжка края отрезка  — сдвинуть появление или исчезновение
- *   Alt + протяжка         — вырезать заслонённый участок
- *   правая кнопка          — меню на этом кадре
- * Жест, о котором нельзя догадаться, для нового разметчика не существует —
- * поэтому всё то же есть в контекстном меню.
- */
+import { hiddenRanges, trackEnd } from "./trackMath";
+import { extensionFrame, timelineFrame, timelineTicks } from "./timelineMath";
 
 export interface LaneAction {
-  kind: "seek" | "move-key" | "set-start" | "set-end" | "hide" | "menu";
+  kind: "seek" | "move-key" | "set-start" | "set-end" | "add-key" | "hide" | "menu";
   trackId: string;
   frame: number;
-  /** Для переноса ключа — откуда, для заслонения — второй край. */
   from?: number;
   at?: { x: number; y: number };
 }
+type Drag = { kind: "key" | "start" | "end" | "hide" | "seek"; trackId: string; from: number; x: number };
 
-type Drag =
-  | { kind: "key"; trackId: string; from: number }
-  | { kind: "start"; trackId: string }
-  | { kind: "end"; trackId: string }
-  | { kind: "hide"; trackId: string; anchor: number };
-
-export default function TrackLanes({
-  tracks,
-  frame,
-  lastFrame,
-  labelOf,
-  selected,
-  editable,
-  onSelect,
-  onAction,
-}: {
-  tracks: VideoTrack[];
-  frame: number;
-  lastFrame: number;
+/** Одна шкала, одно координатное пространство, один указатель.
+ * Ручки продления стоят слева и справа от края трека, на линии ключей, и
+ * отодвинуты от неё: у трека из одного ключа ручка и ромб не должны делить
+ * хитбокс. Пиксели в кадры переводит timelineMath — тот же, что и у шкалы. */
+export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected, editable, onSelect, onAction, onSeek }: {
+  tracks: VideoTrack[]; frame: number; lastFrame: number;
   labelOf: (ci: number) => { name: string; color: string };
-  selected: string | null;
-  editable: boolean;
-  onSelect: (trackId: string) => void;
-  onAction: (action: LaneAction) => void;
+  selected: string | null; editable: boolean;
+  onSelect: (id: string) => void; onAction: (action: LaneAction) => void; onSeek: (frame: number) => void;
 }) {
-  const [drag, setDrag] = useState<Drag | null>(null);
-  const [ghost, setGhost] = useState<number | null>(null);
-  const laneRef = useRef<HTMLDivElement>(null);
-
-  const span = Math.max(1, lastFrame);
-  const pct = (f: number) => `${Math.max(0, Math.min(100, (f / span) * 100))}%`;
-
-  const frameFromEvent = useCallback(
-    (e: { clientX: number }, el: HTMLElement) => {
-      const rect = el.getBoundingClientRect();
-      const ratio = (e.clientX - rect.left) / Math.max(1, rect.width);
-      return Math.max(0, Math.min(lastFrame, Math.round(ratio * span)));
-    },
-    [lastFrame, span]
-  );
-
-  const onPointerDown = useCallback(
-    (e: ReactPointerEvent, track: VideoTrack, kind: Drag["kind"] | "lane", from?: number) => {
-      if (e.button === 2) return;
-      onSelect(track.id);
-      const lane = (e.currentTarget as HTMLElement).closest(".g-lane-track") as HTMLElement;
-      if (!lane) return;
-      const at = frameFromEvent(e, lane);
-
-      if (!editable || kind === "lane") {
-        if (e.altKey && editable) {
-          setDrag({ kind: "hide", trackId: track.id, anchor: at });
-          setGhost(at);
-          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-          e.preventDefault();
-          return;
-        }
-        onAction({ kind: "seek", trackId: track.id, frame: at });
-        return;
-      }
-
-      setDrag(
-        kind === "key"
-          ? { kind: "key", trackId: track.id, from: from ?? at }
-          : kind === "start"
-            ? { kind: "start", trackId: track.id }
-            : kind === "end"
-              ? { kind: "end", trackId: track.id }
-              : { kind: "hide", trackId: track.id, anchor: at }
-      );
-      setGhost(at);
-      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-      e.preventDefault();
-      e.stopPropagation();
-    },
-    [editable, frameFromEvent, onAction, onSelect]
-  );
-
-  const onPointerMove = useCallback(
-    (e: ReactPointerEvent) => {
-      if (!drag) return;
-      const lane = (e.currentTarget as HTMLElement).closest(".g-lane-track") as HTMLElement;
-      if (!lane) return;
-      setGhost(frameFromEvent(e, lane));
-    },
-    [drag, frameFromEvent]
-  );
-
-  const onPointerUp = useCallback(
-    (e: ReactPointerEvent) => {
-      if (!drag || ghost === null) {
-        setDrag(null);
-        setGhost(null);
-        return;
-      }
-      const lane = (e.currentTarget as HTMLElement).closest(".g-lane-track") as HTMLElement;
-      const at = lane ? frameFromEvent(e, lane) : ghost;
-
-      if (drag.kind === "key" && at !== drag.from) {
-        onAction({ kind: "move-key", trackId: drag.trackId, frame: at, from: drag.from });
-      } else if (drag.kind === "start") {
-        onAction({ kind: "set-start", trackId: drag.trackId, frame: at });
-      } else if (drag.kind === "end") {
-        onAction({ kind: "set-end", trackId: drag.trackId, frame: at });
-      } else if (drag.kind === "hide" && at !== drag.anchor) {
-        onAction({
-          kind: "hide",
-          trackId: drag.trackId,
-          frame: Math.max(at, drag.anchor),
-          from: Math.min(at, drag.anchor),
-        });
-      }
-      setDrag(null);
-      setGhost(null);
-    },
-    [drag, ghost, frameFromEvent, onAction]
-  );
-
-  if (!tracks.length) {
-    return (
-      <div className="g-lanes-empty">
-        Нажмите <kbd>T</kbd> и обведите объект — он станет треком и будет жить
-        от этого кадра до того, где вы его уберёте.
-      </div>
-    );
+  const grid = useRef<HTMLDivElement>(null);
+  const drag = useRef<Drag | null>(null);
+  const [preview, setPreview] = useState<{ drag: Drag; frame: number } | null>(null);
+  const [width, setWidth] = useState(600);
+  useEffect(() => {
+    const el = grid.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setWidth(el.clientWidth));
+    observer.observe(el); return () => observer.disconnect();
+  }, []);
+  const pct = (n: number) => `${Math.max(0, Math.min(100, n / Math.max(1, lastFrame) * 100))}%`;
+  const ticks = timelineTicks(lastFrame, width);
+  const at = (x: number) => { const r = grid.current!.getBoundingClientRect(); return timelineFrame(x, r.left, r.width, lastFrame); };
+  function begin(e: ReactPointerEvent<HTMLElement>, kind: Drag["kind"], trackId = "", from = at(e.clientX)) {
+    if (e.button !== 0) return;
+    if (trackId) onSelect(trackId);
+    if (!editable && kind !== "seek") { onSeek(from); e.stopPropagation(); return; }
+    const d = { kind, trackId, from, x: e.clientX };
+    drag.current = d; setPreview({ drag: d, frame: from });
+    e.currentTarget.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation();
+    if (kind === "seek" || kind === "key") onSeek(from);
   }
-
-  return (
-    <div className="g-lanes" ref={laneRef}>
-      {tracks.map((track) => {
-        const label = labelOf(track.class_index ?? -1);
-        const end = trackEnd(track);
-        const here = stateAt(track, frame);
-        const on = track.id === selected;
-        const dragging = drag?.trackId === track.id ? drag : null;
-
-        return (
-          <div key={track.id} className={on ? "g-lane on" : "g-lane"}>
-            <button className="g-lane-name" type="button" onClick={() => onSelect(track.id)}>
-              <i style={{ background: label.color }} />
-              <span>{track.label || label.name || "объект"}</span>
-              <em>{track.keys.length}</em>
-            </button>
-
-            <div
-              className="g-lane-track"
-              data-help=""
-              data-ht="Дорожка объекта: ромб — ключ, края — жизнь трека, Alt + протяжка — заслонить"
-              onContextMenu={(e) => {
-                e.preventDefault();
-                const at = frameFromEvent(e, e.currentTarget as HTMLElement);
-                onAction({
-                  kind: "menu", trackId: track.id, frame: at,
-                  at: { x: e.clientX, y: e.clientY },
-                });
-              }}
-              onPointerDown={(e) => onPointerDown(e, track, "lane")}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-            >
-              {/* Отрезок жизни: от появления до кадра, где объект убрали. */}
-              <span
-                className="g-lane-life"
-                style={{ left: pct(track.start_frame), right: `${100 - (end / span) * 100}%`,
-                         background: label.color }}
-              />
-              {editable && on && (
-                <>
-                  <span className="g-lane-grip s" style={{ left: pct(track.start_frame) }}
-                    onPointerDown={(e) => onPointerDown(e, track, "start")}
-                    onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
-                  <span className="g-lane-grip e" style={{ left: pct(end) }}
-                    onPointerDown={(e) => onPointerDown(e, track, "end")}
-                    onPointerMove={onPointerMove} onPointerUp={onPointerUp} />
-                </>
-              )}
-
-              {hiddenRanges(track).map(([from, to], i) => (
-                <span key={i} className="g-lane-occl"
-                  style={{ left: pct(from), width: pct(to - from) }}
- />
-              ))}
-
-              {/* Тень будущего действия: пока тянут, видно, куда попадёт. */}
-              {dragging && ghost !== null && (
-                dragging.kind === "hide" ? (
-                  <span className="g-lane-occl ghost" style={{
-                    left: pct(Math.min(ghost, dragging.anchor)),
-                    width: pct(Math.abs(ghost - dragging.anchor)),
-                  }} />
-                ) : (
-                  <span className="g-lane-key ghost" style={{ left: pct(ghost) }} />
-                )
-              )}
-
-              {track.keys.map((k) => (
-                <span
-                  key={k.frame_no}
-                  className={k.frame_no === frame ? "g-lane-key now" : "g-lane-key"}
-                  style={{ left: pct(k.frame_no), background: label.color }}
-                  onPointerDown={(e) => onPointerDown(e, track, "key", k.frame_no)}
-                  onPointerMove={onPointerMove}
-                  onPointerUp={onPointerUp}
-                />
-              ))}
-
-              <span className="g-lane-needle" style={{ left: pct(frame) }} />
-            </div>
-
-            <span className="g-lane-state">
-              {here ? (here.hidden ? "заслонён" : "виден") : "нет"}
-              {here && keyAt(track, frame) ? " · ключ" : ""}
-            </span>
+  function target(d: Drag, x: number) {
+    return d.kind === "start" || d.kind === "end"
+      ? extensionFrame(d.from, x - d.x, grid.current!.getBoundingClientRect().width, lastFrame, d.kind)
+      : at(x);
+  }
+  function move(e: ReactPointerEvent<HTMLElement>) {
+    const d = drag.current; if (!d) return;
+    const f = target(d, e.clientX); setPreview({ drag: d, frame: f });
+    if (d.kind === "seek") onSeek(f);
+  }
+  function cancel() { drag.current = null; setPreview(null); }
+  function finish(e: ReactPointerEvent<HTMLElement>) {
+    const d = drag.current; if (!d) return;
+    const f = target(d, e.clientX); cancel();
+    if (f === d.from || d.kind === "seek" || !editable) return;
+    if (d.kind === "hide") onAction({ kind: "hide", trackId: d.trackId, from: Math.min(f,d.from), frame: Math.max(f,d.from) });
+    else onAction({ kind: d.kind === "key" ? "move-key" : d.kind === "start" ? "set-start" : "set-end", trackId: d.trackId, from: d.from, frame: f });
+  }
+  const pointer = { onPointerMove: move, onPointerUp: finish, onPointerCancel: cancel, onLostPointerCapture: cancel };
+  return <div className="vt-timeline" aria-label="Таймлайн видео и объектов">
+    <div className="vt-grid" ref={grid}>
+      <div className="vt-guides" aria-hidden="true">{ticks.map(t => <i key={t} style={{ left: pct(t) }} />)}</div>
+      <div className="vt-ruler" role="slider" tabIndex={0} aria-label="Кадр" aria-valuemin={0} aria-valuemax={lastFrame} aria-valuenow={frame}
+        onPointerDown={e => begin(e,"seek")} {...pointer}
+        onKeyDown={e => {
+          const delta = e.shiftKey ? 10 : 1;
+          const next = e.key === "Home" ? 0 : e.key === "End" ? lastFrame : e.key === "ArrowRight" ? Math.min(lastFrame,frame+delta) : e.key === "ArrowLeft" ? Math.max(0,frame-delta) : null;
+          if(next !== null) { e.preventDefault();e.stopPropagation();onSeek(next); }
+        }}>
+        {ticks.map(t => <span key={t} className={t === 0 ? "first" : t === lastFrame ? "last" : ""} style={{ left: pct(t) }}>{t}</span>)}
+      </div>
+      <div className="vt-video" aria-label="Дорожка видео" onPointerDown={e => begin(e,"seek")} {...pointer}><span className="vt-name">Видео</span></div>
+      {tracks.map(track => {
+        const label = labelOf(track.class_index ?? -1), end = trackEnd(track), on = track.id === selected;
+        const ghost = preview?.drag.trackId === track.id ? preview : null;
+        return <div key={track.id} className={`vt-row${on ? " on" : ""}`} data-track-id={track.id}>
+          <button className="vt-name" type="button" title={track.label || label.name} onClick={() => onSelect(track.id)}><i style={{background:label.color}} /><span>{track.label || label.name || "Объект"}</span></button>
+          <div className="vt-lane" {...pointer} onPointerDown={e => begin(e,e.altKey && editable ? "hide" : "seek",track.id)}
+            onDoubleClick={e => { if(editable && !(e.target as HTMLElement).closest('.vt-key,.vt-grip')) onAction({kind:"add-key",trackId:track.id,frame:at(e.clientX)}); }}
+            onContextMenu={e => {e.preventDefault(); onSelect(track.id);onAction({kind:"menu",trackId:track.id,frame:at(e.clientX),at:{x:e.clientX,y:e.clientY}});}}>
+            <span className="vt-life" style={{left:pct(track.start_frame),width:pct(end-track.start_frame),background:label.color}} />
+            {hiddenRanges(track).map(([a,b],i)=><span key={i} className="vt-hidden" style={{left:pct(a),width:pct(b-a)}} />)}
+            {track.keys.map(k=><button key={k.frame_no} type="button" className={`vt-key${k.frame_no === frame ? " now" : ""}`} style={{left:pct(k.frame_no),color:label.color}}
+              aria-label={`Ключ ${k.frame_no}`} title={`Кадр ${k.frame_no} · перетащите для переноса`}
+              onPointerDown={e=>begin(e,"key",track.id,k.frame_no)}
+              onKeyDown={e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();e.stopPropagation();onSelect(track.id);onSeek(k.frame_no);}}} />)}
+            {editable && on && track.start_frame>0 && <button type="button" className="vt-grip start" style={{left:pct(track.start_frame)}} aria-label="Продлить трек влево" title="Потяните влево: новый ключ на границе" onPointerDown={e=>begin(e,"start",track.id,track.start_frame)} onKeyDown={e=>{if(e.key==='ArrowLeft'){e.preventDefault();e.stopPropagation();onAction({kind:'set-start',trackId:track.id,frame:Math.max(0,track.start_frame-(e.shiftKey?10:1))});}}}>‹</button>}
+            {editable && on && end<lastFrame && <button type="button" className="vt-grip end" style={{left:pct(end)}} aria-label="Продлить трек вправо" title="Потяните вправо: новый ключ на границе" onPointerDown={e=>begin(e,"end",track.id,end)} onKeyDown={e=>{if(e.key==='ArrowRight'){e.preventDefault();e.stopPropagation();onAction({kind:'set-end',trackId:track.id,frame:Math.min(lastFrame,end+(e.shiftKey?10:1))});}}}>›</button>}
+            {ghost && ghost.drag.kind !== "seek" && <span className={ghost.drag.kind==='hide'?'vt-hidden preview':'vt-preview'} style={ghost.drag.kind==='hide'?{left:pct(Math.min(ghost.frame,ghost.drag.from)),width:pct(Math.abs(ghost.frame-ghost.drag.from))}:{left:pct(ghost.frame)}} />}
           </div>
-        );
+        </div>;
       })}
+      {!tracks.length && <p className="vt-empty">T · обведите объект на видео, чтобы создать трек</p>}
+      <div className="vt-playhead" aria-hidden="true" style={{left:pct(frame)}}><i /></div>
     </div>
-  );
+  </div>;
 }

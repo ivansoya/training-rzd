@@ -29,6 +29,7 @@ export default function ProjectClasses() {
   const [info, setInfo] = useState<ClassesInfo | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Editing>(null);
+  const [query, setQuery] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -63,7 +64,10 @@ export default function ProjectClasses() {
   if (!info) return <div className="mag-empty">Загружаем классы…</div>;
 
   const canEdit = info.can_edit;
-  const ungrouped = info.classes.filter((c) => !c.superclass_id);
+  const matching = info.classes.filter((c) => [c.name, c.class_index,
+    info.superclasses.find((sc) => sc.id === c.superclass_id)?.name ?? "Без группы"
+  ].join(" ").toLocaleLowerCase("ru").includes(query.trim().toLocaleLowerCase("ru")));
+  const ungrouped = matching.filter((c) => !c.superclass_id);
 
   return (
     <>
@@ -79,6 +83,12 @@ export default function ProjectClasses() {
           моделями. Порядок для обучения задаётся при экспорте.
         </p>
 
+        <div className="workspace-project-search">
+          <input type="search" aria-label="Найти класс" placeholder="Название, номер или группа…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <span role="status">{matching.length} из {info.classes.length}</span>
+        </div>
+        {query.trim() && matching.length === 0 && <p className="mag-empty">Классы не найдены. Измените поисковый запрос.</p>}
+
         {canEdit && (
           <button
             className="mag-dashed"
@@ -89,11 +99,11 @@ export default function ProjectClasses() {
           </button>
         )}
 
-        {info.superclasses.map((sc) => (
+        {info.superclasses.filter((sc) => !query.trim() || matching.some((c) => c.superclass_id === sc.id)).map((sc) => (
           <Group
             key={sc.id}
             sc={sc}
-            items={info.classes.filter((c) => c.superclass_id === sc.id)}
+            items={matching.filter((c) => c.superclass_id === sc.id)}
             canEdit={canEdit}
             onEditGroup={() => setEditing({ kind: "superclass", sc })}
             onAddClass={() => setEditing({ kind: "new-class", superclassId: sc.id })}

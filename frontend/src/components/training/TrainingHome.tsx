@@ -115,7 +115,7 @@ export default function TrainingHome() {
         {canEdit && (
           <Link
             to={`/projects/${code}/training/new`}
-            className="mag-btn"
+            className="mag-btn mag-btn-inline"
             style={{ marginLeft: "auto", alignSelf: "center" }}
           >
             Собрать набор

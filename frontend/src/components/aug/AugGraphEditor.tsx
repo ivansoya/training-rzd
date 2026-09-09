@@ -10,7 +10,6 @@ import {
   Background,
   BackgroundVariant,
   Controls,
-  MiniMap,
   ReactFlow,
   ReactFlowProvider,
   addEdge,
@@ -510,12 +509,6 @@ function Editor() {
               color="#232629"
             />
             <Controls showInteractive={false} />
-            <MiniMap
-              pannable
-              zoomable
-              nodeColor="#32363a"
-              maskColor="rgba(12,13,14,.72)"
-            />
           </ReactFlow>
         </div>
 

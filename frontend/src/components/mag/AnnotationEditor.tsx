@@ -25,10 +25,8 @@ import type { AutoRefine } from "../../auth/api";
  * порознь значило бы, что однажды они разойдутся и подсказка начнёт врать про
  * клавишу.
  *
- * Из интерфейса при этом убраны все вечные подсказки. Разметчик смотрит в кадр
- * часами, и текст, который он прочитал в первый день, все остальные дни только
- * отнимает у кадра место и внимание. Что делает кнопка — говорит наведение,
- * когда справка включена; весь список — сама справка.
+ * Краткие названия видны на панели инструментов, подробные сочетания —
+ * в справке и в подсказках при включённом режиме справки.
  */
 const HELP = {
   close: ["Esc", "Выйти из разметки"],
@@ -878,7 +876,7 @@ export default function AnnotationEditor({
             onClick={() => { setTool("select"); setLock(false); setAddTo(null); }}
             {...hk("select")}
           >
-            ↖
+            <span>V</span><small>Выбор</small>
           </button>
           <button
             className={tool === "box" ? "mag-tool on" : "mag-tool"}
@@ -887,7 +885,7 @@ export default function AnnotationEditor({
             onClick={() => pickTool("box")}
             {...hk("box")}
           >
-            ▢
+            <span>B</span><small>Бокс</small>
             {tool === "box" && lock && <i className="mag-tool-lock" />}
           </button>
           <button
@@ -897,7 +895,7 @@ export default function AnnotationEditor({
             onClick={() => { setTool("polygon"); setAddTo(null); }}
             {...hk("polygon")}
           >
-            ⬠
+            <span>P</span><small>Контур</small>
           </button>
           {tool === "polygon" && (
             <button
@@ -906,7 +904,7 @@ export default function AnnotationEditor({
               onClick={() => setPolyPanel((v) => !v)}
               {...hk("polyOpts")}
             >
-              ⚙
+              <span>⚙</span><small>Контур</small>
             </button>
           )}
           {/* Полуавтомат стоит за чертой: он не четвёртый инструмент, а способ
@@ -933,7 +931,7 @@ export default function AnnotationEditor({
                   : "Модель готовится…"
             }
           >
-            ✨
+            <span>A</span><small>SAM2</small>
           </button>
           {autoOn && (
             <button
@@ -942,17 +940,17 @@ export default function AnnotationEditor({
               onClick={() => setAutoPanel((v) => !v)}
               {...hk("autoOpts")}
             >
-              ⚙
+              <span>⚙</span><small>SAM2</small>
             </button>
           )}
           <hr />
           <button className="mag-tool" type="button" {...hk("zoomIn")}
             onClick={() => canvas.current?.zoomBy(1.3)}>
-            +
+            <span>+</span><small>Зум</small>
           </button>
           <button className="mag-tool" type="button" {...hk("zoomOut")}
             onClick={() => canvas.current?.zoomBy(1 / 1.3)}>
-            −
+            <span>−</span><small>Зум</small>
           </button>
           <button className="mag-tool wide" type="button" {...hk("fit")}
             onClick={() => canvas.current?.fit()}>
@@ -965,7 +963,7 @@ export default function AnnotationEditor({
             onClick={() => setGrid((g) => !g)}
             {...hk("grid")}
           >
-            ▦
+            <span>▦</span><small>Сетка</small>
           </button>
         </div>
 

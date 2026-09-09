@@ -17,6 +17,10 @@ export default function ProjectsPage() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [query, setQuery] = useState("");
+  const filtered = projects.filter((p) =>
+    [p.name, p.code, p.description].join(" ").toLocaleLowerCase("ru").includes(query.trim().toLocaleLowerCase("ru"))
+  );
 
   const refresh = useCallback(async () => {
     try {
@@ -91,6 +95,15 @@ export default function ProjectsPage() {
         </button>
       </div>
 
+      {loaded && projects.length > 0 && <div className="workspace-project-search">
+        <input type="search" aria-label="Найти проект" placeholder="Название, код или описание…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <span role="status">{filtered.length} из {projects.length}</span>
+      </div>}
+      {!loaded && <div className="mag-card mag-empty" role="status">Загружаем проекты…</div>}
+      {loaded && projects.length > 0 && filtered.length === 0 && <div className="mag-card mag-empty-big">
+        <h3>Проекты не найдены</h3><p>Попробуйте другое название или код проекта.</p>
+        <button type="button" className="mag-ghost mag-ghost-inline" onClick={() => setQuery("")}>Сбросить поиск</button>
+      </div>}
       {loaded && projects.length === 0 ? (
         <div className="mag-card mag-empty-big">
           <h3>Проектов пока нет</h3>
@@ -101,7 +114,7 @@ export default function ProjectsPage() {
         </div>
       ) : (
         <div className="mag-projects">
-          {projects.map((p) => (
+          {filtered.map((p) => (
             <Link key={p.id} to={`/projects/${p.code}`} className="mag-proj-card">
               <div className="mag-proj-top">
                 <h3>{p.name}</h3>

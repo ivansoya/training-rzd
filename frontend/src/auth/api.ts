@@ -1138,6 +1138,8 @@ export async function putTrackKey(
   body: {
     geometry?: { x: number; y: number; w: number; h: number };
     source?: string;
+    /** Расширить границы трека вместе с новым ключом, одной транзакцией. */
+    extend?: boolean;
   }
 ): Promise<VideoTrack> {
   return asJson(await put(`video-tracks/${trackId}/keys/${frameNo}`, body));

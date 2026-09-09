@@ -87,6 +87,7 @@ export default function ProjectOverview() {
   return (
     <>
     {tabs}
+    <div className="workspace-overview">
     <div className="mag-card">
       <div className="mag-card-h">
         <h4>Разметки по классам</h4>
@@ -118,6 +119,21 @@ export default function ProjectOverview() {
           {plural(classes.length - 12, "класс", "класса", "классов")}
         </div>
       )}
+    </div>
+    <aside className="workspace-overview-side">
+      <section className="mag-card">
+        <div className="mag-card-h"><h4>Продолжить работу</h4></div>
+        <Link className="workspace-next" to={`/projects/${project.code}/tasks`}><span><b>Разметка</b><small>{detail.stats.tasks ?? 0} тасок в проекте</small></span><span aria-hidden="true">→</span></Link>
+        <Link className="workspace-next" to={`/projects/${project.code}/training`}><span><b>Наборы и обучение</b><small>Подготовка данных и запуски моделей</small></span><span aria-hidden="true">→</span></Link>
+        <Link className="workspace-next" to={`/projects/${project.code}/aug`}><span><b>Аугментации</b><small>Графы преобразований для проекта</small></span><span aria-hidden="true">→</span></Link>
+      </section>
+      <section className="mag-card">
+        <div className="mag-card-h"><h4>Исходные данные</h4></div>
+        {datasets.slice(0, 5).map((d) => <Link key={d.id} className="workspace-next" to={`/projects/${project.code}/datasets/${d.id}`}><span><b>{d.name}</b><small>{d.images_count.toLocaleString("ru-RU")} изображений</small></span><span aria-hidden="true">→</span></Link>)}
+        <Link className="mag-link" to={`/projects/${project.code}/datasets`}>Все датасеты →</Link>
+        {isAdmin && <Link className="mag-ghost mag-ghost-inline" to={`/projects/${project.code}/import`}>Импортировать датасет</Link>}
+      </section>
+    </aside>
     </div>
     </>
   );

@@ -42,6 +42,7 @@ import {
   msToFrame,
   normalizeRanges,
   stateAt,
+  trackEnd,
 } from "./trackMath";
 
 /** Управление редактором: клавиша и что она делает.
@@ -68,7 +69,7 @@ const HELP = {
   scrub: ["", "Перемотка по ролику"],
   key: ["K", "Поставить ключ трека на этом кадре"],
   occlude: ["Alt + протяжка", "Заслонить участок на дорожке объекта"],
-  lane: ["", "Дорожка объекта: ромб — ключ, края — жизнь трека"],
+  lane: ["", "Ромб: перенести ключ. Ручки: продлить трек с новым ключом. Двойной клик: ключ. Alt + протяжка: заслонить"],
   cls: ["", "Класс для новых объектов"],
 } as const;
 
@@ -473,6 +474,8 @@ export default function VideoAnnotator({
     (action: LaneAction) => {
       const track = trackById(action.trackId);
       if (!track) return;
+      stop();
+      if (frozen && action.kind !== "seek" && action.kind !== "menu") return;
       switch (action.kind) {
         case "seek":
           setFrame(action.frame);
@@ -483,15 +486,18 @@ export default function VideoAnnotator({
             await load();
           });
           break;
+        case "add-key":
         case "set-start":
-          // Начало трека — его первый ключ, поэтому двигаем именно ключ.
-          guard(async () => {
-            await moveTrackKey(track.id, track.start_frame, action.frame);
-            await load();
-          });
-          break;
         case "set-end":
-          patchTrack(track, { end_frame: action.frame });
+          guard(async () => {
+            const keys = [...track.keys].sort((a,b) => a.frame_no-b.frame_no);
+            const source = stateAt(track, action.frame)?.geometry
+              ?? (action.frame < track.start_frame ? keys[0] : keys[keys.length-1])?.geometry;
+            if (!source) return;
+            await putTrackKey(track.id, action.frame, { geometry: source, extend: true });
+            await load();
+            setFrame(action.frame);
+          });
           break;
         case "hide":
           patchTrack(track, {
@@ -506,7 +512,7 @@ export default function VideoAnnotator({
           break;
       }
     },
-    [trackById, guard, load, patchTrack]
+    [trackById, guard, load, patchTrack, stop, frozen]
   );
 
   // --- навигация ----------------------------------------------------------- #
@@ -866,7 +872,78 @@ export default function VideoAnnotator({
         </>
       )}
 
-      {objectsOpen && (
+      <div className="mag-ed-body">
+        {/* Пока картинка догоняет, подсветка инструмента гаснет: рисовать
+            нельзя, и это должно быть видно, а не выясняться протяжкой. */}
+        <div className={shown.lagging ? "mag-ed-rail waiting" : "mag-ed-rail"}>
+          <button className={tool === "select" ? "mag-tool on" : "mag-tool"} type="button"
+            onClick={() => setTool("select")} {...hk("select")}><span>V</span><small>Выбор</small></button>
+          <button className={tool === "box" ? "mag-tool on" : "mag-tool"} type="button"
+            disabled={frozen} onClick={() => setTool("box")}
+            {...hk("box")}><span>B</span><small>Бокс</small></button>
+          <button className={tool === "polygon" ? "mag-tool on" : "mag-tool"} type="button"
+            disabled={frozen} onClick={() => setTool("polygon")}
+            {...hk("polygon")}><span>P</span><small>Контур</small></button>
+          <button className={tool === "track" ? "mag-tool on" : "mag-tool"} type="button"
+            disabled={frozen} onClick={() => setTool("track")}
+            {...hk("track")}><span>T</span><small>Трек</small></button>
+          <button
+            className={(tool === "auto" ? "mag-tool on" : "mag-tool") +
+              (auto.state === "starting" ? " warming" : "")}
+            type="button" disabled={frozen || auto.state !== "ready"}
+            onClick={() => { setTool("auto"); clearAuto(); }}
+            {...hk("auto")}
+            data-ht={
+              auto.state === "ready"
+                ? HELP.auto[1]
+                : "Полуавтомат: модель ещё готовится"
+            }><span>A</span><small>SAM2</small></button>
+          <hr />
+          <button className="mag-tool" type="button" {...hk("zoomIn")}
+            onClick={() => canvas.current?.zoomBy(1.3)}><span>+</span><small>Зум</small></button>
+          <button className="mag-tool" type="button" {...hk("zoomOut")}
+            onClick={() => canvas.current?.zoomBy(1 / 1.3)}><span>−</span><small>Зум</small></button>
+          <button className="mag-tool wide" type="button" {...hk("fit")}
+            onClick={() => canvas.current?.fit()}>{Math.round(scale * 100)}%</button>
+        </div>
+
+        {/* Объекты: только свойства и статистика. Действия переехали на
+            дорожки — там, где у объекта есть время. */}
+        <aside className="mag-ved-side">
+          <h5>Класс</h5>
+          <input className="mag-ed-search" type="text" value={query}
+            placeholder="Поиск класса…" onChange={(e) => setQuery(e.target.value)} />
+          <div className="mag-ved-classes">
+            {visibleClasses.map((c, i) => (
+              <button key={c.id} type="button"
+                className={c.class_index === active ? "mag-ed-cls on" : "mag-ed-cls"}
+                onClick={() => setActive(c.class_index)}>
+                <i style={{ background: c.color }} />
+                <span className="mag-ed-cls-name">{c.name}</span>
+                {i < 9 && <kbd>{i + 1}</kbd>}
+              </button>
+            ))}
+          </div>
+          {query.trim() && visibleClasses.length === 0 && !frozen && (
+            <button className="mag-ed-newcls" type="button"
+              onClick={() => {
+                createClass(code, { name: query.trim() })
+                  .then((c) => {
+                    setClasses((prev) => [...prev, c]);
+                    setActive(c.class_index);
+                    setQuery("");
+                  })
+                  .catch((e) => setError((e as Error).message));
+              }}>
+              Ничего не нашлось — создать «{query.trim()}»
+            </button>
+          )}
+
+          <div className="workspace-object-tabs" aria-label="Тип объектов">
+            <button type="button" className={!objectsOpen ? "on" : ""} aria-pressed={!objectsOpen} onClick={() => setObjectsOpen(false)}>Треки · {(data?.tracks || []).length}</button>
+            <button type="button" className={objectsOpen ? "on" : ""} aria-pressed={objectsOpen} onClick={() => setObjectsOpen(true)}>Одиночные</button>
+          </div>
+          {objectsOpen && (
         <div className="mag-ed-objects">
           <div className="mag-ed-objects-h">
             <b>Одиночные объекты</b>
@@ -909,115 +986,29 @@ export default function VideoAnnotator({
           )}
         </div>
       )}
-
-      <div className="mag-ed-body">
-        {/* Пока картинка догоняет, подсветка инструмента гаснет: рисовать
-            нельзя, и это должно быть видно, а не выясняться протяжкой. */}
-        <div className={shown.lagging ? "mag-ed-rail waiting" : "mag-ed-rail"}>
-          <button className={tool === "select" ? "mag-tool on" : "mag-tool"} type="button"
-            onClick={() => setTool("select")} {...hk("select")}>↖</button>
-          <button className={tool === "box" ? "mag-tool on" : "mag-tool"} type="button"
-            disabled={frozen} onClick={() => setTool("box")}
-            {...hk("box")}>▢</button>
-          <button className={tool === "polygon" ? "mag-tool on" : "mag-tool"} type="button"
-            disabled={frozen} onClick={() => setTool("polygon")}
-            {...hk("polygon")}>⬠</button>
-          <button className={tool === "track" ? "mag-tool on" : "mag-tool"} type="button"
-            disabled={frozen} onClick={() => setTool("track")}
-            {...hk("track")}>◇</button>
-          <button
-            className={(tool === "auto" ? "mag-tool on" : "mag-tool") +
-              (auto.state === "starting" ? " warming" : "")}
-            type="button" disabled={frozen || auto.state !== "ready"}
-            onClick={() => { setTool("auto"); clearAuto(); }}
-            {...hk("auto")}
-            data-ht={
-              auto.state === "ready"
-                ? HELP.auto[1]
-                : "Полуавтомат: модель ещё готовится"
-            }>✨</button>
-          <hr />
-          <button className="mag-tool" type="button" {...hk("zoomIn")}
-            onClick={() => canvas.current?.zoomBy(1.3)}>+</button>
-          <button className="mag-tool" type="button" {...hk("zoomOut")}
-            onClick={() => canvas.current?.zoomBy(1 / 1.3)}>−</button>
-          <button className="mag-tool wide" type="button" {...hk("fit")}
-            onClick={() => canvas.current?.fit()}>{Math.round(scale * 100)}%</button>
-        </div>
-
-        {/* Объекты: только свойства и статистика. Действия переехали на
-            дорожки — там, где у объекта есть время. */}
-        <aside className="mag-ved-side">
-          <h5>Класс</h5>
-          <input className="mag-ed-search" type="text" value={query}
-            placeholder="Поиск класса…" onChange={(e) => setQuery(e.target.value)} />
-          <div className="mag-ved-classes">
-            {visibleClasses.map((c, i) => (
-              <button key={c.id} type="button"
-                className={c.class_index === active ? "mag-ed-cls on" : "mag-ed-cls"}
-                onClick={() => setActive(c.class_index)}>
-                <i style={{ background: c.color }} />
-                <span className="mag-ed-cls-name">{c.name}</span>
-                {i < 9 && <kbd>{i + 1}</kbd>}
-              </button>
-            ))}
-          </div>
-          {query.trim() && visibleClasses.length === 0 && !frozen && (
-            <button className="mag-ed-newcls" type="button"
-              onClick={() => {
-                createClass(code, { name: query.trim() })
-                  .then((c) => {
-                    setClasses((prev) => [...prev, c]);
-                    setActive(c.class_index);
-                    setQuery("");
-                  })
-                  .catch((e) => setError((e as Error).message));
-              }}>
-              Ничего не нашлось — создать «{query.trim()}»
-            </button>
-          )}
-
-          <h5>Объекты · {(data?.tracks || []).length}</h5>
-          <div className="mag-ved-objs">
-            {(data?.tracks || []).length === 0 ? (
-              <p className="mag-ed-hint">
-                Нажмите T и обведите объект — он появится дорожкой внизу.
-              </p>
-            ) : (
-              (data?.tracks || []).map((track) => {
+          {!objectsOpen && <>
+            <div className="mag-ved-objs">
+              {(data?.tracks || []).length === 0 && <p className="mag-ed-hint">Нажмите T и обведите объект — он появится дорожкой внизу.</p>}
+              {(data?.tracks || []).map((track) => {
                 const label = labelOf(track.class_index ?? -1);
                 const on = track.id === pickedTrack;
-                return (
-                  <div key={track.id} className={on ? "mag-ved-obj on" : "mag-ved-obj"}
-                    onClick={() => setPickedTrack(track.id)}>
-                    <div className="mag-ved-obj-head">
-                      <i style={{ background: label.color }} />
-                      <span className="mag-ved-obj-name">
-                        {track.label || label.name || "объект"}
-                      </span>
-                      <span className="mag-ved-obj-n">{exportCount(track)} кадров</span>
-                    </div>
-                    <label className="mag-ved-row">
-                      <span>Интерполяция</span>
-                      <input type="checkbox" checked={track.interpolate} disabled={frozen}
-                        onChange={(e) => patchTrack(track, { interpolate: e.target.checked })} />
-                    </label>
-                    <label className="mag-ved-row">
-                      <span>Шаг выгрузки</span>
-                      <input type="number" min={1} value={track.export_step} disabled={frozen}
-                        onChange={(e) =>
-                          patchTrack(track, { export_step: Math.max(1, Number(e.target.value)) })
-                        } />
-                    </label>
-                    <p className="mag-ved-note">
-                      {track.keys.length} ключей · кадры {track.start_frame}—
-                      {track.end_frame ?? "…"}
-                    </p>
-                  </div>
-                );
-              })
-            )}
-          </div>
+                return <button key={track.id} type="button" className={on ? "mag-ved-obj on" : "mag-ved-obj"}
+                  aria-pressed={on} onClick={() => setPickedTrack(track.id)}>
+                  <span className="mag-ved-obj-head"><i style={{ background: label.color }} />
+                    <span className="mag-ved-obj-name">{track.label || label.name || "Объект"}</span>
+                    <span className="mag-ved-obj-n">{exportCount(track)} кадров</span>
+                  </span>
+                  <span className="mag-ved-note">{track.keys.length} ключей · кадры {track.start_frame}—{trackEnd(track)}</span>
+                </button>;
+              })}
+            </div>
+            {currentTrack && <div className="vt-properties" aria-label="Свойства выбранного трека">
+              <label><input type="checkbox" checked={currentTrack.interpolate} disabled={frozen}
+                onChange={(e) => patchTrack(currentTrack, { interpolate: e.target.checked })} />Интерполяция</label>
+              <label>Шаг выгрузки<input type="number" min={1} value={currentTrack.export_step} disabled={frozen}
+                onChange={(e) => patchTrack(currentTrack, { export_step: Math.max(1, Number(e.target.value)) })} /></label>
+            </div>}
+         </>}
         </aside>
 
         <div className="mag-ved-stage">
@@ -1180,28 +1171,6 @@ export default function VideoAnnotator({
           </span>
         </div>
 
-        {/* Шкала ролика стоит в той же сетке, что и дорожки объектов: имя —
-            полоса — состояние. Иначе их шкалы совпадали бы лишь на глаз, и
-            «объект появляется здесь» на дорожке указывало бы не туда. */}
-        <div className="g-lane mag-ved-ruler">
-          <span className="g-lane-name">кадр</span>
-          <span className="g-lane-track">
-            <input className="mag-ved-scrub" type="range" min={0} max={lastFrame}
-              value={frame} aria-label="Кадр" {...hk("scrub")}
-              onChange={(e) => { stop(); setFrame(Number(e.target.value)); }} />
-          </span>
-          {/* Место занято всегда: появляясь по месту, метка сжимала строку. */}
-          <span
-            className={
-              data?.materialized[String(frame)]
-                ? "g-lane-state mag-ved-mark on"
-                : "g-lane-state mag-ved-mark"
-            }
-          >
-            в таске
-          </span>
-        </div>
-
         <TrackLanes
           tracks={data?.tracks || []}
           frame={frame}
@@ -1211,6 +1180,7 @@ export default function VideoAnnotator({
           editable={!frozen}
           onSelect={setPickedTrack}
           onAction={onLane}
+          onSeek={(next) => { stop(); setFrame(next); }}
         />
       </div>
 
@@ -1369,7 +1339,7 @@ function LaneMenu({
     <>
       <div className="mag-menu-veil" onClick={onClose} onContextMenu={(e) => e.preventDefault()} />
       <div className="mag-menu g-lane-menu"
-        style={{ left: action.at?.x ?? 0, top: action.at?.y ?? 0 }}>
+        style={{ left: Math.max(8, Math.min(action.at?.x ?? 0, window.innerWidth - 250)), top: Math.max(8, Math.min(action.at?.y ?? 0, window.innerHeight - 280)), maxHeight: "calc(100dvh - 16px)", overflowY: "auto" }}>
         <div className="g-lane-menu-h">кадр {action.frame}</div>
         <button type="button" disabled={frozen} onClick={run(onKey)}>
           {hasKey ? "Обновить ключ здесь" : "Поставить ключ здесь"}

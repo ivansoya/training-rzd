@@ -343,6 +343,9 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     if (!stage) return;
     const ro = new ResizeObserver(() => bump((n) => n + 1));
     ro.observe(stage);
+    // Изображение загружается позже сцены. Его рамка меняет размер, даже
+    // когда размер сцены прежний: разметку нужно пересчитать сразу.
+    if (frameRef.current) ro.observe(frameRef.current);
     return () => ro.disconnect();
   }, []);
 

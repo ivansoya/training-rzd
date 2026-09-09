@@ -1,0 +1,61 @@
+/* Focused editing: no second application sidebar and no minimap. */
+.workspace.workspace-graph { --workspace-width: 0px; }
+.workspace-graph .workspace-sidebar { display: none; }
+.workspace-graph .g-ged { left: 0; }
+.t-tabs > .mag-btn { width: auto; flex: 0 0 auto; white-space: nowrap; }
+
+/* A vertical scrollbar must not consume the tool labels' horizontal space. */
+.mag-ed .mag-ed-rail { width: 84px; min-width: 84px; padding-inline: 10px; align-items: center; overflow-x: hidden; overflow-y: auto; scrollbar-width: thin; }
+.mag-ed .mag-tool { width: 56px; max-width: 100%; }
+.mag-ved { grid-template-columns: 84px minmax(0,1fr) 308px; }
+.mag-ved .mag-ed-rail { width: auto; min-width: 0; }
+.mag-ved-stage { container-type: size; }
+.mag-ved-stage .mag-cv-frame canvas { max-height: max(1px,calc(100cqh - 32px)) !important; }
+.vt-properties { display: flex; flex-wrap: wrap; gap: 10px 18px; border-top: 1px solid var(--rule); padding-top: 12px; font-size: 12px; }
+.vt-properties label { display: flex; align-items: center; gap: 7px; color: var(--dim); }
+.vt-properties input[type=number] { width: 56px; padding: 5px 7px; background: var(--sunk); border: 1px solid var(--control-edge); border-radius: 6px; color: var(--ink); }
+.mag-ved-bottom { max-height: none; }
+.vt-timeline { max-height: min(240px,34vh); min-height: 95px; overflow-y: auto; overflow-x: hidden; padding: 0 24px 12px 108px; scrollbar-gutter: stable; background: var(--ed-chrome); }
+.vt-grid { position: relative; isolation: isolate; }
+.vt-guides { position: absolute; inset: 0; pointer-events: none; z-index: 1; }
+.vt-guides i { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--hair); }
+/* Закреплённая шапка кроет только сетку, а названия дорожек лежат в левом поле
+   прокрутки — там их ничто не перекрывало, и на прокрутке они всплывали поверх
+   шкалы. Крышка продолжает фон шапки на всю ширину поля. */
+.vt-ruler { height: 30px; position: sticky; top: 0; z-index: 6; background: var(--ed-chrome); cursor: ew-resize; touch-action: none; border-bottom: 1px solid var(--rule); user-select: none; }
+.vt-ruler::before, .vt-video::before { content: ''; position: absolute; top: 0; bottom: 0; right: 100%; width: 130px; background: var(--ed-chrome); z-index: -1; }
+.vt-ruler::before { border-bottom: 1px solid var(--rule); }
+.vt-ruler > span { position: absolute; top: 5px; transform: translateX(-50%); color: var(--dim); font: 11px/1.4 var(--mono); pointer-events: none; }
+.vt-ruler > .first { transform: none; }.vt-ruler > .last { transform: translateX(-100%); }
+.vt-video { position: sticky; top: 30px; z-index: 6; height: 22px; margin: 0 0 8px; background: var(--hair); border-radius: 4px; cursor: ew-resize; touch-action: none; }
+.vt-name { position: absolute; right: calc(100% + 12px); top: 0; width: 84px; height: 100%; padding: 0; border: 0; background: transparent; color: var(--dim); display: flex; align-items: center; gap: 6px; font: 12px/1.4 "Segoe UI",sans-serif; text-align: left; }
+.vt-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vt-name i { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
+.vt-row { position: relative; }
+.vt-row.on { background: var(--accent-soft); }
+.vt-row.on .vt-name { color: var(--ink); }
+/* У каждой дорожки свой жёлоб: полоса, в которой лежат жизнь трека, ключи и
+   ручки. Раньше дорожка была прозрачной, и таймлайн выглядел одним полотном. */
+.vt-lane { height: 56px; position: relative; touch-action: none; cursor: crosshair; }
+.vt-lane::before { content: ''; position: absolute; left: 0; right: 0; top: 12px; height: 32px; background: var(--sunk); border: 1px solid var(--hair); border-radius: 6px; pointer-events: none; }
+.vt-row.on .vt-lane::before { background-image: linear-gradient(var(--accent-soft), var(--accent-soft)); border-color: #EF6B7377; }
+.vt-life { position: absolute; top: 20px; min-width: 3px; height: 16px; border-radius: 3px; opacity: .45; pointer-events: none; }
+.vt-key { position: absolute; top: 18px; width: 20px; height: 20px; padding: 0; transform: translateX(-50%); background: none; border: 0; cursor: grab; touch-action: none; z-index: 3; }
+.vt-key::before { content: ''; display: block; margin: auto; width: 8px; height: 8px; transform: rotate(45deg); background: currentColor; border: 1px solid var(--ink); }
+.vt-key.now::before { box-shadow: 0 0 0 2px var(--card); }
+.vt-key:active { cursor: grabbing; }
+/* Ручки продления стоят слева и справа от края трека, на одной линии с
+   ключами. Отступ в 12 px оставлен намеренно: у трека из одного ключа ручка и
+   ромб не должны делить хитбокс. */
+.vt-grip { position: absolute; top: 18px; width: 15px; height: 20px; padding: 0; border: 1px solid var(--ed-edge); border-radius: 6px; background: var(--surface-raised); color: var(--dim); font: 13px/1 "Segoe UI",sans-serif; cursor: ew-resize; touch-action: none; z-index: 4; }
+.vt-grip.start { transform: translateX(calc(-100% - 12px)); }
+.vt-grip.end { transform: translateX(12px); }
+.vt-grip:hover { background: var(--accent-soft); border-color: var(--red); color: var(--ink); }
+.vt-hidden { position: absolute; top: 20px; height: 16px; border-radius: 3px; background: repeating-linear-gradient(-45deg,#C7C1C644 0 2px,transparent 2px 6px); pointer-events: none; }
+.vt-preview { position: absolute; top: 12px; bottom: 12px; width: 2px; background: var(--ink); pointer-events: none; }
+.vt-playhead { position: absolute; top: 25px; bottom: 0; width: 1px; background: var(--red); pointer-events: none; z-index: 7; }
+.vt-playhead i { display: block; position: sticky; top: 25px; margin-left: -4px; width: 9px; height: 9px; border-radius: 2px; background: var(--red); transform: rotate(45deg); }
+.vt-empty { padding: 12px 0; font-size: 12px; color: var(--dim); }
+@media(max-height:800px) { .vt-timeline { max-height: 220px; } }
+@media(max-width:900px) { .mag-ved { grid-template-columns: 84px minmax(0,1fr) 250px; }.workspace-graph .g-ged { height: calc(100dvh - 56px); } }
+@media(max-width:600px) { .mag-ved { grid-template-columns: 84px minmax(0,1fr); }.vt-timeline { padding-left: 86px; }.vt-name { width: 62px; } }
