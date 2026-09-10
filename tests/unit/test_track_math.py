@@ -10,10 +10,13 @@ from datasets_svc.video_tracks import (
     MAX_TRACK_FRAMES,
     TrackError,
     box_at,
+    drop_boundary,
+    empty_frames,
     export_frames,
     frame_to_ms,
     interpolate,
     is_hidden,
+    move_boundary,
     ms_to_frame,
     normalize_ranges,
     plan,
@@ -205,3 +208,62 @@ def test_интерполяция_округляет_до_сотых():
     a = {"x": 0, "y": 0, "w": 1, "h": 1}
     b = {"x": 1, "y": 1, "w": 1, "h": 1}
     assert interpolate(a, b, 1 / 3)["x"] == 0.33
+
+
+# --- зона невидимости держится ключами ------------------------------------ #
+def test_край_зоны_едет_за_перенесённым_ключом():
+    assert move_boundary([[10, 20]], 10, 7) == [[7, 20]]
+    assert move_boundary([[10, 20]], 20, 25) == [[10, 25]]
+
+
+def test_ключ_в_середине_зоны_её_не_двигает():
+    assert move_boundary([[10, 20]], 15, 16) == [[10, 20]]
+
+
+def test_схлопнутая_зона_исчезает():
+    """Перенесли начало на конец — невидимости в ноль кадров не бывает."""
+    assert move_boundary([[10, 20]], 10, 20) == []
+    assert move_boundary([[10, 20]], 10, 25) == []
+
+
+def test_снятый_граничный_ключ_уносит_зону():
+    assert drop_boundary([[10, 20], [30, 40]], 10) == [[30, 40]]
+    assert drop_boundary([[10, 20], [30, 40]], 40) == [[10, 20]]
+
+
+def test_снятый_ключ_внутри_зоны_её_не_трогает():
+    assert drop_boundary([[10, 20]], 15) == [[10, 20]]
+
+
+# --- фоновые кадры --------------------------------------------------------- #
+def _track(start, end, step=1, keys=None):
+    return {
+        "class_id": "c", "start_frame": start, "end_frame": end,
+        "interpolate": True, "export_step": step, "hidden_ranges": [],
+        "keys": keys or [key(start, 0), key(end, 0)],
+    }
+
+
+def test_фоновым_считается_только_свободный_кадр():
+    tracks = [_track(10, 20)]
+    assert empty_frames(tracks, [], [5, 15, 25]) == [5, 25]
+
+
+def test_шаг_выгрузки_не_делает_кадр_фоновым():
+    """Кадр между выгружаемыми в план не попадает, но объект на нём есть."""
+    tracks = [_track(10, 20, step=5)]
+    assert empty_frames(tracks, [], [11]) == []
+
+
+def test_заслонённый_участок_освобождает_кадр():
+    track = _track(10, 20)
+    track["hidden_ranges"] = [[12, 16]]
+    assert empty_frames([track], [], [11, 13, 17]) == [13]
+
+
+def test_одиночная_разметка_занимает_свой_кадр():
+    assert empty_frames([], [{"frame_no": 7}], [7, 8]) == [8]
+
+
+def test_пометки_упорядочены_и_без_повторов():
+    assert empty_frames([], [], [9, 3, 9, 1]) == [1, 3, 9]

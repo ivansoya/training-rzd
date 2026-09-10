@@ -13,6 +13,7 @@ import {
 } from "../../auth/api";
 import type { FriendsInfo, InvitationItem } from "../../auth/api";
 import { useAuth } from "./AuthGate";
+import Sep from "../Sep";
 
 export function initials(name: string): string {
   return (
@@ -213,9 +214,9 @@ export default function AccountPage() {
                 <div key={inv.id} className="mag-invite-line">
                   <div>
                     <b>{inv.project.name}</b>{" "}
-                    <span className="mag-code">{inv.project.code}</span> · роль «
+                    <span className="mag-code">{inv.project.code}</span><Sep /> роль «
                     {inv.role_label}»
-                    {inv.invited_by ? ` · пригласил(а) ${inv.invited_by}` : ""}
+                    {inv.invited_by ? ` — пригласил(а) ${inv.invited_by}` : ""}
                   </div>
                   <div className="mag-invite-actions">
                     <button
@@ -263,7 +264,7 @@ export default function AccountPage() {
                 <span className="mag-ava">{initials(f.user.display_name)}</span>
                 <span className="mag-member-name">
                   <b>{f.user.display_name}</b>
-                  <span>{f.user.login} · хочет добавить вас в друзья</span>
+                  <span>{f.user.login} <Sep /> хочет добавить вас в друзья</span>
                 </span>
                 <span className="mag-invite-actions">
                   <button
@@ -291,7 +292,7 @@ export default function AccountPage() {
                 <span className="mag-member-name">
                   <b>{f.user.display_name}</b>
                   <span>
-                    {f.user.login} · {f.user.online ? "в сети" : "не в сети"}
+                    {f.user.login} <Sep /> {f.user.online ? "в сети" : "не в сети"}
                   </span>
                 </span>
                 <button
@@ -309,7 +310,7 @@ export default function AccountPage() {
                 <span className="mag-ava">{initials(f.user.display_name)}</span>
                 <span className="mag-member-name">
                   <b>{f.user.display_name}</b>
-                  <span>{f.user.login} · заявка отправлена</span>
+                  <span>{f.user.login} <Sep /> заявка отправлена</span>
                 </span>
                 <button
                   className="mag-ghost mag-ghost-sm"

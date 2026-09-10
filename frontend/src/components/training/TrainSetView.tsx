@@ -189,7 +189,7 @@ export default function TrainSetView() {
               </div>
             )}
             <div className="mag-stat">
-              <b>{set.graph ? `${set.graph.name} · в${set.graph.version}` : "нет"}</b>
+              <b>{set.graph ? `${set.graph.name} — в${set.graph.version}` : "нет"}</b>
               <span>граф аугментаций</span>
             </div>
           </div>

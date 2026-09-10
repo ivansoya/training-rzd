@@ -7,6 +7,7 @@ import { initials } from "../auth/AccountPage";
 import { useProject } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
 import { useEscape } from "./useEscape";
+import Sep from "../Sep";
 
 export const TASK_TONE: Record<string, string> = {
   queued: "queued",
@@ -57,7 +58,7 @@ export default function ProjectTasks() {
       {error && <div className="mag-error">{error}</div>}
 
       <div className="mag-card-h">
-        <h4 style={{ margin: 0 }}>Таски проекта · {tasks.length}</h4>
+        <h4 style={{ margin: 0 }}>Таски проекта <Sep /> {tasks.length}</h4>
         {canCreate && (
           <button className="mag-btn mag-btn-inline" type="button" onClick={() => setShowCreate(true)}>
             Новая таска
@@ -89,7 +90,7 @@ export default function ProjectTasks() {
               <p className="mag-tcard-sub">
                 {t.counts.total}{" "}
                 {plural(t.counts.total, "кадр", "кадра", "кадров")}
-                {t.target_dataset ? ` · в датасет «${t.target_dataset.name}»` : ""}
+                {t.target_dataset ? ` — в датасет «${t.target_dataset.name}»` : ""}
               </p>
 
               <Progress counts={t.counts} />
@@ -212,7 +213,7 @@ function CreateTaskModal({
             {isAdmin &&
               detail.members.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.display_name} · {m.role_label}
+                  {m.display_name} <Sep /> {m.role_label}
                 </option>
               ))}
           </select>

@@ -12,6 +12,7 @@ import type { LabelClass, ProjectDetail } from "../../auth/api";
 import * as aug from "../../api/aug";
 import * as sets from "../../api/trainsets";
 import type { AnnKind, Preview, SplitMode } from "../../api/trainsets";
+import Sep from "../Sep";
 
 const STEPS = ["Данные", "Деление", "Аугментации", "Сборка"];
 
@@ -87,7 +88,7 @@ export default function TrainSetWizard() {
     getProject(code).then((got) => {
       setDetail(got);
       setDatasets(got.datasets.map((d) => d.id));
-      setName(`${got.project.name} · набор`);
+      setName(`${got.project.name} — набор`);
     });
     getClasses(code).then((got) => {
       setClasses(got.classes);
@@ -450,7 +451,7 @@ export default function TrainSetWizard() {
                         ))}
                         {preview.background > 0 && (
                           <tr className="t-bg-row">
-                            <td>фон · кадры без разметки</td>
+                            <td>фон <Sep /> кадры без разметки</td>
                             <td>{ru(preview.background_split?.train ?? 0)}</td>
                             <td>{ru(preview.background_split?.val ?? 0)}</td>
                             <td className="t-dash">—</td>
@@ -480,7 +481,7 @@ export default function TrainSetWizard() {
                   .filter((g) => g.version_id)
                   .map((g) => (
                     <option key={g.id} value={g.version_id as string}>
-                      {g.name} · версия {g.version} · ×{g.stats?.multiplier ?? 1}
+                      {g.name} <Sep /> версия {g.version} <Sep /> ×{g.stats?.multiplier ?? 1}
                     </option>
                   ))}
               </select>
@@ -503,7 +504,7 @@ export default function TrainSetWizard() {
                   .filter((g) => g.version_id)
                   .map((g) => (
                     <option key={g.id} value={g.version_id as string}>
-                      {g.name} · версия {g.version}
+                      {g.name} <Sep /> версия {g.version}
                     </option>
                   ))}
               </select>
@@ -545,7 +546,7 @@ export default function TrainSetWizard() {
               {computing && (
                 <span className="t-computing">
                   {" "}
-                  · считаю
+<Sep /> считаю
                   {mode === "smart" ? " умное деление" : ""}
                   {preview?.split_ms
                     ? ` (≈ ${Math.max(1, Math.round(preview.split_ms / 1000))} с)`

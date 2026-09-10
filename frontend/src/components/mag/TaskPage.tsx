@@ -29,6 +29,7 @@ import { plural } from "./ProjectsPage";
 import { SourceCard, VideoCard, buildSources } from "./TaskSources";
 import VideoAnnotator from "./VideoAnnotator";
 import VideoCutModal from "./VideoCutModal";
+import Sep from "../Sep";
 
 const NEXT: Record<TaskStatus, { to: TaskStatus; label: string; hint: string }[]> = {
   queued: [{ to: "in_progress", label: "Взять в работу", hint: "" }],
@@ -192,17 +193,34 @@ export default function TaskPage() {
     }
   }
 
-  /** Загрузить ролик. Режим не спрашиваем: вкладка уже ответила. */
+  /** Загрузить ролики. Режим не спрашиваем: вкладка уже ответила.
+   *
+   *  По одному запросу на файл и строго по очереди: ролик на сотни мегабайт
+   *  и так занимает канал целиком, а параллельная отправка нескольких только
+   *  растянула бы каждый. Полоса показывает общий ход по числу файлов.
+   */
   async function onVideo(files: FileList | null, mode: "cut" | "annotate") {
-    const file = files?.[0];
-    if (!file || !taskId) return;
+    const list = Array.from(files || []);
+    if (!list.length || !taskId) return;
     setUploadPct(0);
     setError(null);
     try {
-      await uploadTaskVideo(taskId, file, setUploadPct, mode);
+      for (const [i, file] of list.entries()) {
+        await uploadTaskVideo(
+          taskId, file,
+          (pct) => setUploadPct((i + pct) / list.length),
+          mode
+        );
+      }
+      if (list.length > 1) {
+        setNotice(`Загружено ${list.length} ${plural(list.length, "ролик", "ролика", "роликов")}.`);
+      }
       await load();
     } catch (e) {
+      // Уже уехавшие файлы остаются в таске: перезагружаем, чтобы человек
+      // видел, что дошло, а что нет.
       setError((e as Error).message);
+      await load().catch(() => {});
     } finally {
       setUploadPct(null);
     }
@@ -252,15 +270,29 @@ export default function TaskPage() {
   }
 
   /** Закрытие разметки ролика: фоновая задача, ждём её и обновляем таску. */
+  // Сумма по незакрытым роликам: столько кадров появится в таске, когда
+  // разметку закроют, и столько же уйдёт в датасет.
+  const pending = task ? task.pending_videos.reduce(
+    (acc, v) => ({
+      frames: acc.frames + v.frames,
+      boxes: acc.boxes + v.boxes,
+      empty: acc.empty + (v.empty || 0),
+    }),
+    { frames: 0, boxes: 0, empty: 0 }
+  ) : { frames: 0, boxes: 0, empty: 0 };
+
   async function closeVideo(video: TaskVideoItem) {
     if (!taskId) return;
     await guard(async () => {
       const { job_id } = await closeVideoAnnotation(taskId, video.id);
       setNotice(`Достаю кадры из «${video.file_name}»…`);
-      const made = await pollJob<{ created: number; boxes: number }>(job_id, () => {});
+      const made = await pollJob<{ created: number; boxes: number; empty: number }>(job_id, () => {});
       setNotice(
         `Разметка «${video.file_name}» закрыта: ${made.created} ` +
-        `${plural(made.created, "кадр", "кадра", "кадров")} в таске.`
+        `${plural(made.created, "кадр", "кадра", "кадров")} в таске` +
+        (made.empty
+          ? `, из них ${made.empty} ${plural(made.empty, "фоновый", "фоновых", "фоновых")}.`
+          : ".")
       );
       await load();
     });
@@ -308,7 +340,7 @@ export default function TaskPage() {
           </div>
           <p>
             {task.assignee ? task.assignee.display_name : "без исполнителя"}
-            {task.target_dataset ? ` · в датасет «${task.target_dataset.name}»` : ""}
+            {task.target_dataset ? ` — в датасет «${task.target_dataset.name}»` : ""}
           </p>
         </div>
 
@@ -319,6 +351,20 @@ export default function TaskPage() {
           <div><b>{task.counts.new}</b><span>не тронуто</span></div>
           {task.counts.accepted > 0 && (
             <div><b>{task.counts.accepted}</b><span>в проекте</span></div>
+          )}
+          {/* Работа по незакрытому ролику кадрами ещё не стала, и во всех
+              счётчиках выше её нет. Без этого числа шапка говорит «размечать
+              не начинали» там, где размечен целый ролик. */}
+          {pending.frames > 0 && (
+            <div className="mag-task-pending" title={
+              `В роликах размечено ${pending.boxes} ` +
+              plural(pending.boxes, "объект", "объекта", "объектов") +
+              (pending.empty ? ` и ${pending.empty} ` +
+                plural(pending.empty, "кадр отмечен фоновым", "кадра отмечено фоновыми", "кадров отмечено фоновыми") : "") +
+              ". Кадрами таски они станут, когда закроете разметку."
+            }>
+              <b>{pending.frames}</b><span>ждут закрытия</span>
+            </div>
           )}
         </div>
 
@@ -378,7 +424,7 @@ export default function TaskPage() {
               <div className="mag-head-actions">
                 <input ref={fileRef} type="file" accept="image/*" multiple hidden
                   onChange={(e) => onFiles(e.target.files)} />
-                <input ref={cutRef} type="file" accept="video/*" hidden
+                <input ref={cutRef} type="file" accept="video/*" multiple hidden
                   onChange={(e) => {
                     void onVideo(e.target.files, "cut");
                     e.target.value = "";
@@ -406,8 +452,8 @@ export default function TaskPage() {
                 <SourceCard key={block.key} taskId={task.id} block={block}
                   editable={editable}
                   onAnnotate={() => openSource(block.key)}
-                  onCut={block.video ? () => setCutting({ video: block.video! }) : undefined}
-                  onDelete={block.video ? () => removeVideo(block.video!) : undefined} />
+                  onCut={block.videos ? (video) => setCutting({ video }) : undefined}
+                  onDelete={block.videos ? (video) => removeVideo(video) : undefined} />
               ))}
             </div>
           )}
@@ -418,10 +464,10 @@ export default function TaskPage() {
       {tab === "videos" && (
         <div className="mag-card">
           <div className="mag-card-h">
-            <h4>Ролики · {annotateVideos.length}</h4>
+            <h4>Ролики <Sep /> {annotateVideos.length}</h4>
             {editable && (
               <div className="mag-head-actions">
-                <input ref={annotateRef} type="file" accept="video/*" hidden
+                <input ref={annotateRef} type="file" accept="video/*" multiple hidden
                   onChange={(e) => {
                     void onVideo(e.target.files, "annotate");
                     e.target.value = "";
@@ -448,6 +494,7 @@ export default function TaskPage() {
                   taskId={task.id}
                   video={v}
                   pending={task.pending_videos.find((p) => p.video_id === v.id)}
+                  classes={task.classes}
                   editable={editable}
                   busy={busy}
                   onOpen={() => setAnnotating(v)}
@@ -487,6 +534,8 @@ export default function TaskPage() {
               {plural(task.pending_videos.length, "ролика", "роликов", "роликов")} разметка
               ещё не закрыта, и их кадров здесь нет:{" "}
               {task.pending_videos.map((v) => `«${v.file_name}» (${v.frames})`).join(", ")}.{" "}
+              Всего {pending.frames} {plural(pending.frames, "кадр", "кадра", "кадров")}
+              {pending.empty > 0 && `, из них ${pending.empty} фоновых`}.{" "}
               <button className="mag-link" type="button" onClick={() => setTab("videos")}>
                 Закрыть разметку
               </button>
@@ -522,7 +571,7 @@ export default function TaskPage() {
 
           <div className="mag-card">
             <div className="mag-card-h">
-              <h4>Размеченные кадры · {annotated.length}</h4>
+              <h4>Размеченные кадры <Sep /> {annotated.length}</h4>
               {editable && annotated.length > 0 && (
                 <button className="mag-ghost mag-ghost-inline" type="button"
                   onClick={() => setEditing({ list: annotated, index: 0 })}>

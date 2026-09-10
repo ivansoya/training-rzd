@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   createClass,
   createTrack,
@@ -6,10 +6,13 @@ import {
   deleteTrackKey,
   getClasses,
   getVideoAnnotations,
+  hideTrackSpan,
+  markEmptyFrame,
   moveTrackKey,
   previewMaterialize,
   putTrackKey,
   saveFrameBoxes,
+  unmarkEmptyFrame,
   updateTrack,
   videoFrameUrl,
 } from "../../auth/api";
@@ -38,12 +41,13 @@ import {
   exportCount,
   fmtFrameTime,
   frameToMs,
+  hiddenRanges,
   keyAt,
   msToFrame,
-  normalizeRanges,
   stateAt,
   trackEnd,
 } from "./trackMath";
+import Sep from "../Sep";
 
 /** Управление редактором: клавиша и что она делает.
  *
@@ -68,6 +72,7 @@ const HELP = {
   quality: ["", "Качество картинки: исходное или помельче"],
   scrub: ["", "Перемотка по ролику"],
   key: ["K", "Поставить ключ трека на этом кадре"],
+  empty: ["E", "Кадр фоновый: объектов на нём нет"],
   occlude: ["Alt + протяжка", "Заслонить участок на дорожке объекта"],
   lane: ["", "Ромб: перенести ключ. Ручки: продлить трек с новым ключом. Двойной клик: ключ. Alt + протяжка: заслонить"],
   cls: ["", "Класс для новых объектов"],
@@ -174,7 +179,7 @@ export default function VideoAnnotator({
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [plan, setPlan] = useState<{ frames: number; boxes: number } | null>(null);
+  const [plan, setPlan] = useState<{ frames: number; boxes: number; empty: number } | null>(null);
   const [menu, setMenu] = useState<{ i: number | null; x: number; y: number } | null>(null);
   const [laneMenu, setLaneMenu] = useState<LaneAction | null>(null);
   const [scale, setScale] = useState(1);
@@ -241,7 +246,7 @@ export default function VideoAnnotator({
     if (!data) return;
     const h = window.setTimeout(() => {
       previewMaterialize(taskId, video.id)
-        .then((p) => setPlan({ frames: p.frames, boxes: p.boxes }))
+        .then((p) => setPlan({ frames: p.frames, boxes: p.boxes, empty: p.empty }))
         .catch(() => setPlan(null));
     }, 500);
     return () => window.clearTimeout(h);
@@ -469,6 +474,35 @@ export default function VideoAnnotator({
     [guard, load]
   );
 
+  // Пометка «фоновый» действует, только пока кадр свободен. Занятость
+  // считаем так же, как сервер при выгрузке: по присутствию объекта, а не по
+  // попаданию в план — шаг выгрузки выбрасывает из плана занятые кадры.
+  const frameBusy = useCallback(
+    (at: number) =>
+      (data?.singles || []).some((b) => b.frame_no === at) ||
+      (data?.tracks || []).some((t) => {
+        const state = stateAt(t, at);
+        return state !== null && !state.hidden;
+      }),
+    [data]
+  );
+  const marks = useMemo(
+    () => (data?.empty_frames || []).map((at) => ({ frame: at, on: !frameBusy(at) })),
+    [data, frameBusy]
+  );
+  const markedHere = (data?.empty_frames || []).includes(frame);
+  const busyHere = frameBusy(frame);
+
+  const toggleEmpty = useCallback(() => {
+    if (frozen || !video) return;
+    if (!markedHere && busyHere) return;
+    guard(async () => {
+      if (markedHere) await unmarkEmptyFrame(taskId, video.id, frame);
+      else await markEmptyFrame(taskId, video.id, frame);
+      await load();
+    });
+  }, [frozen, video, markedHere, busyHere, guard, load, taskId, frame]);
+
   // --- действия с дорожек -------------------------------------------------- #
   const onLane = useCallback(
     (action: LaneAction) => {
@@ -500,11 +534,19 @@ export default function VideoAnnotator({
           });
           break;
         case "hide":
-          patchTrack(track, {
-            hidden_ranges: normalizeRanges([
-              ...(track.hidden_ranges || []),
-              [action.from!, action.frame],
-            ]),
+          // Одной ручкой: ключи на краях, снос ключей внутри, границы трека и
+          // сам отрезок — в одной транзакции на сервере.
+          guard(async () => {
+            await hideTrackSpan(track.id, action.from!, action.frame);
+            await load();
+          });
+          break;
+        case "drop":
+          if (!window.confirm(`Удалить объект «${trackName(track, labelOf)}» целиком?`)) return;
+          guard(async () => {
+            await deleteTrack(track.id);
+            setPickedTrack(null);
+            await load();
           });
           break;
         case "menu":
@@ -512,7 +554,7 @@ export default function VideoAnnotator({
           break;
       }
     },
-    [trackById, guard, load, patchTrack, stop, frozen]
+    [trackById, guard, load, patchTrack, stop, frozen, labelOf]
   );
 
   // --- навигация ----------------------------------------------------------- #
@@ -657,6 +699,7 @@ export default function VideoAnnotator({
         case "KeyP": if (!frozen) setTool("polygon"); break;
         case "KeyT": if (!frozen) setTool("track"); break;
         case "KeyA": if (!frozen && auto.state === "ready") setTool("auto"); break;
+        case "KeyE": toggleEmpty(); break;
         case "KeyK":
           if (!frozen && currentTrack) {
             guard(async () => { await putTrackKey(currentTrack.id, frame, {}); await load(); });
@@ -785,7 +828,7 @@ export default function VideoAnnotator({
         <b>{taskName}</b>
         <span className="mag-ed-cnt">
           кадр {String(frame).padStart(String(lastFrame).length, " ")} / {lastFrame}
-          {" · "}
+          <Sep />
           {fmtFrameTime(timeMs)}
         </span>
         {active !== null && (
@@ -821,7 +864,8 @@ export default function VideoAnnotator({
         )}
         {plan && (
           <span className="mag-ved-plan">
-            в таску: <b>{plan.frames}</b> кадров · {plan.boxes} объектов
+            в таску: <b>{plan.frames}</b> кадров <Sep /> {plan.boxes} объектов
+            {plan.empty > 0 && <><Sep /> <b>{plan.empty}</b> фоновых</>}
           </span>
         )}
         <span className={busy ? "mag-ed-saving" : "mag-ed-saved"}>
@@ -940,7 +984,7 @@ export default function VideoAnnotator({
           )}
 
           <div className="workspace-object-tabs" aria-label="Тип объектов">
-            <button type="button" className={!objectsOpen ? "on" : ""} aria-pressed={!objectsOpen} onClick={() => setObjectsOpen(false)}>Треки · {(data?.tracks || []).length}</button>
+            <button type="button" className={!objectsOpen ? "on" : ""} aria-pressed={!objectsOpen} onClick={() => setObjectsOpen(false)}>Треки <Sep /> {(data?.tracks || []).length}</button>
             <button type="button" className={objectsOpen ? "on" : ""} aria-pressed={objectsOpen} onClick={() => setObjectsOpen(true)}>Одиночные</button>
           </div>
           {objectsOpen && (
@@ -998,7 +1042,7 @@ export default function VideoAnnotator({
                     <span className="mag-ved-obj-name">{track.label || label.name || "Объект"}</span>
                     <span className="mag-ved-obj-n">{exportCount(track)} кадров</span>
                   </span>
-                  <span className="mag-ved-note">{track.keys.length} ключей · кадры {track.start_frame}—{trackEnd(track)}</span>
+                  <span className="mag-ved-note">{track.keys.length} ключей <Sep /> кадры {track.start_frame}—{trackEnd(track)}</span>
                 </button>;
               })}
             </div>
@@ -1007,6 +1051,10 @@ export default function VideoAnnotator({
                 onChange={(e) => patchTrack(currentTrack, { interpolate: e.target.checked })} />Интерполяция</label>
               <label>Шаг выгрузки<input type="number" min={1} value={currentTrack.export_step} disabled={frozen}
                 onChange={(e) => patchTrack(currentTrack, { export_step: Math.max(1, Number(e.target.value)) })} /></label>
+              <button type="button" className="vt-drop-track" disabled={frozen}
+                onClick={() => onLane({ kind: "drop", trackId: currentTrack.id, frame })}>
+                Удалить объект
+              </button>
             </div>}
          </>}
         </aside>
@@ -1160,7 +1208,7 @@ export default function VideoAnnotator({
             {/* Номер добит до ширины последнего кадра. Иначе «0» → «250»
                 раздвигает строку, и всё правее дёргается на каждом переходе
                 через десяток. Добивка — цифровой пробел: он ровно в цифру. */}
-            {fmtFrameTime(timeMs)} ·{" "}
+            {fmtFrameTime(timeMs)} <Sep />{" "}
             {String(frame).padStart(String(lastFrame).length, " ")}
             {/* Точка нарисована всегда и лишь гаснет: появляйся она по месту,
                 строка времени раздвигалась бы и дёргала всё правее себя. */}
@@ -1169,6 +1217,30 @@ export default function VideoAnnotator({
               aria-hidden={!shown.pending}
             />
           </span>
+          {/* Приговор кадру, а не настройка вида: отделён от перемотки и
+              стоит рядом с номером кадра, к которому относится. */}
+          <button
+            className={`mag-ed-btn nul${markedHere ? " on" : ""}${markedHere && busyHere ? " idle" : ""}`}
+            type="button"
+            /* Гасим только постановку. Снять пометку с занятого кадра нужно
+               уметь всегда — иначе она осталась бы там навсегда. */
+            disabled={frozen || (!markedHere && busyHere)}
+            aria-pressed={markedHere && !busyHere}
+            aria-label={markedHere ? "Снять пометку «фоновый кадр»" : "Пометить кадр фоновым"}
+            title={busyHere
+              ? (markedHere
+                ? "Пометка не действует: на этом кадре есть объект. Нажмите, чтобы снять"
+                : "На этом кадре есть объект — фоновым он быть не может")
+              : (markedHere
+                ? "Кадр отмечен фоновым: объектов на нём нет. Нажмите, чтобы снять (E)"
+                : "Отметить кадр фоновым: объектов на нём нет (E)")}
+            onClick={toggleEmpty}
+            {...hk("empty")}
+          >
+            {/* Знак пустого множества: строка транспорта вся из символов, и
+                слово «Пусто» в ней читалось как чужое, ничего не объясняя. */}
+            <span aria-hidden="true">∅</span>
+          </button>
         </div>
 
         <TrackLanes
@@ -1181,6 +1253,7 @@ export default function VideoAnnotator({
           onSelect={setPickedTrack}
           onAction={onLane}
           onSeek={(next) => { stop(); setFrame(next); }}
+          marks={marks}
         />
       </div>
 
@@ -1265,27 +1338,18 @@ export default function VideoAnnotator({
             await deleteTrackKey(laneMenu.trackId, laneMenu.frame);
             await load();
           })}
-          onEnd={() => {
-            const track = trackById(laneMenu.trackId);
-            if (track) patchTrack(track, { end_frame: laneMenu.frame });
-          }}
+          onHide={(to) => guard(async () => {
+            await hideTrackSpan(laneMenu.trackId, laneMenu.frame, to);
+            await load();
+          })}
           onShow={() => {
             const track = trackById(laneMenu.trackId);
             if (!track) return;
+            // Снимаем ровно ту зону, которую держит этот ключ.
             patchTrack(track, {
               hidden_ranges: (track.hidden_ranges || []).filter(
-                ([from, to]) => !(from <= laneMenu.frame && laneMenu.frame < to)
+                ([from]) => from !== laneMenu.frame
               ),
-            });
-          }}
-          onDelete={() => {
-            const track = trackById(laneMenu.trackId);
-            if (!track) return;
-            if (!window.confirm(`Удалить объект «${trackName(track, labelOf)}» целиком?`)) return;
-            guard(async () => {
-              await deleteTrack(track.id);
-              setPickedTrack(null);
-              await load();
             });
           }}
         />
@@ -1317,8 +1381,16 @@ function trackName(track: VideoTrack, labelOf: (ci: number) => { name: string })
 
 /** Меню на дорожке: то же, что делают жестами. Жест, о котором нельзя
  *  догадаться, для нового разметчика не существует. */
+/** Меню правой кнопки. Их два, и разница в том, куда попали.
+ *
+ * По дорожке мимо ромба — только «поставить ключ»: правая кнопка на пустом
+ * месте не должна предлагать ничего разрушительного. По ромбу — то, что
+ * относится к самому ключу: зона невидимости от него до следующего ключа и
+ * снятие ключа. Удаление объекта живёт корзиной у дорожки и кнопкой в
+ * свойствах — рядом с «поставить ключ» ему не место.
+ */
 function LaneMenu({
-  action, track, frozen, onClose, onKey, onDropKey, onEnd, onShow, onDelete,
+  action, track, frozen, onClose, onKey, onDropKey, onHide, onShow,
 }: {
   action: LaneAction;
   track: VideoTrack | null;
@@ -1326,39 +1398,62 @@ function LaneMenu({
   onClose: () => void;
   onKey: () => void;
   onDropKey: () => void;
-  onEnd: () => void;
+  onHide: (to: number) => void;
   onShow: () => void;
-  onDelete: () => void;
 }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [at, setAt] = useState({ left: action.at?.x ?? 0, top: action.at?.y ?? 0 });
+  // Меню открывается в точке курсора и разворачивается вверх, если снизу не
+  // помещается. Считаем по настоящему размеру: жёсткая догадка о высоте меню
+  // уводила его на кадр — таймлайн стоит у нижнего края экрана.
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const x = action.at?.x ?? 0, y = action.at?.y ?? 0;
+    setAt({
+      left: Math.max(8, Math.min(x, window.innerWidth - width - 8)),
+      top: y + height + 8 <= window.innerHeight ? y : Math.max(8, y - height),
+    });
+  }, [action]);
+
   if (!track) return null;
+  const onDiamond = action.onKey === true;
   const hasKey = keyAt(track, action.frame) !== null;
-  const state = stateAt(track, action.frame);
+  const next = track.keys
+    .map((k) => k.frame_no)
+    .sort((a, b) => a - b)
+    .find((f) => f > action.frame);
+  const zone = hiddenRanges(track).find(([from]) => from === action.frame);
   const run = (fn: () => void) => () => { fn(); onClose(); };
 
   return (
     <>
       <div className="mag-menu-veil" onClick={onClose} onContextMenu={(e) => e.preventDefault()} />
-      <div className="mag-menu g-lane-menu"
-        style={{ left: Math.max(8, Math.min(action.at?.x ?? 0, window.innerWidth - 250)), top: Math.max(8, Math.min(action.at?.y ?? 0, window.innerHeight - 280)), maxHeight: "calc(100dvh - 16px)", overflowY: "auto" }}>
+      <div className="mag-menu g-lane-menu" ref={box} role="menu"
+        style={{ left: at.left, top: at.top, maxHeight: "calc(100dvh - 16px)", overflowY: "auto" }}>
         <div className="g-lane-menu-h">кадр {action.frame}</div>
-        <button type="button" disabled={frozen} onClick={run(onKey)}>
-          {hasKey ? "Обновить ключ здесь" : "Поставить ключ здесь"}
-        </button>
-        {hasKey && track.keys.length > 1 && (
-          <button type="button" disabled={frozen} onClick={run(onDropKey)}>Снять ключ</button>
-        )}
-        {state?.hidden && (
-          <button type="button" disabled={frozen} onClick={run(onShow)}>
-            Снять заслонение
+        {!onDiamond && (
+          <button type="button" disabled={frozen} onClick={run(onKey)}>
+            {hasKey ? "Обновить ключ" : "Поставить ключ"}
           </button>
         )}
-        <button type="button" disabled={frozen} onClick={run(onEnd)}>
-          Объект исчезает здесь
-        </button>
-        <hr />
-        <button type="button" className="del" disabled={frozen} onClick={run(onDelete)}>
-          Удалить объект
-        </button>
+        {onDiamond && (zone ? (
+          <button type="button" disabled={frozen} onClick={run(onShow)}>
+            Снова видно
+          </button>
+        ) : (
+          <button type="button" disabled={frozen || next === undefined}
+            title={next === undefined
+              ? "Следующего ключа нет — здесь трек и так кончается"
+              : `Объекта не видно до кадра ${next}`}
+            onClick={run(() => onHide(next as number))}>
+            Отсюда не видно
+          </button>
+        ))}
+        {onDiamond && track.keys.length > 1 && (
+          <button type="button" disabled={frozen} onClick={run(onDropKey)}>Снять ключ</button>
+        )}
       </div>
     </>
   );

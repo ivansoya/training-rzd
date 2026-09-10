@@ -76,9 +76,9 @@ export default function ProjectShell() {
       <div className="mag-pass-strip">
         <div className="mag-pass-id">
           <p>
-            {project.description ? `${project.description} · ` : ""}
+            {project.description ? `${project.description} — ` : ""}
             создан {new Date(project.created_at).toLocaleDateString("ru-RU")}
-            {project.created_by ? ` · ${project.created_by}` : ""}
+            {project.created_by ? ` — ${project.created_by}` : ""}
           </p>
         </div>
         <div className="mag-pass-nums">

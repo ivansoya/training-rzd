@@ -220,7 +220,7 @@ function Tile({
       className="mag-tile"
       type="button"
       onClick={onOpen}
-      title={`${item.title} · ${item.objects} ${plural(item.objects, "объект", "объекта", "объектов")}${item.note ? ` · ${item.note}` : ""}`}
+      title={`${item.title} — ${item.objects} ${plural(item.objects, "объект", "объекта", "объектов")}${item.note ? ` — ${item.note}` : ""}`}
     >
       <img src={item.thumb} alt={item.title} loading="lazy" decoding="async" />
       {showBoxes && <ShapeMini boxes={item.boxes} width={w} height={h} />}

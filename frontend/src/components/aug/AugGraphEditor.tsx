@@ -412,7 +412,7 @@ function Editor() {
           )}
           {readOnly && (
             <span className="pill wait">
-              {wanted ? "старая версия · только чтение" : "чужой граф"}
+              {wanted ? "старая версия — только чтение" : "чужой граф"}
             </span>
           )}
           <div className="sp">
@@ -428,7 +428,7 @@ function Editor() {
               {versions.map((v) => (
                 <option key={v.id} value={v.id}>
                   версия {v.version}
-                  {v.note ? ` · ${v.note}` : ""}
+                  {v.note ? ` — ${v.note}` : ""}
                 </option>
               ))}
             </select>

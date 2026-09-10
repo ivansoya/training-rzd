@@ -6,6 +6,7 @@ import * as runsApi from "../../api/runs";
 import type { EpochRow, Run } from "../../api/runs";
 import { useLive } from "../../live/LiveProvider";
 import { ClassMetrics, ConfusionMatrix, CurveChart, LossChart, MetricChart } from "./Charts";
+import Sep from "../Sep";
 
 const ru = (n: number) => Math.round(n).toLocaleString("ru-RU");
 
@@ -140,15 +141,15 @@ export default function TrainRunPage() {
           <span className={`t-pill ${look}`}>
             <i />
             {label}
-            {busy && ` · эпоха ${run.current_epoch} из ${run.epochs}`}
+            {busy && ` — эпоха ${run.current_epoch} из ${run.epochs}`}
           </span>
         </div>
 
         <div className="t-run-sub">
-          {run.base_model} · набор <b>{run.set?.name ?? "удалён"}</b> ·{" "}
+          {run.base_model} <Sep /> набор <b>{run.set?.name ?? "удалён"}</b><Sep />{" "}
           {run.device === "cpu" ? "процессор" : `карта ${run.device}`}
-          {run.author ? ` · запустил ${run.author}` : ""}
-          {eta && <> · осталось примерно <b>{eta}</b></>}
+          {run.author ? ` — запустил ${run.author}` : ""}
+          {eta && <><Sep /> осталось примерно <b>{eta}</b></>}
         </div>
 
         {run.status === "waiting_gpu" && run.queue_reason && (

@@ -1061,10 +1061,20 @@ def task_images(task_id):
         q = select(Image).where(Image.task_id == task.id)
         if status:
             q = q.where(Image.task_status == status)
-        # «files» — загруженные файлами, иначе идентификатор ролика.
+        # «files» — загруженные файлами, «videos» — все нарезаемые ролики
+        # разом, иначе идентификатор одного ролика.
         source = request.args.get("source")
         if source == "files":
             q = q.where(Image.source_video_id.is_(None))
+        elif source == "videos":
+            # Именно нарезаемые: кадры размечаемого ролика приходят в таску
+            # уже размеченными и своим источником во вкладке «Кадры» не
+            # значатся — у них своя вкладка и свой редактор.
+            q = q.where(Image.source_video_id.in_(
+                select(TaskVideo.id).where(
+                    TaskVideo.task_id == task.id, TaskVideo.mode == "cut"
+                )
+            ))
         elif source:
             sid = _uuid_or_none(source)
             q = q.where(Image.source_video_id == sid)

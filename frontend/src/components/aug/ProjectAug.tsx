@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import * as api from "../../api/aug";
+import Sep from "../Sep";
 
 export default function ProjectAug() {
   const { code } = useParams<{ code: string }>();
@@ -98,7 +99,7 @@ export default function ProjectAug() {
                   <div className="name">{g.name}</div>
                   <div className="meta">
                     версия {g.version}
-                    {g.stats ? ` · ×${g.stats.multiplier}` : ""} ·{" "}
+                    {g.stats ? ` — ×${g.stats.multiplier}` : ""} <Sep />{" "}
                     {g.stats?.nodes ?? 0} узлов
                   </div>
                 </div>

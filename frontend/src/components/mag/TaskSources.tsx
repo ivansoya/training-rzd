@@ -1,12 +1,18 @@
+import { useState } from "react";
 import { plural } from "./ProjectsPage";
-import { fmtBytes, fmtTime } from "./VideoCutModal";
+import { fmtBytes, fmtStep, fmtTime, framesIn } from "./VideoCutModal";
 import type {
+  PendingObject,
   PendingVideo,
   TaskDetail,
   TaskVideoItem,
   VideoPrepare,
 } from "../../auth/api";
+
+/** Классы таски: нужны карточкам, чтобы назвать объект по имени и цвету. */
+type TaskClass = TaskDetail["classes"][number];
 import VideoStrip from "./VideoStrip";
+import Sep from "../Sep";
 
 /** Блоки вкладки «Кадры» и карточки вкладки «Видео».
  *
@@ -84,8 +90,15 @@ export interface SourceCounts {
 export interface SourceBlock {
   key: string;
   title: string;
+  /** Число рядом с заголовком. Отдельным полем, а не внутри строки: между
+   *  ними стоит разделитель, нарисованный CSS. */
+  count?: number;
   kind: "files" | "cut";
-  video?: TaskVideoItem;
+  /** Все нарезаемые ролики таски — блок у них общий. Резать каждый приходится
+   *  отдельно (у ролика свой план), а размечают нарезанное со всех разом:
+   *  кадр от кадра ничем не отличается, и делить их по происхождению значило
+   *  бы гонять разметчика по вкладкам. */
+  videos?: TaskVideoItem[];
   counts: SourceCounts;
   total: number;
   /** Когда источник появился. У ролика — когда его загрузили, у файлов —
@@ -121,22 +134,31 @@ export function buildSources(task: TaskDetail): SourceBlock[] {
     });
   }
 
-  for (const video of task.videos) {
-    if (video.mode === "annotate") continue;
-    const counts = (task.by_source || {})[video.id] || {};
-    // Ролик показывается всегда, даже пока из него ничего не нарезано:
-    // именно с этого блока в нарезку и заходят. Раньше блок появлялся только
-    // с первым кадром, и инструмент считался пропавшим.
+  // Ролики показываются всегда, даже пока из них ничего не нарезано: именно
+  // с этого блока в нарезку и заходят. Раньше блок появлялся только с первым
+  // кадром, и инструмент считался пропавшим.
+  const videos = task.videos.filter((v) => v.mode === "cut");
+  if (videos.length) {
+    const counts: SourceCounts = {};
+    let bornAt = Infinity;
+    for (const video of videos) {
+      const own = (task.by_source || {})[video.id] || {};
+      for (const key of ["new", "annotated", "empty", "skipped", "deleted", "accepted"] as const) {
+        counts[key] = (counts[key] || 0) + (own[key] || 0);
+      }
+      bornAt = Math.min(bornAt, at(video.created_at));
+    }
     out.push({
-      key: video.id,
-      title: video.file_name,
+      key: "videos",
+      title: "Ролики",
+      count: videos.length,
       kind: "cut",
-      video,
+      videos,
       counts,
       total:
         (counts.new || 0) + (counts.annotated || 0) + (counts.empty || 0) +
         (counts.skipped || 0),
-      bornAt: at(video.created_at),
+      bornAt: Number.isFinite(bornAt) ? bornAt : 0,
     });
   }
   return out.sort((a, b) => a.bornAt - b.bornAt);
@@ -164,26 +186,28 @@ export function SourceCard({
   block: SourceBlock;
   editable: boolean;
   onAnnotate: () => void;
-  /** Открыть нарезку. Есть только у блока ролика. */
-  onCut?: () => void;
+  /** Открыть нарезку названного ролика. Есть только у блока роликов. */
+  onCut?: (video: TaskVideoItem) => void;
   /** Убрать ролик вместе с нарезанными из него кадрами. */
-  onDelete?: () => void;
+  onDelete?: (video: TaskVideoItem) => void;
 }) {
-  const { counts, total, video } = block;
+  const { counts, total } = block;
+  const videos = block.videos || [];
+  // Подробности плана — по требованию: на пяти роликах пять таблиц сразу
+  // превращают вкладку в полотно, а нужны они по одному ролику за раз.
+  const [open, setOpen] = useState<string | null>(null);
   const share = (n: number) => (total ? `${(n / total) * 100}%` : "0%");
   const left = (counts.new || 0) + (counts.skipped || 0);
-  const duration = video?.duration_ms || 1;
 
   return (
     <div className="g-block">
       <div className="g-block-h">
-        {video && (
-          <VideoStrip className="g-block-poster" taskId={taskId} videoId={video.id} />
+        {videos[0] && (
+          <VideoStrip className="g-block-poster" taskId={taskId} videoId={videos[0].id} />
         )}
-        <h4>{block.title}</h4>
-        <span className="g-chip">{video ? "нарезка" : "изображения"}</span>
+        <h4>{block.title}{block.count !== undefined && <><Sep />{block.count}</>}</h4>
+        <span className="g-chip">{videos.length ? "нарезка" : "изображения"}</span>
         <span className="g-sp" />
-        {video && <PrepareLine prepare={video.prepare} />}
         {block.counts.first_at && (
           <span className="g-when">
             {new Date(block.counts.first_at).toLocaleString("ru-RU", {
@@ -191,55 +215,87 @@ export function SourceCard({
             })}
           </span>
         )}
-        {video && onCut && (
-          <button className="mag-btn mag-btn-inline" type="button" onClick={onCut}>
-            {!editable ? "Смотреть" : video.segments.length ? "Нарезать ещё" : "Нарезать"}
-          </button>
-        )}
         {editable && total > 0 && (
           <button className="mag-btn mag-btn-inline" type="button" onClick={onAnnotate}>
             Размечать
           </button>
         )}
-        {video && editable && onDelete && (
-          <TrashButton title="Убрать ролик и нарезанные из него кадры"
-            onClick={onDelete} />
-        )}
       </div>
 
-      {video && (
-        <div className="g-block-b g-vcard">
-          <div className="g-vcard-nums">
-            <div className="g-stat"><b>{video.frames}</b><span>кадров нарезано</span></div>
-            <div className="g-stat s">
-              <b>{video.segments.length}</b>
-              <span>{plural(video.segments.length, "участок", "участка", "участков")}</span>
-            </div>
-            <div className="g-stat s">
-              <b>{fmtTime(video.duration_ms || 0)}</b>
-              <span>{fmtBytes(video.size_bytes || 0)}</span>
-            </div>
-          </div>
-          <div className="g-vcard-body">
-            {/* Где именно нарезано вдоль ролика. Ради этого ролик и живёт до
-                закрытия таски: видно, какой кусок ещё не разобран. */}
-            <div className="g-rail">
-              <span className="g-rail-line" />
-              {video.segments.map((s, i) => (
-                <u key={i} style={{
-                  left: `${(s.start_ms / duration) * 100}%`,
-                  width: `${Math.max(0.6, ((s.end_ms - s.start_ms) / duration) * 100)}%`,
-                }} />
-              ))}
-              {[0, 0.25, 0.5, 0.75, 1].map((m) => (
-                <i key={m} className="major" style={{ left: `${m * 100}%` }} />
-              ))}
-            </div>
-            {video.segments.length === 0 && (
-              <p className="g-vcard-note">
-                Участков пока нет — нажмите «Нарезать» и выберите их на дорожке.
-              </p>
-            )}
+      {videos.length > 0 && (
+        /* По строке на ролик: режут каждый отдельно, своим планом. Общая тут
+           только разметка — кнопка на весь блок выше. */
+        <div className="g-block-b">
+          <div className="g-plan-box g-reels">
+            {videos.map((video) => {
+              const frames = video.frames || 0;
+              const cut = video.segments.length;
+              return (
+                <div className="g-reel" key={video.id}>
+                  <VideoStrip className="g-reel-poster" taskId={taskId} videoId={video.id} />
+                  <div className="g-reel-name">
+                    <b title={video.file_name}>{video.file_name}</b>
+                    <span>
+                      {fmtTime(video.duration_ms || 0)} <Sep /> {video.width}×{video.height} <Sep />{" "}
+                      {fmtBytes(video.size_bytes)}
+                    </span>
+                    {/* Где по ролику взяты участки. Одно число «3» не говорит
+                        ни где они, ни сколько ролика осталось неразобранным. */}
+                    <span className="g-reel-rail" aria-hidden="true">
+                      {video.segments.map((seg, i) => (
+                        <u key={i} style={{
+                          left: `${(seg.start_ms / (video.duration_ms || 1)) * 100}%`,
+                          width: `${Math.max(0.8, ((seg.end_ms - seg.start_ms) / (video.duration_ms || 1)) * 100)}%`,
+                        }} />
+                      ))}
+                    </span>
+                  </div>
+                  <div className="g-reel-nums">
+                    <b>{frames.toLocaleString("ru-RU")}</b>
+                    <span>{plural(frames, "кадр", "кадра", "кадров")} нарезано</span>
+                  </div>
+                  {cut ? (
+                    <button className="g-reel-segs" type="button"
+                      aria-expanded={open === video.id}
+                      onClick={() => setOpen((id) => (id === video.id ? null : video.id))}>
+                      {cut} {plural(cut, "участок", "участка", "участков")}
+                      <i aria-hidden="true">{open === video.id ? "▴" : "▾"}</i>
+                    </button>
+                  ) : (
+                    <span className="g-reel-segs none">не нарезан</span>
+                  )}
+                  <PrepareLine prepare={video.prepare} />
+                  {onCut && (
+                    <button className="mag-ghost mag-btn-inline" type="button"
+                      onClick={() => onCut(video)}>
+                      {!editable ? "Смотреть" : cut ? "Нарезать ещё" : "Нарезать"}
+                    </button>
+                  )}
+                  {editable && onDelete && (
+                    <TrashButton title="Убрать ролик и нарезанные из него кадры"
+                      onClick={() => onDelete(video)} />
+                  )}
+                  {open === video.id && (
+                    <table className="g-plan g-reel-plan">
+                      <thead>
+                        <tr><th>участок</th><th>с — по</th><th>длина</th><th>шаг</th><th>кадров</th></tr>
+                      </thead>
+                      <tbody>
+                        {video.segments.map((seg, i) => (
+                          <tr key={i}>
+                            <td>{seg.end_ms - seg.start_ms <= 1 ? "кадр" : `${i + 1}`}</td>
+                            <td>{fmtTime(seg.start_ms)} — {fmtTime(seg.end_ms)}</td>
+                            <td>{fmtTime(Math.max(0, seg.end_ms - seg.start_ms))}</td>
+                            <td>{seg.end_ms - seg.start_ms <= 1 ? "—" : fmtStep(seg.step_ms)}</td>
+                            <td>{framesIn(seg).toLocaleString("ru-RU")}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -269,12 +325,26 @@ export function SourceCard({
             )}
             <span className="g-sp" />
             <div><em>{total}</em> {plural(total, "кадр", "кадра", "кадров")}
-              {left ? ` · ${left} в работе` : " · всё пройдено"}</div>
+              {left ? ` — ${left} в работе` : " — всё пройдено"}</div>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+/** Как назвать объект. Имя и цвет приходят вместе с планом; на классы таски
+ *  опираемся только как на запасной вариант — они считаются по уже созданным
+ *  аннотациям, которых у незакрытого ролика ещё нет. */
+function classOf(
+  classes: TaskClass[] | undefined,
+  o: PendingObject
+): { name: string; color: string } {
+  if (o.class_name) return { name: o.class_name, color: o.class_color || "#9aa4ae" };
+  const found = (classes || []).find((c) => c.class_index === o.class_index);
+  return found
+    ? { name: found.name, color: found.color }
+    : { name: o.class_index === null ? "класс не задан" : `класс ${o.class_index}`, color: "#9aa4ae" };
 }
 
 /** Карточка ролика, компоновка К4: числа слева крупно, под кинолентой —
@@ -284,6 +354,7 @@ export function VideoCard({
   taskId,
   video,
   pending,
+  classes,
   editable,
   busy,
   onOpen,
@@ -295,6 +366,8 @@ export function VideoCard({
   taskId: string;
   video: TaskVideoItem;
   pending?: PendingVideo;
+  /** Классы таски: карточка называет объект по имени и цвету. */
+  classes?: TaskClass[];
   editable: boolean;
   busy: boolean;
   onOpen: () => void;
@@ -399,11 +472,63 @@ export function VideoCard({
             </p>
           )}
           {!closed && pending && (
-            <p className="g-vcard-note">
-              Размечено {pending.boxes} {plural(pending.boxes, "объект", "объекта", "объектов")} на{" "}
-              {pending.frames} {plural(pending.frames, "кадре", "кадрах", "кадрах")}. Кадры
-              появятся в таске, когда закроете разметку.
-            </p>
+            <>
+              {/* Ошибка плана раньше молча превращалась в нули, и карточка
+                  ролика с тремя треками выглядела как ролик без разметки. */}
+              {pending.error && (
+                <p className="g-vcard-fail">
+                  <b>Разметку не закрыть.</b> {pending.error}
+                </p>
+              )}
+              {(pending.objects || []).length > 0 && (
+                <div className="g-plan-box">
+                <table className="g-plan">
+                  <thead>
+                    <tr>
+                      <th>объект</th><th>кадры</th><th>ключей</th>
+                      <th>шаг</th><th>уйдёт кадров</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(pending.objects || []).map((o, i) => {
+                      const cls = classOf(classes, o);
+                      return (
+                        <tr key={i} className={o.error ? "bad" : undefined}>
+                          <td><i style={{ background: cls.color }} />{cls.name}</td>
+                          <td>{o.start}—{o.end}</td>
+                          <td>
+                            {o.keys}
+                            {!o.interpolate && " — без интерполяции"}
+                            {o.hidden > 0 && ` — ${o.hidden} ${plural(o.hidden, "зона", "зоны", "зон")} невидимости`}
+                          </td>
+                          <td>{o.step === 1 ? "каждый" : `каждый ${o.step}-й`}</td>
+                          <td>{o.error
+                            ? <em title={o.error}>не считается</em>
+                            : o.frames.toLocaleString("ru-RU")}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+                </div>
+              )}
+              {!pending.error && <p className="g-vcard-note">
+                {/* Фоновые кадры несут ноль объектов, и без отдельного числа
+                    выходило «7 объектов на 10 кадрах» — три кадра из десяти
+                    выглядели бы недоразмеченными. */}
+                Размечено {pending.boxes} {plural(pending.boxes, "объект", "объекта", "объектов")} на{" "}
+                {pending.frames - pending.empty}{" "}
+                {plural(pending.frames - pending.empty, "кадре", "кадрах", "кадрах")}
+                {pending.empty > 0 && <>
+                  {", ещё "}{pending.empty}{" "}
+                  {plural(pending.empty, "кадр отмечен фоновым", "кадра отмечено фоновыми", "кадров отмечено фоновыми")}
+                </>}
+                {(pending.singles || 0) > 0 && `, одиночных фигур ${pending.singles}`}
+                . Все {pending.frames} {plural(pending.frames, "кадр", "кадра", "кадров")}{" "}
+                {plural(pending.frames, "появится", "появятся", "появятся")} в таске и уйдут в
+                датасет, когда закроете разметку.
+              </p>}
+            </>
           )}
         </div>
       </div>

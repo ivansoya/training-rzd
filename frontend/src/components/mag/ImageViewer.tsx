@@ -5,6 +5,7 @@ import BoxCanvas from "./BoxCanvas";
 import type { CanvasHandle, CanvasShape } from "./BoxCanvas";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
+import Sep from "../Sep";
 
 const GREY = { name: "", color: "#9aa4ae" };
 
@@ -259,7 +260,7 @@ export default function ImageViewer({
             >
               {classes.map((c) => (
                 <option key={c.id} value={c.class_index}>
-                  {c.class_index} · {c.name}
+                  {c.class_index} <Sep /> {c.name}
                 </option>
               ))}
             </select>
@@ -381,7 +382,7 @@ export default function ImageViewer({
                 <kbd>Del</kbd> удалить<br />
               </>
             ) : null}
-            <kbd>←</kbd> <kbd>→</kbd> кадры · протяжка — полотно · колесо — зум ·{" "}
+            <kbd>←</kbd> <kbd>→</kbd> кадры <Sep /> протяжка — полотно <Sep /> колесо — зум <Sep />{" "}
             <kbd>0</kbd> вписать
           </p>
         </aside>
@@ -393,7 +394,7 @@ export default function ImageViewer({
           width: im.width,
           height: im.height,
           boxes: im.boxes,
-          title: `${im.file_name} · ${im.annotations} объектов`,
+          title: `${im.file_name} — ${im.annotations} объектов`,
         }))}
         index={index}
         onPick={(i) => { flush(); onIndex(i); }}

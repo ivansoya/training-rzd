@@ -6,6 +6,7 @@
 
 import { useId, useState } from "react";
 import type { ClassMetric, CurveSeries, EpochRow, PerClass } from "../../api/runs";
+import Sep from "../Sep";
 
 const AREA = { x0: 44, y0: 16, x1: 596, y1: 196 };
 
@@ -38,9 +39,9 @@ const LOSSES = [
   { key: "box_loss", label: "рамка", colour: "#2ee07a" },
   { key: "cls_loss", label: "класс", colour: "#6aa8ff" },
   { key: "dfl_loss", label: "форма", colour: "#ffb02e" },
-  { key: "val/box_loss", label: "рамка · проверка", colour: "#2ee07a", dash: true },
-  { key: "val/cls_loss", label: "класс · проверка", colour: "#6aa8ff", dash: true },
-  { key: "val/dfl_loss", label: "форма · проверка", colour: "#ffb02e", dash: true },
+  { key: "val/box_loss", label: "рамка — проверка", colour: "#2ee07a", dash: true },
+  { key: "val/cls_loss", label: "класс — проверка", colour: "#6aa8ff", dash: true },
+  { key: "val/dfl_loss", label: "форма — проверка", colour: "#ffb02e", dash: true },
 ];
 
 function pick(row: EpochRow, key: string): number | null {
@@ -322,7 +323,7 @@ export function ClassMetrics({ data }: { data: PerClass }) {
         <span className="g-label">Метрики по классам</span>
         {data.totals && (
           <span style={{ marginLeft: "auto", color: "var(--faint)", fontSize: 11.5 }}>
-            измерено {data.totals.measured} из {data.totals.classes} ·{" "}
+            измерено {data.totals.measured} из {data.totals.classes} <Sep />{" "}
             {data.totals.instances.toLocaleString("ru-RU")} объектов
           </span>
         )}

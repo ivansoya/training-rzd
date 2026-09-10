@@ -9,6 +9,7 @@ import {
 import type { CutEstimate, CutSegment, Segment, TaskVideoItem } from "../../auth/api";
 import { plural } from "./ProjectsPage";
 import VideoStrip from "./VideoStrip";
+import Sep from "../Sep";
 
 const COLORS = ["#e21a1a", "#1f6feb", "#1a7f4b", "#8957e5", "#e8590c"];
 const STEPS_MS = [100, 250, 500, 1000, 2000, 5000];
@@ -31,7 +32,7 @@ function fmtPrecise(ms: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}.${String(cs % 100).padStart(2, "0")}`;
 }
 
-function fmtStep(ms: number): string {
+export function fmtStep(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toLocaleString("ru-RU")} с` : `${ms} мс`;
 }
 
@@ -85,7 +86,10 @@ interface MenuState {
   segId?: number;
 }
 
-function framesIn(s: Segment): number {
+/** Сколько кадров даст участок плана. Правило одно на мастер нарезки и на
+ *  карточку ролика: два счёта разошлись бы, и одно число называло бы другое
+ *  враньём. */
+export function framesIn(s: { start_ms: number; end_ms: number; step_ms: number }): number {
   return Math.max(0, Math.ceil((s.end_ms - s.start_ms) / Math.max(1, s.step_ms)));
 }
 
@@ -631,7 +635,7 @@ export default function VideoCutModal({
         <div className="mag-cut-head">
           <b>{video.file_name}</b>
           <span className="mag-cut-meta">
-            {fmtTime(duration)} · {video.fps} к/с · {video.width}×{video.height} ·{" "}
+            {fmtTime(duration)} <Sep /> {video.fps} к/с <Sep /> {video.width}×{video.height} <Sep />{" "}
             {fmtBytes(video.size_bytes)}
           </span>
           <span className="mag-cut-sp" />
@@ -783,7 +787,7 @@ export default function VideoCutModal({
                         setMenu({ x: e.clientX, y: e.clientY, kind: "step", segId: s.id });
                       }}
                     >
-                      {fmtTime(s.end_ms - s.start_ms)} · {fmtStep(s.step_ms)}
+                      {fmtTime(s.end_ms - s.start_ms)} <Sep /> {fmtStep(s.step_ms)}
                     </b>
                     <i className="h l" style={{ background: color }}
                       onPointerDown={(e) => grabSeg(e, s, "l")} />
@@ -884,7 +888,7 @@ export default function VideoCutModal({
 
             <div className="mag-cut-ticks">
               <span>{fmtTime(view.start)}</span>
-              <span>{zoomed ? `окно ${fmtTime(view.span)} · колесо — масштаб` : "колесо — масштаб, протяжка — сдвиг"}</span>
+              <span>{zoomed ? `окно ${fmtTime(view.span)} — колесо — масштаб` : "колесо — масштаб, протяжка — сдвиг"}</span>
               <span>{fmtTime(view.start + view.span)}</span>
             </div>
 

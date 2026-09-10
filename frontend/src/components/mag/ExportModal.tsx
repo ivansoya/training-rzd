@@ -15,6 +15,7 @@ import type {
 } from "../../auth/api";
 import { formatBytes } from "./ProjectShell";
 import { useEscape } from "./useEscape";
+import Sep from "../Sep";
 
 interface Props {
   detail: ProjectDetail;
@@ -362,7 +363,7 @@ export default function ExportModal({ detail, onClose }: Props) {
             <div className="mag-exp-done">
               <b>Готово</b>
               <span>
-                {result.images.toLocaleString("ru-RU")} изображений ·{" "}
+                {result.images.toLocaleString("ru-RU")} изображений <Sep />{" "}
                 {formatBytes(result.size_bytes)}
               </span>
             </div>

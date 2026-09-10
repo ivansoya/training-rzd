@@ -21,6 +21,7 @@ from common import config
 from common.models import (
     Annotation,
     Image,
+    LabelClass,
     TaskVideo,
     VideoAnnotation,
     VideoTrack,
@@ -38,12 +39,8 @@ def _last_frame(video):
     return None
 
 
-def collect_plan(db, video):
-    """План материализации ролика: ``{кадр: [боксы]}``.
-
-    Зовут двое — предпросмотр в редакторе и закрытие разметки. Расходиться им
-    нельзя, иначе предпросмотр обещает одно, а в таску уходит другое.
-    """
+def _payload(db, video):
+    """Треки и одиночная разметка ролика — в том виде, в каком их ждёт tracklib."""
     tracks = db.execute(
         select(VideoTrack).where(VideoTrack.video_id == video.id)
     ).scalars().all()
@@ -83,7 +80,32 @@ def collect_plan(db, video):
         }
         for t in tracks
     ]
-    return tracklib.plan(payload, singles, _last_frame(video))
+    return payload, singles
+
+
+def collect(db, video):
+    """Что уйдёт в таску: ``({кадр: [боксы]}, [фоновые кадры])``.
+
+    Зовут трое — предпросмотр в редакторе, сводка незакрытых роликов и само
+    закрытие. Расходиться им нельзя, иначе предпросмотр обещает одно, а в таску
+    уходит другое; поэтому и фоновые кадры отбираются здесь же, а не у каждого
+    вызывающего по-своему.
+    """
+    payload, singles = _payload(db, video)
+    return (
+        tracklib.plan(payload, singles, _last_frame(video)),
+        tracklib.empty_frames(payload, singles, video.empty_frames),
+    )
+
+
+def frame_is_free(db, video, frame_no):
+    """Свободен ли кадр от объектов — по тому же правилу, что и при выгрузке.
+
+    Нужно пометке «фоновый»: спрашивать об этом планом нельзя, шаг выгрузки
+    трека выбрасывает из плана кадры, на которых объект есть.
+    """
+    payload, singles = _payload(db, video)
+    return bool(tracklib.empty_frames(payload, singles, [frame_no]))
 
 
 def open_videos(db, task):
@@ -100,31 +122,76 @@ def open_videos(db, task):
 def pending_summary(db, task):
     """Что ещё не стало кадрами: по строке на незакрытый ролик с разметкой.
 
-    Нужна вкладке прогресса и предупреждению при сдаче таски: работа по
+    Нужна вкладке прогресса, шапке таски и карточке ролика: работа по
     незакрытому ролику иначе невидима, и прогресс врал бы.
+
+    Каждый трек считается **отдельно**. Раньше одна негодная дорожка обнуляла
+    сводку целиком, и карточка показывала «0 кадров уйдёт в таску» — то есть
+    ровно то же, что у ролика без разметки. Теперь видно, сколько даёт каждый
+    объект и который из них не считается.
     """
     out = []
     for video in open_videos(db, task):
-        try:
-            plan = collect_plan(db, video)
-        except tracklib.TrackError as exc:
-            out.append({
-                "video_id": str(video.id), "file_name": video.file_name,
-                "frames": 0, "boxes": 0, "error": str(exc),
-            })
-            continue
-        if not plan:
-            continue
-        tracks = db.execute(
-            select(VideoTrack).where(VideoTrack.video_id == video.id)
-        ).scalars().all()
-        out.append({
+        payload, singles = _payload(db, video)
+        last = _last_frame(video)
+        # Имя и цвет берём здесь: в сводке таски классы считаются по уже
+        # созданным аннотациям, а у незакрытого ролика их ещё нет — экран
+        # показывал бы «класс 0» вместо названия.
+        by_class = {
+            c.id: (c.class_index, c.name, c.color)
+            for c in db.execute(
+                select(LabelClass).where(LabelClass.project_id == task.project_id)
+            ).scalars()
+        }
+
+        objects = []
+        for track in payload:
+            keys = sorted(track.get("keys") or [], key=lambda k: k["frame_no"])
+            index, name, color = by_class.get(track["class_id"], (None, None, None))
+            item = {
+                "class_index": index,
+                "class_name": name,
+                "class_color": color,
+                "start": track["start_frame"],
+                "end": tracklib.track_end(track, keys),
+                "keys": len(keys),
+                "step": int(track.get("export_step") or 1),
+                "interpolate": bool(track.get("interpolate", True)),
+                "hidden": len(track.get("hidden_ranges") or []),
+                "frames": 0,
+                "error": None,
+            }
+            try:
+                item["frames"] = len(tracklib.export_frames(track, keys, last))
+            except tracklib.TrackError as exc:
+                item["error"] = str(exc)
+            objects.append(item)
+
+        row = {
             "video_id": str(video.id),
             "file_name": video.file_name,
-            "frames": len(plan),
+            "tracks": len(payload),
+            "objects": objects,
+            "singles": len(singles),
+        }
+        try:
+            plan, empty = collect(db, video)
+        except tracklib.TrackError as exc:
+            # План целиком не считается, но остальное показать всё равно надо:
+            # человеку нужно знать, какой именно объект мешает закрыть разметку.
+            row.update({"frames": 0, "boxes": 0, "empty": 0, "error": str(exc)})
+            out.append(row)
+            continue
+        if not plan and not empty:
+            continue
+        row.update({
+            # Фоновые кадры — такие же кадры таски, поэтому входят в общее
+            # число; отдельным полем видно, сколько их из этого числа.
+            "frames": len(plan) + len(empty),
             "boxes": sum(len(v) for v in plan.values()),
-            "tracks": len(tracks),
+            "empty": len(empty),
         })
+        out.append(row)
     return out
 
 
@@ -138,10 +205,13 @@ def run_video(db, task, video, user_id, progress=None):
 
     Кадры создаются нетронутыми данными таски: со статусом «размечен», но без
     датасета — в проект они уйдут обычной сдачей вместе со всеми остальными.
+    Помеченные фоновыми уходят со статусом «empty» и без разметки — ровно тем
+    же, каким разметчик изображений объявляет кадр фоновым примером.
     """
-    by_frame = collect_plan(db, video)
-    if not by_frame:
-        return {"created": 0, "boxes": 0}
+    by_frame, empty = collect(db, video)
+    empty_set = set(empty)
+    if not by_frame and not empty_set:
+        return {"created": 0, "boxes": 0, "empty": 0}
 
     source = os.path.join(config.DATA_DIR, video.file_path)
     if not os.path.exists(source):
@@ -157,7 +227,7 @@ def run_video(db, task, video, user_id, progress=None):
             project_id=task.project_id,
             dataset_id=None,
             task_id=task.id,
-            task_status="annotated",
+            task_status="empty" if frame_no in empty_set else "annotated",
             file_name=_file_name(video, frame_no),
             file_path="",
             split="other",
@@ -176,7 +246,9 @@ def run_video(db, task, video, user_id, progress=None):
         if progress and len(created) % 20 == 0:
             progress(len(created))
 
-    videolib.extract_frames(source, sorted(by_frame), on_frame)
+    # Одним проходом декодера: фоновые кадры перемешаны с размеченными, и
+    # второй проход по тому же ролику стоил бы столько же, сколько первый.
+    videolib.extract_frames(source, sorted(set(by_frame) | empty_set), on_frame)
 
     boxes = 0
     for frame_no, planned in sorted(by_frame.items()):
@@ -209,4 +281,8 @@ def run_video(db, task, video, user_id, progress=None):
 
     if progress:
         progress(len(created))
-    return {"created": len(created), "boxes": boxes}
+    return {
+        "created": len(created),
+        "boxes": boxes,
+        "empty": len([f for f in empty_set if f in created]),
+    }

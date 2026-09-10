@@ -5,6 +5,7 @@ import { initials } from "../auth/AccountPage";
 import { useProject } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
 import { useEscape } from "./useEscape";
+import Sep from "../Sep";
 
 const ROLES = [
   { value: "viewer", label: "Просмотр", hint: "Смотрит данные и статистику, ничего не меняет." },
@@ -34,7 +35,7 @@ export default function ProjectMembers() {
       <div className="mag-card">
         <div className="mag-card-h">
           <h4>
-            Участники · {members.length}
+            Участники <Sep /> {members.length}
             {online > 0 && <span className="mag-online-n"> {online} в сети</span>}
           </h4>
           {isAdmin && (
@@ -66,7 +67,7 @@ export default function ProjectMembers() {
       {isAdmin && pending_invitations && pending_invitations.length > 0 && (
         <div className="mag-card">
           <div className="mag-card-h">
-            <h4>Ждут ответа · {pending_invitations.length}</h4>
+            <h4>Ждут ответа <Sep /> {pending_invitations.length}</h4>
           </div>
           <div className="mag-members">
             {pending_invitations.map((i) => (

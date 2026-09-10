@@ -713,12 +713,38 @@ export interface TaskVideoItem {
 }
 
 /** Ролик, чья разметка ещё не стала кадрами: его работа невидима в счётчиках. */
+/** Один трек в сводке незакрытого ролика: как он ведётся и сколько даёт. */
+export interface PendingObject {
+  class_index: number | null;
+  /** Имя и цвет класса приходят с планом: в сводке таски классы считаются по
+   *  уже созданным аннотациям, а у незакрытого ролика их ещё нет. */
+  class_name: string | null;
+  class_color: string | null;
+  start: number;
+  end: number;
+  keys: number;
+  step: number;
+  interpolate: boolean;
+  /** Сколько отрезков невидимости на этом треке. */
+  hidden: number;
+  frames: number;
+  /** Этот трек посчитать не вышло — он и мешает закрыть разметку. */
+  error: string | null;
+}
+
 export interface PendingVideo {
   video_id: string;
   file_name: string;
+  /** Всего кадров уйдёт в таску — вместе с фоновыми. */
   frames: number;
   boxes: number;
+  /** Сколько из `frames` уйдёт фоновыми примерами. */
+  empty: number;
   tracks?: number;
+  /** Одиночная разметка: фигуры, живущие на своём кадре. */
+  singles?: number;
+  objects?: PendingObject[];
+  /** План целиком не считается: закрыть разметку не выйдет, пока не поправят. */
   error?: string;
 }
 
@@ -1088,6 +1114,9 @@ export interface VideoAnnotations {
   singles: VideoSingleBox[];
   /** Кадры, уже уехавшие в проект: правка попадёт в то же изображение. */
   materialized: Record<string, string>;
+  /** Кадры, помеченные фоновыми: объектов на них нет. Пометка на занятом
+   *  кадре остаётся в списке, но в датасет такой кадр уйдёт размеченным. */
+  empty_frames: number[];
   editable: boolean;
 }
 
@@ -1162,6 +1191,20 @@ export async function deleteTrackKey(
   return asJson(await del(`video-tracks/${trackId}/keys/${frameNo}`));
 }
 
+/** Скрыть отрезок `[от, до)`: объект есть, но его не видно.
+ *
+ *  Одной ручкой, а не четырьмя запросами: жест один, и сервер ставит ключи на
+ *  краях, снимает ключи внутри, раздвигает границы трека и пишет отрезок в
+ *  одной транзакции. Геометрию краевых ключей считает он же — чтобы его расчёт
+ *  и наш `trackMath` не разъехались. */
+export async function hideTrackSpan(
+  trackId: string,
+  from: number,
+  to: number
+): Promise<VideoTrack> {
+  return asJson(await post(`video-tracks/${trackId}/hide`, { from, to }));
+}
+
 /** Фигура кадра ролика на проводе. Ключ запроса остался «boxes», а под ним
  *  теперь обе формы: одиночную разметку кадра размечают и рамкой, и контуром.
  *  Трек — только рамка, у него своя ручка. */
@@ -1189,6 +1232,8 @@ export async function saveFrameBoxes(
 export interface MaterializePreview {
   frames: number;
   boxes: number;
+  /** Сколько из `frames` уйдёт фоновыми примерами. */
+  empty: number;
   new_frames: number;
   updated_frames: number;
   first_frames: number[];
@@ -1230,6 +1275,25 @@ export async function dropVideoFrames(
   videoId: string
 ): Promise<{ removed: number; kept_accepted: number }> {
   return asJson(await del(`tasks/${taskId}/videos/${videoId}/frames`));
+}
+
+/** Пометить кадр фоновым. Занятый кадр сервер отклонит: «фоновый» и «на нём
+ *  объект» — противоречие, и разрешать его при выгрузке значило бы решать за
+ *  человека. Возвращает список пометок целиком. */
+export async function markEmptyFrame(
+  taskId: string,
+  videoId: string,
+  frameNo: number
+): Promise<{ empty_frames: number[] }> {
+  return asJson(await put(`tasks/${taskId}/videos/${videoId}/empty-frames/${frameNo}`, {}));
+}
+
+export async function unmarkEmptyFrame(
+  taskId: string,
+  videoId: string,
+  frameNo: number
+): Promise<{ empty_frames: number[] }> {
+  return asJson(await del(`tasks/${taskId}/videos/${videoId}/empty-frames/${frameNo}`));
 }
 
 export async function previewMaterialize(

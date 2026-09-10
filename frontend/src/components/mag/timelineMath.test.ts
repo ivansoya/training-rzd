@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extensionFrame, timelineFrame, timelineTicks } from "./timelineMath";
+import { extensionFrame, timelineFrame, timelineTicks, visibleSpans } from "./timelineMath";
 
 describe("shared timeline coordinates", () => {
   it("maps both endpoints and midpoint without a native slider thumb offset", () => {
@@ -30,5 +30,19 @@ describe("shared timeline coordinates", () => {
       expect(ticks.every(t=>Number.isInteger(t)&&t>=0&&t<=299)).toBe(true);
     }
     expect(timelineTicks(299,200).length).toBeLessThan(timelineTicks(299,1400).length);
+  });
+  it("breaks the life bar exactly where a zone hides the object", () => {
+    expect(visibleSpans(0,29,[])).toEqual([[0,29]]);
+    // Отрезок полуоткрыт: кадр 20 снова виден, с него полоса и продолжается.
+    expect(visibleSpans(0,29,[[10,20]])).toEqual([[0,10],[20,29]]);
+    expect(visibleSpans(0,29,[[0,10]])).toEqual([[10,29]]);
+    expect(visibleSpans(0,29,[[10,30]])).toEqual([[0,10]]);
+    expect(visibleSpans(0,29,[[0,30]])).toEqual([]);
+  });
+  it("merges touching and unordered zones instead of drawing stubs between them", () => {
+    expect(visibleSpans(0,29,[[20,25],[5,10]])).toEqual([[0,5],[10,20],[25,29]]);
+    expect(visibleSpans(0,29,[[5,10],[10,15]])).toEqual([[0,5],[15,29]]);
+    expect(visibleSpans(0,29,[[5,20],[8,12]])).toEqual([[0,5],[20,29]]);
+    expect(visibleSpans(7,7,[])).toEqual([[7,7]]);
   });
 });

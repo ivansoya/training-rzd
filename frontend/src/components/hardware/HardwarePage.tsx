@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import * as api from "../../api/gpu";
 import type { Device, GpuState } from "../../api/gpu";
+import Sep from "../Sep";
 
 const gb = (mb: number) => `${(mb / 1024).toFixed(1).replace(".", ",")} ГБ`;
 
@@ -45,7 +46,7 @@ function Card({
     <div className="t-side">
       <div className="t-run-head" style={{ marginBottom: 10 }}>
         <b style={{ fontSize: 13.5 }}>
-          Карта {device.index} · {device.name}
+          Карта {device.index} <Sep /> {device.name}
         </b>
         <span className={`t-pill ${device.held_mb ? "ok" : "idle"}`}>
           <i />
@@ -219,7 +220,7 @@ export default function HardwarePage() {
 
       <div className="t-side" style={{ marginTop: 14 }}>
         <div className="g-label">
-          Очередь · {state.queue.total}{" "}
+          Очередь <Sep /> {state.queue.total}{" "}
           {state.queue.total === 1 ? "задача" : "задач"}
         </div>
         {queue.length === 0 ? (
@@ -252,9 +253,9 @@ export default function HardwarePage() {
                     {row.mine && <span className="t-pill wait">ваша</span>}
                   </div>
                   <div className="meta">
-                    просит <b>{gb(row.want_mb)}</b> · ждёт{" "}
+                    просит <b>{gb(row.want_mb)}</b><Sep /> ждёт{" "}
                     <b>{Math.round(row.waiting_seconds / 60)} мин</b>
-                    {row.reason ? ` · ${row.reason}` : ""}
+                    {row.reason ? ` — ${row.reason}` : ""}
                   </div>
                 </div>
                 <div className="right">

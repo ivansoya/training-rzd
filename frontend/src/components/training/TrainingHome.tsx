@@ -12,6 +12,7 @@ import type { Run } from "../../api/runs";
 import type { TrainSet } from "../../api/trainsets";
 import { useLive } from "../../live/LiveProvider";
 import StartRunModal from "./StartRunModal";
+import Sep from "../Sep";
 
 const ru = (n: number) => Math.round(n).toLocaleString("ru-RU");
 
@@ -157,20 +158,20 @@ export default function TrainingHome() {
                       </span>
                       {s.graph && (
                         <span className="t-pill idle">
-                          {s.graph.name} · v{s.graph.version}
+                          {s.graph.name} <Sep /> v{s.graph.version}
                         </span>
                       )}
                     </div>
                     <div className="meta">
                       {s.counts ? (
                         <>
-                          образцов <b>{ru(s.counts.samples)}</b> · обучение{" "}
-                          <b>{ru(s.counts.train)}</b> · проверка{" "}
-                          <b>{ru(s.counts.val)}</b> ·{" "}
-                          {s.kind === "polygon" ? "сегментация" : "рамки"} ·{" "}
+                          образцов <b>{ru(s.counts.samples)}</b><Sep /> обучение{" "}
+                          <b>{ru(s.counts.train)}</b><Sep /> проверка{" "}
+                          <b>{ru(s.counts.val)}</b><Sep />{" "}
+                          {s.kind === "polygon" ? "сегментация" : "рамки"} <Sep />{" "}
                           <b>{bytes(s.size_bytes)}</b>
                           {s.hardlinked_bytes > 0 && (
-                            <> · ссылками {bytes(s.hardlinked_bytes)}</>
+                            <><Sep /> ссылками {bytes(s.hardlinked_bytes)}</>
                           )}
                         </>
                       ) : s.error ? (
@@ -193,7 +194,7 @@ export default function TrainingHome() {
                           />
                         </div>
                         <div className="meta">
-                          {job.stage_text ?? "готовлю"} · {ru(job.processed)} из{" "}
+                          {job.stage_text ?? "готовлю"} <Sep /> {ru(job.processed)} из{" "}
                           {ru(job.total)}
                         </div>
                       </>
@@ -273,17 +274,17 @@ export default function TrainingHome() {
                       <span className={`t-pill ${look}`}>
                         <i />
                         {label}
-                        {busy && ` · эпоха ${r.current_epoch} из ${r.epochs}`}
+                        {busy && ` — эпоха ${r.current_epoch} из ${r.epochs}`}
                       </span>
                     </div>
                     <div className="meta">
-                      {r.base_model} · {r.device} ·{" "}
+                      {r.base_model} <Sep /> {r.device} <Sep />{" "}
                       {r.set ? `набор «${r.set.name}»` : "набор удалён"}
-                      {r.author ? ` · ${r.author}` : ""}
+                      {r.author ? ` — ${r.author}` : ""}
                       {r.best_fitness !== null && (
                         <>
                           {" "}
-                          · лучшая эпоха <b>{r.best_epoch}</b>
+<Sep /> лучшая эпоха <b>{r.best_epoch}</b>
                         </>
                       )}
                     </div>

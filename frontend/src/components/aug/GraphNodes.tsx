@@ -242,14 +242,14 @@ function SplitNode(kind: "split_share" | "split_prob", label: string, why: strin
     const total = w.reduce((a, b) => a + b, 0);
     const shares = w
       .map((v) => `${Math.round((v / total) * 100)}`)
-      .join(" · ");
+      .join(" — ");
     return (
       <Card
         id={id}
         data={d}
         klass="k-flow"
         title={(d.params.label as string) || label}
-        why={`${why} · ${shares}`}
+        why={`${why} — ${shares}`}
         ins={["in"]}
         outs={Array.from({ length: branches(node) }, (_, i) => `o${i}`)}
         eye={false}
@@ -305,7 +305,7 @@ export function GroupNode({ id, data }: NodeProps) {
       title={(d.params.label as string) || d.group?.name || "Блок"}
       why={
         d.group?.version
-          ? `мой граф · версия ${d.group.version}`
+          ? `мой граф — версия ${d.group.version}`
           : "вложенный граф"
       }
       ins={d.group?.in ?? ["in"]}

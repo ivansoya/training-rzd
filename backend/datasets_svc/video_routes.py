@@ -37,7 +37,7 @@ from datasets_svc import video_index
 from common import shapes
 from datasets_svc import video_queue as queue
 from datasets_svc import video_tracks as tracklib
-from datasets_svc.materialize import collect_plan
+from datasets_svc.materialize import collect, frame_is_free
 from datasets_svc.task_routes import (
     _clamp_box,
     _drop_files,
@@ -600,6 +600,7 @@ def video_annotations(task_id, video_id):
             "tracks": out,
             "singles": singles,
             "materialized": {str(k): str(v) for k, v in materialized.items()},
+            "empty_frames": sorted(int(f) for f in (video.empty_frames or [])),
             "editable": _may_work(task, user, role) and task.status != "closed"
                         and video.mode == "annotate",
         })
@@ -855,6 +856,113 @@ def put_key(track_id, frame_no):
         db.close()
 
 
+def _geometry_at(track, keys, frame_no):
+    """Где объект на этом кадре — по тем ключам, что есть сейчас.
+
+    За пределами жизни трека расчёта нет, и тогда берём ближайший край: объект
+    просто не двигали с тех пор. Иначе «скрыть хвост» требовало бы сперва
+    нарисовать рамку там, где рисовать нечего.
+    """
+    if not keys:
+        return None
+    state = tracklib.state_at(
+        {
+            "start_frame": track.start_frame,
+            "end_frame": track.end_frame,
+            "interpolate": track.interpolate,
+            "hidden_ranges": track.hidden_ranges or [],
+        },
+        [{"frame_no": k.frame_no, "geometry": k.geometry} for k in keys],
+        frame_no,
+    )
+    if state and state.get("geometry"):
+        return dict(state["geometry"])
+    ordered = sorted(keys, key=lambda k: k.frame_no)
+    edge = ordered[0] if frame_no < ordered[0].frame_no else ordered[-1]
+    return dict(edge.geometry)
+
+
+@bp.post("/api/video-tracks/<track_id>/hide")
+def hide_span(track_id):
+    """Скрыть отрезок: объект есть, но его не видно.
+
+    Одной транзакцией, потому что и жест один. Ключ на начале отрезка — тот
+    самый «ключ исчезновения», ключ на конце — «снова видно», ключи строго
+    внутри снимаются: внутри зоны объекта не видно, и держать там положения
+    незачем. Четыре отдельных запроса оставляли бы на дорожке ключи без зоны
+    при первом же обрыве связи.
+    """
+    db, task, track, err = _resolve_track(track_id)
+    if err:
+        return err
+    try:
+        video = db.get(TaskVideo, track.video_id)
+        data = request.get_json(silent=True) or {}
+        try:
+            frm, to = int(data["from"]), int(data["to"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": "Нужны кадры начала и конца отрезка."}), 400
+        if to <= frm:
+            return jsonify({"error": "Отрезок невидимости пуст."}), 400
+        last = _last_frame(video)
+        if frm < 0 or (last is not None and to > last):
+            return jsonify({"error": "Отрезок выходит за пределы ролика."}), 400
+
+        keys = db.execute(
+            select(VideoAnnotation).where(VideoAnnotation.track_id == track.id)
+            .order_by(VideoAnnotation.frame_no)
+        ).scalars().all()
+        if not keys:
+            return jsonify({"error": "У объекта нет ни одного положения."}), 400
+
+        # Геометрию обоих краёв считаем ДО сноса внутренних ключей: снесённые
+        # ключи и есть опора расчёта, и после сноса рамка уехала бы.
+        edges = {frame_no: _geometry_at(track, keys, frame_no) for frame_no in (frm, to)}
+        if any(geometry is None for geometry in edges.values()):
+            return jsonify({"error": "На этих кадрах объекта нет."}), 400
+
+        for row in keys:
+            if frm < row.frame_no < to:
+                db.delete(row)
+        db.flush()
+        for frame_no, geometry in edges.items():
+            row = db.execute(
+                select(VideoAnnotation).where(
+                    VideoAnnotation.track_id == track.id,
+                    VideoAnnotation.frame_no == frame_no,
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                db.add(VideoAnnotation(
+                    video_id=track.video_id,
+                    track_id=track.id,
+                    frame_no=frame_no,
+                    class_id=track.class_id,
+                    ann_type="bbox",
+                    geometry=geometry,
+                    source="human",
+                ))
+
+        # Протяжка за край трека продлевает его — то же правило, что и внутри.
+        track.start_frame = min(track.start_frame, frm)
+        if track.end_frame is not None:
+            track.end_frame = max(track.end_frame, to)
+        track.hidden_ranges = tracklib.normalize_ranges(
+            (track.hidden_ranges or []) + [[frm, to]]
+        )
+        db.commit()
+
+        keys = db.execute(
+            select(VideoAnnotation).where(VideoAnnotation.track_id == track.id)
+            .order_by(VideoAnnotation.frame_no)
+        ).scalars().all()
+        cls = db.get(LabelClass, track.class_id)
+        track.class_index = cls.class_index if cls else None
+        return jsonify(_track_json(track, keys))
+    finally:
+        db.close()
+
+
 @bp.delete("/api/video-tracks/<track_id>/keys/<int:frame_no>")
 def drop_key(track_id, frame_no):
     """Снять ключевой кадр. Последний снять нельзя — трек остался бы пустым."""
@@ -878,6 +986,7 @@ def drop_key(track_id, frame_no):
         rest = [k for k in keys if k.frame_no != frame_no]
         # Трек начинается с первого ключа: сняли начальный — начало съезжает.
         track.start_frame = min(k.frame_no for k in rest)
+        track.hidden_ranges = tracklib.drop_boundary(track.hidden_ranges or [], frame_no)
         db.commit()
         cls = db.get(LabelClass, track.class_id)
         track.class_index = cls.class_index if cls else None
@@ -950,6 +1059,62 @@ def put_frame_boxes(task_id, video_id, frame_no):
 # --------------------------------------------------------------------------- #
 # Что уйдёт в проект
 # --------------------------------------------------------------------------- #
+@bp.put("/api/tasks/<task_id>/videos/<video_id>/empty-frames/<int:frame_no>")
+def mark_empty_frame(task_id, video_id, frame_no):
+    """Пометить кадр фоновым: объектов на нём нет.
+
+    По одной пометке на запрос, как у ключей трека. Пометить занятый кадр
+    нельзя — «фоновый» и «на нём объект» это противоречие, и разрешать его
+    задним числом при выгрузке значило бы тихо решать за человека.
+    """
+    db, task, project, user, role, video = _resolve_video(task_id, video_id, "editor")
+    if db is None:
+        return video
+    try:
+        denied = _writable(task, user, role, video)
+        if denied:
+            return denied
+        last = _last_frame(video)
+        if frame_no < 0 or (last is not None and frame_no > last):
+            return jsonify({"error": "Такого кадра в ролике нет."}), 400
+        marks = {int(f) for f in (video.empty_frames or [])}
+        if frame_no not in marks:
+            try:
+                free = frame_is_free(db, video, frame_no)
+            except tracklib.TrackError as exc:
+                return jsonify({"error": str(exc)}), 400
+            if not free:
+                return jsonify({
+                    "error": "На этом кадре есть объект — фоновым он быть не может."
+                }), 409
+            marks.add(frame_no)
+            video.empty_frames = sorted(marks)
+            db.commit()
+        return jsonify({"empty_frames": sorted(marks)})
+    finally:
+        db.close()
+
+
+@bp.delete("/api/tasks/<task_id>/videos/<video_id>/empty-frames/<int:frame_no>")
+def unmark_empty_frame(task_id, video_id, frame_no):
+    """Снять пометку «фоновый» с кадра."""
+    db, task, project, user, role, video = _resolve_video(task_id, video_id, "editor")
+    if db is None:
+        return video
+    try:
+        denied = _writable(task, user, role, video)
+        if denied:
+            return denied
+        marks = {int(f) for f in (video.empty_frames or [])}
+        if frame_no in marks:
+            marks.discard(frame_no)
+            video.empty_frames = sorted(marks)
+            db.commit()
+        return jsonify({"empty_frames": sorted(marks)})
+    finally:
+        db.close()
+
+
 @bp.post("/api/tasks/<task_id>/videos/<video_id>/materialize/preview")
 def preview_materialize(task_id, video_id):
     """Сколько кадров и объектов уйдёт в проект — до нажатия «Готово»."""
@@ -958,7 +1123,7 @@ def preview_materialize(task_id, video_id):
         return video
     try:
         try:
-            by_frame = collect_plan(db, video)
+            by_frame, empty = collect(db, video)
         except tracklib.TrackError as exc:
             return jsonify({"error": str(exc)}), 400
         already = set(db.execute(
@@ -967,10 +1132,12 @@ def preview_materialize(task_id, video_id):
                 Image.source_frame_no.isnot(None),
             )
         ).scalars())
-        frames = sorted(by_frame)
+        # Фоновые кадры — такие же кадры таски и считаются вместе со всеми.
+        frames = sorted(set(by_frame) | set(empty))
         return jsonify({
             "frames": len(frames),
             "boxes": sum(len(v) for v in by_frame.values()),
+            "empty": len(empty),
             "new_frames": len([f for f in frames if f not in already]),
             "updated_frames": len([f for f in frames if f in already]),
             "first_frames": frames[:50],
@@ -1015,6 +1182,11 @@ def move_key(track_id, frame_no):
         rest = [k for k in keys if k.id != row.id] + [row]
         # Начало трека — его первый ключ: перенесли начальный, начало съехало.
         track.start_frame = min(k.frame_no for k in rest)
+        # Край зоны невидимости держится ключом и едет вместе с ним: иначе
+        # граница осталась бы там, где её больше нечем поймать.
+        track.hidden_ranges = tracklib.move_boundary(
+            track.hidden_ranges or [], frame_no, target
+        )
         db.commit()
 
         keys = db.execute(
@@ -1101,7 +1273,8 @@ def _run_close_job(job_id, task_id, video_id, user_id):
         video.annotation_closed_at = utcnow()
         user = db.get(User, user_id) if user_id else None
         _log(db, task, user, "video_annotation_closed",
-             file=video.file_name, frames=made["created"], boxes=made["boxes"])
+             file=video.file_name, frames=made["created"], boxes=made["boxes"],
+             empty=made["empty"])
         db.commit()
         jobs.update(job_id, status="done", processed=made["created"], result=made)
     except (videolib.VideoError, tracklib.TrackError) as exc:
@@ -1144,19 +1317,24 @@ def close_annotation(task_id, video_id):
             }), 409
 
         try:
-            plan = collect_plan(db, video)
+            plan, empty = collect(db, video)
         except tracklib.TrackError as exc:
             return jsonify({"error": str(exc)}), 400
-        if not plan:
-            return jsonify({"error": "Размечать нечего — на ролике нет ни одного бокса."}), 400
+        # Ролик из одних фоновых кадров — законная работа: отрицательные
+        # примеры нужны обучению не меньше объектов.
+        total = len(set(plan) | set(empty))
+        if not total:
+            return jsonify({
+                "error": "Размечать нечего — на ролике нет ни боксов, ни фоновых кадров."
+            }), 400
 
-        job_id = jobs.create("video-close", total=len(plan), message="Достаю кадры")
+        job_id = jobs.create("video-close", total=total, message="Достаю кадры")
         threading.Thread(
             target=_run_close_job,
             args=(job_id, task.id, video.id, user.id),
             daemon=True,
         ).start()
-        return jsonify({"job_id": job_id, "frames": len(plan)}), 202
+        return jsonify({"job_id": job_id, "frames": total}), 202
     finally:
         db.close()
 

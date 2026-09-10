@@ -4,6 +4,7 @@ import { ApiError, createProject, getFriends } from "../../auth/api";
 import type { FriendEntry } from "../../auth/api";
 import { initials } from "../auth/AccountPage";
 import { useEscape } from "./useEscape";
+import Sep from "../Sep";
 
 interface Props {
   onClose: () => void;
@@ -166,7 +167,7 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
                   <span className="mag-ava">{initials(f.user.display_name)}</span>
                   <span className="mag-friend-name">
                     <b>{f.user.display_name}</b>
-                    <span>{f.user.login} · друг</span>
+                    <span>{f.user.login} <Sep /> друг</span>
                   </span>
                   <select
                     value={pick?.role || "editor"}

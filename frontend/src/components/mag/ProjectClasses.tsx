@@ -13,6 +13,7 @@ import ColorPicker, { PALETTE } from "./ColorPicker";
 import { useProject } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
 import { useEscape } from "./useEscape";
+import Sep from "../Sep";
 
 // Что сейчас редактируется. null — ничего.
 type Editing =
@@ -75,7 +76,7 @@ export default function ProjectClasses() {
 
       <div className="mag-card">
         <div className="mag-card-h">
-          <h4>Классы проекта · {info.classes.length}</h4>
+          <h4>Классы проекта <Sep /> {info.classes.length}</h4>
         </div>
         <p className="mag-hint">
           Идентификатор класса присваивается сам и не меняется: это его номер в
@@ -205,7 +206,7 @@ function Group({
         />
         {sc ? sc.name : "Без группы"}
         <span className="mag-group-n">
-          {items.length} {plural(items.length, "класс", "класса", "классов")} ·{" "}
+          {items.length} {plural(items.length, "класс", "класса", "классов")} <Sep />{" "}
           {total.toLocaleString("ru-RU")} разметок
         </span>
         {canEdit && sc && (

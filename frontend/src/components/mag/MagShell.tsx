@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Link, NavLink, matchPath, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthGate";
 import { initials } from "../auth/AccountPage";
+import Sep from "../Sep";
 
 /** The workspace shell never transforms its children: editors measure their
  * bitmap and annotation layers in viewport coordinates. */
@@ -52,7 +53,7 @@ export default function MagShell({ children }: { children: ReactNode }) {
           {me.user.is_staff && <NavLink to="/hardware" className={nav}><span className="workspace-code">GPU</span>Оборудование</NavLink>}
           <NavLink to="/account" className={nav}><span className="workspace-code">ЛК</span>Кабинет</NavLink>
         </nav>
-        <div className="workspace-sidebar-foot">Данные · разметка · обучение</div>
+        <div className="workspace-sidebar-foot">Данные <Sep /> разметка <Sep /> обучение</div>
       </aside>
       <header className="mag-topbar workspace-topbar">
         {graphEditor ? <Link to="/augment" className="workspace-project">← Мои графы</Link> : code ? <Link to={projectPath} className="workspace-project" title={code}>{projectName}</Link> : <span className="workspace-project">Рабочая среда</span>}

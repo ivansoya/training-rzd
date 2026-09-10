@@ -1,21 +1,27 @@
-/* Obsidian / red. Approved Studio composition, shared by the real product.
-   Domain colors (classes, annotation states and GPU series) remain semantic.
-   Never transform the shell or independently scale a canvas/annotation layer. */
+/* «Габарит»: обсидиановые нейтрали, сигнальный красный на действие и путевой
+   жёлтый на состояние. Доменные цвета — классы, состояния разметки, серии GPU —
+   остаются семантическими. Оболочка никогда не трансформирует своих детей и не
+   масштабирует слой разметки отдельно от кадра. */
 :root {
-  --surface-raised: #353A43;
-  --control-edge: #969BA8;
-  --accent-text: #FF9399;
-  --accent-soft: #EF6B7318;
+  --surface-raised: #302F40;
+  --control-edge: #9998A9;
+  --accent-text: #FDA0A0;
+  --accent-soft: #F94D4D40;
   --danger: #FFB5B9;
   --workspace-width: 216px;
   --workspace-header: 64px;
+  /* Потолок ширины. На сверхшироком мониторе строка в 3000 px не читается:
+     глаз теряет начало следующей строки, а органы управления разъезжаются по
+     краям экрана. Шапка держит тот же потолок, что и содержимое, иначе имя
+     проекта и человек уезжают от того, что под ними. */
+  --workspace-max: 1700px;
 }
 body, .mag { font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 14px; line-height: 1.5; }
 .mag { --mag-line: var(--rule); --mag-edge: var(--rule); }
 .mag-ed, .mag-viewer, .mag-cv, .mag-fs {
-  --ed-bg: #191B20; --ed-chrome: #272B32; --ed-panel: #272B32;
-  --ed-edge: #565A65; --ed-btn: #353A43; --ed-ink: #F4F0F1;
-  --ed-dim: #C7C1C6; --ed-faint: #AAB0BC;
+  --ed-bg: #0F0F15; --ed-chrome: #1F1E29; --ed-panel: #1F1E29;
+  --ed-edge: #56556C; --ed-btn: #302F40; --ed-ink: #F7F7F8;
+  --ed-dim: #C6C5CE; --ed-faint: #A9A8B8;
 }
 button, input, select, textarea { font-family: inherit; }
 button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
@@ -57,7 +63,7 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-exp-done { background: #24352C; border-color: #4B705A; color: #B1EBC7; }
 .mag-exp-done span { color: #B1EBC7; }
 .mag-exp-progress i { background: var(--accent-soft); }
-.mag-exp-seg button.on, .mag-chips button.on { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 0 0 1px #EF6B7377; }
+.mag-exp-seg button.on, .mag-chips button.on { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 0 0 1px #F94D4D78; }
 .mag-tile-split, .mag-tile-n, .mag-tile-note, .mag-tile-mark, .mag-poster-play, .mag-poster-dur, .mag-from, .mag-one .mag-icon-btn { color: var(--ink); }
 .mag-role, .mag-code-badge, .t-pill { border-radius: 5px; letter-spacing: 0; text-transform: none; font-size: 12px; box-shadow: none; }
 .mag-role { background: var(--hair); color: var(--dim); border: 1px solid var(--rule); }
@@ -76,18 +82,23 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .workspace-caption { padding: 0 12px; margin-bottom: 9px; color: var(--faint); font-size: 11px; letter-spacing: .03em; }
 .workspace-link { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 9px 10px; color: var(--dim); text-decoration: none; font-size: 13px; border: 1px solid transparent; border-radius: 7px; }
 .workspace-link:hover { color: var(--ink); background: var(--hair); }
-.workspace-link.on { background: var(--accent-soft); border-color: #EF6B7355; color: var(--ink); box-shadow: inset 3px 0 var(--red); }
+.workspace-link.on { background: var(--accent-soft); border-color: #F94D4D54; color: var(--ink); box-shadow: inset 3px 0 var(--red); }
 .workspace-code { flex: 0 0 25px; font: 10px var(--mono); color: var(--faint); }
 .workspace-link.on .workspace-code { color: var(--accent-text); }
 .workspace-sidebar-foot { margin-top: auto; padding: 20px 10px 0; color: var(--faint); font-size: 11px; }
 .mag-topbar.workspace-topbar { position: fixed; top: 0; left: var(--workspace-width); right: 0; height: var(--workspace-header); min-height: var(--workspace-header); padding: 0 32px; z-index: 35; background: var(--paper); border-bottom: 1px solid var(--rule); gap: 20px; box-shadow: none; }
+/* Содержимое шапки живёт в той же колонке, что и страница под ней: сама полоса
+   тянется во всю ширину, а имя проекта и человек — нет. Поле растёт вместе с
+   экраном, поэтому обходимся без обёртки в разметке. Селектор из двух классов:
+   правило выше задаёт `padding` шорткатом и иначе перебивает это. */
+.mag-topbar.workspace-topbar { padding-inline: max(32px, calc((100% - var(--workspace-max)) / 2 + 32px)); }
 .workspace-project { color: var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; padding-right: 20px; border-right: 1px solid var(--rule); }
 .workspace-breadcrumb { color: var(--dim); font-size: 12px; }
 .workspace-topbar .mag-me { margin-left: auto; font-size: 12px; color: var(--ink); gap: 9px; }
 .workspace-main { min-width: 0; outline: none; }
 .workspace-skip { position: fixed; top: -100px; left: 240px; z-index: 250; background: var(--red); color: var(--on-acc); padding: 12px 18px; border-radius: 8px; }
 .workspace-skip:focus { top: 12px; }
-.workspace .mag-content { max-width: 1680px; width: 100%; margin: 0 auto; padding: 32px; }
+.workspace .mag-content { max-width: var(--workspace-max); width: 100%; margin: 0 auto; padding: 32px; }
 .mag-content-head { margin-bottom: 28px; gap: 18px; align-items: center; }
 .mag-content-head h1, .workspace-project-head h1 { font-size: 32px; line-height: 1.2; letter-spacing: -1px; font-weight: 650; margin: 0; }
 .workspace-eyebrow { display: block; color: var(--dim); font-size: 12px; margin-bottom: 10px; }
@@ -103,7 +114,7 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-pass-export { grid-column: 2; grid-row: 1; }
 .mag-projects { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; }
 .mag-proj-card { padding: 25px; background: var(--card); border: 1px solid var(--rule); border-radius: 12px; min-width: 0; box-shadow: none; }
-.mag-proj-card:hover { background: #2C3038; border-color: var(--control-edge); box-shadow: none; transform: none; }
+.mag-proj-card:hover { background: #262533; border-color: var(--control-edge); box-shadow: none; transform: none; }
 .mag-proj-top { gap: 12px; flex-wrap: wrap; }
 .mag-proj-top h3 { font-size: 23px; font-weight: 600; letter-spacing: -.5px; overflow-wrap: anywhere; }
 .mag-proj-desc { line-height: 1.7; margin-block: 15px 25px; }
@@ -115,6 +126,11 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .workspace-project-search { display: flex; align-items: center; gap: 15px; margin-bottom: 22px; }
 .workspace-project-search input { width: min(380px,100%); padding: 10px 13px; border: 1px solid var(--control-edge); background: var(--sunk); color: var(--ink); border-radius: 8px; font-size: 14px; }
 .workspace-project-search span { color: var(--dim); font-size: 12px; }
+
+/* Разделитель строки — элемент, а не символ. Точка в тексте съезжала с базовой
+   линии и на плотной строке читалась как опечатка. */
+.sep { display: inline-block; flex-shrink: 0; width: 1px; height: .9em; margin-inline: 9px; vertical-align: -.12em; background: var(--rule); }
+h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair); }
 
 /* Lists, tables and gallery chrome; image pixels and shape colors are untouched. */
 .mag-table { font-size: 13px; }
@@ -132,7 +148,7 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-ds-head h1, .mag-ds-head h2 { letter-spacing: -.5px; }
 .mag-tabs, .mag-vtabs, .t-tabs { border-bottom: 1px solid var(--rule); background: transparent; gap: 8px; margin-bottom: 24px; padding: 0 0 10px; }
 .mag-tab, .mag-tabs .mag-tab, .mag-vtabs button, .t-tab { min-height: 38px; padding: 9px 14px; border: 1px solid transparent; border-radius: 7px; font: 550 13px/1.4 "Segoe UI",sans-serif; color: var(--dim); background: transparent; box-shadow: none; text-transform: none; letter-spacing: 0; }
-.mag-tab.on, .mag-tabs .mag-tab.on, .mag-vtabs button.on, .t-tab.on { background: var(--accent-soft); color: var(--ink); border: 1px solid #EF6B7355; box-shadow: none; }
+.mag-tab.on, .mag-tabs .mag-tab.on, .mag-vtabs button.on, .t-tab.on { background: var(--accent-soft); color: var(--ink); border: 1px solid #F94D4D54; box-shadow: none; }
 .mag-tab:hover, .mag-vtabs button:hover, .t-tab:hover { background: var(--hair); color: var(--ink); }
 .g-ctx { top: var(--workspace-header); padding: 15px 32px; background: var(--paper); min-height: 60px; gap: 14px; border-color: var(--rule); }
 .g-ctx-name { font-size: 18px; font-weight: 600; }
@@ -141,6 +157,50 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .g-block-h { padding: 16px 20px; background: transparent; gap: 13px; }
 .g-block-b { padding: 20px; }
 .g-vcard { grid-template-columns: 170px minmax(0,1fr); gap: 24px; }
+
+/* План ролика: по строке на объект или на участок нарезки. Карточка широкая и
+   до этого пустовала, а «3 объекта» одним числом не говорят ни где они, ни
+   сколько кадров дадут. */
+/* Ролики нарезки — по строке в общем блоке: режут каждый отдельно, размечают
+   нарезанное со всех разом. Строки прокручиваются тем же жёлобом, что и план. */
+.g-reels { max-height: 360px; padding-right: 2px; }
+/* Каждый ролик — отдельный предмет со своей рамкой: строки без границ на
+   широкой карточке сливаются с пустым местом вокруг. */
+.g-reel { display: grid; grid-template-columns: 72px minmax(140px,1fr) auto auto auto auto; align-items: center; gap: 8px 16px; padding: 12px 14px; margin-bottom: 10px; border: 1px solid var(--rule); border-radius: 10px; background: var(--sunk); }
+.g-reel:last-child { margin-bottom: 0; }
+.g-reel:hover { border-color: var(--control-edge); }
+.g-reel-poster { width: 72px; height: 34px; object-fit: cover; border-radius: var(--radius-s); flex-shrink: 0; }
+.g-reel-name { min-width: 0; }
+.g-reel-name b { display: block; font-size: 13px; font-weight: 550; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-reel-name > span { display: block; margin-top: 3px; font-size: 11px; color: var(--faint); }
+/* Дорожка ролика: закрашено то, что взято в нарезку. */
+.g-reel-rail { position: relative; display: block; height: 4px; margin-top: 8px; border-radius: 2px; background: var(--hair); overflow: hidden; }
+.g-reel-rail u { position: absolute; top: 0; bottom: 0; background: var(--red); border-radius: 2px; }
+.g-reel-nums { text-align: right; }
+.g-reel-nums b { display: block; font-size: 17px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.2; }
+.g-reel-nums span { display: block; margin-top: 2px; font-size: 11px; color: var(--dim); white-space: nowrap; }
+.g-reel-segs { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid var(--rule); border-radius: 7px; background: transparent; color: var(--dim); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
+.g-reel-segs:hover { border-color: var(--control-edge); color: var(--ink); background: var(--hair); }
+.g-reel-segs[aria-expanded=true] { border-color: #F94D4D78; background: var(--accent-soft); color: var(--ink); }
+.g-reel-segs i { font-style: normal; font-size: 10px; color: var(--faint); }
+.g-reel-segs.none { border-style: dashed; color: var(--faint); cursor: default; }
+.g-reel-plan { grid-column: 1 / -1; margin-top: 6px; }
+.g-reel-plan th { background: var(--sunk); }
+
+/* Список прокручивается сам: на ролике с полусотней объектов карточка иначе
+   растягивает вкладку тасок в полотно, по которому надо листать страницу. */
+.g-plan-box { margin-top: 14px; max-height: 216px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
+.g-plan { width: 100%; border-collapse: collapse; font-size: 12px; }
+.g-plan th { position: sticky; top: 0; z-index: 1; text-align: left; padding: 7px 12px 7px 0; font-weight: 550; color: var(--faint); white-space: nowrap; background: var(--card); box-shadow: inset 0 -1px var(--rule); }
+.g-plan tbody tr:first-child td { border-top: 0; }
+.g-plan td { padding: 8px 12px 8px 0; border-top: 1px solid var(--hair); color: var(--dim); vertical-align: middle; }
+.g-plan td:first-child { color: var(--ink); }
+.g-plan td:last-child, .g-plan th:last-child { text-align: right; padding-right: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
+.g-plan td i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 8px; vertical-align: -1px; }
+.g-plan tr.bad td { color: var(--danger); }
+.g-plan tr.bad td em { font-style: normal; border-bottom: 1px dotted currentColor; cursor: help; }
+.g-vcard-fail { margin: 14px 0 0; padding: 11px 14px; border: 1px solid #A36973; border-radius: 8px; background: #38272E; color: var(--danger); font-size: 13px; line-height: 1.6; }
+.g-vcard-fail b { color: var(--ink); }
 .g-when, .g-vcard-note, .mag-src-mode { color: var(--dim); }
 .g-stat b { font-size: 28px; font-weight: 600; }
 .g-meter, .t-bar { border-radius: 5px; background: var(--hair); }
@@ -176,7 +236,7 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .g-canvas-top .ttl { font-size: 17px; font-weight: 600; }
 .g-canvas-top .ver { color: var(--dim); font-size: 12px; }
 .g-canvas-top .mag-btn { font-size: 13px; padding: 9px 14px; }
-.g-graph { --xy-edge-stroke: #969BA8; --xy-background-color: var(--paper); --xy-selection-background-color: var(--accent-soft); }
+.g-graph { --xy-edge-stroke: #9998A9; --xy-background-color: var(--paper); --xy-selection-background-color: var(--accent-soft); }
 .g-node { border-radius: 10px; border-color: var(--rule); background: var(--card); box-shadow: 0 3px 12px #0003; }
 .g-node.selected, .react-flow__node.selected .g-node { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 .g-peek { background: var(--card); border-color: var(--rule); }
@@ -185,7 +245,7 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-friend-row, .mag-invite-row { padding-block: 14px; border-color: var(--rule); }
 
 /* Auth keeps the existing forms, validation, registration and resend flows. */
-.mag-auth { grid-template-columns: minmax(0,1fr) minmax(420px,1fr); background: var(--paper); }
+.mag-auth { grid-template-columns: minmax(0,1fr) minmax(420px,1fr); background: var(--paper); max-width: var(--workspace-max); margin: 0 auto; }
 .mag-brand { padding: 48px 64px; background: var(--paper); border-right: 1px solid var(--rule); }
 .mag-brand h2 { font-size: clamp(32px,3.2vw,48px); line-height: 1.16; font-weight: 600; letter-spacing: -1.5px; max-width: 14ch; }
 .mag-brand p { color: var(--dim); font-size: 15px; line-height: 1.7; max-width: 40ch; }
@@ -217,7 +277,7 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-ed-side h5, .mag-ved-side h5 { font: 600 14px/1.4 "Segoe UI",sans-serif; color: var(--ink); letter-spacing: 0; text-transform: none; margin: 0; }
 .mag-ed-search { min-height: 36px; font-size: 13px; border: 1px solid var(--control-edge); color: var(--ink); background: var(--sunk); border-radius: 7px; padding: 8px 10px; }
 .mag-ed-cls { padding: 9px 10px; font-size: 13px; border-radius: 6px; gap: 8px; border: 1px solid transparent; }
-.mag-ed-cls.on { color: var(--ink); border-color: #EF6B7377; background: var(--accent-soft); box-shadow: none; }
+.mag-ed-cls.on { color: var(--ink); border-color: #F94D4D78; background: var(--accent-soft); box-shadow: none; }
 .mag-ed-cls kbd { color: var(--dim); border-color: var(--rule); }
 .mag-ed-hint, .mag-ved-note { color: var(--dim); font-size: 12px; line-height: 1.6; }
 .mag-ved { display: grid; grid-template-columns: 66px minmax(0,1fr) 308px; grid-template-rows: auto minmax(0,1fr) auto; }
@@ -232,10 +292,10 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-ved-classes { max-height: 24vh; min-height: 60px; flex-shrink: 0; gap: 4px; }
 .workspace-object-tabs { display: flex; gap: 5px; padding-top: 16px; margin-top: 5px; border-top: 1px solid var(--rule); }
 .workspace-object-tabs button { flex: 1; padding: 8px 6px; border: 1px solid var(--rule); border-radius: 7px; background: transparent; font-size: 12px; color: var(--dim); cursor: pointer; }
-.workspace-object-tabs button.on { background: var(--accent-soft); border-color: #EF6B7377; color: var(--ink); }
+.workspace-object-tabs button.on { background: var(--accent-soft); border-color: #F94D4D78; color: var(--ink); }
 .mag-ved-objs { flex: 1 1 130px; min-height: 80px; gap: 5px; }
 .mag-ved-obj { flex-shrink: 0; text-align: left; color: var(--ink); padding: 11px 10px; background: transparent; border: 1px solid transparent; gap: 5px; font-family: inherit; }
-.mag-ved-obj.on { background: var(--accent-soft); border-color: #EF6B7377; box-shadow: inset 3px 0 var(--red); }
+.mag-ved-obj.on { background: var(--accent-soft); border-color: #F94D4D78; box-shadow: inset 3px 0 var(--red); }
 .mag-ved-obj-head { width: 100%; font-size: 13px; }
 .mag-ved-obj-n { color: var(--dim); font-size: 10px; }
 .mag-ved-obj .mag-ved-note { padding-left: 17px; font-size: 11px; }
@@ -274,9 +334,9 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-v-obj-id, .mag-v-obj-n { color: var(--ed-dim); }
 .mag-v-btn { background: var(--ed-btn); color: var(--ed-ink); border-color: var(--ed-edge); }
 .mag-v-btn.on { background: var(--accent-soft); border-color: var(--red); color: var(--ink); }
-.mag-ghost-inline.on, .mag-switch button.on { background: var(--accent-soft); border-color: #EF6B7377; color: var(--ink); }
+.mag-ghost-inline.on, .mag-switch button.on { background: var(--accent-soft); border-color: #F94D4D78; color: var(--ink); }
 .mag-step { padding: 22px; border-radius: 12px; gap: 18px; }
-.mag-step.now { box-shadow: none; border-color: #EF6B7377; }
+.mag-step.now { box-shadow: none; border-color: #F94D4D78; }
 .mag-step-num { border-radius: 7px; }
 .mag-step.done .mag-step-num { background: #20352C; color: #A5DFBF; border: 1px solid #527A64; }
 .mag-step-h .sub { color: var(--dim); font-size: 13px; }
@@ -288,7 +348,7 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-h1 { font-size: 30px; line-height: 1.25; letter-spacing: -.7px; font-weight: 650; margin: 0 0 8px; }
 .g-label { font: 600 12px/1.4 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; color: var(--dim); }
 .t-chip { padding: 7px 10px; font-size: 12px; border-radius: 6px; border-color: var(--rule); }
-.t-chip.on { background: var(--accent-soft); border-color: #EF6B7355; color: var(--ink); }
+.t-chip.on { background: var(--accent-soft); border-color: #F94D4D54; color: var(--ink); }
 .workspace-overview { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(270px,1fr); gap: 22px; align-items: start; }
 .workspace-overview > .mag-card { margin: 0; }
 .workspace-overview-side { display: flex; flex-direction: column; gap: 22px; }

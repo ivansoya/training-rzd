@@ -41,7 +41,7 @@ function seconds(value: number): string {
 function splitLine(splits: Record<string, number>): string {
   const parts = ["train", "val", "test", "other"].filter((s) => splits[s]);
   if (parts.length === 0) return "—";
-  return parts.map((s) => `${splits[s].toLocaleString("ru-RU")} ${SPLIT_LABELS[s]}`).join(" · ");
+  return parts.map((s) => `${splits[s].toLocaleString("ru-RU")} ${SPLIT_LABELS[s]}`).join(" — ");
 }
 
 export default function ImportWizard() {

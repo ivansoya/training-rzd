@@ -16,6 +16,7 @@ import { useEffect, useMemo, useState } from "react";
 import * as runsApi from "../../api/runs";
 import type { ModelRow, ParamSpec, ParamValue } from "../../api/runs";
 import type { TrainSet } from "../../api/trainsets";
+import Sep from "../Sep";
 
 const TASK_OF: Record<string, "detect" | "segment"> = {
   bbox: "detect",
@@ -114,7 +115,7 @@ export default function StartRunModal({
   }, [task]);
 
   useEffect(() => {
-    if (model) setName(`${set.name} · ${model}`);
+    if (model) setName(`${set.name} — ${model}`);
   }, [set.name, model]);
 
   const chosen = useMemo(() => models.find((m) => m.id === model), [models, model]);
@@ -233,11 +234,11 @@ export default function StartRunModal({
         <h1>Обучение на наборе «{set.name}»</h1>
         <p className="mag-sub">
           {set.counts
-            ? `${ru(set.counts.samples)} образцов · обучение ${ru(
+            ? `${ru(set.counts.samples)} образцов — обучение ${ru(
                 set.counts.train
-              )} · проверка ${ru(set.counts.val)}`
+              )} <Sep /> проверка ${ru(set.counts.val)}`
             : "набор готов"}
-          {set.counts?.background ? ` · фона ${ru(set.counts.background)}` : ""}
+          {set.counts?.background ? ` — фона ${ru(set.counts.background)}` : ""}
         </p>
 
         {error && <div className="mag-error">{error}</div>}
@@ -253,7 +254,7 @@ export default function StartRunModal({
 
         <div className="mag-field">
           <label htmlFor="run-model">
-            Модель · {task === "segment" ? "сегментация" : "детекция"}, по виду
+            Модель <Sep /> {task === "segment" ? "сегментация" : "детекция"}, по виду
             набора
           </label>
           <select
@@ -264,9 +265,9 @@ export default function StartRunModal({
             {models.map((m) => (
               <option key={m.id} value={m.id}>
                 {m.name}
-                {m.size ? ` · ${m.size}` : ""}
-                {m.note ? ` · ${m.note}` : ""}
-                {m.builtin ? "" : " · своя"}
+                {m.size ? ` — ${m.size}` : ""}
+                {m.note ? ` — ${m.note}` : ""}
+                {m.builtin ? "" : " — своя"}
               </option>
             ))}
           </select>

@@ -17,6 +17,7 @@ import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
 import { useAutoLabel } from "./useAutoLabel";
 import type { AutoRefine } from "../../auth/api";
+import Sep from "../Sep";
 
 /** Управление редактором: клавиша и что она делает.
  *
@@ -1180,7 +1181,7 @@ export default function AnnotationEditor({
             </button>
           )}
 
-          <h5>На кадре · {boxes.length}</h5>
+          <h5>На кадре <Sep /> {boxes.length}</h5>
           <div className="mag-ed-objs">
             {boxes.length === 0 ? (
               <p className="mag-ed-objects-empty">
@@ -1230,7 +1231,7 @@ export default function AnnotationEditor({
           height: im.height,
           boxes: im.boxes,
           ring: im.task_status,
-          title: `${im.file_name} · ${im.annotations} разметок`,
+          title: `${im.file_name} — ${im.annotations} разметок`,
         }))}
         index={index}
         onPick={jump}
