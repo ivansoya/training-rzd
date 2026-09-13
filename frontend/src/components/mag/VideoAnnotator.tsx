@@ -26,6 +26,7 @@ import type {
   VideoTrack,
 } from "../../auth/api";
 import BoxCanvas from "./BoxCanvas";
+import { useLive } from "../../live/LiveProvider";
 import type {
   CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape,
 } from "./BoxCanvas";
@@ -233,7 +234,7 @@ export default function VideoAnnotator({
 
   useEffect(() => { load(); }, [load]);
 
-  useEffect(() => {
+  const loadClasses = useCallback(() => {
     getClasses(code)
       .then((c) => {
         setClasses(c.classes);
@@ -241,6 +242,15 @@ export default function VideoAnnotator({
       })
       .catch(() => {});
   }, [code]);
+
+  useEffect(loadClasses, [loadClasses]);
+
+  // Класс мог уехать или исчезнуть, пока ролик открыт: у треков он сменится
+  // на сервере, а список слева обязан показать то же самое.
+  useLive("classes", () => {
+    loadClasses();
+    load();
+  });
 
   useEffect(() => {
     if (!data) return;

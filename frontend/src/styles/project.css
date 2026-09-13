@@ -453,6 +453,79 @@
   margin-right: auto;
 }
 
+/* Кроме окна судьбы класса: там подтверждение САМО разрушительно и обязано
+ * остаться справа, где его и ищут. */
+.mag-modal-foot .mag-btn.mag-danger {
+  margin-right: 0;
+}
+
+/* Пара «Удалить» и «Перенести разметку…» держится вместе слева. */
+.mag-foot-left {
+  display: flex;
+  gap: 10px;
+  margin-right: auto;
+}
+
+.mag-foot-left .mag-danger {
+  margin-right: 0;
+}
+
+/* ===== Судьба класса ===== */
+.mag-fate-table {
+  margin: 4px 0 14px;
+}
+
+.mag-fate-table td {
+  padding: 5px 0;
+  color: var(--mag-muted);
+}
+
+.mag-fate-table td.num {
+  text-align: right;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.mag-fate-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Переключатель приходится называть полным путём: `.mag-field label` объявлен
+ * блочным, а `.mag-field input` — во всю ширину, с рамкой и отступами. Оба
+ * правила специфичнее одиночного класса, и без этого подпись уезжала под
+ * кружок, а сам кружок растягивался полосой во всю модалку. */
+.mag-field label.mag-fate-opt {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 0;
+  cursor: pointer;
+  font-weight: 400;
+  font-size: 13.5px;
+}
+
+.mag-field .mag-fate-opt input[type="radio"] {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: none;
+}
+
+.mag-fate-opt input:disabled + span {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.mag-hint.mag-warn {
+  color: var(--red);
+}
+
 .mag-roles {
   display: flex;
   gap: 8px;

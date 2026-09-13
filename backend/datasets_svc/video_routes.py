@@ -1017,15 +1017,26 @@ def put_frame_boxes(task_id, video_id, frame_no):
                 select(LabelClass).where(LabelClass.project_id == project.id)
             ).scalars()
         }
+        raws = (request.get_json(silent=True) or {}).get("boxes") or []
+        # То же, что и на кадре таски: молча пропустить бокс с исчезнувшим
+        # классом здесь значит стереть его — сохранение сносит всю одиночную
+        # разметку кадра и вставляет заново.
+        if any(by_index.get(raw.get("class_index")) is None for raw in raws):
+            return jsonify({
+                "error": (
+                    "Класс исчез из проекта, пока ролик был открыт. "
+                    "Перечитайте разметку кадра."
+                ),
+                "code": "class_gone",
+            }), 409
+
         fresh = []
         # Ключ запроса остался «boxes», а под ним теперь обе фигуры: одиночная
         # разметка кадра ролика бывает и рамкой, и контуром. Трек — только
         # рамка: положение между ключами там считается, а контур посчитать
         # нечем, пока точки соседних ключей не сопоставлены друг с другом.
-        for raw in (request.get_json(silent=True) or {}).get("boxes") or []:
-            cls = by_index.get(raw.get("class_index"))
-            if cls is None:
-                continue
+        for raw in raws:
+            cls = by_index[raw.get("class_index")]
             parsed = shapes.from_wire(raw, video.width or 0, video.height or 0)
             if parsed is None:
                 continue

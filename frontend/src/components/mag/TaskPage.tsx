@@ -701,6 +701,13 @@ function describe(e: TaskEventItem): JSX.Element {
       return <>Забракован кадр {p.file}</>;
     case "image_restored":
       return <>Кадр {p.file} вернули в работу</>;
+    case "class_moved":
+      return (
+        <>
+          Класс разметки сменён: <b>{p.from}</b> → <b>{p.to}</b>
+          {p.tracks ? <>, треков: {p.tracks}</> : null}
+        </>
+      );
     case "status":
       return <>Состояние: <b>{p.status}</b></>;
     default:

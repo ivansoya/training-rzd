@@ -16,6 +16,7 @@ import type { Ring } from "./polygon";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
 import { useAutoLabel } from "./useAutoLabel";
+import { useLive } from "../../live/LiveProvider";
 import type { AutoRefine } from "../../auth/api";
 import Sep from "../Sep";
 
@@ -178,12 +179,19 @@ export default function AnnotationEditor({
   // Забракованный кадр смотрим, но не правим: иначе он оживёт незаметно.
   const frozen = readOnly || image?.task_status === "deleted";
 
-  useEffect(() => {
+  const loadClasses = useCallback(() => {
     getClasses(code).then((c) => {
       setClasses(c.classes);
       setActive((prev) => prev ?? (c.classes[0]?.class_index ?? null));
     }).catch(() => {});
   }, [code]);
+
+  useEffect(loadClasses, [loadClasses]);
+
+  // Класс могли удалить или переименовать, пока кадр открыт. Список слева
+  // обновится сразу; боксы в памяти помечены номером класса и останутся
+  // старыми до перечитывания кадра — их поймает отказ при сохранении.
+  useLive("classes", loadClasses);
 
   // Кадр сменился — берём его разметку как есть.
   useEffect(() => {

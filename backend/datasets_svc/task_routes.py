@@ -1169,14 +1169,31 @@ def save_annotations(image_id):
         width = image.width or 0
         height = image.height or 0
 
+        # Классы, которых в проекте больше нет. Раньше такой бокс молча
+        # пропускался — и открытый редактор, переживший удаление класса,
+        # терял разметку без единого слова: сохранение стирает всю разметку
+        # кадра и вставляет заново, так что «пропустить» здесь значит «стереть».
+        # Теперь честный отказ: человек перечитает кадр и увидит, что стало.
+        unknown = sorted({
+            raw.get("class_index") for raw in (data.get("boxes") or [])
+            if by_index.get(raw.get("class_index")) is None
+        }, key=lambda v: (v is None, v))
+        if unknown:
+            return jsonify({
+                "error": (
+                    "Класс исчез из проекта, пока кадр был открыт. "
+                    "Перечитайте разметку кадра."
+                ),
+                "code": "class_gone",
+                "class_index": unknown,
+            }), 409
+
         fresh = []
         clamped = 0
         # Ключ запроса остался «boxes»: он давно в клиенте и в тестах, а под
         # ним теперь идут обе фигуры. Что именно пришло, говорит `kind`.
         for raw in data.get("boxes") or []:
-            cls = by_index.get(raw.get("class_index"))
-            if cls is None:
-                continue
+            cls = by_index[raw.get("class_index")]
             parsed = shapes.from_wire(raw, width, height)
             if parsed is None:
                 continue

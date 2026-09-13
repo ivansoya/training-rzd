@@ -186,6 +186,14 @@ class Project(Base, AuditMixin):
     status: Mapped[str] = mapped_column(
         PROJECT_STATUS_ENUM, nullable=False, default="ready", server_default="ready"
     )
+    # Следующий номер класса. Только растёт: номер удалённого класса в оборот
+    # не возвращается, потому что он уже уехал в мету выгрузки, и «3 = Шпала»
+    # из прошлого экспорта не должно однажды означать другой класс. Считать
+    # `max + 1` по живым классам было мало — удаление верхнего освобождало
+    # его номер.
+    next_class_index: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
 
     members: Mapped[list["ProjectMember"]] = relationship(
         back_populates="project", cascade="all, delete-orphan", passive_deletes=True

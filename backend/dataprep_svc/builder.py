@@ -169,6 +169,19 @@ def build(db, job, *, on_beat=None):
     want = tset.kind
 
     picked = sel_lib.gather(db, project, sel)
+    # `spec` читается здесь, а не при создании набора, поэтому класс успевает
+    # исчезнуть из-под ног: `gather` вернул бы на класс меньше, `export_id`
+    # сдвинулся бы у всех последующих, и на томе оказался бы набор, которого
+    # человек в мастере не утверждал. Падаем словами вместо тихой подмены.
+    # По множеству, а не по длине списка: повтор uuid в `spec` не должен
+    # читаться как пропавший класс.
+    missing = len(set(sel["classes"])) - len(picked.classes)
+    if missing > 0:
+        raise ValueError(
+            f"Классов из отбора больше нет в проекте: {missing}. "
+            "Набор собрался бы с другими номерами классов, чем показывал "
+            "мастер. Создайте набор заново."
+        )
     cluster_of = _clusters(db, tset, picked) if sel["split_mode"] == "smart" \
         else None
     split_of, ratio, warnings = sel_lib.assign(

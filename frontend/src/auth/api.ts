@@ -567,6 +567,9 @@ export interface ClassesInfo {
   classes: LabelClass[];
   superclasses: SuperclassItem[];
   can_edit: boolean;
+  // Судьба класса — только админу: удаление и перенос разметки необратимы и
+  // трогают работу всех разметчиков разом.
+  can_manage: boolean;
 }
 
 export async function getClasses(code: string): Promise<ClassesInfo> {
@@ -594,13 +597,79 @@ export async function updateClass(
   );
 }
 
-// Без confirm сервер отвечает 409 и числом разметок под удаление — цену
-// называем до того, как что-то исчезнет.
+// Чем занят класс. Спрашиваем ДО того, как человек решит его судьбу: диалогу
+// нужны числа по всем трём таблицам, а не одно поле из списка классов,
+// загруженного вместе со страницей и, возможно, устаревшего.
+export interface ClassUsage {
+  class_id: string;
+  name: string;
+  annotations: number;
+  video_tracks: number;
+  video_keys: number;
+  video_singles: number;
+  tasks: { id: string; name: string; status: TaskStatus }[];
+  train_sets: number;
+  unbuilt_sets: string[];
+  // Приходит только когда спрашивали с целевым классом: кадры, где разметка
+  // обоих классов уже есть, — там после слияния будут дубли.
+  overlap_images?: number;
+  target_id?: string;
+}
+
+export async function getClassUsage(
+  code: string,
+  id: string,
+  targetId?: string
+): Promise<ClassUsage> {
+  const q = targetId ? `?target=${encodeURIComponent(targetId)}` : "";
+  return asJson(
+    await fetch(
+      `/api/projects/${encodeURIComponent(code)}/classes/${id}/usage${q}`
+    )
+  );
+}
+
+export interface ClassMoved {
+  moved: {
+    annotations: number;
+    video_tracks: number;
+    video_keys: number;
+    video_singles: number;
+  };
+  overlap_images: number;
+  source_deleted: boolean;
+  target_id: string;
+}
+
+// Отдать разметку класса другому классу. `deleteSource` превращает перенос в
+// слияние: разметка уезжает, исходный класс исчезает.
+export async function moveClass(
+  code: string,
+  id: string,
+  targetId: string,
+  deleteSource: boolean
+): Promise<ClassMoved> {
+  return asJson(
+    await post(`projects/${encodeURIComponent(code)}/classes/${id}/move`, {
+      target_id: targetId,
+      delete_source: deleteSource,
+    })
+  );
+}
+
+// Без confirm сервер отвечает 409 и числами под удаление — цену называем до
+// того, как что-то исчезнет. Интерфейс числа уже знает из `usage`, поэтому
+// шлёт confirm сразу; 409 остаётся страховкой для того, кто ходит в API мимо.
 export async function deleteClass(
   code: string,
   id: string,
   confirm = false
-): Promise<{ deleted_annotations: number }> {
+): Promise<{
+  deleted_annotations: number;
+  deleted_tracks: number;
+  deleted_keys: number;
+  deleted_singles: number;
+}> {
   const q = confirm ? "?confirm=1" : "";
   return asJson(
     await fetch(`/api/projects/${encodeURIComponent(code)}/classes/${id}${q}`, {

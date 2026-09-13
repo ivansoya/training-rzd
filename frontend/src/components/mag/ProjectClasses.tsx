@@ -4,24 +4,39 @@ import {
   createSuperclass,
   deleteClass,
   deleteSuperclass,
+  getClassUsage,
   getClasses,
+  moveClass,
   updateClass,
   updateSuperclass,
 } from "../../auth/api";
-import type { ClassesInfo, LabelClass, SuperclassItem } from "../../auth/api";
+import type {
+  ClassUsage,
+  ClassesInfo,
+  LabelClass,
+  SuperclassItem,
+} from "../../auth/api";
 import ColorPicker, { PALETTE } from "./ColorPicker";
+import { useLive } from "../../live/LiveProvider";
 import { useProject } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
 
 // Что сейчас редактируется. null — ничего.
+//
+// «fate» — судьба разметки класса: удалить её, отдать другому классу или
+// отдать и класс при этом оставить. Все три — одна операция на сервере,
+// поэтому и окно одно.
 type Editing =
   | { kind: "class"; cls: LabelClass }
   | { kind: "new-class"; superclassId: string | null }
+  | { kind: "fate"; cls: LabelClass; move: boolean }
   | { kind: "superclass"; sc: SuperclassItem }
   | { kind: "new-superclass" }
   | null;
+
+type Fate = "delete" | "move-delete" | "move-keep";
 
 export default function ProjectClasses() {
   const { detail, refresh: refreshProject } = useProject();
@@ -44,6 +59,10 @@ export default function ProjectClasses() {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Классы мог изменить кто-то другой — и это не косметика: боксы в открытом
+  // редакторе адресуются номером класса.
+  useLive("classes", load);
 
   const act = useCallback(
     async (fn: () => Promise<unknown>) => {
@@ -136,15 +155,24 @@ export default function ProjectClasses() {
                 : await act(() => createClass(code, patch));
             if (ok) setEditing(null);
           }}
-          onDelete={
-            editing.kind === "class"
-              ? async () => {
-                  if (await act(() => deleteClass(code, editing.cls.id, true))) {
-                    setEditing(null);
-                  }
-                }
+          onFate={
+            editing.kind === "class" && info.can_manage
+              ? (move) => setEditing({ kind: "fate", cls: editing.cls, move })
               : undefined
           }
+        />
+      )}
+
+      {editing?.kind === "fate" && (
+        <ClassFateModal
+          code={code}
+          cls={editing.cls}
+          others={info.classes.filter((c) => c.id !== editing.cls.id)}
+          initialMove={editing.move}
+          onClose={() => setEditing(null)}
+          onDone={async (fn) => {
+            if (await act(fn)) setEditing(null);
+          }}
         />
       )}
 
@@ -263,6 +291,196 @@ function Group({
   );
 }
 
+
+/** Судьба разметки класса.
+ *
+ * Одно окно на три исхода, потому что на сервере это одна операция и один
+ * `UPDATE`. Числа берём с сервера отдельным запросом, а не из списка классов:
+ * тот загружен вместе со страницей и считает только разметку кадров — треки
+ * и ключевые кадры несданных роликов в нём не видны, а гибнут они так же.
+ */
+function ClassFateModal({
+  code,
+  cls,
+  others,
+  initialMove,
+  onClose,
+  onDone,
+}: {
+  code: string;
+  cls: LabelClass;
+  others: LabelClass[];
+  initialMove: boolean;
+  onClose: () => void;
+  onDone: (fn: () => Promise<unknown>) => void;
+}) {
+  const [fate, setFate] = useState<Fate>(
+    initialMove ? "move-delete" : "delete"
+  );
+  const [target, setTarget] = useState(others[0]?.id ?? "");
+  const [usage, setUsage] = useState<ClassUsage | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEscape(onClose);
+
+  const moving = fate !== "delete";
+
+  useEffect(() => {
+    let alive = true;
+    setUsage(null);
+    getClassUsage(code, cls.id, moving && target ? target : undefined)
+      .then((u) => alive && setUsage(u))
+      .catch((e) => alive && setFailed((e as Error).message));
+    return () => {
+      alive = false;
+    };
+  }, [code, cls.id, moving, target]);
+
+  const total =
+    usage &&
+    usage.annotations + usage.video_tracks + usage.video_keys +
+      usage.video_singles;
+  const to = others.find((c) => c.id === target);
+  const ready = usage !== null && !busy && (!moving || Boolean(to));
+
+  const run = () => {
+    if (!ready) return;
+    setBusy(true);
+    onDone(() =>
+      fate === "delete"
+        ? deleteClass(code, cls.id, true)
+        : moveClass(code, cls.id, target, fate === "move-delete")
+    );
+  };
+
+  return (
+    <div className="mag-backdrop">
+      <div className="mag-modal" onClick={(e) => e.stopPropagation()}>
+        <h1>Класс «{cls.name}»</h1>
+        <p className="mag-sub">
+          {usage === null
+            ? failed ?? "Считаем, чем занят класс…"
+            : total === 0
+              ? "На классе нет ни одной разметки."
+              : "Что сделать с его разметкой. Действие необратимо."}
+        </p>
+
+        {usage !== null && total !== 0 && (
+          <table className="mag-table mag-fate-table">
+            <tbody>
+              <tr>
+                <td>Разметок на кадрах</td>
+                <td className="num">{usage.annotations.toLocaleString("ru-RU")}</td>
+              </tr>
+              <tr>
+                <td>Треков в несданных роликах</td>
+                <td className="num">{usage.video_tracks.toLocaleString("ru-RU")}</td>
+              </tr>
+              <tr>
+                <td>Ключевых кадров этих треков</td>
+                <td className="num">{usage.video_keys.toLocaleString("ru-RU")}</td>
+              </tr>
+              <tr>
+                <td>Одиночных боксов в роликах</td>
+                <td className="num">{usage.video_singles.toLocaleString("ru-RU")}</td>
+              </tr>
+            </tbody>
+          </table>
+        )}
+
+        {usage !== null && usage.tasks.length > 0 && (
+          <p className="mag-hint">
+            Затронуты таски:{" "}
+            {usage.tasks.map((t) => t.name).join(", ")}. В их ленте появится
+            запись о смене класса.
+          </p>
+        )}
+
+        {usage !== null && usage.unbuilt_sets.length > 0 && fate !== "move-keep" && (
+          <p className="mag-hint">
+            Класс входит в отбор {usage.train_sets}{" "}
+            {plural(usage.train_sets, "набора", "наборов", "наборов")}, из них
+            ещё не {plural(usage.unbuilt_sets.length, "собран", "собраны", "собраны")}:{" "}
+            {usage.unbuilt_sets.join(", ")}.
+            {fate === "delete" &&
+              " После удаления такой набор не соберётся: номера классов в нём" +
+                " разошлись бы с тем, что показывал мастер."}
+          </p>
+        )}
+
+        <div className="mag-field">
+          <label>Что сделать</label>
+          <div className="mag-fate-choice">
+            {(
+              [
+                ["delete", "Удалить класс вместе с разметкой"],
+                ["move-delete", "Перенести разметку в другой класс, класс удалить"],
+                ["move-keep", "Перенести разметку, класс оставить пустым"],
+              ] as [Fate, string][]
+            ).map(([value, label]) => (
+              <label key={value} className="mag-fate-opt">
+                <input
+                  type="radio"
+                  name="fate"
+                  checked={fate === value}
+                  disabled={value !== "delete" && others.length === 0}
+                  onChange={() => setFate(value)}
+                />
+                <span>{label}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {moving && (
+          <div className="mag-field">
+            <label htmlFor="fate-target">Куда перенести</label>
+            <select
+              id="fate-target"
+              value={target}
+              onChange={(e) => setTarget(e.target.value)}
+            >
+              {others.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.class_index} · {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+
+        {moving && usage?.overlap_images ? (
+          <p className="mag-hint mag-warn">
+            На {usage.overlap_images.toLocaleString("ru-RU")}{" "}
+            {plural(usage.overlap_images, "кадре", "кадрах", "кадрах")} разметка
+            обоих классов уже есть — там появятся дубли. Схлопывать их мы не
+            будем: это удаление чужой разметки внутри операции, затеянной ради
+            её сохранения.
+          </p>
+        ) : null}
+
+        <div className="mag-modal-foot">
+          <button className="mag-ghost" type="button" onClick={onClose}>
+            Отмена
+          </button>
+          <button
+            className={fate === "delete" ? "mag-btn mag-danger" : "mag-btn"}
+            type="button"
+            disabled={!ready}
+            onClick={run}
+          >
+            {fate === "delete"
+              ? "Удалить"
+              : fate === "move-delete"
+                ? `Перенести в «${to?.name ?? "…"}» и удалить`
+                : `Перенести в «${to?.name ?? "…"}»`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- модалки ---
 
 function ClassModal({
@@ -271,7 +489,7 @@ function ClassModal({
   initialSuperclassId,
   onClose,
   onSave,
-  onDelete,
+  onFate,
 }: {
   cls: LabelClass | null;
   superclasses: SuperclassItem[];
@@ -282,7 +500,7 @@ function ClassModal({
     color: string;
     superclass_id: string | null;
   }) => void;
-  onDelete?: () => void;
+  onFate?: (move: boolean) => void;
 }) {
   const [name, setName] = useState(cls?.name ?? "");
   const [color, setColor] = useState(cls?.color ?? PALETTE[0]);
@@ -297,7 +515,7 @@ function ClassModal({
         <h1>{cls ? `Класс ${cls.class_index}` : "Новый класс"}</h1>
         <p className="mag-sub">
           {!cls
-            ? "Идентификатор присвоится сам — следующий свободный в проекте."
+            ? "Идентификатор присвоится сам — следующий за наибольшим в проекте. Освободившиеся номера не переиспользуются: номер уходит в выгрузку, и «3» из прошлого экспорта не должно однажды означать другой класс."
             : cls.annotations === 0
             ? "В проекте нет разметки этим классом."
             : `${cls.annotations.toLocaleString("ru-RU")} ${plural(cls.annotations, "разметка", "разметки", "разметок")} в проекте.`}
@@ -334,21 +552,26 @@ function ClassModal({
         </div>
 
         <div className="mag-modal-foot">
-          {onDelete && cls && (
-            <button
-              className="mag-ghost mag-danger"
-              type="button"
-              onClick={() => {
-                const warn =
-                  cls.annotations === 0
-                    ? `Удалить класс «${cls.name}»?`
-                    : `Удалить класс «${cls.name}»? Вместе с ним исчезнут ` +
-                      `${cls.annotations.toLocaleString("ru-RU")} ${plural(cls.annotations, "разметка", "разметки", "разметок")}. Действие необратимо.`;
-                if (window.confirm(warn)) onDelete();
-              }}
-            >
-              Удалить
-            </button>
+          {onFate && cls && (
+            <div className="mag-foot-left">
+              {/* Два входа в одно окно: «удалить» и «перенести». Числа туда
+                  приедут с сервера — снимок страницы для такого решения
+                  слишком стар, и разметку роликов он не считает вовсе. */}
+              <button
+                className="mag-ghost mag-danger"
+                type="button"
+                onClick={() => onFate(false)}
+              >
+                Удалить
+              </button>
+              <button
+                className="mag-ghost"
+                type="button"
+                onClick={() => onFate(true)}
+              >
+                Перенести разметку…
+              </button>
+            </div>
           )}
           <button className="mag-ghost" type="button" onClick={onClose}>
             Отмена

@@ -13,9 +13,9 @@ import uuid
 import zipfile
 
 from flask import Blueprint, jsonify, request, send_file
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 
-from common import config, jobs
+from common import config, jobs, live
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
@@ -25,6 +25,12 @@ from common.models import (
     LabelClass,
     Project,
     Superclass,
+    Task,
+    TaskEvent,
+    TaskVideo,
+    TrainSet,
+    VideoAnnotation,
+    VideoTrack,
 )
 from common.storage import load_json, save_json, translit_slug
 from datasets_svc import importer, upload
@@ -390,6 +396,12 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
             db.add(row)
             db.flush()
             class_ids[cls["class_index"]] = row.id
+        # Номера пришли из архива, а не от счётчика проекта: двигаем отметку
+        # за ними, иначе следующий класс, созданный руками, налетит на занятый.
+        if plan["classes"]:
+            db.get(Project, project_id).next_class_index = max(
+                cls["class_index"] for cls in plan["classes"]
+            ) + 1
         db.commit()
 
         written = unreadable = orphan_boxes = 0
@@ -968,6 +980,7 @@ def list_classes(code):
         ).scalars().all()
         by_id = {s.id: s for s in supers}
 
+        role = role_in(db, current_user(db), project)
         rows = db.execute(
             select(LabelClass).where(LabelClass.project_id == project.id)
             .order_by(LabelClass.class_index)
@@ -992,7 +1005,11 @@ def list_classes(code):
                 }
                 for s in supers
             ],
-            "can_edit": has_role(role_in(db, current_user(db), project), "editor"),
+            "can_edit": has_role(role, "editor"),
+            # Судьба класса — уровня владельца проекта: удаление и перенос
+            # разметки трогают работу всех разметчиков сразу и необратимы.
+            # Создание, переименование и цвет остаются у редактора.
+            "can_manage": has_role(role, "admin"),
         })
     finally:
         db.close()
@@ -1008,12 +1025,20 @@ def create_class(code):
         name = (data.get("name") or "").strip()
         if not name:
             return jsonify({"error": "Укажите название класса."}), 400
-        # Номер выдаём сами — следующий свободный, чтобы не столкнуться с уже
-        # занятым и не заставлять человека его выдумывать.
-        used = set(db.execute(
-            select(LabelClass.class_index).where(LabelClass.project_id == project.id)
-        ).scalars())
-        class_index = next(i for i in range(len(used) + 1) if i not in used)
+        # Номер выдаём сами и НИКОГДА не переиспользуем освободившийся:
+        # `class_index` уходит в мету выгрузки, и «3 = Шпала» из прошлого
+        # экспорта не должно однажды означать «3 = Опора». Дырки в нумерации
+        # ничего не стоят — `export_id` в выгрузке всё равно считается заново
+        # от нуля (common/selection.py), а номер здесь лишь опознавательный.
+        #
+        # Отметка у проекта, а не `max + 1` по живым классам: удаление самого
+        # верхнего класса снова освобождало бы его номер, а это тот же случай.
+        class_index = db.execute(
+            update(Project)
+            .where(Project.id == project.id)
+            .values(next_class_index=Project.next_class_index + 1)
+            .returning(Project.next_class_index)
+        ).scalar_one() - 1
         superclass_id = _superclass_arg(db, project, data)
 
         row = LabelClass(
@@ -1026,6 +1051,9 @@ def create_class(code):
         )
         db.add(row)
         db.commit()
+        # Открытые редакторы держат список классов в памяти и адресуют боксы
+        # номером класса: без этого нового класса там не будет до перезагрузки.
+        live.notify(db, "classes", project.id, project.id)
         sc = db.get(Superclass, superclass_id) if superclass_id else None
         return jsonify(_class_json(row, 0, sc)), 201
     finally:
@@ -1065,6 +1093,7 @@ def update_class(code, class_id):
         if "superclass_id" in data:
             row.superclass_id = _superclass_arg(db, project, data)
         db.commit()
+        live.notify(db, "classes", project.id, project.id)
         count = db.execute(
             select(func.count()).select_from(Annotation)
             .where(Annotation.class_id == row.id)
@@ -1075,30 +1104,279 @@ def update_class(code, class_id):
         db.close()
 
 
-@bp.delete("/api/projects/<code>/classes/<class_id>")
-def delete_class(code, class_id):
-    db, project, err = _resolve(code, "editor")
+# Наборы, до которых сборка ещё не дошла: их `spec` читается в момент сборки,
+# а не создания, поэтому удалённый класс успевает исчезнуть у них из-под ног.
+UNBUILT_SETS = ("draft", "queued", "building")
+
+
+def _track_ids(db, cls_id):
+    return db.execute(
+        select(VideoTrack.id).where(VideoTrack.class_id == cls_id)
+    ).scalars().all()
+
+
+def _video_cond(cls_id, track_ids):
+    """Разметка ролика, которую утащит за собой этот класс.
+
+    Через ИЛИ, а не по одному полю: ключ трека гибнет двумя путями — своим
+    `class_id` и каскадом от трека. Классы у ключа и у его трека обязаны
+    совпадать, но условие, полагающееся на это, врало бы ровно там, где они
+    разошлись.
+    """
+    cond = VideoAnnotation.class_id == cls_id
+    if track_ids:
+        cond = or_(cond, VideoAnnotation.track_id.in_(track_ids))
+    return cond
+
+
+def _class_usage(db, project, cls, target=None):
+    """Всё, что класс держит на себе, — по трём таблицам, которые на него
+    ссылаются каскадом.
+
+    Считать одни `annotations` было мало: на `classes.id` висят ещё
+    `video_tracks` и `video_annotations`. Класс, размеченный только в несданных
+    роликах, показывал «0 разметок», а удаление молча уносило чужие треки
+    целиком — вместе с ключевыми кадрами, которые ставили руками.
+    """
+    track_ids = _track_ids(db, cls.id)
+    cond = _video_cond(cls.id, track_ids)
+
+    def count(model, *where):
+        return db.execute(
+            select(func.count()).select_from(model).where(*where)
+        ).scalar_one()
+
+    videos = set(db.execute(
+        select(VideoTrack.video_id).where(VideoTrack.class_id == cls.id).distinct()
+    ).scalars())
+    videos |= set(db.execute(
+        select(VideoAnnotation.video_id).where(cond).distinct()
+    ).scalars())
+
+    tasks = []
+    if videos:
+        rows = db.execute(
+            select(Task.id, Task.name, Task.status)
+            .join(TaskVideo, TaskVideo.task_id == Task.id)
+            .where(TaskVideo.id.in_(videos))
+            .distinct()
+        ).all()
+        tasks = [
+            {"id": str(tid), "name": name, "status": status}
+            for tid, name, status in rows
+        ]
+
+    # Наборы держат отбор списком uuid в `spec`; наборов в проекте десятки,
+    # поэтому читаем их и сверяем на месте, а не выражением по JSON, которое
+    # разошлось бы между PostgreSQL и SQLite в тестах.
+    in_sets, unbuilt = 0, []
+    for tset in db.execute(
+        select(TrainSet).where(TrainSet.project_id == project.id)
+    ).scalars():
+        picked = {str(x) for x in ((tset.spec or {}).get("classes") or [])}
+        if str(cls.id) not in picked:
+            continue
+        in_sets += 1
+        if tset.status in UNBUILT_SETS:
+            unbuilt.append(tset.name)
+
+    out = {
+        "class_id": str(cls.id),
+        "name": cls.name,
+        "annotations": count(Annotation, Annotation.class_id == cls.id),
+        "video_tracks": len(track_ids),
+        "video_keys": count(
+            VideoAnnotation, cond, VideoAnnotation.track_id.isnot(None)
+        ),
+        "video_singles": count(
+            VideoAnnotation, cond, VideoAnnotation.track_id.is_(None)
+        ),
+        "tasks": tasks,
+        "train_sets": in_sets,
+        "unbuilt_sets": unbuilt,
+    }
+    if target is not None:
+        # Кадры, где разметка обоих классов уже есть: после слияния там будут
+        # дубли. Только изображения — у ролика «кадр с обоими классами» без
+        # прогона интерполяции не сосчитать, и число вышло бы заниженным,
+        # то есть врущим.
+        mine = select(Annotation.image_id).where(
+            Annotation.class_id == cls.id
+        ).distinct()
+        theirs = select(Annotation.image_id).where(
+            Annotation.class_id == target.id
+        ).distinct()
+        out["overlap_images"] = db.execute(
+            select(func.count()).select_from(mine.intersect(theirs).subquery())
+        ).scalar_one()
+        out["target_id"] = str(target.id)
+    return out
+
+
+def _target_arg(db, project, raw):
+    """Целевой класс переноса: (класс, ошибка)."""
+    target = _get_by_uuid(db, LabelClass, raw) if raw else None
+    if target is None or target.project_id != project.id:
+        return None, (jsonify({"error": "Целевой класс не найден."}), 404)
+    return target, None
+
+
+@bp.get("/api/projects/<code>/classes/<class_id>/usage")
+def class_usage(code, class_id):
+    """Чем занят класс — до того, как человек решит его судьбу.
+
+    Отдельной ручкой, а не полем в списке классов: список зовётся при каждом
+    открытии вкладки, а эти счётчики лезут во все таски проекта и нужны раз в
+    месяц. И не через 409 у DELETE: чтобы узнать, стоит ли НЕ удалять, звать
+    удаление — странный способ спрашивать.
+    """
+    db, project, err = _resolve(code)
     if err:
         return err
     try:
         row = _get_by_uuid(db, LabelClass, class_id)
         if row is None or row.project_id != project.id:
             return jsonify({"error": "Класс не найден."}), 404
-        count = db.execute(
-            select(func.count()).select_from(Annotation)
+        target = None
+        raw = request.args.get("target")
+        if raw:
+            target, bad = _target_arg(db, project, raw)
+            if bad:
+                return bad
+        return jsonify(_class_usage(db, project, row, target))
+    finally:
+        db.close()
+
+
+@bp.post("/api/projects/<code>/classes/<class_id>/move")
+def move_class(code, class_id):
+    """Отдать разметку класса другому классу.
+
+    Одна ручка на два применения: слияние (`delete_source`) и переназначение,
+    оставляющее класс пустым. Это один и тот же `UPDATE`, и разделять его на
+    два кода незачем.
+
+    Синхронно и одной транзакцией: три `UPDATE` по индексированным полям — это
+    секунды даже на полумиллионе строк, а транзакция даёт то, чего воркер даром
+    не даст, — либо переехали все три таблицы, либо ни одна. Класс, переехавший
+    наполовину, был бы хуже любого ожидания.
+    """
+    db, project, err = _resolve(code, "admin")
+    if err:
+        return err
+    try:
+        row = _get_by_uuid(db, LabelClass, class_id)
+        if row is None or row.project_id != project.id:
+            return jsonify({"error": "Класс не найден."}), 404
+        data = request.get_json(silent=True) or {}
+        target, bad = _target_arg(db, project, data.get("target_id"))
+        if bad:
+            return bad
+        if target.id == row.id:
+            return jsonify({"error": "Класс совпадает с целевым."}), 400
+
+        usage = _class_usage(db, project, row, target)
+        user = current_user(db)
+
+        # Порядок важен: список треков берём ДО того, как у них сменится класс,
+        # и ключи двигаем по номеру трека, а не по классу. Иначе ключ, у
+        # которого класс разошёлся с треком, остался бы висеть на исходном
+        # классе — и удаление этого класса снесло бы ключевые кадры только что
+        # перенесённого трека.
+        track_ids = _track_ids(db, row.id)
+        if track_ids:
+            db.execute(
+                update(VideoAnnotation)
+                .where(VideoAnnotation.track_id.in_(track_ids))
+                .values(class_id=target.id)
+            )
+        db.execute(
+            update(VideoAnnotation)
+            .where(VideoAnnotation.class_id == row.id)
+            .values(class_id=target.id)
+        )
+        db.execute(
+            update(VideoTrack)
+            .where(VideoTrack.class_id == row.id)
+            .values(class_id=target.id)
+        )
+        db.execute(
+            update(Annotation)
             .where(Annotation.class_id == row.id)
-        ).scalar_one()
-        # У класса CASCADE на аннотации: без явного подтверждения молча стёрлись
-        # бы размеченные объекты. Число возвращаем, чтобы UI назвал цену.
-        if count and request.args.get("confirm") != "1":
+            .values(class_id=target.id)
+        )
+
+        # В ленту затронутых тасок: разметчик увидит, почему его треки вдруг
+        # называются иначе. У датасетных разметок такой ленты нет, и следа от
+        # переноса там не останется — это названная цена, а не недосмотр.
+        for task in usage["tasks"]:
+            if task["status"] == "closed":
+                continue
+            db.add(TaskEvent(
+                task_id=uuid.UUID(task["id"]),
+                user_id=user.id if user else None,
+                kind="class_moved",
+                payload={
+                    "from": row.name,
+                    "to": target.name,
+                    "tracks": usage["video_tracks"],
+                    "keys": usage["video_keys"],
+                },
+            ))
+
+        deleted = bool(data.get("delete_source"))
+        if deleted:
+            db.delete(row)
+        db.commit()
+        live.notify(db, "classes", project.id, project.id)
+        return jsonify({
+            "ok": True,
+            "moved": {k: usage[k] for k in
+                      ("annotations", "video_tracks", "video_keys",
+                       "video_singles")},
+            "overlap_images": usage.get("overlap_images", 0),
+            "source_deleted": deleted,
+            "target_id": str(target.id),
+        })
+    finally:
+        db.close()
+
+
+@bp.delete("/api/projects/<code>/classes/<class_id>")
+def delete_class(code, class_id):
+    db, project, err = _resolve(code, "admin")
+    if err:
+        return err
+    try:
+        row = _get_by_uuid(db, LabelClass, class_id)
+        if row is None or row.project_id != project.id:
+            return jsonify({"error": "Класс не найден."}), 404
+        usage = _class_usage(db, project, row)
+        total = (usage["annotations"] + usage["video_tracks"]
+                 + usage["video_keys"] + usage["video_singles"])
+        # У класса CASCADE на все три таблицы: без явного подтверждения молча
+        # стёрлись бы и боксы, и чужие треки. Числа возвращаем, чтобы тот, кто
+        # ходит в API мимо интерфейса, тоже услышал цену.
+        if total and request.args.get("confirm") != "1":
             return jsonify({
-                "error": f"Вместе с классом будет удалено разметок: {count}.",
+                "error": (
+                    f"Вместе с классом будет удалено: разметок "
+                    f"{usage['annotations']}, треков {usage['video_tracks']}, "
+                    f"ключевых кадров {usage['video_keys']}."
+                ),
                 "code": "confirm_required",
-                "annotations": count,
+                **usage,
             }), 409
         db.delete(row)
         db.commit()
-        return jsonify({"ok": True, "deleted_annotations": count})
+        live.notify(db, "classes", project.id, project.id)
+        return jsonify({
+            "ok": True,
+            "deleted_annotations": usage["annotations"],
+            "deleted_tracks": usage["video_tracks"],
+            "deleted_keys": usage["video_keys"],
+            "deleted_singles": usage["video_singles"],
+        })
     finally:
         db.close()
 
