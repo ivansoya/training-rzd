@@ -11,6 +11,7 @@ import {
 import type { ImportState, ScannedClass } from "../../auth/api";
 import { formatBytes } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
+import Banner from "../Banner";
 
 // Colours offered to classes that arrive without one — the same list the
 // server falls back to, so a class looks the same before and after the write.
@@ -214,7 +215,7 @@ export default function ImportWizard() {
         <b>Импорт датасета</b>
       </div>
 
-      {error && <div className="mag-error">{error}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
       {/* ---- 1. Архив ---- */}
       {state.archive ? (

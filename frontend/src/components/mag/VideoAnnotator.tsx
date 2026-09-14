@@ -1006,10 +1006,7 @@ export default function VideoAnnotator({
             </button>
           </div>
           {singleFrames.length === 0 ? (
-            <p className="mag-ed-objects-empty">
-              Одиночных объектов нет. Обведённое рамкой или контуром живёт на
-              своём кадре и появится здесь.
-            </p>
+            <p className="mag-ed-objects-empty">Одиночных объектов нет.</p>
           ) : (
             <div className="mag-ed-objects-list">
               {singleFrames.map(({ ci, frames }) => (

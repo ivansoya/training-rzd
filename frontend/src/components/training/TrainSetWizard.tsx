@@ -5,43 +5,26 @@
 // начнёт мерить запоминание вместо обобщения, и заметить это по метрикам будет
 // нельзя — они просто окажутся неправдоподобно хорошими.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { getClasses, getProject } from "../../auth/api";
 import type { LabelClass, ProjectDetail } from "../../auth/api";
 import * as aug from "../../api/aug";
 import * as sets from "../../api/trainsets";
-import type { AnnKind, Preview, SplitMode } from "../../api/trainsets";
+import type { AnnKind, FeedRow, Preview, SplitMode } from "../../api/trainsets";
+import { listTags } from "../../api/tags";
+import type { Tag } from "../../api/tags";
+import FeedRows from "./FeedRows";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 const STEPS = ["Данные", "Деление", "Аугментации", "Сборка"];
 
-const MODES: { key: SplitMode; title: string; why: string }[] = [
-  {
-    key: "manual",
-    title: "Вручную",
-    why: "Берём то, что уже проставлено у кадров. Кадры без назначения уйдут "
-      + "в обучение — в проверку кадр попадает только тогда, когда его туда отправили.",
-  },
-  {
-    key: "random",
-    title: "Случайно",
-    why: "Доля проверки от общего числа. Одинаково при каждом пересчёте: "
-      + "порядок берётся из отпечатка кадра, а не из случайности.",
-  },
-  {
-    key: "balanced",
-    title: "Случайно, с оглядкой на классы",
-    why: "Редкий класс попадёт в проверку хотя бы одним кадром. Пропорцию это "
-      + "слегка искажает — и ради этого затевалось.",
-  },
-  {
-    key: "smart",
-    title: "Умное",
-    why: "Похожие кадры собираются в группы и уезжают в одну сторону целиком. "
-      + "Соседние кадры одного перегона не окажутся по разные стороны, и "
-      + "проверка перестанет мерить запоминание.",
-  },
+const MODES: { key: SplitMode; title: string }[] = [
+  { key: "manual", title: "Вручную" },
+  { key: "random", title: "Случайно" },
+  { key: "balanced", title: "Случайно, с оглядкой на классы" },
+  { key: "smart", title: "Умное" },
 ];
 
 const bytes = (n: number) => {
@@ -72,8 +55,16 @@ export default function TrainSetWizard() {
   const [kind, setKind] = useState<AnnKind>("bbox");
   const [mode, setMode] = useState<SplitMode>("balanced");
   const [ratio, setRatio] = useState(0.2);
-  const [trainGraph, setTrainGraph] = useState<string>("");
-  const [valGraph, setValGraph] = useState<string>("");
+  const [tags, setTags] = useState<Tag[]>([]);
+  // Строки сборки. Стартовое состояние — «всё как есть»: по строке на
+  // половину, кадры своей половины, без графа. Ровно то, что набор делал до
+  // появления строк, и потому объяснять его человеку не нужно.
+  const [feeds, setFeeds] = useState<FeedRow[]>(() => [
+    { part: "train", position: 0, graph_version_id: null,
+      bindings: [{ source_node: "", feed: "train", tag_ids: [] }] },
+    { part: "val", position: 0, graph_version_id: null,
+      bindings: [{ source_node: "", feed: "val", tag_ids: [] }] },
+  ]);
   const [name, setName] = useState("");
 
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -95,6 +86,7 @@ export default function TrainSetWizard() {
       setPicked(got.classes.filter((c) => c.annotations > 0).map((c) => c.id));
     });
     aug.projectGraphs(code).then((got) => setGraphs([...got.graphs, ...got.mine]));
+    listTags(code).then((got) => setTags(got.tags)).catch(() => setTags([]));
   }, [code]);
 
   const spec = useMemo(
@@ -104,8 +96,9 @@ export default function TrainSetWizard() {
       ann_type: kind,
       split_mode: mode,
       val_ratio: ratio,
+      feeds,
     }),
-    [datasets, picked, kind, mode, ratio]
+    [datasets, picked, kind, mode, ratio, feeds]
   );
 
   // Предпросмотр считается на каждое изменение — по тому же коду, которым
@@ -116,8 +109,11 @@ export default function TrainSetWizard() {
       return;
     }
     let alive = true;
+    // Отметку «считаю» ставим сразу, до паузы дребезга. Иначе движение
+    // ползунка триста миллисекунд выглядело как «ничего не произошло», а
+    // числа в карточке всё это время показывали старое деление.
+    setComputing(true);
     const timer = window.setTimeout(() => {
-      setComputing(true);
       sets
         .preview(code, spec)
         .then((got) => alive && setPreview(got))
@@ -130,24 +126,24 @@ export default function TrainSetWizard() {
     };
   }, [code, spec, datasets.length, picked.length]);
 
-  const graphOf = useCallback(
-    (id: string) => graphs.find((g) => g.version_id === id),
-    [graphs]
-  );
-
-  const samplesOut = preview
-    ? Math.round(preview.train * (graphOf(trainGraph)?.stats?.multiplier ?? 1)) +
-      Math.round(preview.val * (graphOf(valGraph)?.stats?.multiplier ?? 1))
-    : 0;
+  // Итог в образцах считает сервер — по строкам, тем же кодом, которым потом
+  // соберёт. Клиент его только показывает: складывать множители строк на
+  // глаз значило бы обещать одно, а собрать другое.
+  //
+  // `??` — на сервер, который строк ещё не знает (стенд между выкатками):
+  // без него мастер показывал бы «0 образцов» при живом отборе, и это
+  // читалось бы как поломка, а не как рассинхрон версий.
+  const samplesOut = preview ? preview.samples ?? preview.train + preview.val : 0;
 
   const perImage = detail && detail.stats.images
     ? detail.stats.size_bytes / detail.stats.images
     : 0;
   // Неизменённые кадры кладутся жёсткой ссылкой и места не занимают — их из
   // оценки надо вычесть, иначе «займёт 40 ГБ» пугает впустую.
-  const linked = preview
-    ? (trainGraph ? 0 : preview.train) + (valGraph ? 0 : preview.val)
-    : 0;
+  // Ссылками ложатся строки без графа: их образцы это те же файлы проекта.
+  const linked = (preview?.feeds || [])
+    .filter((f) => f.source_node === null)
+    .reduce((sum, f) => sum + f.samples, 0);
   const estimate = Math.round((samplesOut - linked) * perImage * 1.15);
 
   const build = async () => {
@@ -155,12 +151,7 @@ export default function TrainSetWizard() {
     setBusy(true);
     setError(null);
     try {
-      const got = await sets.createSet(code, {
-        ...spec,
-        name: name.trim(),
-        graph_version_id: trainGraph || null,
-        val_graph_version_id: valGraph || null,
-      });
+      const got = await sets.createSet(code, { ...spec, name: name.trim() });
       navigate(`/projects/${code}/training?set=${got.id}`);
     } catch (e) {
       setError((e as Error).message);
@@ -218,10 +209,6 @@ export default function TrainSetWizard() {
       <div className="mag-pass-strip">
         <div className="mag-pass-id">
           <h1 className="mag-h1">Новый обучающий набор</h1>
-          <p>
-            Кадры проекта превращаются в папку, которую читает YOLO. Деление на
-            обучение и проверку считается до первой картинки.
-          </p>
         </div>
         <Link
           to={`/projects/${code}/training`}
@@ -239,7 +226,7 @@ export default function TrainSetWizard() {
         ))}
       </div>
 
-      {error && <div className="mag-error">{error}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
       <div className="t-wiz">
         <div>
@@ -314,15 +301,8 @@ export default function TrainSetWizard() {
                     onClick={() => setKind(k)}
                   >
                     <span className="dot" />
-                    <span>
-                      <span className="t">
-                        {k === "bbox" ? "Рамки" : "Сегментация"}
-                      </span>
-                      <span className="d">
-                        {k === "bbox"
-                          ? "Полигон сводится к охватывающей рамке: объект упрощается, но не пропадает."
-                          : "Контур строкой. Рамки сюда не идут: прямоугольник, записанный контуром, учил бы модель, что объекты прямоугольные."}
-                      </span>
+                    <span className="t">
+                      {k === "bbox" ? "Рамки" : "Сегментация"}
                     </span>
                   </button>
                 ))}
@@ -344,10 +324,7 @@ export default function TrainSetWizard() {
                     onClick={() => setMode(m.key)}
                   >
                     <span className="dot" />
-                    <span>
-                      <span className="t">{m.title}</span>
-                      <span className="d">{m.why}</span>
-                    </span>
+                    <span className="t">{m.title}</span>
                   </button>
                 ))}
               </div>
@@ -369,7 +346,15 @@ export default function TrainSetWizard() {
                 </div>
               )}
 
-              {mode === "smart" && preview?.embeddings && (
+              {/* Полоса признаков — только пока их считают или не хватает.
+                  Досчитанная до конца, она висела зелёной навсегда и не
+                  сообщала ничего: «11 885 из 11 885» — это не состояние, а
+                  сообщение о том, что состояния больше нет. Число групп
+                  живёт в карточке справа, вместе с остальным итогом. */}
+              {mode === "smart" && preview?.embeddings &&
+                (preview.embeddings.missing > 0 ||
+                  preview.embeddings.job ||
+                  preview.embeddings.failure) && (
                 <div className="t-side" style={{ marginBottom: 14 }}>
                   <div className="g-label">Признаки кадров</div>
                   <div className="t-split">
@@ -468,47 +453,30 @@ export default function TrainSetWizard() {
           {step === 2 && (
             <>
               <div className="g-label" style={{ marginBottom: 10 }}>
-                Граф для обучающей части
+                Обучающая часть
               </div>
-              <select
-                
-                value={trainGraph}
-                onChange={(e) => setTrainGraph(e.target.value)}
-                style={{ width: "100%", marginBottom: 6 }}
-              >
-                <option value="">без аугментаций</option>
-                {graphs
-                  .filter((g) => g.version_id)
-                  .map((g) => (
-                    <option key={g.id} value={g.version_id as string}>
-                      {g.name} <Sep /> версия {g.version} <Sep /> ×{g.stats?.multiplier ?? 1}
-                    </option>
-                  ))}
-              </select>
-              <p className="t-choice-hint" style={{ color: "var(--faint)", fontSize: 11.5 }}>
-                Набор запомнит и граф, и его версию: правка графа задним числом
-                этот набор не изменит.
-              </p>
+              <FeedRows
+                part="train"
+                rows={feeds}
+                graphs={graphs}
+                tags={tags}
+                preview={preview?.feeds || []}
+                onChange={setFeeds}
+              />
 
-              <div className="g-label" style={{ margin: "18px 0 10px" }}>
-                Граф для проверочной части
+              <div className="g-label" style={{ margin: "20px 0 10px" }}>
+                Проверочная часть
               </div>
-              <select
-                
-                value={valGraph}
-                onChange={(e) => setValGraph(e.target.value)}
-                style={{ width: "100%" }}
-              >
-                <option value="">без аугментаций (обычно так и надо)</option>
-                {graphs
-                  .filter((g) => g.version_id)
-                  .map((g) => (
-                    <option key={g.id} value={g.version_id as string}>
-                      {g.name} <Sep /> версия {g.version}
-                    </option>
-                  ))}
-              </select>
-              {valGraph && (
+              <FeedRows
+                part="val"
+                rows={feeds}
+                graphs={graphs}
+                tags={tags}
+                preview={preview?.feeds || []}
+                onChange={setFeeds}
+              />
+
+              {feeds.some((r) => r.part === "val" && r.graph_version_id) && (
                 <div className="t-warn">
                   Проверочная часть пойдёт через аугментации. Тогда метрика
                   измерит качество на выдуманных кадрах, а не на настоящих —
@@ -530,17 +498,16 @@ export default function TrainSetWizard() {
                 style={{ width: "100%" }}
                 aria-label="Имя набора"
               />
-              <p style={{ color: "var(--faint)", fontSize: 12, marginTop: 10 }}>
-                Собранный набор живёт, пока его не удалят: обучение будет
-                ссылаться именно на него, и «повторить ровно на том же» без него
-                превратится в слова.
-              </p>
             </>
           )}
         </div>
 
         <div>
-          <div className="t-side">
+          {/* Пока идёт пересчёт, карточка честно гаснет: числа в ней —
+              прошлое деление, и показывать их в полную силу рядом с только
+              что сдвинутым ползунком значит врать. Полоса под подписью
+              бегущая, без процентов: сколько осталось, никто не знает. */}
+          <div className={computing ? "t-side t-side-busy" : "t-side"}>
             <div className="g-label">
               Разделится так
               {computing && (
@@ -554,6 +521,7 @@ export default function TrainSetWizard() {
                 </span>
               )}
             </div>
+            {computing && <div className="t-busy-line" aria-hidden="true" />}
             {preview ? (
               <>
                 <div className="t-split">

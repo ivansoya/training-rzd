@@ -20,13 +20,13 @@ from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
     AugGraph, AugGraphUse, AugGraphVersion, DataprepJob, Project,
-    ProjectAugGraph, TrainSet, User, utcnow,
+    ProjectAugGraph, TrainSet, TrainSetFeed, User, utcnow,
 )
 from common import config, live
 from common import prep_queue as queue
 from common import similarity
 from common.models import LabelClass
-from dataprep_svc import albu, samples as samples_lib
+from dataprep_svc import albu, feeds, samples as samples_lib
 from dataprep_svc.graph import plan as planlib
 from dataprep_svc.graph import schema
 from dataprep_svc.graph.schema import GraphError
@@ -119,9 +119,10 @@ def _graph_view(db, graph, head=None):
         head = db.get(AugGraphVersion, graph.head_version_id)
     owner = db.get(User, graph.owner_id) if graph.owner_id else None
     used_by = db.execute(
-        select(func.count(TrainSet.id))
+        select(func.count(func.distinct(TrainSet.id)))
+        .join(TrainSetFeed, TrainSetFeed.set_id == TrainSet.id)
         .join(AugGraphVersion,
-              AugGraphVersion.id == TrainSet.graph_version_id)
+              AugGraphVersion.id == TrainSetFeed.graph_version_id)
         .where(AugGraphVersion.graph_id == graph.id)
     ).scalar() or 0
     return {
@@ -228,6 +229,14 @@ def _save_version(db, graph, doc, user, note=None):
         ports = planlib.group_ports_for(doc, loader)
         schema.check(doc, group_ports=ports)
         stats = planlib.counts(doc, 1.0, loader)
+        # Источники — списком, с номером узла и подписью: по ним мастер
+        # сборки спрашивает, что вливать в каждый. Кладём в паспорт версии,
+        # а не считаем на лету: версия неизменна, а разбирать её документ
+        # ради двух строк пришлось бы на каждое открытие мастера.
+        stats["sources"] = [
+            {"id": n["id"], "name": schema.source_name(n)}
+            for n in schema.sources_of(doc)
+        ]
     except GraphError as exc:
         return None, (jsonify({"error": str(exc)}), 400)
 
@@ -396,9 +405,10 @@ def delete_graph(graph_id):
         if graph is None or graph.owner_id != user.id:
             return jsonify({"error": "Граф не найден."}), 404
         used = db.execute(
-            select(func.count(TrainSet.id))
+            select(func.count(func.distinct(TrainSet.id)))
+            .join(TrainSetFeed, TrainSetFeed.set_id == TrainSet.id)
             .join(AugGraphVersion,
-                  AugGraphVersion.id == TrainSet.graph_version_id)
+                  AugGraphVersion.id == TrainSetFeed.graph_version_id)
             .where(AugGraphVersion.graph_id == graph.id)
         ).scalar() or 0
         if used:
@@ -512,18 +522,30 @@ def unlink_graph(code, graph_id):
 # --------------------------------------------------------------------------- #
 # Обучающие наборы
 # --------------------------------------------------------------------------- #
+def _graph_label(db, version_id):
+    """Как назвать версию графа в списке наборов. Удалённой она быть не может
+    (ссылка с RESTRICT), но пересобранный набор старой версии — может."""
+    version = db.get(AugGraphVersion, version_id) if version_id else None
+    if version is None:
+        return None
+    row = db.get(AugGraph, version.graph_id)
+    return {
+        "id": str(version.graph_id),
+        "name": row.name if row else "— удалён —",
+        "version": version.version,
+        "version_id": str(version.id),
+    }
+
+
 def _set_view(db, tset):
-    graph = None
-    if tset.graph_version_id:
-        version = db.get(AugGraphVersion, tset.graph_version_id)
-        if version is not None:
-            row = db.get(AugGraph, version.graph_id)
-            graph = {
-                "id": str(version.graph_id),
-                "name": row.name if row else "— удалён —",
-                "version": version.version,
-                "version_id": str(version.id),
-            }
+    rows = feeds.load(db, tset.id)
+    labels = {v: _graph_label(db, v) for v in feeds.versions_of(rows)}
+    # «graph» — первый граф обучающей половины. Остался ради списка наборов:
+    # там одна строка на набор, и назвать в ней все графы всё равно негде.
+    graph = next(
+        (labels[r["graph_version_id"]] for r in rows
+         if r["part"] == "train" and r["graph_version_id"]), None
+    )
     job = queue.progress_of(db, queue.KIND_BUILD, tset.id)
     if job is None and tset.status == "deleting":
         job = queue.progress_of(db, queue.KIND_DELETE, tset.id)
@@ -539,6 +561,12 @@ def _set_view(db, tset):
         "size_bytes": tset.size_bytes,
         "hardlinked_bytes": tset.hardlinked_bytes,
         "graph": graph,
+        # Имя графа рядом со строкой: в списке строк «версия 7 графа „Ночь“»
+        # читается, а uuid — нет.
+        "feeds": [
+            {**shown, "graph": labels.get(row["graph_version_id"])}
+            for row, shown in zip(rows, feeds.view(rows))
+        ],
         "built_at": tset.built_at.isoformat() if tset.built_at else None,
         "created_at": tset.created_at.isoformat(),
         "error": tset.error,
@@ -641,12 +669,50 @@ def preview_set(code):
             for i, c in enumerate(picked.classes)
         ))
 
+        # Строки сборки: сколько кадров возьмёт каждая и во сколько образцов
+        # превратит. Без этих чисел кнопка «Собрать» обещает вслепую — а
+        # ошибка в привязке стоит часа сборки и десятков гигабайт.
+        rows = feeds.parse(data.get("feeds"))
+        docs = {}
+        for version_id in feeds.versions_of(rows):
+            version = db.get(AugGraphVersion, version_id)
+            if version is not None:
+                docs[version_id] = version.doc
+        units = feeds.plan_units(
+            rows, docs.get, picked, split_of, load_version=_loader(db)
+        )
+        warnings.extend(feeds.cross_half_warnings(rows))
+        covered = {u["part"]: set() for u in units}
+        for unit in units:
+            covered[unit["part"]].update(i.id for i in unit["images"])
+        for part, total in (("train", train), ("val", val)):
+            missed = total - len(covered.get(part, ()))
+            if missed > 0:
+                warnings.append(
+                    f"Кадров половины «{part}», которых не берёт ни одна "
+                    f"строка: {missed}. В набор они не попадут."
+                )
+
         return jsonify({
             "images": len(picked.images),
             "train": train,
             "val": val,
             "val_ratio": round(ratio, 4),
+            "feeds": [
+                {
+                    "part": u["part"],
+                    "position": u["position"],
+                    "source_node": u["source_node"],
+                    "source_name": u["source_name"],
+                    "feed": u["feed"],
+                    "images": len(u["images"]),
+                    "samples": int(round(u["expected"])),
+                }
+                for u in units
+            ],
+            "samples": int(round(sum(u["expected"] for u in units))),
             "dropped": picked.dropped,
+            "no_tag": picked.no_tag,
             "background": picked.background,
             "no_size": picked.no_size,
             "wrong_kind": picked.wrong_kind,
@@ -727,10 +793,9 @@ def create_set(code):
         if taken is not None:
             return jsonify({"error": "Набор с таким именем уже есть."}), 409
 
-        graph_version = _uuid(data.get("graph_version_id"))
-        val_version = _uuid(data.get("val_graph_version_id"))
-        for version_id in (graph_version, val_version):
-            if version_id and db.get(AugGraphVersion, version_id) is None:
+        rows = feeds.parse(data.get("feeds"))
+        for version_id in feeds.versions_of(rows):
+            if db.get(AugGraphVersion, version_id) is None:
                 return jsonify({"error": "Версия графа не найдена."}), 404
 
         seed = data.get("seed")
@@ -750,10 +815,11 @@ def create_set(code):
             project_id=project.id, name=name, kind=sel["ann_type"],
             status="queued", spec=spec, split_mode=sel["split_mode"],
             val_ratio=sel["val_ratio"], seed=seed,
-            graph_version_id=graph_version, val_graph_version_id=val_version,
             created_by=user.id,
         )
         db.add(tset)
+        db.flush()
+        feeds.save(db, tset.id, rows)
         db.commit()
 
         job = queue.enqueue(

@@ -216,3 +216,32 @@
   border-color: rgba(226, 26, 26, 0.35);
   color: var(--mag-red-dark);
 }
+
+/* ── Окно загрузки кадров ──────────────────────────────────────────────────
+   Вопрос там ровно один — таг, — поэтому окно узкое и без вкладок. Список
+   файлов разворачивается по требованию: в девяти случаях из десяти вся пачка
+   получает один набор тагов, и показывать двести строк незачем. */
+.mag-up { width: min(620px, 92vw); }
+.up-common { margin: 14px 0 10px; }
+.up-common .g-label { margin-bottom: 8px; }
+.up-list {
+  margin-top: 10px; max-height: 320px; overflow-y: auto;
+  border: 1px solid var(--hair); border-radius: var(--radius-s);
+}
+.up-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 10px;
+  align-items: baseline; padding: 9px 11px;
+  border-bottom: 1px solid var(--hair);
+}
+.up-row:last-child { border-bottom: 0; }
+.up-row b {
+  font-weight: 550; font-size: 13px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.up-row > span { font: 400 11px/1 var(--mono); color: var(--faint); }
+.up-row .tagp { grid-column: 1 / -1; }
+
+/* Таги ролика: в списке нарезки — своей строкой во всю ширину, в карточке
+   размечаемого — над фактами о файле. */
+.g-reel-tags { grid-column: 1 / -1; }
+.g-vcard-tags { margin: 10px 0 2px; }

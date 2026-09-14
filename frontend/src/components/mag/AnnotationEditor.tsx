@@ -15,6 +15,8 @@ import * as poly from "./polygon";
 import type { Ring } from "./polygon";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
+import TagPicker from "./TagPicker";
+import type { Tag } from "../../api/tags";
 import { useAutoLabel } from "./useAutoLabel";
 import { useLive } from "../../live/LiveProvider";
 import type { AutoRefine } from "../../auth/api";
@@ -87,18 +89,27 @@ export default function AnnotationEditor({
   images,
   index,
   readOnly,
+  tags,
   onIndex,
   onClose,
   onChanged,
+  onTags,
+  onTagCreated,
 }: {
   code: string;
   taskName: string;
   images: TaskImage[];
   index: number;
   readOnly: boolean;
+  /** Справочник тагов проекта. */
+  tags: Tag[];
   onIndex: (i: number) => void;
   onClose: () => void;
   onChanged: (image: TaskImage) => void;
+  /** Таги этого кадра. Единственное место, где их правят после того, как
+   *  кадр ушёл в датасет, — и правят по одному кадру. */
+  onTags: (imageId: string, tagIds: string[]) => void;
+  onTagCreated: (tag: Tag) => void;
 }) {
   const image = images[index];
 
@@ -1188,6 +1199,21 @@ export default function AnnotationEditor({
               Ничего не нашлось — создать «{query.trim()}»
             </button>
           )}
+
+          {/* Таг правится здесь и только здесь: человек видит кадр, когда
+              решает про его условия съёмки. Работает и в закрытой таске —
+              закрытие останавливает разметку, а таг это паспорт кадра. */}
+          <h5>Таги кадра</h5>
+          <TagPicker
+            code={code}
+            all={tags}
+            value={image?.tag_ids || []}
+            disabled={readOnly}
+            compact
+            placeholder="таг кадра"
+            onChange={(next) => image && onTags(image.id, next)}
+            onCreated={onTagCreated}
+          />
 
           <h5>На кадре <Sep /> {boxes.length}</h5>
           <div className="mag-ed-objs">

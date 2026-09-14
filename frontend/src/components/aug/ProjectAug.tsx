@@ -8,6 +8,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import * as api from "../../api/aug";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 export default function ProjectAug() {
   const { code } = useParams<{ code: string }>();
@@ -37,16 +38,12 @@ export default function ProjectAug() {
 
   return (
     <>
-      {error && <div className="mag-error">{error}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
       {linked.length === 0 ? (
         <div className="mag-empty-big">
           <b>К проекту не подключён ни один граф.</b>
-          <p>
-            Граф живёт в вашей библиотеке и подключается сюда ссылкой. Правки в
-            нём увидят все проекты сразу, а собранные наборы — нет: они помнят
-            ту версию, которой их собрали.
-          </p>
+          <p>Граф живёт в вашей библиотеке и подключается сюда ссылкой.</p>
           <Link to="/augment" className="mag-btn">
             Открыть библиотеку
           </Link>

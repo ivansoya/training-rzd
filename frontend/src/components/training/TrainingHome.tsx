@@ -13,6 +13,7 @@ import type { TrainSet } from "../../api/trainsets";
 import { useLive } from "../../live/LiveProvider";
 import StartRunModal from "./StartRunModal";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 const ru = (n: number) => Math.round(n).toLocaleString("ru-RU");
 
@@ -124,18 +125,13 @@ export default function TrainingHome() {
         )}
       </div>
 
-      {error && <div className="mag-error">{error}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
       {tab === "sets" &&
         (sets.length === 0 ? (
           <div className="mag-empty-big">
             <b>Обучающих наборов пока нет.</b>
-            <p>
-              Набор — это папка с кадрами и разметкой, поделённая на обучение и
-              проверку. Учиться напрямую из датасета нельзя: деление и
-              аугментации нужно где-то записать, иначе повторить обучение будет
-              не на чем.
-            </p>
+            <p>Обучение идёт из набора, а не напрямую из датасета.</p>
             {canEdit && (
               <Link to={`/projects/${code}/training/new`} className="mag-btn">
                 Собрать первый набор

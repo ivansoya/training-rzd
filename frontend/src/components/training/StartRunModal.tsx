@@ -17,6 +17,7 @@ import * as runsApi from "../../api/runs";
 import type { ModelRow, ParamSpec, ParamValue } from "../../api/runs";
 import type { TrainSet } from "../../api/trainsets";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 const TASK_OF: Record<string, "detect" | "segment"> = {
   bbox: "detect",
@@ -241,7 +242,7 @@ export default function StartRunModal({
           {set.counts?.background ? ` — фона ${ru(set.counts.background)}` : ""}
         </p>
 
-        {error && <div className="mag-error">{error}</div>}
+        {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
         <div className="mag-field">
           <label htmlFor="run-name">Имя обучения</label>
@@ -297,13 +298,6 @@ export default function StartRunModal({
             Учить с нуля, без предобученных весов
           </label>
         )}
-        {!pretrained && (
-          <p className="t-form-hint">
-            С нуля сеть начинает со случайных весов. На тысячах кадров одного
-            ракурса это даёт заметно хуже, чем дообучение, и переобучается
-            раньше — включайте, только если знаете зачем.
-          </p>
-        )}
 
         <div className="t-form-section">
           <div className="g-label">Сколько учить</div>
@@ -312,20 +306,11 @@ export default function StartRunModal({
             {field("imgsz")}
             {field("batch")}
           </div>
-          <p className="t-form-hint">
-            Размер входа и батч определяют, сколько нужно видеопамяти. Не хватит
-            сейчас — обучение встанет в очередь и скажет, чего именно не хватает;
-            не хватит никогда — скажет и это, до запуска.
-          </p>
         </div>
 
         <div className="t-form-section">
           <div className="g-label">Когда остановиться</div>
           <div className="t-form-grid">{field("patience")}</div>
-          <p className="t-form-hint">
-            Столько эпох подряд без роста качества на проверке — и обучение
-            заканчивается, лучшие веса уже сохранены. Ноль — идти до конца.
-          </p>
         </div>
 
         <div className="t-form-section">
@@ -354,11 +339,6 @@ export default function StartRunModal({
                     {AUG.map(field)}
                   </div>
                   <div className="t-form-actions">
-                    <p className="t-form-hint" style={{ margin: 0 }}>
-                      Значения «p» — вероятность применить к кадру. Мозаика
-                      склеивает четыре кадра в один и выключается за последние
-                      эпохи, чтобы сеть доучилась на настоящих кадрах.
-                    </p>
                     {augChanged && (
                       <button type="button" className="mag-ghost mag-ghost-inline" onClick={resetAug}>
                         Вернуть рекомендуемые
@@ -367,11 +347,7 @@ export default function StartRunModal({
                   </div>
                 </>
               ) : (
-                <p className="t-form-hint">
-                  Без аугментаций сеть видит одни и те же кадры сто раз подряд и
-                  запоминает их: потери на обучении падают, на проверке растут.
-                  Годится только для наборов, размноженных заранее.
-                </p>
+                <></>
               )}
             </>
           )}
@@ -380,20 +356,10 @@ export default function StartRunModal({
         <details className="t-fold">
           <summary>Тонкая настройка: оптимизатор, регуляризация, зерно</summary>
           <div className="t-form-grid">{OPTIM.map(field)}</div>
-          <p className="t-form-hint">
-            «auto» подбирает оптимизатор и скорость сам: SGD на долгих
-            обучениях, AdamW на коротких. Разогрев — эпохи с малой скоростью в
-            начале, чтобы предобученные веса не сорвало первым же шагом.
-          </p>
           <div className="t-form-grid" style={{ marginTop: 10 }}>
             {REG.map(field)}
             {MISC.map(field)}
           </div>
-          <p className="t-form-hint">
-            Заморозка первых слоёв ускоряет дообучение и бережёт признаки
-            основы; зерно повторяет перемешивание и аугментации — то же зерно
-            даёт то же обучение. Загрузчиков «авто» — по числу ядер.
-          </p>
         </details>
 
         <div className="mag-modal-foot">

@@ -18,6 +18,7 @@ export default function MagShell({ children }: { children: ReactNode }) {
   const projectLinks = [
     ["", "Обзор", "ОБ"], ["/tasks", "Таски", "ТС"],
     ["/datasets", "Датасеты", "ДТ"], ["/classes", "Классы", "КЛ"],
+    ["/tags", "Таги", "ТГ"],
     ["/aug", "Аугментации проекта", "АУ"], ["/training", "Обучение", "МО"],
     ["/members", "Участники", "УЧ"],
   ];

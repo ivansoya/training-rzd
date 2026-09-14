@@ -14,6 +14,7 @@ import {
 import type { FriendsInfo, InvitationItem } from "../../auth/api";
 import { useAuth } from "./AuthGate";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 export function initials(name: string): string {
   return (
@@ -144,7 +145,7 @@ export default function AccountPage() {
             <b>{projects.length}</b>
           </div>
 
-          {passOk && <div className="mag-ok">Пароль изменён.</div>}
+          {passOk && <Banner onClose={() => setPassOk(false)}>Пароль изменён.</Banner>}
           {!showPass ? (
             <button
               className="mag-ghost"
@@ -158,7 +159,7 @@ export default function AccountPage() {
             </button>
           ) : (
             <form className="mag-pass-form" onSubmit={handlePassword}>
-              {passError && <div className="mag-error">{passError}</div>}
+              {passError && <Banner className="mag-error" onClose={() => setPassError(null)}>{passError}</Banner>}
               <div className="mag-field">
                 <label htmlFor="pw-cur">Текущий пароль</label>
                 <input
@@ -241,8 +242,8 @@ export default function AccountPage() {
 
           <div className="mag-card">
             <h4>Друзья</h4>
-            {friendErr && <div className="mag-error">{friendErr}</div>}
-            {friendMsg && <div className="mag-ok">{friendMsg}</div>}
+            {friendErr && <Banner className="mag-error" onClose={() => setFriendErr(null)}>{friendErr}</Banner>}
+            {friendMsg && <Banner onClose={() => setFriendMsg(null)}>{friendMsg}</Banner>}
             <form className="mag-friend-add" onSubmit={handleAddFriend}>
               <input
                 type="text"

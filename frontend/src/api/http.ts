@@ -65,6 +65,10 @@ export async function patch<T>(path: string, body: unknown = {}): Promise<T> {
   return asJson<T>(await send("PATCH", path, body));
 }
 
+export async function put<T>(path: string, body: unknown = {}): Promise<T> {
+  return asJson<T>(await send("PUT", path, body));
+}
+
 export async function del<T>(path: string): Promise<T> {
   return asJson<T>(await send("DELETE", path));
 }

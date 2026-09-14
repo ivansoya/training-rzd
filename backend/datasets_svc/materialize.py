@@ -17,7 +17,7 @@ import os
 
 from sqlalchemy import select
 
-from common import config
+from common import config, tags
 from common.models import (
     Annotation,
     Image,
@@ -221,6 +221,8 @@ def run_video(db, task, video, user_id, progress=None):
 
     base = config.image_base_dir(task.project_id, task.id)
     created = {}
+    # Таги ролика — один раз на всю материализацию, а не на кадр.
+    video_tags = tags.ids_of(db, "video", video.id)
 
     def on_frame(frame_no, time_ms, img):
         image = Image(
@@ -238,6 +240,7 @@ def run_video(db, task, video, user_id, progress=None):
         )
         db.add(image)
         db.flush()
+        tags.link(db, "image", image.id, video_tags)
         full, size, nbytes = videolib.save_frame(img, base, image.id)
         image.file_path = os.path.relpath(full, config.DATA_DIR)
         image.width, image.height = size

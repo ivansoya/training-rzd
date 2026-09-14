@@ -258,6 +258,9 @@
 
 /* ===== Модалка нарезки: видео слева, участки справа ===== */
 .mag-cut {
+  /* Точка отсчёта для заслонки и подтверждения: без неё они мерили себя от
+     подложки и ложились на весь экран, а не на окно. */
+  position: relative;
   background: #14181c;
   color: #e8ecef;
   border-radius: 12px;
@@ -1083,6 +1086,116 @@
   color: #e8ecef;
 }
 
-.mag-cut-foot .mag-progress-lbl {
+/* ===== Заслонка нарезки: работа и её итог поверх всего окна ===== */
+/* Полоска в углу подвала терялась — нарезка идёт десятки секунд, и за это
+   время план успевали тронуть. Заслонка заодно закрывает окно от правки. */
+.mag-cut-veil {
+  position: absolute;
+  inset: 0;
+  background: rgba(10, 14, 18, 0.78);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+  padding: 20px;
+}
+
+.mag-cut-work {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  color: #e8ecef;
+}
+
+.mag-cut-work b {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.mag-cut-work > span {
+  max-width: 380px;
+  font-size: 13px;
   color: #93a0ac;
+}
+
+.mag-cut-work-foot {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+/* Кнопки формы входа растягиваются на всю ширину и несут верхний отступ —
+   здесь они стоят парой в строке, и то и другое мешает. */
+.mag-cut-work-foot .mag-btn,
+.mag-cut-work-foot .mag-ghost {
+  width: auto;
+  margin: 0;
+  white-space: nowrap;
+}
+
+/* Галочка вместо кольца: работа кончилась, доля больше ничего не значит. */
+.mag-cut-ok {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: rgba(46, 160, 87, 0.16);
+  color: #4ec06e;
+  font-size: 30px;
+  line-height: 1;
+}
+
+
+/* Крутилка вместо доли. Доля с сервера прыгает рывками по участкам: на шаге
+   в две секунды она стоит, потом скачет на треть — такой прибор врёт больше,
+   чем молчит. Крутилка честно говорит одно: работа идёт. */
+.mag-spin {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  border: 5px solid rgba(232, 236, 239, 0.14);
+  border-top-color: #f94d4d;
+  animation: mag-spin 0.9s linear infinite;
+}
+
+@keyframes mag-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes mag-veil-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Итог приезжает снизу и слегка подрастает: движение отделяет «кончилось» от
+   «шло» — иначе крутилка сменяется галочкой без единого признака события. */
+@keyframes mag-work-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.96); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes mag-ok-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  60% { transform: scale(1.12); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+.mag-cut-veil { animation: mag-veil-in 0.18s ease-out; }
+.mag-cut-work { animation: mag-work-in 0.26s cubic-bezier(0.22, 1, 0.36, 1); }
+.mag-cut-ok { animation: mag-ok-pop 0.42s cubic-bezier(0.22, 1, 0.36, 1); }
+
+/* Спокойный режим: крутилка остаётся, но перестаёт вращаться — анимация здесь
+   украшение, а не смысл, и отнимать её не жаль. */
+@media (prefers-reduced-motion: reduce) {
+  .mag-spin,
+  .mag-cut-veil,
+  .mag-cut-work,
+  .mag-cut-ok {
+    animation: none;
+  }
 }

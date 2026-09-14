@@ -9,6 +9,7 @@ import {
 import type { InvitationItem, ProjectSummary } from "../../auth/api";
 import CreateProjectModal from "./CreateProjectModal";
 import { initials } from "../auth/AccountPage";
+import Banner from "../Banner";
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
@@ -55,7 +56,7 @@ export default function ProjectsPage() {
 
   return (
     <div className="mag-content">
-      {error && <div className="mag-error">{error}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
       {invitations.map((inv) => (
         <div key={inv.id} className="mag-invite-banner">

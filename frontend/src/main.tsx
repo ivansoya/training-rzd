@@ -15,6 +15,7 @@ import DatasetPage from "./components/mag/DatasetPage";
 import ImportWizard from "./components/mag/ImportWizard";
 import MagShell from "./components/mag/MagShell";
 import ProjectClasses from "./components/mag/ProjectClasses";
+import ProjectTags from "./components/mag/ProjectTags";
 import ProjectDatasets from "./components/mag/ProjectDatasets";
 import ProjectMembers from "./components/mag/ProjectMembers";
 import ProjectOverview from "./components/mag/ProjectOverview";
@@ -73,6 +74,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route index element={<ProjectOverview />} />
                   <Route path="datasets" element={<ProjectDatasets />} />
                   <Route path="classes" element={<ProjectClasses />} />
+                  <Route path="tags" element={<ProjectTags />} />
                   <Route path="members" element={<ProjectMembers />} />
                   <Route path="tasks" element={<ProjectTasks />} />
                   <Route path="aug" element={<ProjectAug />} />

@@ -33,11 +33,22 @@ input[type=checkbox]:checked { background: var(--red); border-color: var(--red);
 input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 :where(button,input,select,textarea):disabled { cursor: not-allowed; }
 .mag :is(.mag-btn,.mag-ghost,.mag-ed-btn) { box-shadow: none; text-shadow: none; }
-.mag-btn { background: var(--red); color: var(--on-acc); border: 1px solid var(--red); border-radius: 8px; font-size: 14px; font-weight: 650; padding: 10px 16px; }
+/* Кегль, поля и рамка у главной и второстепенной кнопок ОДИНАКОВЫ — разными
+   остаются только цвет и насыщенность начертания. Пока у красной стояло 14px,
+   а у чёрной 13px, любая пара в одной строке («Отмена» рядом с «Применить»)
+   выходила разной высоты; рамка в 1px есть у обеих по той же причине —
+   без неё красная ниже соседки ровно на два пикселя. */
+.mag-btn, .mag-ghost { border-radius: 8px; font-size: 14px; line-height: 1.3; padding: 10px 16px; border: 1px solid; }
+.mag-btn { background: var(--red); color: var(--on-acc); border-color: var(--red); font-weight: 650; }
 .mag-btn:hover:not(:disabled) { background: var(--red-hi); border-color: var(--red-hi); box-shadow: none; transform: none; }
-.mag-ghost { background: var(--card); border: 1px solid var(--rule); color: var(--ink); border-radius: 8px; font-size: 13px; font-weight: 550; padding: 10px 15px; }
+.mag-ghost { background: var(--card); border-color: var(--rule); color: var(--ink); font-weight: 550; }
+/* Строчные варианты — та же пара, только мельче. Правило повторено здесь,
+   потому что этот файл грузится последним: объявленное в project.css имело ту
+   же силу, но шло раньше и молча проигрывало базовым размерам выше. */
+.mag-btn-inline, .mag-ghost-inline { padding: 7px 14px; font-size: 13px; }
+.mag-btn-sm, .mag-ghost-sm { padding: 6px 12px; font-size: 12px; }
 .mag-ghost:hover:not(:disabled) { background: var(--hair); color: var(--ink); border-color: var(--control-edge); }
-.mag-link, .mag-text-btn { color: var(--accent-text); }
+.mag-link { color: var(--accent-text); }
 .mag-danger, .mag-ghost.mag-danger { color: var(--danger); background: transparent; border-color: var(--rule); }
 .mag-field :is(input,textarea), .mag select { border-color: var(--control-edge); background-color: var(--sunk); border-radius: 8px; }
 .mag-field label { font-size: 13px; font-weight: 550; margin-bottom: 8px; }
@@ -139,10 +150,14 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-table tbody tr:hover { background: #ffffff04; }
 .mag-cls { padding-block: 13px; border-color: var(--rule); }
 .mag-cls-name b { font-weight: 550; font-size: 13px; }
-.mag-cls-name span { color: var(--dim); }
+.mag-cls-name > span { color: var(--dim); }
 .mag-cls-bar { background: var(--hair); }
 .mag-cls-n { color: var(--ink); font-variant-numeric: tabular-nums; font-size: 13px; }
 .mag-group { border-color: var(--rule); border-radius: 12px; }
+/* Куда упадёт перетаскиваемый класс. Групп на экране больше трёх, и без
+   подсветки промах виден только по результату — уже после запроса. */
+.mag-group.drop { border-color: var(--red); background: var(--accent-soft); }
+.mag-classes-table tr[draggable=true] { cursor: grab; }
 .mag-group-h { padding: 16px; background: var(--sunk); font-size: 14px; }
 .mag-ds-head { gap: 13px; flex-wrap: wrap; margin-bottom: 20px; }
 .mag-ds-head h1, .mag-ds-head h2 { letter-spacing: -.5px; }
@@ -163,7 +178,13 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
    сколько кадров дадут. */
 /* Ролики нарезки — по строке в общем блоке: режут каждый отдельно, размечают
    нарезанное со всех разом. Строки прокручиваются тем же жёлобом, что и план. */
-.g-reels { max-height: 360px; padding-right: 2px; }
+/* Высота на три ролика с запасом: на 360px в жёлоб влезала полторы строки, и
+   список читался как обрезок — не видно было даже, сколько там всего. */
+.g-reels { max-height: 720px; padding-right: 2px; }
+/* Общая строка тагов стоит НАД списком и вне жёлоба: она про весь блок, а
+   уехав вместе с роликами при прокрутке, читалась бы как таг первого. */
+.g-reels-all { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px 14px; border: 1px dashed var(--rule); border-radius: 10px; }
+.g-reels-all > span { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
 /* Каждый ролик — отдельный предмет со своей рамкой: строки без границ на
    широкой карточке сливаются с пустым местом вокруг. */
 .g-reel { display: grid; grid-template-columns: 72px minmax(140px,1fr) auto auto auto auto; align-items: center; gap: 8px 16px; padding: 12px 14px; margin-bottom: 10px; border: 1px solid var(--rule); border-radius: 10px; background: var(--sunk); }
@@ -220,7 +241,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .t-rail div b { font-size: 12px; }
 .t-choice { border-radius: 9px; background: var(--card); border-color: var(--rule); padding: 16px; }
 .t-choice .t { font-size: 14px; font-weight: 600; }
-.t-choice .d { font-size: 13px; color: var(--dim); line-height: 1.6; }
 .t-side h3, .t-card-head { font-size: 15px; font-weight: 600; }
 .t-kv { padding-block: 10px; font-size: 13px; border-color: var(--rule); }
 .t-kv span, .t-legend { color: var(--dim); }
@@ -361,7 +381,60 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .workspace-next:hover b, .workspace-next:hover > span:last-child { color: var(--accent-text); }
 .workspace-overview-side .mag-link { display: block; margin-top: 16px; font-size: 13px; }
 .workspace-overview-side .mag-ghost { margin-top: 20px; }
-.workspace-overview .mag-cls-bar { min-width: 60px; }
+/* ===== Строка класса со шкалой: обзор проекта и прогресс разметки =====
+   Сетка, а не flex. Пока шкала была `flex: 1`, её длина зависела от длины
+   имени слева и ширины числа справа: у «Человека» с 87 разметками шкала
+   выходила длиннее, чем у «Полимерных и текстильных материалов» со 125.
+   Шкала здесь — прибор для сравнения, и общая для всех строк нулевая отметка
+   с общей полной длиной — единственное, на чём это сравнение держится.
+   Колонка под число фиксированная по той же причине: «195» шире «0». */
+.mag-cls {
+  display: grid;
+  grid-template-columns: 26px 1.75rem minmax(0, 15rem) minmax(96px, 1fr) 3.25rem;
+  align-items: center;
+  gap: 14px;
+}
+/* Только внутри строки: те же имена носят ячейки таблиц в мастере импорта и
+   в списке классов, и там ширина колонки № и шкалы своя. */
+.mag-cls > .mag-cls-id { width: auto; text-align: right; }
+.mag-cls > .mag-cls-bar { min-width: 0; }
+.mag-cls > .mag-cls-n { margin-left: 0; justify-self: end; }
+
+/* Имя обрезается многоточием, а по наведению на строку едет бегущей строкой.
+   Ширину рамки даёт контейнерная единица: `100cqw` — это ширина самого <b>,
+   `100%` — ширина текста внутри. Их разность отрицательна ровно тогда, когда
+   текст не влез, а `min(0px, …)` оставляет короткие имена стоять на месте —
+   иначе ездило бы и то, что и так видно целиком. */
+.mag-cls-name b {
+  display: block;
+  container-type: inline-size;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.mag-cls-name b > span { display: inline-block; }
+.mag-cls:hover .mag-cls-name b { text-overflow: clip; }
+.mag-cls:hover .mag-cls-name b > span {
+  animation: cls-marquee 7s ease-in-out infinite;
+}
+.mag-cls-name > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Две остановки: в начале, чтобы прочитать первые слова, и в конце — хвост.
+   Без них строка уезжает раньше, чем глаз успевает зацепиться. */
+@keyframes cls-marquee {
+  0%, 14% { transform: translateX(0); }
+  56%, 72% { transform: translateX(min(0px, calc(100cqw - 100%))); }
+  100% { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mag-cls:hover .mag-cls-name b > span { animation: none; }
+  .mag-cls:hover .mag-cls-name b { text-overflow: ellipsis; }
+}
 .g-insp { padding: 20px; }
 .g-insp-name { font-size: 18px; font-weight: 600; }
 .g-field .k { font-size: 13px; color: var(--ink); }
@@ -458,3 +531,157 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 @media(prefers-reduced-motion:reduce) {
   *, *::before, *::after { animation-duration: .01ms!important; transition-duration: .01ms!important; scroll-behavior: auto!important; }
 }
+
+/* ===== Плашка с крестиком ===== */
+/* Модификатор, а не правка самих .mag-ok / .mag-error: те же классы стоят на
+   двух десятках плашек без кнопки, и раскладка им не нужна. */
+.mag-note { display: flex; align-items: flex-start; gap: 12px; }
+.mag-note > span { flex: 1; min-width: 0; }
+.mag-note-x {
+  flex-shrink: 0;
+  margin: -4px -4px 0 0;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  opacity: .6;
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.mag-note-x:hover { opacity: 1; background: rgba(255,255,255,.08); }
+
+/* ===== Перелистывание страниц ===== */
+/* Полоса читается слева направо одной строкой: шаг назад, где ты среди
+   страниц, шаг вперёд. Прежние кнопки тянулись на всю ширину (width:100% они
+   унаследовали от формы входа) и выдавливали счётчик в столбик. */
+.mag-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--rule);
+}
+.mag-pager-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  width: auto;
+  margin: 0;
+  padding: 7px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+}
+.mag-pager-step:hover:not(:disabled) { color: var(--ink); background: var(--hair); border-color: var(--control-edge); }
+.mag-pager-step:disabled { opacity: .4; cursor: not-allowed; }
+
+.mag-pager-nums { display: flex; align-items: center; gap: 4px; }
+/* Квадрат под двузначное число: на переходе с 9 на 10 ряд не должен дёргаться,
+   поэтому ширина задана минимумом, а не содержимым. */
+.mag-pager-n {
+  min-width: 32px;
+  height: 32px;
+  padding: 0 7px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dim);
+  font: inherit;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.mag-pager-n:hover:not(:disabled):not(.on) { color: var(--ink); background: var(--hair); }
+/* Текущая — единственное красное пятно в полосе: глаз находит своё место
+   раньше, чем прочитает хоть одну цифру. */
+.mag-pager-n.on {
+  background: var(--accent-soft);
+  border-color: #F94D4D78;
+  color: var(--ink);
+  font-weight: 650;
+  cursor: default;
+}
+.mag-pager-gap { padding: 0 2px; color: var(--faint); user-select: none; }
+
+@media (max-width: 560px) {
+  /* На телефоне номера важнее подписей: стрелка говорит то же самое. */
+  .mag-pager-step { padding: 7px 10px; font-size: 0; gap: 0; }
+  .mag-pager-step > span { font-size: 14px; }
+}
+
+/* ===== Справочник тагов ===== */
+/* Строка — один предмет, а не три куска по углам. Раньше чип-таблетка жалась
+   к левому краю, число и два одинаково-красных действия — к правому, и между
+   ними лежала пустота во всю карточку: связь имени с его весом читалась в
+   последнюю очередь. */
+.mag-tagrow {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 56px;
+  padding: 10px 12px;
+  margin: 0 -12px;
+  border-radius: 10px;
+  border-top: 1px solid var(--rule);
+}
+.mag-tagrow:first-of-type { border-top: 0; }
+.mag-tagrow:hover { background: var(--hair); }
+
+.mag-tagrow-name { min-width: 0; flex: 1; }
+.mag-tagrow-name b {
+  display: block;
+  font-size: 14px;
+  font-weight: 550;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Вес тага — под именем и тише его: сколько кадров за ним стоит, важно
+   знать перед удалением, но искать глазами человек будет имя. */
+.mag-tagrow-name small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.mag-tagrow-acts { display: flex; gap: 6px; flex-shrink: 0; }
+/* Действия редкие — переименовывают таг раз в жизни. Поэтому они приглушены,
+   пока строка не под курсором, и никогда не исчезают совсем: с клавиатуры
+   фокус их проявляет так же, как мышь. */
+.mag-rowbtn {
+  padding: 6px 11px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--faint);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.mag-tagrow:hover .mag-rowbtn, .mag-rowbtn:focus-visible { color: var(--dim); border-color: var(--rule); }
+.mag-rowbtn:hover { color: var(--ink); background: var(--card); border-color: var(--control-edge); }
+/* Красным — только необратимое, и только под курсором. Пока оба действия были
+   красными всегда, «Удалить» ничем не отличалось от «Переименовать». */
+.mag-rowbtn.danger:hover { color: var(--danger); border-color: #A36973; background: #38272E; }
+
+.mag-tagrow-edit { display: flex; align-items: center; gap: 10px; width: 100%; }
+.mag-tagrow-edit .mag-input { flex: 1; min-width: 0; }

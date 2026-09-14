@@ -30,8 +30,7 @@ from common.models import (
     AugGraphVersion, Project, TrainSet, TrainSetSplit, utcnow,
 )
 from common import prep_queue as queue
-from dataprep_svc import albu, engine, samples
-from dataprep_svc.graph import plan as planlib
+from dataprep_svc import albu, engine, feeds, samples
 
 # Как часто отмечаемся в очереди. Чаще — лишние записи на том и в базу; реже —
 # полоса прогресса начинает выглядеть зависшей.
@@ -206,23 +205,32 @@ def build(db, job, *, on_beat=None):
         os.makedirs(os.path.join(root, "labels", split), exist_ok=True)
 
     loader = load_version_doc(db)
-    graphs = {}
-    for split, version_id in (
-        ("train", tset.graph_version_id), ("val", tset.val_graph_version_id)
-    ):
-        if version_id is None:
-            continue
-        row = db.get(AugGraphVersion, version_id)
-        if row is None:
-            raise ValueError(f"Граф для части «{split}» не найден.")
-        graphs[split] = engine.compile_graph(
-            row.doc, loader,
+    rows = feeds.load(db, tset.id)
+    warnings.extend(feeds.cross_half_warnings(rows))
+    docs, compiled_of = {}, {}
+    for version_id in feeds.versions_of(rows):
+        version = db.get(AugGraphVersion, version_id)
+        if version is None:
+            raise ValueError("Граф одной из строк сборки не найден.")
+        docs[version_id] = version.doc
+        compiled_of[version_id] = engine.compile_graph(
+            version.doc, loader,
             min_visibility=float(tset.spec.get("min_visibility", 0.15)),
             with_masks=(want == "polygon"),
         )
 
+    # Порядок кадра в отборе: по нему «Разделитель долями» решает, в какую
+    # ветку уйдёт образец. Один и тот же у всех строк, чтобы пересборка тем же
+    # зерном давала тот же набор.
     order = sorted(picked.images, key=lambda i: str(i.id))
-    total_expected = _expected(order, split_of, graphs)
+    rank_of = {img.id: i for i, img in enumerate(order)}
+    # План: одна запись на (строка, источник). Считается до первой картинки —
+    # из него же берётся и ожидаемое число образцов для полосы прогресса.
+    units = feeds.plan_units(
+        rows, docs.get, picked, split_of, load_version=loader
+    )
+    total_expected = int(round(sum(u["expected"] for u in units)))
+    many_rows = Counter(row["part"] for row in rows)
 
     counts = Counter()
     per_class = defaultdict(Counter)
@@ -233,71 +241,87 @@ def build(db, job, *, on_beat=None):
     last_beat = 0.0
 
     with open(manifest_path, "w", encoding="utf-8") as manifest:
-        for rank, image in enumerate(order):
-            if time.monotonic() - last_beat > BEAT_EVERY:
-                alive = queue.beat(
-                    db, job, processed=counts["samples"], total=total_expected,
-                    stage="render", stage_text="Складываю кадры",
-                )
-                if on_beat is not None:
-                    on_beat(counts["samples"], total_expected)
-                if not alive:
-                    raise Cancelled()
-                last_beat = time.monotonic()
-
-            split = split_of.get(image.id, "train")
-            anns = picked.anns.get(image.id, [])
-            compiled = graphs.get(split)
-            src = os.path.join(config.DATA_DIR, image.file_path)
-            ext = os.path.splitext(image.file_path)[1] or ".jpg"
-
-            if compiled is None:
-                # Кадр без аугментаций: тот же файл, ссылкой.
-                base = sample_of(image, anns, picked.export_id, want, read=False)
-                lines = lines_of(base, want, image.width, image.height)
-                # Пустая разметка — это фон, и он идёт в набор: отбор уже
-                # решил, что этот кадр здесь нужен (см. common.selection).
-                if not lines:
-                    counts["background"] += 1
-                name = sample_name(image.id, "", ext)
-                dst = os.path.join(root, "images", split, name)
-                written, linked = link_or_copy(src, dst)
-                size_bytes += 0 if linked else written
-                linked_bytes += written if linked else 0
-                _write_label(root, split, name, lines)
-                _note(manifest, image, split, name, lines, linked, "", ())
-                counts["samples"] += 1
-                counts[split] += 1
-                counts["annotations"] += len(lines)
-                _tally(per_class, lines, split)
-                continue
-
-            base = sample_of(image, anns, picked.export_id, want)
-            base.ordinal = rank
-            made = engine.run_frame(
-                compiled, base, tset.seed, str(image.id),
-                on_drop=lambda node_id, _why: dropped_at.update([node_id]),
+        for unit in units:
+            split = unit["part"]
+            compiled = compiled_of.get(unit["graph_version_id"])
+            # Приставка в имени файла: номер строки и номер источника внутри
+            # неё. Ставится только там, где без неё имена столкнулись бы —
+            # набор из одной строки с одним источником получает те же имена,
+            # что и до появления строк, и жёсткие ссылки на них не меняются.
+            #
+            # Источник в приставке не для красоты: один кадр входит и в
+            # «обучающую половину», и в «таг ночь», путь по графу у него при
+            # этом один и тот же, и второй образец затёр бы первый.
+            prefix = (f"r{unit['position']}" if many_rows[split] > 1 else "") + (
+                f"s{unit['source_index']}" if unit["source_count"] > 1 else ""
             )
-            for _out_node, item in made:
-                h, w = item.image.shape[:2]
-                lines = lines_of(item, want, w, h)
-                if not lines:
-                    # Потерял разметку по дороге — потеря, и она считается.
-                    # Не имел её с самого начала — фон, и он нужен.
-                    if not base.empty:
-                        dropped_at.update(["выход"])
-                        continue
-                    counts["background"] += 1
-                name = sample_name(image.id, item.sid, ext)
-                dst = os.path.join(root, "images", split, name)
-                size_bytes += albu.imwrite_rgb(dst, item.image)
-                _write_label(root, split, name, lines)
-                _note(manifest, image, split, name, lines, False,
-                      item.sid, item.ops)
-                counts["samples"] += 1
-                counts[split] += 1
-                counts["annotations"] += len(lines)
-                _tally(per_class, lines, split)
+
+            for image in unit["images"]:
+                if time.monotonic() - last_beat > BEAT_EVERY:
+                    alive = queue.beat(
+                        db, job, processed=counts["samples"],
+                        total=total_expected,
+                        stage="render", stage_text="Складываю кадры",
+                    )
+                    if on_beat is not None:
+                        on_beat(counts["samples"], total_expected)
+                    if not alive:
+                        raise Cancelled()
+                    last_beat = time.monotonic()
+
+                anns = picked.anns.get(image.id, [])
+                src = os.path.join(config.DATA_DIR, image.file_path)
+                ext = os.path.splitext(image.file_path)[1] or ".jpg"
+
+                if compiled is None:
+                    # Кадр без аугментаций: тот же файл, ссылкой.
+                    base = sample_of(image, anns, picked.export_id, want,
+                                     read=False)
+                    lines = lines_of(base, want, image.width, image.height)
+                    # Пустая разметка — это фон, и он идёт в набор: отбор уже
+                    # решил, что этот кадр здесь нужен (см. common.selection).
+                    if not lines:
+                        counts["background"] += 1
+                    name = sample_name(image.id, prefix, ext)
+                    dst = os.path.join(root, "images", split, name)
+                    written, linked = link_or_copy(src, dst)
+                    size_bytes += 0 if linked else written
+                    linked_bytes += written if linked else 0
+                    _write_label(root, split, name, lines)
+                    _note(manifest, image, split, name, lines, linked, "", ())
+                    counts["samples"] += 1
+                    counts[split] += 1
+                    counts["annotations"] += len(lines)
+                    _tally(per_class, lines, split)
+                    continue
+
+                base = sample_of(image, anns, picked.export_id, want)
+                base.ordinal = rank_of[image.id]
+                made = engine.run_frame(
+                    compiled, base, tset.seed, str(image.id),
+                    source=unit["source_node"],
+                    on_drop=lambda node_id, _why: dropped_at.update([node_id]),
+                )
+                for _out_node, item in made:
+                    h, w = item.image.shape[:2]
+                    lines = lines_of(item, want, w, h)
+                    if not lines:
+                        # Потерял разметку по дороге — потеря, и она считается.
+                        # Не имел её с самого начала — фон, и он нужен.
+                        if not base.empty:
+                            dropped_at.update(["выход"])
+                            continue
+                        counts["background"] += 1
+                    name = sample_name(image.id, prefix + item.sid, ext)
+                    dst = os.path.join(root, "images", split, name)
+                    size_bytes += albu.imwrite_rgb(dst, item.image)
+                    _write_label(root, split, name, lines)
+                    _note(manifest, image, split, name, lines, False,
+                          item.sid, item.ops)
+                    counts["samples"] += 1
+                    counts[split] += 1
+                    counts["annotations"] += len(lines)
+                    _tally(per_class, lines, split)
 
     names = [c.name for c in picked.classes]
     with open(os.path.join(root, "data.yaml"), "w", encoding="utf-8") as fh:
@@ -390,34 +414,6 @@ def _tally(per_class, lines, split):
             continue
         per_class[cls][split] += 1
         per_class[cls]["annotations"] += 1
-
-
-def _expected(order, split_of, graphs):
-    """Сколько образцов ждём — для полосы прогресса.
-
-    Считается по тому же плану, что показывает редактор: если полоса и итог
-    разойдутся, виноват будет счёт, а не сборка.
-    """
-    total = 0.0
-    for image in order:
-        split = split_of.get(image.id, "train")
-        compiled = graphs.get(split)
-        if compiled is None:
-            total += 1
-            continue
-        total += _multiplier(compiled)
-    return int(round(total))
-
-
-_MULT_CACHE = {}
-
-
-def _multiplier(compiled):
-    key = id(compiled)
-    if key not in _MULT_CACHE:
-        doc = {"nodes": compiled.nodes, "edges": compiled.edges}
-        _MULT_CACHE[key] = planlib.counts(doc, 1.0)["multiplier"]
-    return _MULT_CACHE[key]
 
 
 def _clusters(db, tset, picked):

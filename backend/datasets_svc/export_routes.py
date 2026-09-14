@@ -165,6 +165,9 @@ def _plan(db, project, sel):
         "empty": empty_total,
         "dropped": picked.dropped,
         "wrong_kind": picked.wrong_kind,
+        # Отсеянное фильтром по тагам: без этого числа «выбрал
+        # «ночь» и получил 12 кадров» читается как поломка.
+        "no_tag": picked.no_tag,
         "ann_type": want,
         "background": picked.background,
         "splits": {s: counts[s] for s in sel_lib.FIXED_SPLITS if counts[s]},

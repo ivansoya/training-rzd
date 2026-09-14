@@ -159,6 +159,9 @@ export interface Counts {
   outputs: number;
   dropped: number;
   multiplier: number;
+  /** Сколько «Источников» у графа: по одному на каждый в мастере сборки
+   *  спрашивают, что в него вливать. */
+  source_count: number;
   nodes: number;
 }
 
@@ -172,10 +175,15 @@ export interface Counts {
  * Блоки (`group`) этот счёт не разворачивает: их содержимое лежит на сервере.
  * Для них берётся множитель из паспорта версии, а если его нет — единица, и
  * редактор помечает такой провод как приблизительный.
+ *
+ * `base` — что вливается в источники. Числом, когда спрашивает редактор: там
+ * неизвестно, сколько кадров придёт, и каждому источнику дают одну и ту же
+ * условную тысячу. Словарём `{ номер узла: кадров }`, когда счёт делают под
+ * конкретную строку сборки.
  */
 export function counts(
   doc: GraphDoc,
-  base = 1,
+  base: number | Record<string, number> = 1,
   groupInfo?: Record<string, { ports?: { in: string[]; out: string[] }; multiplier?: number }>
 ): Counts {
   const nodes = doc.nodes ?? [];
@@ -194,6 +202,8 @@ export function counts(
 
   const perEdge: Record<string, number> = {};
   let outputs = 0;
+  let totalIn = 0;
+  const fed = typeof base === "number" ? null : base;
 
   const arriving = (node: GraphNode) => {
     const [ins] = ports(node, groupInfo?.[node.id]?.ports);
@@ -211,7 +221,9 @@ export function counts(
     let produced: Record<string, number> = {};
 
     if (SOURCES.includes(node.type)) {
-      produced = { out: base };
+      const got = fed ? fed[node.id] ?? 0 : (base as number);
+      totalIn += got;
+      produced = { out: got };
     } else if (node.type === "output") {
       outputs += arriving(node);
       continue;
@@ -268,7 +280,11 @@ export function counts(
     ),
     outputs: round(outputs),
     dropped: round(dropped),
-    multiplier: base ? round(outputs / base) : 0,
+    // От того, что реально влили, а не от условной тысячи: у графа с двумя
+    // источниками «×3 на тысячу» иначе означало бы то шесть тысяч, то три —
+    // в зависимости от числа источников, а не от того, что граф делает.
+    multiplier: totalIn ? round(outputs / totalIn) : 0,
+    source_count: nodes.filter((n) => SOURCES.includes(n.type)).length,
     nodes: nodes.length,
   };
 }

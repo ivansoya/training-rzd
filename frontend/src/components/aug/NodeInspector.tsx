@@ -42,7 +42,6 @@ function Number_({
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
       />
-      {spec.hint && <div className="hint">{spec.hint}</div>}
     </div>
   );
 }
@@ -92,7 +91,6 @@ function Range_({
           onChange={(e) => onChange([a, Math.max(Number(e.target.value), a)])}
         />
       </div>
-      {spec.hint && <div className="hint">{spec.hint}</div>}
     </div>
   );
 }
@@ -118,10 +116,7 @@ export default function NodeInspector({
         <div className="g-label" style={{ marginBottom: 9 }}>
           Узел
         </div>
-        <p className="g-insp-why">
-          Выберите узел на холсте — здесь будут его параметры. Числа на проводах
-          пересчитываются сразу, до запуска.
-        </p>
+        <p className="g-insp-why">Выберите узел на холсте.</p>
         {totals && (
           <>
             <div className="g-label" style={{ margin: "18px 0 8px" }}>
@@ -226,11 +221,12 @@ export default function NodeInspector({
             onChange={(e) =>
               onChange(
                 // У «Входа» и «Выхода» подпись — это ещё и имя гнезда, когда
-                // граф вставляют блоком. Пишем в оба поля: сервер читает name,
-                // холст — label, и расходиться им нельзя.
-                data.kind === "input" || data.kind === "output"
-                  ? { name: e.target.value, label: e.target.value }
-                  : { label: e.target.value }
+                // граф вставляют блоком, а у «Источника» — то, по чему его
+                // выбирают при сборке набора. Пишем в оба поля: сервер читает
+                // name, холст — label, и расходиться им нельзя.
+                data.kind === "flow"
+                  ? { label: e.target.value }
+                  : { name: e.target.value, label: e.target.value }
               )
             }
           />
@@ -247,8 +243,6 @@ export default function NodeInspector({
             high: 32,
             int: true,
             default: 3,
-            hint: "×3 значит ровно три копии, а не «оригинал плюс три». "
-              + "Оригинал попадёт в набор, только если провести его отдельным проводом.",
           }}
           value={times(asNode)}
           disabled={readOnly}
@@ -297,11 +291,6 @@ export default function NodeInspector({
               }}
             />
           ))}
-          <p className="hint" style={{ color: "var(--faint)", fontSize: 11 }}>
-            {data.kind === "split_share"
-              ? "Каждый кадр уходит ровно в одну ветку. Доли соблюдаются точно: ветка «30 %» из тысячи получит триста кадров, а не «около трёхсот»."
-              : "Каждый кадр уходит ровно в одну ветку жребием. Один и тот же кадр при том же зерне всегда уходит в ту же сторону."}
-          </p>
         </>
       )}
 
@@ -315,10 +304,6 @@ export default function NodeInspector({
             high: 8,
             int: true,
             default: 2,
-            hint:
-              data.kind === "merge"
-                ? "Потоки идут вперемешку: прервали сборку — в наборе обе ветки."
-                : "Сперва вся первая ветка, потом вторая. На состав набора не влияет, на порядок файлов — да.",
           }}
           value={inputsCount(asNode)}
           disabled={readOnly}

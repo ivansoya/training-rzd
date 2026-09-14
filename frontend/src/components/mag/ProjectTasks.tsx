@@ -8,6 +8,7 @@ import { useProject } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 export const TASK_TONE: Record<string, string> = {
   queued: "queued",
@@ -55,7 +56,7 @@ export default function ProjectTasks() {
 
   return (
     <>
-      {error && <div className="mag-error">{error}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
       <div className="mag-card-h">
         <h4 style={{ margin: 0 }}>Таски проекта <Sep /> {tasks.length}</h4>
@@ -69,10 +70,7 @@ export default function ProjectTasks() {
       {tasks.length === 0 ? (
         <div className="mag-card mag-empty-big">
           <h3>Тасок пока нет</h3>
-          <p>
-            Таска — это пул кадров, который размечают и по частям отдают в
-            проект. Загрузите в неё изображения или видео.
-          </p>
+          <p>Загрузите в таску изображения или видео.</p>
           {canCreate && (
             <button className="mag-btn mag-btn-inline" type="button" onClick={() => setShowCreate(true)}>
               Создать первую
@@ -187,7 +185,7 @@ function CreateTaskModal({
         <p className="mag-sub">
           Кадры попадут в проект, когда вы переведёте таску в «готово».
         </p>
-        {error && <div className="mag-error">{error}</div>}
+        {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
         <div className="mag-field">
           <label htmlFor="nt-name">Название</label>

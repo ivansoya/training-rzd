@@ -5,6 +5,7 @@ import type { FriendEntry } from "../../auth/api";
 import { initials } from "../auth/AccountPage";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 interface Props {
   onClose: () => void;
@@ -103,7 +104,7 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
             Код проекта присвоится автоматически. Датасет загрузим на странице
             проекта.
           </p>
-          {error && <div className="mag-error">{error}</div>}
+          {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
           <div className={fieldErrors.name ? "mag-field invalid" : "mag-field"}>
             <label htmlFor="np-name">Название</label>
             <input

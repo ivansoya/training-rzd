@@ -6,6 +6,7 @@ import { useProject } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 const ROLES = [
   { value: "viewer", label: "Просмотр", hint: "Смотрит данные и статистику, ничего не меняет." },
@@ -135,7 +136,7 @@ function InviteModal({
         <p className="mag-sub">
           Приглашение появится у человека на странице «Проекты» — он решит сам.
         </p>
-        {error && <div className="mag-error">{error}</div>}
+        {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
         <div className="mag-field">
           <label htmlFor="inv-id">Логин или почта</label>

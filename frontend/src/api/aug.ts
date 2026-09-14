@@ -40,6 +40,11 @@ export interface GraphStats {
   dropped: number;
   multiplier: number;
   nodes: number;
+  source_count?: number;
+  /** «Источники» графа: номер узла и подпись. По ним мастер сборки
+   *  спрашивает, что вливать в каждый. У версий, сохранённых до
+   *  13.09.2026, поля нет — там источник ровно один и безымянный. */
+  sources?: { id: string; name: string }[];
   edges?: Record<string, number>;
 }
 

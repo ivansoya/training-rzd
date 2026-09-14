@@ -14,7 +14,7 @@ from common import config, gpu, live
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
-    GpuDevice, TrainEpoch, TrainRun, TrainSet, User, utcnow,
+    GpuDevice, TrainEpoch, TrainRun, TrainSet, TrainSetFeed, User, utcnow,
 )
 from common.storage import load_json
 from training_svc import trainer
@@ -259,7 +259,10 @@ def start_run(code):
         # YOLO к нему не применяются, что бы ни пришло в запросе. Режим
         # записывается в параметры, чтобы на странице обучения было видно,
         # почему ручек аугментаций там нет.
-        has_graph = bool(tset.graph_version_id or tset.val_graph_version_id)
+        has_graph = db.query(TrainSetFeed.id).filter(
+            TrainSetFeed.set_id == tset.id,
+            TrainSetFeed.graph_version_id.isnot(None),
+        ).first() is not None
         if has_graph:
             params = {k: v for k, v in params.items()
                       if k not in trainer.AUG_KEYS}

@@ -13,8 +13,47 @@ export interface SetSpec {
   val_ratio: number;
   seed?: number;
   min_visibility?: number;
-  graph_version_id?: string | null;
-  val_graph_version_id?: string | null;
+  /** Строки сборки: что кладём в конвейер и через что пропускаем. */
+  feeds?: FeedRow[];
+}
+
+/** Что вливается в источник: своя половина целиком или кадры с тагами. */
+export type FeedKind = "train" | "val" | "tags";
+
+export interface FeedBinding {
+  /** Номер узла «Источник» в графе. Пусто у строки «без графа». */
+  source_node: string;
+  feed: FeedKind;
+  /** Таги для feed="tags": берём кадр с ЛЮБЫМ из них. */
+  tag_ids: string[];
+}
+
+/**
+ * Строка сборки: «что кладём → через что пропускаем».
+ *
+ * До 13.09.2026 набор знал ровно два графа, по одному на половину. Теперь на
+ * половину вешают несколько строк, и у графа бывает несколько «Источников» —
+ * привязка на каждый. Строка без графа — пустой конвейер: кадры ложатся в
+ * набор как есть, жёсткой ссылкой.
+ */
+export interface FeedRow {
+  part: "train" | "val";
+  position: number;
+  graph_version_id: string | null;
+  bindings: FeedBinding[];
+  /** Имя графа рядом со строкой — приходит с сервера, на запись не идёт. */
+  graph?: { id: string; name: string; version: number; version_id: string } | null;
+}
+
+/** Сколько кадров возьмёт одна привязка и во сколько образцов превратит. */
+export interface FeedPreview {
+  part: "train" | "val";
+  position: number;
+  source_node: string | null;
+  source_name: string;
+  feed: FeedKind;
+  images: number;
+  samples: number;
 }
 
 export interface ClassRow {
@@ -36,6 +75,11 @@ export interface Preview {
   background: number;
   no_size: number;
   wrong_kind: number;
+  /** Отсеяно фильтром по тагам на шаге отбора. */
+  no_tag: number;
+  /** Числа по строкам сборки и общий итог в образцах. */
+  feeds: FeedPreview[];
+  samples: number;
   classes: ClassRow[];
   groups: number | null;
   /** Куда легли кадры-фон: они делятся вместе со всеми, и это тоже итог. */
@@ -87,7 +131,10 @@ export interface TrainSet {
   } | null;
   size_bytes: number;
   hardlinked_bytes: number;
+  /** Первый граф обучающей половины — для строки в списке наборов. */
   graph: { id: string; name: string; version: number; version_id: string } | null;
+  /** Все строки сборки набора, как их утвердили в мастере. */
+  feeds: FeedRow[];
   built_at: string | null;
   created_at: string;
   error: string | null;

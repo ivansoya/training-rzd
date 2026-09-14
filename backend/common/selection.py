@@ -23,6 +23,7 @@ from common import polygon as polylib
 from common.splitting import (  # noqa: F401 — coverage_warnings нужен соседям
     FIXED_SPLITS, bucket_key, by_clusters, by_groups, coverage_warnings,
 )
+from common import tags as taglib
 from common.models import Annotation, Image, LabelClass
 
 VAL_DEFAULT = 0.2
@@ -73,6 +74,9 @@ def parse(data):
     return {
         "datasets": uuids(data.get("datasets")),
         "classes": uuids(data.get("classes")),
+        # Пусто — берём всё. Отмеченные таги СУЖАЮТ отбор и работают «любым
+        # из»: кадр проходит, если на нём есть хоть один из отмеченных.
+        "tags": uuids(data.get("tags")),
         "ann_type": ann_type,
         "split_mode": mode,
         "seed": seed,
@@ -103,8 +107,8 @@ class Selection:
 
     __slots__ = (
         "classes", "export_id", "images", "anns", "by_image",
-        "dropped", "background", "no_size", "wrong_kind", "ann_type",
-        "rarest_of", "classes_of",
+        "dropped", "background", "no_size", "wrong_kind", "no_tag", "ann_type",
+        "rarest_of", "classes_of", "tags_of",
     )
 
     def __init__(self):
@@ -117,9 +121,13 @@ class Selection:
         self.background = 0
         self.no_size = 0
         self.wrong_kind = 0
+        # Отсеяно фильтром по тагам. Число говорящее: «выбрал «ночь» и
+        # получил 12 кадров» иначе читается как поломка, а не как отбор.
+        self.no_tag = 0
         self.ann_type = "bbox"
         self.rarest_of = {}
         self.classes_of = {}
+        self.tags_of = {}
 
 
 def gather(db, project, sel) -> Selection:
@@ -153,6 +161,23 @@ def gather(db, project, sel) -> Selection:
             .order_by(Image.file_name)
         ).scalars().all()
 
+    # Таги кадров — одним запросом на весь отбор. Нужны они дважды: здесь,
+    # чтобы сузить отбор, и потом сборщику, чтобы развести кадры по строкам
+    # сборки. Второй раз спрашивать базу было бы тем же самым запросом.
+    out.tags_of = {
+        img_id: set(ids)
+        for img_id, ids in taglib.of(db, "image", [i.id for i in images]).items()
+    }
+    picked_tags = set(sel["tags"])
+    if picked_tags:
+        kept_by_tag = []
+        for img in images:
+            if out.tags_of.get(img.id, ()) & picked_tags:
+                kept_by_tag.append(img)
+            else:
+                out.no_tag += 1
+        images = kept_by_tag
+
     # Кадры, у которых разметка выбранных классов есть только не того рода.
     # Их одних и отсеиваем: остальное без строк — фон.
     wrong_only = set()
@@ -165,7 +190,13 @@ def gather(db, project, sel) -> Selection:
                 Annotation.class_id.in_([c.id for c in out.classes]),
             )
         ).scalars().all()
+        # Фильтр по тагам уже сузил список кадров, а запрос выше по-прежнему
+        # ходит через датасеты: списком из ста тысяч id он бы не взлетел.
+        # Отсеянное отбрасываем здесь, иначе счётчики считали бы чужое.
+        alive = {i.id for i in images} if picked_tags else None
         for ann in rows:
+            if alive is not None and ann.image_id not in alive:
+                continue
             if (ann.ann_type or "bbox") in USABLE[want]:
                 out.anns[ann.image_id].append(ann)
             else:

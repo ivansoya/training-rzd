@@ -763,6 +763,9 @@ export interface VideoPrepare {
 
 export interface TaskVideoItem {
   id: string;
+  /** Таги ролика. Достаются каждому кадру, нарезанному ПОСЛЕ правки: таг
+   *  кадра это снимок, а не ссылка на ролик. */
+  tag_ids: string[];
   prepare: VideoPrepare;
   file_name: string;
   duration_ms: number | null;
@@ -831,6 +834,9 @@ export interface TaskDetail extends TaskSummary {
     deleted?: number; accepted?: number; first_at?: string;
   }>;
   classes: { class_index: number; name: string; color: string; annotations: number }[];
+  /** Справочник тагов проекта. Едет вместе с таской: его спрашивают три места
+   *  на одной странице — карточка ролика, карточка загрузки и редактор. */
+  tags: { id: string; name: string }[];
 }
 
 export function videoStripUrl(taskId: string, videoId: string): string {
@@ -872,6 +878,9 @@ export interface TaskImage {
   accepted: boolean;
   source_video_id: string | null;
   source_time_ms: number | null;
+  /** Таги кадра. Правятся в редакторе разметки, по одному кадру — и после
+   *  того, как кадр ушёл в датасет, тоже. */
+  tag_ids: string[];
   annotations: number;
   boxes: (Box & { id: string; source: string })[];
 }
@@ -935,10 +944,17 @@ export async function getTaskImages(
   return asJson(await fetch(`/api/tasks/${id}/images${suffix}`));
 }
 
+/** Загрузить кадры в таску.
+ *
+ * `tags` — по набору на каждый файл, в том же порядке. «Всем один набор» и
+ * «каждому свой» для сервера одно и то же: карточка загрузки уже решила, что
+ * кому, и второго понятия на проводе заводить незачем.
+ */
 export function uploadTaskImages(
   id: string,
   files: File[],
-  onProgress: (pct: number) => void
+  onProgress: (pct: number) => void,
+  tags?: string[][]
 ): Promise<{ added: number; skipped: number; counts: TaskCounts }> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
@@ -962,6 +978,7 @@ export function uploadTaskImages(
     xhr.onerror = () => reject(new ApiError("Не удалось передать файлы."));
     const form = new FormData();
     files.forEach((f) => form.append("files", f));
+    if (tags) form.append("tags", JSON.stringify(tags));
     xhr.send(form);
   });
 }
@@ -1531,6 +1548,8 @@ export function imageFileUrl(id: string): string {
 export interface ExportOptions {
   datasets: string[];
   classes: string[];
+  /** Сужение по тагам, «любой из». Пусто — берём всё. */
+  tags?: string[];
   /** keep — брать images.split, resplit — поделить всё заново. */
   split_mode: "keep" | "resplit";
   val_ratio: number;
@@ -1559,6 +1578,9 @@ export interface ExportPreview {
   /** Объектов не того рода: боксы при выгрузке сегментации. Отдельно от
    *  `dropped` — эти два человек чинит по-разному. */
   wrong_kind: number;
+  /** Отсеяно фильтром по тагам. «Выбрал „ночь“ и получил 12 кадров» без
+   *  этого числа читается как поломка, а не как отбор. */
+  no_tag: number;
   ann_type: "bbox" | "polygon";
   /** Кадры без разметки: идут в выгрузку фоном, с пустым файлом. */
   background: number;

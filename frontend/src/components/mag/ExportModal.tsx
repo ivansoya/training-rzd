@@ -15,7 +15,10 @@ import type {
 } from "../../auth/api";
 import { formatBytes } from "./ProjectShell";
 import { useEscape } from "./useEscape";
+import { listTags } from "../../api/tags";
+import type { Tag } from "../../api/tags";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 interface Props {
   detail: ProjectDetail;
@@ -45,6 +48,12 @@ export default function ExportModal({ detail, onClose }: Props) {
     () => new Set(detail.datasets.map((d) => d.id))
   );
   const [pickedCls, setPickedCls] = useState<Set<string>>(new Set());
+  // Таги СУЖАЮТ отбор и работают «любым из»: ничего не отмечено — берём всё.
+  // Умолчание именно пустое: экспорт без оглядки на таги — обычный случай,
+  // а «выбрать все таги» и «не выбирать ни одного» дали бы разное, стоило бы
+  // появиться кадру вовсе без тагов.
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [pickedTags, setPickedTags] = useState<string[]>([]);
   const [resplit, setResplit] = useState(false);
   const [annType, setAnnType] = useState<"bbox" | "polygon">("bbox");
   const [valRatio, setValRatio] = useState(0.2);
@@ -70,17 +79,21 @@ export default function ExportModal({ detail, onClose }: Props) {
         setPickedCls(new Set(rows.filter((c) => c.annotations > 0).map((c) => c.id)));
       })
       .catch((e) => setError((e as Error).message));
+    listTags(code)
+      .then(({ tags: rows }) => setTags(rows))
+      .catch(() => setTags([]));   // без тагов экспорт работает как прежде
   }, [code]);
 
   const options: ExportOptions = useMemo(
     () => ({
       datasets: [...pickedDs],
       classes: [...pickedCls],
+      tags: pickedTags,
       split_mode: resplit ? "resplit" : "keep",
       val_ratio: valRatio,
       ann_type: annType,
     }),
-    [pickedDs, pickedCls, resplit, valRatio, annType]
+    [pickedDs, pickedCls, pickedTags, resplit, valRatio, annType]
   );
 
   useEffect(() => {
@@ -153,11 +166,6 @@ export default function ExportModal({ detail, onClose }: Props) {
       >
         <div className="mag-exp-pick">
           <h1>Экспорт проекта</h1>
-          <p className="mag-sub">
-            В архив попадут кадры выбранных датасетов, у которых осталась
-            разметка выбранных классов. Кадры «пусто» выгружаются всегда.
-          </p>
-
           <h3 className="mag-exp-h">Датасеты</h3>
           <div className="mag-exp-list">
             {detail.datasets.map((d) => (
@@ -176,6 +184,48 @@ export default function ExportModal({ detail, onClose }: Props) {
               <div className="mag-empty">В проекте пока нет датасетов.</div>
             )}
           </div>
+
+          {tags.length > 0 && (
+            <>
+              <h3 className="mag-exp-h">
+                Таги
+                {pickedTags.length > 0 && (
+                  <span className="mag-exp-acts">
+                    <button type="button" onClick={() => setPickedTags([])}>
+                      снять
+                    </button>
+                  </span>
+                )}
+              </h3>
+              <div className="t-pick">
+                {tags.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    disabled={phase !== "setup"}
+                    className={`t-chip${pickedTags.includes(t.id) ? " on" : ""}`}
+                    onClick={() =>
+                      setPickedTags((prev) =>
+                        prev.includes(t.id)
+                          ? prev.filter((x) => x !== t.id)
+                          : [...prev, t.id]
+                      )
+                    }
+                  >
+                    {t.name}
+                    <span>{t.images ?? 0}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="mag-sub">
+                {pickedTags.length
+                  ? `Только кадры с этими тагами${
+                      preview?.no_tag ? ` — ${preview.no_tag} отсеяно` : ""
+                    }.`
+                  : "Ничего не отмечено — берём кадры со всеми тагами и без них."}
+              </p>
+            </>
+          )}
 
           <h3 className="mag-exp-h">
             Классы
@@ -351,7 +401,7 @@ export default function ExportModal({ detail, onClose }: Props) {
               {w}
             </div>
           ))}
-          {error && <div className="mag-error">{error}</div>}
+          {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
           {phase === "packing" && (
             <div className="mag-exp-progress">

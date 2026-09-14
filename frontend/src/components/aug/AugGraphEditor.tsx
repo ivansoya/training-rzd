@@ -26,6 +26,7 @@ import { GraphError, counts, edgeKey, findCycle } from "./counts";
 import { edgeTypes, nodeTypes, ru, type NodeData, type WireData } from "./GraphNodes";
 import NodeInspector from "./NodeInspector";
 import NodePalette from "./NodePalette";
+import Banner from "../Banner";
 
 // Сколько кадров показывать на проводах, пока набор не выбран. Число условное
 // и подписано как условное: важны не сами кадры, а во сколько раз их станет
@@ -114,6 +115,10 @@ function Editor() {
   const wanted = search.get("version") ?? undefined;
 
   const [graph, setGraph] = useState<api.GraphDetail | null>(null);
+  // Имя графа правится прямо в шапке. Держим его отдельным состоянием, чтобы
+  // буквы появлялись сразу, а на сервер уходило одно сохранение по уходу
+  // из поля, а не запрос на каждое нажатие.
+  const [title, setTitle] = useState("");
   const [cat, setCat] = useState<api.Catalogue | null>(null);
   const [versions, setVersions] = useState<api.VersionRow[]>([]);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
@@ -165,6 +170,7 @@ function Editor() {
         const got = await api.getGraph(graphId, wanted);
         if (!alive) return;
         setGraph(got);
+        setTitle(got.name);
         const [ns, es] = toFlow(got.doc, byOp, {}, {}, setEyeOn, null);
         setNodes(ns);
         setEdges(es);
@@ -310,7 +316,25 @@ function Editor() {
           x: (box?.left ?? 0) + (box?.width ?? 600) / 2,
           y: (box?.top ?? 0) + 160,
         });
-      setNodes((old) => [
+      setNodes((old) => {
+        // Второй «Источник» получает свободный номер в подписи. Сервер не
+        // примет два одинаково подписанных — при сборке источник выбирают
+        // именно по подписи, — и упереться в это после десяти минут работы
+        // на холсте было бы обидно.
+        let fresh = params;
+        if (kind === "source") {
+          const taken = new Set(
+            old
+              .filter((n) => (n.data as NodeData).kind === "source")
+              .map((n) => String((n.data as NodeData).params.label ?? ""))
+          );
+          if (taken.size) {
+            let k = taken.size + 1;
+            while (taken.has(`Источник ${k}`)) k++;
+            fresh = { ...params, label: `Источник ${k}`, name: `Источник ${k}` };
+          }
+        }
+        return [
         // Снимаем выделение с прежнего: холст держит своё состояние выделения,
         // и без этого инспектор оставался бы пустым сразу после добавления.
         ...old.map((n) => ({ ...n, selected: false })),
@@ -321,13 +345,14 @@ function Editor() {
           selected: true,
           data: {
             kind,
-            params,
+            params: fresh,
             catalogue: byOp.get((params.op as string) ?? ""),
             eye: false,
             onEye: setEyeOn,
           } as NodeData,
         } as Node,
-      ]);
+        ];
+      });
       setSelected(id);
     },
     [byOp, screenToFlowPosition, setNodes]
@@ -383,6 +408,23 @@ function Editor() {
     }
   }, [graphId, nodes, edges, graph?.version, wanted, setSearch]);
 
+  /** Сохранить имя. Пустое не отправляем: граф без имени не найти в списке,
+   *  а случайно стереть его в поле — дело одной клавиши. */
+  const rename = useCallback(async () => {
+    const clean = title.trim();
+    if (!graphId || !graph || !clean || clean === graph.name) {
+      setTitle(graph?.name ?? "");
+      return;
+    }
+    try {
+      await api.patchGraph(graphId, { name: clean });
+      setGraph({ ...graph, name: clean });
+    } catch (e) {
+      setProblem((e as Error).message);
+      setTitle(graph.name);
+    }
+  }, [graphId, graph, title]);
+
   const current = nodes.find((n) => n.id === selected) ?? null;
   // Поломку графа показываем рядом с сорванной загрузкой: и то, и другое
   // мешает сохранить версию, и человеку важно видеть, что именно.
@@ -401,7 +443,22 @@ function Editor() {
           <Link to="/augment" className="g-ctx-back" title="К библиотеке">
             ←
           </Link>
-          <span className="ttl">{graph?.name ?? "Граф"}</span>
+          {/* Имя правится здесь, а не при создании: его придумывают, глядя
+              на собранный граф, а не на пустой холст. Поле без рамки —
+              заголовок, который можно поправить, а не форма в шапке. */}
+          <input
+            className="ttl"
+            value={title}
+            disabled={readOnly}
+            aria-label="Имя графа"
+            size={Math.max(8, title.length)}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => void rename()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") setTitle(graph?.name ?? "");
+            }}
+          />
           <span className="ver">
             версия {graph?.version ?? "—"} из {versions.length || "—"}
           </span>
@@ -448,8 +505,10 @@ function Editor() {
           </div>
         </div>
 
+        {/* Без крестика: это не событие, а причина, по которой граф не
+            сохраняется. Убрать её можно только починив граф. */}
         {trouble && <div className="mag-error">{trouble}</div>}
-        {note && <div className="mag-ok">{note}</div>}
+        {note && <Banner onClose={() => setNote(null)}>{note}</Banner>}
 
         <div className="g-canvas-body" ref={wrap}>
           <ReactFlow

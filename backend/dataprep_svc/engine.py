@@ -183,12 +183,18 @@ def apply(compiled, node, sample, seed):
 # --------------------------------------------------------------------------- #
 # Обход плана одним кадром
 # --------------------------------------------------------------------------- #
-def run_frame(compiled, sample, set_seed, image_id, *, on_drop=None):
+def run_frame(compiled, sample, set_seed, image_id, *, source=None, on_drop=None):
     """Все образцы, которые даст этот кадр. Возвращает [(узел-выход, образец)].
 
     ``on_drop(node_id, reason)`` зовётся, когда образец потерял всю разметку и
     дальше не идёт. Молчаливая потеря трети набора — ровно то, что находят
     через месяц по странным метрикам, поэтому считать её надо поимённо.
+
+    ``source`` — в какой именно «Источник» влить кадр. У графа их бывает
+    несколько, и каждый получает свои кадры: ночные в один, дневные в другой.
+    Без этого довода кадр входил бы во все сразу и выходил бы столько раз,
+    сколько у графа источников. Пусто — влить во все: так живёт граф с
+    единственным источником, а таких большинство.
     """
     frame = rng.frame_seed(set_seed, image_id)
     at_port = {}   # (node_id, port) -> [Sample]
@@ -200,7 +206,9 @@ def run_frame(compiled, sample, set_seed, image_id, *, on_drop=None):
         ins, outs = schema.ports(node)
 
         if kind in schema.SOURCES:
-            at_port[(node_id, "out")] = [sample]
+            at_port[(node_id, "out")] = (
+                [sample] if source is None or node_id == source else []
+            )
             continue
 
         arriving = []

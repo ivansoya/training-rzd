@@ -4,12 +4,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import * as api from "../../api/aug";
+import Banner from "../Banner";
 
 export default function AugGraphList() {
   const [graphs, setGraphs] = useState<api.GraphSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
-  const [name, setName] = useState("");
   const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
@@ -25,14 +25,26 @@ export default function AugGraphList() {
     refresh();
   }, [refresh]);
 
+  /** Завести граф и сразу открыть его.
+   *
+   *  Имя здесь не спрашиваем. Раньше кнопка разворачивала полосу с полем и
+   *  двумя кнопками во всю ширину страницы — ради одного слова, которое всё
+   *  равно придумывают уже на холсте, глядя на собранное. Имя правится в
+   *  шапке редактора, а свободный номер не даёт двум черновикам столкнуться.
+   */
   const create = async () => {
-    const clean = name.trim();
-    if (!clean) return;
+    if (making) return;
+    setMaking(true);
+    setError(null);
+    const taken = new Set(graphs.map((g) => g.name));
+    let name = "Новый граф";
+    for (let n = 2; taken.has(name); n++) name = `Новый граф ${n}`;
     try {
-      const got = await api.createGraph(clean);
+      const got = await api.createGraph(name);
       navigate(`/augment/${got.id}`);
     } catch (e) {
       setError((e as Error).message);
+      setMaking(false);
     }
   };
 
@@ -41,54 +53,25 @@ export default function AugGraphList() {
       <div className="mag-pass-strip">
         <div className="mag-pass-id">
           <h1 className="mag-h1">Аугментации</h1>
-          <p>
-            Граф — это рецепт: он говорит, что сделать с кадрами и во сколько
-            раз их станет больше. Кадры он берёт внутри проекта, а живёт здесь,
-            у вас, и подключается к любому проекту ссылкой.
-          </p>
         </div>
         <button
           className="mag-btn mag-pass-export"
           type="button"
-          onClick={() => setMaking(true)}
+          disabled={making}
+          onClick={create}
         >
           Новый граф
         </button>
       </div>
 
-      {error && <div className="mag-error">{error}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
-      {making && (
-        <div className="mag-inline-form">
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && create()}
-            placeholder="Например: Ночная съёмка"
-            aria-label="Имя графа"
-          />
-          <button className="mag-btn" type="button" onClick={create}>
-            Создать
-          </button>
-          <button
-            className="mag-ghost"
-            type="button"
-            onClick={() => setMaking(false)}
-          >
-            Отмена
-          </button>
-        </div>
-      )}
-
-      {graphs.length === 0 && !making ? (
+      {graphs.length === 0 ? (
         <div className="mag-empty-big">
           <b>Графов пока нет.</b>
-          <p>
-            Первый можно собрать за минуту: источник, пара аугментаций и выход.
-            Числа на проводах покажут, во что превратятся кадры, ещё до запуска.
-          </p>
-          <button className="mag-btn" type="button" onClick={() => setMaking(true)}>
+          <p>Источник, пара аугментаций и выход.</p>
+          <button className="mag-btn" type="button" disabled={making}
+            onClick={create}>
             Собрать первый граф
           </button>
         </div>

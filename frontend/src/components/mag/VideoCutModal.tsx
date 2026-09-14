@@ -10,6 +10,7 @@ import type { CutEstimate, CutSegment, Segment, TaskVideoItem } from "../../auth
 import { plural } from "./ProjectsPage";
 import VideoStrip from "./VideoStrip";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 const COLORS = ["#e21a1a", "#1f6feb", "#1a7f4b", "#8957e5", "#e8590c"];
 const STEPS_MS = [100, 250, 500, 1000, 2000, 5000];
@@ -66,16 +67,16 @@ interface Single {
 }
 
 /** План с сервера: участок в миллисекунду — это одиночный кадр. */
-function splitPlan(list: CutSegment[] | undefined, duration: number) {
+function splitPlan(list: CutSegment[] | undefined) {
   const zones: Seg[] = [];
   const ones: Single[] = [];
   (list || []).forEach((s, i) => {
     if (s.end_ms - s.start_ms <= 1) ones.push({ ms: s.start_ms, thumb: null });
     else zones.push({ id: i, start_ms: s.start_ms, end_ms: s.end_ms, step_ms: s.step_ms });
   });
-  if (!zones.length && !ones.length) {
-    zones.push({ id: 0, start_ms: 0, end_ms: Math.min(10000, duration), step_ms: 1000 });
-  }
+  // Пустой план остаётся пустым. Готовый участок «первые 10 секунд» никто не
+  // заказывал: он навязывал кусок ролика, который почти всегда приходилось
+  // стирать, а «Применить» при этом обещало нарезать десяток лишних кадров.
   return { zones, ones, nextId: (list?.length || 0) + 1 };
 }
 
@@ -240,14 +241,21 @@ export default function VideoCutModal({
   const minSpan = Math.max(500, frameMs * 20);
 
   // Сохранённый план — то, из чего таска нарезана; открываем ровно его.
-  const [plan0] = useState(() => splitPlan(video.segments, duration));
+  const [plan0] = useState(() => splitPlan(video.segments));
   const nextId = useRef(plan0.nextId);
   const [segs, setSegs] = useState<Seg[]>(plan0.zones);
   const [selected, setSelected] = useState<number | null>(plan0.zones[0]?.id ?? null);
   const [singles, setSingles] = useState<Single[]>(plan0.ones);
   const [est, setEst] = useState<CutEstimate>({});
   const [confirm, setConfirm] = useState(false);
-  const [job, setJob] = useState<number | null>(null);
+  /** Идёт ли нарезка. Именно «идёт», а не «сколько сделано»: доля с сервера
+   *  прыгает рывками по участкам и врёт тем сильнее, чем крупнее шаг. */
+  const [busy, setBusy] = useState(false);
+  /** Нарезка кончилась: сколько кадров прибавилось и сколько ушло. */
+  const [done, setDone] = useState<{ added: number; removed: number } | null>(null);
+  /** Счётчик применённых планов. Двигает пересчёт оценки: сами участки после
+   *  нарезки не меняются, и без него оценка осталась бы вчерашней. */
+  const [applied, setApplied] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [at, setAt] = useState(startAtMs || 0);
   const [playing, setPlaying] = useState(false);
@@ -290,7 +298,7 @@ export default function VideoCutModal({
 
   useEffect(() => {
     estimateCut(taskId, video.id, cutSegments).then(setEst).catch(() => {});
-  }, [taskId, video.id, cutSegments]);
+  }, [taskId, video.id, cutSegments, applied]);
 
   useEffect(() => {
     if (startAtMs && videoRef.current) videoRef.current.currentTime = startAtMs / 1000;
@@ -613,17 +621,34 @@ export default function VideoCutModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [singles, hover]);
 
+  /** Нарезать по плану.
+   *
+   * Окно после нарезки не закрывается само. Нарезают почти всегда подходами:
+   * взяли участок, посмотрели, что вышло, взяли следующий — и автоматическое
+   * закрытие выбрасывало человека к таске, откуда он тут же лез обратно,
+   * заново искать место в ролике. Куда идти дальше, он решает сам.
+   */
   async function run() {
     setError(null);
-    setJob(0);
+    setDone(null);
+    setBusy(true);
+    // Что заказывали — снимаем ДО запуска: сразу после нарезки оценка уже
+    // другая, те же участки числятся нарезанными.
+    const plan = { added: est.add ?? 0, removed: est.remove ?? 0 };
     try {
       const { job_id } = await cutVideo(taskId, video.id, cutSegments);
-      await pollJob(job_id, (j) => setJob(j.total ? j.processed / j.total : 0));
+      await pollJob(job_id, () => {});
+      // Таску перечитываем сразу, не дожидаясь ухода из окна: числа на
+      // карточке ролика должны сойтись к моменту возврата.
       onDone();
-      onClose();
+      // И пересчитываем план: участки остались те же, но кадры по ним уже
+      // есть — без этого «Применить» звало бы нарезать их второй раз.
+      setApplied((n) => n + 1);
+      setDone(plan);
     } catch (e) {
       setError((e as Error).message);
-      setJob(null);
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -970,7 +995,7 @@ export default function VideoCutModal({
                 свой список — её высоту задаёт левая часть. */}
             <div className="mag-cut-scroll">
             <h5>Участки нарезки</h5>
-            {error && <div className="mag-error">{error}</div>}
+            {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
             {segs.map((s, i) => (
               <div
@@ -1099,37 +1124,65 @@ export default function VideoCutModal({
         </div>
 
         <div className="mag-cut-foot">
-          {job !== null ? (
-            <div className="mag-progress" style={{ flex: 1, marginTop: 0 }}>
-              <div className="mag-progress-track">
-                <i style={{ width: `${Math.round(job * 100)}%` }} />
-              </div>
-              <div className="mag-progress-lbl">
-                <span>Режу кадры</span>
-                <span>{Math.round(job * 100)} %</span>
-              </div>
-            </div>
-          ) : (
-            <>
-              <span className="mag-cut-sp" />
-              <button className="mag-ghost" type="button" onClick={onClose}>
-                Отмена
-              </button>
-              {editable && (
-                <button
-                  className="mag-btn"
-                  type="button"
-                  disabled={!!est.error || (!est.add && !est.remove)}
-                  onClick={() => (est.remove ? setConfirm(true) : run())}
-                >
-                  Применить
-                  {est.add ? ` +${est.add}` : ""}
-                  {est.remove ? ` −${est.remove}` : ""}
-                </button>
-              )}
-            </>
+          <span className="mag-cut-sp" />
+          <button className="mag-ghost" type="button" onClick={onClose}>
+            Отмена
+          </button>
+          {editable && (
+            <button
+              className="mag-btn"
+              type="button"
+              disabled={!!est.error || (!est.add && !est.remove)}
+              onClick={() => (est.remove ? setConfirm(true) : run())}
+            >
+              Применить
+              {est.add ? ` +${est.add}` : ""}
+              {est.remove ? ` −${est.remove}` : ""}
+            </button>
           )}
         </div>
+
+        {/* Работа и её итог — поверх всего окна.
+            Полоска в углу подвала терялась: нарезка занимает десятки секунд,
+            человек за это время успевал тронуть план, которого она уже не
+            касалась. Заслонка честнее — пока режется, окно не редактируют. */}
+        {(busy || done) && (
+          <div className="mag-cut-veil">
+            <div className="mag-cut-work">
+              {busy ? (
+                <>
+                  <div className="mag-spin" aria-label="Нарезка идёт" role="status" />
+                  <b>Режу кадры</b>
+                  <span>Не закрывайте окно — нарезка идёт на сервере.</span>
+                </>
+              ) : (
+                done && (
+                  <>
+                    <div className="mag-cut-ok" aria-hidden="true">✓</div>
+                    <b>Нарезано</b>
+                    <span>
+                      {done.added
+                        ? `Прибавилось ${done.added} ${plural(done.added, "кадр", "кадра", "кадров")}`
+                        : "План применён"}
+                      {done.removed
+                        ? `, ушло ${done.removed} ${plural(done.removed, "кадр", "кадра", "кадров")}`
+                        : ""}
+                      .
+                    </span>
+                    <div className="mag-cut-work-foot">
+                      <button className="mag-ghost" type="button" onClick={() => setDone(null)}>
+                        Продолжить нарезать
+                      </button>
+                      <button className="mag-btn" type="button" onClick={onClose}>
+                        Вернуться к таске
+                      </button>
+                    </div>
+                  </>
+                )
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Спрашиваем только когда есть что терять: чистое добавление идёт молча. */}
         {confirm && (

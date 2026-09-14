@@ -207,9 +207,16 @@ def counts(doc, base=1.0, load_version=None):
     Числа дробные нарочно: у вероятностного разделителя 1000 × 0,3 — это
     ожидание, а не обещание, и редактор пишет «≈ 300». Округлять здесь значило
     бы врать точностью, которой нет.
+
+    ``base`` — что вливается в источники. Числом, когда спрашивает редактор:
+    там неизвестно, сколько кадров придёт, и каждому источнику дают одну и ту
+    же условную тысячу. Словарём ``{номер узла: кадров}``, когда спрашивает
+    мастер сборки: там на каждый источник свои кадры, и общий множитель,
+    посчитанный по условной тысяче, соврал бы.
     """
     load_version = load_version or (lambda *_: None)
     nodes, edges = expand(doc, load_version)
+    fed = base if isinstance(base, dict) else None
     by_id = {n["id"]: n for n in nodes}
     order = topo(nodes, edges)
 
@@ -221,6 +228,7 @@ def counts(doc, base=1.0, load_version=None):
 
     per_edge = {}
     total_out = 0.0
+    total_in = 0.0
 
     def incoming_sum(node):
         ins, _ = schema.ports(node)
@@ -235,7 +243,12 @@ def counts(doc, base=1.0, load_version=None):
         kind = node["type"]
 
         if kind in schema.SOURCES:
-            produced = {"out": float(base)}
+            # После разворачивания блоков источники остались только у корневого
+            # графа: гнёзда блока стали «Потоком». Поэтому номер узла здесь —
+            # тот же, что человек привязывал в мастере сборки.
+            got = float(fed.get(node_id, 0.0)) if fed is not None else float(base)
+            total_in += got
+            produced = {"out": got}
         elif kind == "output":
             total_out += incoming_sum(node)
             continue
@@ -275,7 +288,12 @@ def counts(doc, base=1.0, load_version=None):
         "edges": per_edge,
         "outputs": round(total_out, 4),
         "dropped": round(dropped, 4),
-        "multiplier": round(total_out / base, 4) if base else 0.0,
+        # Множитель считается от того, что реально влили, а не от условной
+        # тысячи: у графа с двумя источниками «×3 на тысячу» без этого
+        # означало бы то шесть тысяч, то три — в зависимости от числа
+        # источников, а не от того, что граф делает.
+        "multiplier": round(total_out / total_in, 4) if total_in else 0.0,
+        "source_count": sum(1 for n in nodes if n["type"] in schema.SOURCES),
         "nodes": len(nodes),
     }
 

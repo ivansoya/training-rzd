@@ -85,6 +85,10 @@ TRAIN_SET_STATUS_ENUM = sa.Enum(
 SPLIT_MODE_ENUM = sa.Enum(
     "manual", "random", "balanced", "smart", name="split_mode"
 )
+# Что вливается в источник графа при сборке: своя половина целиком или кадры,
+# отобранные по тагам. Половина названа так же, как в SPLIT_ENUM, — это одно
+# и то же деление, и второе имя для него разошлось бы с первым.
+TRAIN_FEED_ENUM = sa.Enum("train", "val", "tags", name="train_set_feed")
 # Работа очереди подготовки данных. «embed» считает признаки кадров и потому
 # уезжает на видеокарту — её берёт воркер обучения, а не воркер подготовки:
 # torch стоит в одном образе, а не в двух.
@@ -290,6 +294,62 @@ class Image(Base, AuditMixin):
     width: Mapped[int | None] = mapped_column(sa.Integer)
     height: Mapped[int | None] = mapped_column(sa.Integer)
     size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
+
+
+class Tag(Base, AuditMixin):
+    """Метка происхождения: «ночь», «дождь», «тоннель».
+
+    Не класс и не разметка: класс говорит, ЧТО на кадре, таг — в каких
+    условиях кадр снят. Справочник проекта, а не свободная строка, потому что
+    по тагам собирают наборы: «Ночь» и «ночь» разошлись бы молча, и половина
+    кадров не попала бы в обучение без единого сообщения.
+    """
+
+    __tablename__ = "tags"
+    __table_args__ = (
+        sa.UniqueConstraint("project_id", "name", name="uq_tag_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+
+
+class ImageTag(Base):
+    """Таг кадра. Снимок, а не ссылка на источник.
+
+    Кадр из ролика получает таги ролика в момент рождения и дальше живёт сам:
+    иначе правку «этому кадру таг не тот» некуда было бы записать, а удаление
+    ролика (закрытие таски уносит исходники) стёрло бы происхождение всех
+    нарезанных из него кадров.
+    """
+
+    __tablename__ = "image_tags"
+    __table_args__ = (sa.Index("ix_image_tags_tag", "tag_id"),)
+
+    image_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("images.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
+class VideoTag(Base):
+    """Таг ролика. То, что достанется каждому нарезанному из него кадру."""
+
+    __tablename__ = "video_tags"
+    __table_args__ = (sa.Index("ix_video_tags_tag", "tag_id"),)
+
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tag_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class Superclass(Base, AuditMixin):
@@ -1069,12 +1129,6 @@ class TrainSet(Base, AuditMixin):
     # графа. Одно число, которое человек видит и может переписать, — этого
     # достаточно, чтобы пересобрать точно так же.
     seed: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
-    graph_version_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="RESTRICT")
-    )
-    val_graph_version_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="RESTRICT")
-    )
     counts: Mapped[dict | None] = mapped_column(JsonCol)
     size_bytes: Mapped[int] = mapped_column(
         sa.BigInteger, nullable=False, default=0, server_default="0"
@@ -1087,6 +1141,53 @@ class TrainSet(Base, AuditMixin):
     dir_path: Mapped[str | None] = mapped_column(sa.String(1024))
     built_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class TrainSetFeed(Base):
+    """Строка сборки: что кладём в конвейер и через что пропускаем.
+
+    До 13.09.2026 набор знал ровно два графа — один на обучение, один на
+    проверку, — и это жило двумя столбцами. Столбцов не хватило: на одну
+    половину теперь вешают несколько графов, а у графа несколько
+    «Источников», и каждому говорят, откуда брать кадры — из половины или по
+    тагам. Две колонки такого не выражают, поэтому строки переехали сюда.
+
+    Таблицей, а не в ``spec``: именно ссылка с ``RESTRICT`` не даёт удалить
+    версию графа, по которой собран набор. В json эта защита исчезла бы, и
+    паспорт набора однажды показал бы на пустоту.
+
+    Строка интерфейса — это (``part``, ``position``). Привязок в ней столько,
+    сколько у графа источников; у строки «без графа» она одна, с пустым
+    ``source_node``.
+    """
+
+    __tablename__ = "train_set_feeds"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "set_id", "part", "position", "source_node", name="uq_set_feed"
+        ),
+        sa.Index("ix_set_feeds_set", "set_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    set_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("train_sets.id", ondelete="CASCADE"), nullable=False
+    )
+    # Куда ляжет то, что выйдет из конвейера. Именно группа набора, а не
+    # происхождение кадра: строка на train может брать кадры по тагу.
+    part: Mapped[str] = mapped_column(SPLIT_ENUM, nullable=False)
+    position: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0)
+    graph_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="RESTRICT")
+    )
+    # Номер узла «Источник» в том графе. Пусто у строки «без графа».
+    source_node: Mapped[str] = mapped_column(
+        sa.String(64), nullable=False, default="", server_default=""
+    )
+    # Что вливаем: свою половину целиком («train»/«val») или кадры с тагами.
+    feed: Mapped[str] = mapped_column(TRAIN_FEED_ENUM, nullable=False)
+    # Таги для feed="tags": берём кадр с ЛЮБЫМ из них.
+    tag_ids: Mapped[list | None] = mapped_column(JsonCol)
 
 
 class TrainSetSplit(Base):

@@ -17,6 +17,7 @@ import type { Box } from "../../auth/api";
 import ShapeMini from "./ShapeMini";
 import { plural } from "./ProjectsPage";
 import type { Mode } from "./useGallery";
+import Pager from "../Pager";
 
 export interface GalleryItem {
   /** Ключ строки и адрес превью. */
@@ -168,27 +169,7 @@ export default function Gallery({
       )}
 
       {mode === "pages" ? (
-        pages > 1 && (
-          <div className="mag-pager">
-            <button
-              className="mag-ghost"
-              disabled={page === 0 || loading}
-              onClick={() => onPage(page - 1)}
-            >
-              Назад
-            </button>
-            <span>
-              {page + 1} из {pages}
-            </span>
-            <button
-              className="mag-ghost"
-              disabled={page + 1 >= pages || loading}
-              onClick={() => onPage(page + 1)}
-            >
-              Дальше
-            </button>
-          </div>
-        )
+        <Pager page={page} pages={pages} onPage={onPage} disabled={loading} />
       ) : (
         <div className="mag-feed-foot" ref={sentinel}>
           {items.length >= matched

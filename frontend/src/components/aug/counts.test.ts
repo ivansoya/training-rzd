@@ -30,7 +30,7 @@ function load(name: string) {
 describe("счёт по образцам", () => {
   // Блоки клиент сам не разворачивает — их содержимое лежит на сервере,
   // поэтому образец «block» проверяется отдельно, с подставленным множителем.
-  for (const name of ["vagony", "shares"]) {
+  for (const name of ["vagony", "shares", "two-sources"]) {
     it(`${name}: числа сходятся с серверными`, () => {
       const fixture = load(name);
       const got = counts(fixture.doc, fixture.base);
@@ -58,8 +58,21 @@ describe("ветвление и деление", () => {
   it("из гнезда идёт сколько угодно проводов, и поток дублируется", () => {
     const got = counts(load("vagony").doc, 1040);
     expect(got.edges["src:out->mul:in"]).toBe(1040);
-    expect(got.edges["src:out->orig:in"]).toBe(1040);
+    expect(got.edges["src:out->mrg:i2"]).toBe(1040);
     expect(got.outputs).toBe(4160);
+  });
+
+  it("источникам можно подать разное", () => {
+    // Словарь вместо числа: у графа с двумя источниками в каждый вливают
+    // своё, и множитель считается от того, что влили.
+    const got = counts(load("two-sources").doc, {
+      night_src: 100,
+      day_src: 900,
+    });
+    expect(got.edges["night_src:out->mul:in"]).toBe(100);
+    expect(got.edges["day_src:out->mrg:i1"]).toBe(900);
+    expect(got.outputs).toBe(1200);
+    expect(got.multiplier).toBeCloseTo(1.2, 3);
   });
 
   it("сумма по веткам разделителя равна входу", () => {

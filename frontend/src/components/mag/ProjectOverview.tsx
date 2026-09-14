@@ -36,10 +36,7 @@ export default function ProjectOverview() {
     return (
       <div className="mag-card mag-empty-big">
         <h3>В проекте пока нет данных</h3>
-        <p>
-          Импортируйте YOLO-архив — из него появятся классы, изображения и
-          разметка. Участников можно приглашать уже сейчас.
-        </p>
+        <p>Импортируйте YOLO-архив.</p>
         {isAdmin && (
           <Link className="mag-btn mag-btn-inline" to={`/projects/${project.code}/import`}>
             Импортировать датасет
@@ -103,7 +100,10 @@ export default function ProjectOverview() {
             <span className="mag-swatch" style={{ background: c.color }} />
             <span className="mag-cls-id">{c.class_index}</span>
             <span className="mag-cls-name">
-              <b>{c.name}</b>
+              {/* Имя внутри <b> отдельным пролётом: его и двигает бегущая
+                  строка. Полное имя остаётся в подсказке — она отвечает
+                  сразу, не заставляя дочитывать едущий текст. */}
+              <b title={c.name}><span>{c.name}</span></b>
               <span>{c.superclass || "без группы"}</span>
             </span>
             <span className="mag-cls-bar">

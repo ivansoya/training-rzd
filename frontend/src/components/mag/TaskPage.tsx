@@ -27,9 +27,13 @@ import ShapeMini from "./ShapeMini";
 import { TaskState } from "./ProjectTasks";
 import { plural } from "./ProjectsPage";
 import { SourceCard, VideoCard, buildSources } from "./TaskSources";
+import UploadImagesModal from "./UploadImagesModal";
+import { setImageTags, setVideoTags } from "../../api/tags";
+import type { Tag } from "../../api/tags";
 import VideoAnnotator from "./VideoAnnotator";
 import VideoCutModal from "./VideoCutModal";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 const NEXT: Record<TaskStatus, { to: TaskStatus; label: string; hint: string }[]> = {
   queued: [{ to: "in_progress", label: "Взять в работу", hint: "" }],
@@ -75,6 +79,14 @@ export default function TaskPage() {
   const [busy, setBusy] = useState(false);
   const [uploadPct, setUploadPct] = useState<number | null>(null);
   const [tab, setTab] = useState<Tab>("frames");
+  // Справочник тагов приезжает с таской, но пополняется прямо на странице:
+  // чип-пикер заводит таг по ходу дела, и ждать перезагрузки таски ради его
+  // появления в соседнем списке — не дело.
+  const [tags, setTags] = useState<Tag[]>([]);
+  // Выбранные файлы ждут ответа на один вопрос — таг. До 13.09.2026 они
+  // улетали сразу, и происхождение кадра, известное только тому, кто их
+  // принёс, терялось в ту же секунду.
+  const [picked, setPicked] = useState<File[] | null>(null);
 
   // Редактор кадров открывается с подмножеством: «Размечать» у блока ведёт
   // только к кадрам этой загрузки, а не ко всей таске.
@@ -99,6 +111,7 @@ export default function TaskPage() {
       ]);
       setTask(t);
       setImages(imgs.images);
+      setTags(t.tags);
       // Пустая таска открывается на «Кадрах»: и загрузка изображений, и
       // добавление ролика под нарезку теперь там. Исключение — когда уже есть
       // размечаемый ролик: его работа в своей вкладке.
@@ -179,17 +192,62 @@ export default function TaskPage() {
     });
   }
 
-  async function onFiles(files: FileList | null) {
-    if (!files || !files.length || !taskId) return;
+  function onFiles(files: FileList | null) {
+    if (!files || !files.length) return;
+    setPicked([...files]);
+  }
+
+  async function sendFiles(files: File[], perFile: string[][]) {
+    if (!taskId) return;
+    setPicked(null);
     setUploadPct(0);
     setError(null);
     try {
-      await uploadTaskImages(taskId, [...files], setUploadPct);
+      await uploadTaskImages(taskId, files, setUploadPct, perFile);
       await load();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setUploadPct(null);
+    }
+  }
+
+  /** Таги ролика. Правка немедленная и без подтверждения: она ничего не
+   *  разрушает — уже нарезанные кадры свои таги сохранят. */
+  async function saveVideoTags(video: TaskVideoItem, tagIds: string[]) {
+    if (!taskId) return;
+    // Показываем сразу: ждать ответа сервера, держа палец на чипе, незачем.
+    setTask((prev) => prev && {
+      ...prev,
+      videos: prev.videos.map((v) =>
+        v.id === video.id ? { ...v, tag_ids: tagIds } : v
+      ),
+    });
+    try {
+      await setVideoTags(taskId, video.id, tagIds);
+    } catch (e) {
+      setError((e as Error).message);
+      await load();
+    }
+  }
+
+  /** Таг одного кадра. Работает и в закрытой таске: закрытие останавливает
+   *  разметку, а таг — не разметка, а паспорт кадра. */
+  async function saveImageTags(imageId: string, tagIds: string[]) {
+    setImages((prev) =>
+      prev.map((i) => (i.id === imageId ? { ...i, tag_ids: tagIds } : i))
+    );
+    setEditing((prev) => prev && {
+      ...prev,
+      list: prev.list.map((i) =>
+        i.id === imageId ? { ...i, tag_ids: tagIds } : i
+      ),
+    });
+    try {
+      await setImageTags(imageId, tagIds);
+    } catch (e) {
+      setError((e as Error).message);
+      await load();
     }
   }
 
@@ -329,8 +387,8 @@ export default function TaskPage() {
         <Link to={`/projects/${code}/tasks`}>Таски</Link> / <b>{task.name}</b>
       </div>
 
-      {error && <div className="mag-error">{error}</div>}
-      {notice && <div className="mag-ok-banner">{notice}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
+      {notice && <Banner className="mag-ok-banner" onClose={() => setNotice(null)}>{notice}</Banner>}
 
       <div className="mag-task-strip">
         <div className="mag-task-id">
@@ -400,6 +458,17 @@ export default function TaskPage() {
         ))}
       </nav>
 
+      {picked && task && (
+        <UploadImagesModal
+          code={task.project.code}
+          tags={tags}
+          files={picked}
+          onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
+          onCancel={() => setPicked(null)}
+          onSend={(perFile) => void sendFiles(picked, perFile)}
+        />
+      )}
+
       {uploadPct !== null && (
         <div className="mag-card mag-upload-card">
           <div className="mag-progress" style={{ marginTop: 0 }}>
@@ -423,7 +492,11 @@ export default function TaskPage() {
             {editable && (
               <div className="mag-head-actions">
                 <input ref={fileRef} type="file" accept="image/*" multiple hidden
-                  onChange={(e) => onFiles(e.target.files)} />
+                  onChange={(e) => {
+                    onFiles(e.target.files);
+                    // Иначе повторный выбор той же пачки не вызовет события.
+                    e.target.value = "";
+                  }} />
                 <input ref={cutRef} type="file" accept="video/*" multiple hidden
                   onChange={(e) => {
                     void onVideo(e.target.files, "cut");
@@ -450,10 +523,14 @@ export default function TaskPage() {
             <div className="g-blocks">
               {sources.map((block) => (
                 <SourceCard key={block.key} taskId={task.id} block={block}
+                  code={task.project.code}
+                  tags={tags}
                   editable={editable}
                   onAnnotate={() => openSource(block.key)}
                   onCut={block.videos ? (video) => setCutting({ video }) : undefined}
-                  onDelete={block.videos ? (video) => removeVideo(video) : undefined} />
+                  onDelete={block.videos ? (video) => removeVideo(video) : undefined}
+                  onVideoTags={(video, ids) => void saveVideoTags(video, ids)}
+                  onTagCreated={(tag) => setTags((prev) => [...prev, tag])} />
               ))}
             </div>
           )}
@@ -492,6 +569,10 @@ export default function TaskPage() {
                 <VideoCard
                   key={v.id}
                   taskId={task.id}
+                  code={task.project.code}
+                  tags={tags}
+                  onVideoTags={(ids) => void saveVideoTags(v, ids)}
+                  onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
                   video={v}
                   pending={task.pending_videos.find((p) => p.video_id === v.id)}
                   classes={task.classes}
@@ -558,7 +639,9 @@ export default function TaskPage() {
                   <div key={c.class_index} className="mag-cls">
                     <span className="mag-swatch" style={{ background: c.color }} />
                     <span className="mag-cls-id">{c.class_index}</span>
-                    <span className="mag-cls-name"><b>{c.name}</b></span>
+                    <span className="mag-cls-name">
+                      <b title={c.name}><span>{c.name}</span></b>
+                    </span>
                     <span className="mag-cls-bar">
                       <i style={{ width: `${(c.annotations / maxCls) * 100}%`, background: c.color }} />
                     </span>
@@ -629,12 +712,10 @@ export default function TaskPage() {
 
       {task.status === "closed" && (
         <p className="mag-hint" style={{ marginTop: 14 }}>
-          Таска закрыта: черновики удалены, разметка заморожена. Принятые кадры
-          остались в проекте —{" "}
           <button className="mag-link" type="button"
             onClick={() => navigate(`/projects/${code}/datasets`)}>
-            смотреть датасеты
-          </button>.
+            Смотреть датасеты
+          </button>
         </p>
       )}
 
@@ -656,6 +737,9 @@ export default function TaskPage() {
           images={editing.list}
           index={editing.index}
           readOnly={!editable}
+          tags={tags}
+          onTags={(imageId, ids) => void saveImageTags(imageId, ids)}
+          onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
           onIndex={(i) => setEditing((prev) => (prev ? { ...prev, index: i } : prev))}
           onClose={() => { setEditing(null); load(); }}
           onChanged={(updated) =>

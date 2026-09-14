@@ -9,6 +9,7 @@
 `task_id` у кадра ставится при загрузке и не снимается никогда: таска — это
 происхождение кадра, датасет — его текущая принадлежность.
 """
+import json
 import os
 import shutil
 import tempfile
@@ -18,7 +19,7 @@ import uuid
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import case, func, select
 
-from common import config, jobs
+from common import config, jobs, tags
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
@@ -299,9 +300,11 @@ def get_task(task_id):
             .where(TaskVideo.task_id == task.id)
             .group_by(VideoTrack.video_id)
         ).all())
+        video_tags = tags.of(db, "video", [v.id for v in videos])
         data["videos"] = [
             {
                 "id": str(v.id),
+                "tag_ids": [str(t) for t in video_tags.get(v.id, [])],
                 "prepare": _prepare_state(db, v),
                 "file_name": v.file_name,
                 "duration_ms": v.duration_ms,
@@ -381,6 +384,9 @@ def get_task(task_id):
             {"class_index": i, "name": n, "color": c, "annotations": k}
             for i, n, c, k in rows
         ]
+        # Справочник тагов едет вместе с таской: его спрашивают три места на
+        # этой же странице — карточка ролика, карточка загрузки и редактор.
+        data["tags"] = [tags.view(t) for t in tags.project_tags(db, project.id)]
         return jsonify(data)
     finally:
         db.close()
@@ -769,17 +775,30 @@ def upload_images(task_id):
         if not files:
             return jsonify({"error": "Файлы не переданы."}), 400
 
+        # Таги приходят списком на каждый файл, по тому же порядку. «Всем один
+        # набор» и «каждому свой» — для сервера одно и то же: карточка загрузки
+        # уже решила, что кому, и второго понятия здесь заводить незачем.
+        try:
+            per_file = json.loads(request.form.get("tags") or "[]")
+        except ValueError:
+            per_file = []
+
         base = config.image_base_dir(task.project_id, task.id)
         added, skipped = 0, 0
-        for file in files:
+        for index, file in enumerate(files):
             ext = os.path.splitext(file.filename or "")[1].lower()
             if ext not in IMAGE_EXTS:
                 skipped += 1
                 continue
-            if _save_upload(db, task, user, file, base) is None:
+            image = _save_upload(db, task, user, file, base)
+            if image is None:
                 skipped += 1
-            else:
-                added += 1
+                continue
+            want = per_file[index] if index < len(per_file) else None
+            if want:
+                tags.attach(db, "image", image.id,
+                            tags.valid_ids(db, project.id, want))
+            added += 1
         _log(db, task, user, "images_added", added=added, skipped=skipped)
         db.commit()
         return jsonify({"added": added, "skipped": skipped,
@@ -956,6 +975,9 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
 
         jobs.update(job_id, total=len(moments), message="Режу кадры", phase="cut")
         created = []
+        # Таги ролика читаем один раз: кадров десятки тысяч, и запрос на
+        # каждый превратил бы нарезку в перекличку с базой.
+        video_tags = tags.ids_of(db, "video", row.id)
 
         def on_frame(index, time_ms, img):
             image = Image(
@@ -978,6 +1000,7 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
             )
             db.add(image)
             db.flush()
+            tags.link(db, "image", image.id, video_tags)
             full, size, nbytes = videolib.save_frame(img, base, image.id)
             image.file_path = os.path.relpath(full, config.DATA_DIR)
             image.width, image.height = size
@@ -1102,6 +1125,7 @@ def task_images(task_id):
                     "class_index": idx, "name": name, "color": color,
                     "source": ann.source,
                 })
+        img_tags = tags.of(db, "image", ids)
         return jsonify({
             "matched": matched,
             "counts": _counts(db, task.id),
@@ -1118,6 +1142,7 @@ def task_images(task_id):
                         str(img.source_video_id) if img.source_video_id else None
                     ),
                     "source_time_ms": img.source_time_ms,
+                    "tag_ids": [str(t) for t in img_tags.get(img.id, [])],
                     "annotations": len(by_image[img.id]),
                     "boxes": by_image[img.id],
                 }
@@ -1276,6 +1301,65 @@ def set_image_status(image_id):
         image.task_status = status
         db.commit()
         return jsonify({"task_status": status, "counts": _counts(db, task.id)})
+    finally:
+        db.close()
+
+
+@bp.put("/api/images/<image_id>/tags")
+def set_image_tags(image_id):
+    """Таги кадра. Только через таску и только этому кадру — так решили, когда
+    заводили таги: массовая правка после приёмки слишком легко переписывает
+    чужую работу.
+
+    В закрытой таске правка РАЗРЕШЕНА, в отличие от разметки. Закрытие
+    останавливает работу над картинкой, а таг — не работа над картинкой, а её
+    паспорт: таски закрывают сразу после приёмки, а набор собирают через
+    месяц, и к этому времени ошибку в таге уже нечем было бы исправить.
+    """
+    db = SessionLocal()
+    try:
+        user = current_user(db)
+        if user is None:
+            return jsonify({"error": "Не выполнен вход."}), 401
+        iid = _uuid_or_none(image_id)
+        image = db.get(Image, iid) if iid else None
+        if image is None or image.task_id is None:
+            return jsonify({"error": "Кадр не найден в таске."}), 404
+        project = db.get(Project, image.project_id)
+        role = role_in(db, user, project)
+        if not has_role(role, "editor"):
+            return jsonify({"error": "Недостаточно прав."}), 403
+        want = tags.valid_ids(db, project.id, (
+            request.get_json(silent=True) or {}
+        ).get("tags"))
+        tags.set_for(db, "image", image.id, want)
+        db.commit()
+        return jsonify({"tags": [str(t) for t in want]})
+    finally:
+        db.close()
+
+
+@bp.put("/api/tasks/<task_id>/videos/<video_id>/tags")
+def set_video_tags(task_id, video_id):
+    """Таги ролика. Достаются каждому кадру, нарезанному ПОСЛЕ этой правки:
+    таг кадра — снимок, а не ссылка. Уже нарезанные кадры не перекрашиваются,
+    иначе правка руками одному кадру однажды пропала бы молча."""
+    db, task, project, user, role, err = _resolve_task(task_id, "editor")
+    if err:
+        return err
+    try:
+        if not _may_work(task, user, role):
+            return jsonify({"error": "Это не ваша таска."}), 403
+        vid = _uuid_or_none(video_id)
+        video = db.get(TaskVideo, vid) if vid else None
+        if video is None or video.task_id != task.id:
+            return jsonify({"error": "Ролик не найден."}), 404
+        want = tags.valid_ids(db, project.id, (
+            request.get_json(silent=True) or {}
+        ).get("tags"))
+        tags.set_for(db, "video", video.id, want)
+        db.commit()
+        return jsonify({"tags": [str(t) for t in want]})
     finally:
         db.close()
 

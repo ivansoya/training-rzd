@@ -111,6 +111,25 @@ def ports(node, group_ports=None):
     raise GraphError(f"Неизвестный узел: {kind!r}")
 
 
+def source_name(node) -> str:
+    """Подпись «Источника» — то, по чему его выбирают при сборке.
+
+    Без подписи имя строится из номера узла: граф с одним источником так и
+    жил до 13.09.2026, и заставлять подписывать его задним числом незачем.
+    """
+    params = node.get("params") or {}
+    return (params.get("name") or params.get("label")
+            or f"Источник {node.get('id')}")
+
+
+def sources_of(doc) -> list:
+    """Источники графа в том порядке, в каком их показывают при сборке."""
+    return sorted(
+        (n for n in (doc.get("nodes") or []) if n.get("type") == "source"),
+        key=source_name,
+    )
+
+
 def node_title(node) -> str:
     """Как назвать узел в сообщении об ошибке."""
     params = node.get("params") or {}
@@ -153,11 +172,21 @@ def check(doc, *, root=True, group_ports=None):
     outputs = [n for n in nodes if n["type"] == "output"]
 
     if root:
-        if len(sources) != 1:
-            raise GraphError(
-                "В графе должен быть ровно один «Источник»: "
-                f"сейчас их {len(sources)}."
-            )
+        if not sources:
+            raise GraphError("В графе нет «Источника» — брать кадры неоткуда.")
+        # Источников теперь бывает несколько: при сборке каждому говорят, что
+        # в него вливать — половину набора или кадры с тагами. Раз человек
+        # выбирает источник по подписи, подписи обязаны различаться.
+        if len(sources) > 1:
+            seen = set()
+            for node in sources:
+                name = source_name(node)
+                if name in seen:
+                    raise GraphError(
+                        f"Два «Источника» подписаны одинаково: {name!r}. "
+                        "При сборке их различают по подписи."
+                    )
+                seen.add(name)
         if entries:
             raise GraphError(
                 "Узел «Вход» бывает только у графа-блока — у того, который "
@@ -165,8 +194,16 @@ def check(doc, *, root=True, group_ports=None):
             )
     elif not entries:
         raise GraphError("У графа-блока должен быть хотя бы один «Вход».")
+    # Выход ровно один — и у корневого графа, и у блока. Несколько «Выходов»
+    # выглядели как разные назначения, а назначение у набора одно: ветки,
+    # которые надо собрать вместе, сводит «Слияние», и это видно на холсте.
     if not outputs:
         raise GraphError("В графе нет ни одного «Выхода» — собирать нечего.")
+    if len(outputs) > 1:
+        raise GraphError(
+            "В графе должен быть ровно один «Выход»: "
+            f"сейчас их {len(outputs)}. Несколько веток сводит «Слияние»."
+        )
 
     # У входного гнезда ровно один провод: два потока, слитые молча, — это
     # «слияние», и оно обязано быть видимым узлом.

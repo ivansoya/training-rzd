@@ -12,6 +12,8 @@ import type {
 /** Классы таски: нужны карточкам, чтобы назвать объект по имени и цвету. */
 type TaskClass = TaskDetail["classes"][number];
 import VideoStrip from "./VideoStrip";
+import TagPicker from "./TagPicker";
+import type { Tag } from "../../api/tags";
 import Sep from "../Sep";
 
 /** Блоки вкладки «Кадры» и карточки вкладки «Видео».
@@ -176,13 +178,21 @@ export function buildSources(task: TaskDetail): SourceBlock[] {
  */
 export function SourceCard({
   taskId,
+  code,
+  tags,
   block,
   editable,
   onAnnotate,
   onCut,
   onDelete,
+  onVideoTags,
+  onTagCreated,
 }: {
   taskId: string;
+  /** Код проекта — чип-пикер заводит таги по ходу дела. */
+  code: string;
+  /** Справочник тагов проекта. */
+  tags: Tag[];
   block: SourceBlock;
   editable: boolean;
   onAnnotate: () => void;
@@ -190,6 +200,9 @@ export function SourceCard({
   onCut?: (video: TaskVideoItem) => void;
   /** Убрать ролик вместе с нарезанными из него кадрами. */
   onDelete?: (video: TaskVideoItem) => void;
+  /** Таги ролика. Достанутся кадрам, нарезанным ПОСЛЕ правки. */
+  onVideoTags: (video: TaskVideoItem, tagIds: string[]) => void;
+  onTagCreated: (tag: Tag) => void;
 }) {
   const { counts, total } = block;
   const videos = block.videos || [];
@@ -198,6 +211,36 @@ export function SourceCard({
   const [open, setOpen] = useState<string | null>(null);
   const share = (n: number) => (total ? `${(n / total) * 100}%` : "0%");
   const left = (counts.new || 0) + (counts.skipped || 0);
+
+  // Таги, стоящие у ВСЕХ роликов блока. Пересечение, а не объединение: чип на
+  // общей строке обещает «это есть у каждого», и снять его должно быть можно
+  // тоже у каждого. Объединение обещало бы неправду на первом же ролике без
+  // тага.
+  const commonTags = videos.length
+    ? videos.reduce<string[]>(
+        (acc, v) => acc.filter((id) => (v.tag_ids || []).includes(id)),
+        [...(videos[0].tag_ids || [])]
+      )
+    : [];
+
+  /** Проставить таги всем роликам блока разом.
+   *
+   * Съёмка идёт сменой: два десятка роликов с одной камеры за один вечер —
+   * это одни и те же условия, и ставить «ночь» двадцать раз подряд человек
+   * отказывается раньше, чем доходит до середины. Правим только разницу:
+   * личные таги ролика, которых нет у соседей, трогать не за что.
+   */
+  function tagAll(next: string[]) {
+    const added = next.filter((id) => !commonTags.includes(id));
+    const removed = commonTags.filter((id) => !next.includes(id));
+    for (const video of videos) {
+      const own = video.tag_ids || [];
+      const ids = [...new Set([...own, ...added])].filter((id) => !removed.includes(id));
+      if (ids.length !== own.length || ids.some((id) => !own.includes(id))) {
+        onVideoTags(video, ids);
+      }
+    }
+  }
 
   return (
     <div className="g-block">
@@ -226,6 +269,20 @@ export function SourceCard({
         /* По строке на ролик: режут каждый отдельно, своим планом. Общая тут
            только разметка — кнопка на весь блок выше. */
         <div className="g-block-b">
+          {editable && videos.length > 1 && (
+            <div className="g-reels-all">
+              <span>Таг на все {videos.length}</span>
+              <TagPicker
+                code={code}
+                all={tags}
+                value={commonTags}
+                compact
+                placeholder="таг на все ролики"
+                onChange={tagAll}
+                onCreated={onTagCreated}
+              />
+            </div>
+          )}
           <div className="g-plan-box g-reels">
             {videos.map((video) => {
               const frames = video.frames || 0;
@@ -249,6 +306,10 @@ export function SourceCard({
                         }} />
                       ))}
                     </span>
+                    {/* Подготовка живёт под именем, а не отдельной ячейкой:
+                        ячейка появлялась и исчезала вместе с работой сервера,
+                        и сетка на шесть колонок то и дело переносила кнопки. */}
+                    <PrepareLine prepare={video.prepare} />
                   </div>
                   <div className="g-reel-nums">
                     <b>{frames.toLocaleString("ru-RU")}</b>
@@ -264,7 +325,6 @@ export function SourceCard({
                   ) : (
                     <span className="g-reel-segs none">не нарезан</span>
                   )}
-                  <PrepareLine prepare={video.prepare} />
                   {onCut && (
                     <button className="mag-ghost mag-btn-inline" type="button"
                       onClick={() => onCut(video)}>
@@ -275,6 +335,24 @@ export function SourceCard({
                     <TrashButton title="Убрать ролик и нарезанные из него кадры"
                       onClick={() => onDelete(video)} />
                   )}
+                  {/* Таги ролика достаются кадрам в момент нарезки — значит
+                      ставить их надо ДО неё. Поэтому они здесь, рядом с
+                      кнопкой «Нарезать», а не спрятаны в подробностях.
+                      Строкой НИЖЕ кнопок, а не выше: таги занимают всю ширину
+                      сетки, и стоя перед кнопками они сталкивали их в
+                      следующий ряд — кнопка «Нарезать» уезжала под постер. */}
+                  <div className="g-reel-tags">
+                    <TagPicker
+                      code={code}
+                      all={tags}
+                      value={video.tag_ids || []}
+                      disabled={!editable}
+                      compact
+                      placeholder="таг ролика"
+                      onChange={(next) => onVideoTags(video, next)}
+                      onCreated={onTagCreated}
+                    />
+                  </div>
                   {open === video.id && (
                     <table className="g-plan g-reel-plan">
                       <thead>
@@ -352,6 +430,8 @@ function classOf(
  *  но и где именно: в начале, в конце или кучкой посередине. */
 export function VideoCard({
   taskId,
+  code,
+  tags,
   video,
   pending,
   classes,
@@ -362,8 +442,12 @@ export function VideoCard({
   onReopen,
   onDropFrames,
   onDelete,
+  onVideoTags,
+  onTagCreated,
 }: {
   taskId: string;
+  code: string;
+  tags: Tag[];
   video: TaskVideoItem;
   pending?: PendingVideo;
   /** Классы таски: карточка называет объект по имени и цвету. */
@@ -376,6 +460,8 @@ export function VideoCard({
   onDropFrames: () => void;
   /** Убрать ролик со всем, что из него вышло и ещё не попало в датасет. */
   onDelete: () => void;
+  onVideoTags: (tagIds: string[]) => void;
+  onTagCreated: (tag: Tag) => void;
 }) {
   const closed = video.annotation_closed_at !== null;
   const lastFrame = Math.max(1, (video.frame_count || 1) - 1);
@@ -452,6 +538,21 @@ export function VideoCard({
             {marks.map((m) => (
               <b key={`l${m}`} style={{ left: `${m * 100}%` }}>{Math.round(m * lastFrame)}</b>
             ))}
+          </div>
+
+          {/* Таги ролика достанутся кадрам при закрытии разметки. Правка
+              после закрытия уже ничего не изменит — таг кадра это снимок. */}
+          <div className="g-vcard-tags">
+            <TagPicker
+              code={code}
+              all={tags}
+              value={video.tag_ids || []}
+              disabled={!editable || closed}
+              compact
+              placeholder="таг ролика"
+              onChange={onVideoTags}
+              onCreated={onTagCreated}
+            />
           </div>
 
           <div className="g-vcard-facts">

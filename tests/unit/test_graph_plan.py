@@ -72,12 +72,33 @@ def test_умножение_и_доли_сходятся():
 
 def test_ветвление_из_гнезда_дублирует_поток():
     """Из одного гнезда можно вести сколько угодно проводов — как в любом
-    нодовом редакторе. Тот же образец уходит в обе стороны, и сумма на выходах
+    нодовом редакторе. Тот же образец уходит в обе стороны, и сумма на выходе
     поэтому больше входа."""
     got = plan.counts(load("vagony")["doc"], 1040)
     assert got["edges"]["src:out->mul:in"] == 1040
-    assert got["edges"]["src:out->orig:in"] == 1040
+    assert got["edges"]["src:out->mrg:i2"] == 1040
     assert got["outputs"] == 4160
+
+
+def test_источникам_можно_подать_разное():
+    """Словарь вместо числа: у графа с двумя источниками в каждый вливают
+    своё, и общий множитель считается от того, что влили, а не от условной
+    тысячи на каждый."""
+    doc = load("two-sources")["doc"]
+    got = plan.counts(doc, {"night_src": 100, "day_src": 900})
+    assert got["edges"]["night_src:out->mul:in"] == 100
+    assert got["edges"]["day_src:out->mrg:i1"] == 900
+    assert got["outputs"] == 1200          # 100×3 + 900
+    assert got["multiplier"] == 1.2        # 1200 на влитую тысячу
+
+
+def test_источник_без_подачи_не_даёт_образцов():
+    """Строка сборки может не назвать источник — тогда в него ничего не
+    льётся, и граф отдаёт только то, что пришло в остальные."""
+    doc = load("two-sources")["doc"]
+    got = plan.counts(doc, {"day_src": 500})
+    assert got["outputs"] == 500
+    assert got["edges"]["night_src:out->mul:in"] == 0
 
 
 # --------------------------------------------------------------------------- #
@@ -107,12 +128,67 @@ def test_без_источника_не_принимается():
         schema.check(doc)
 
 
-def test_двух_источников_не_бывает():
+def test_два_источника_бывают():
+    """Источников несколько с 13.09.2026: при сборке каждому говорят, что в
+    него вливать — половину набора или кадры с тагами."""
     doc = two_nodes()
-    doc["nodes"].append({"id": "s2", "type": "source"})
-    doc["edges"].append({"from": "s2", "out": "out", "to": "e", "in": "in"})
-    with pytest.raises(GraphError, match="ровно один"):
+    doc["nodes"] = [
+        {"id": "s", "type": "source", "params": {"name": "Ночь"}},
+        {"id": "s2", "type": "source", "params": {"name": "День"}},
+        {"id": "m", "type": "merge", "params": {"inputs": 2}},
+        {"id": "e", "type": "output"},
+    ]
+    doc["edges"] = [
+        {"from": "s", "out": "out", "to": "m", "in": "i0"},
+        {"from": "s2", "out": "out", "to": "m", "in": "i1"},
+        {"from": "m", "out": "out", "to": "e", "in": "in"},
+    ]
+    schema.check(doc)
+
+
+def test_источники_с_одной_подписью_не_принимаются():
+    """Источник выбирают при сборке по подписи. Две одинаковые подписи — это
+    выбор вслепую, поэтому граф отвергается до, а не после сборки."""
+    doc = two_nodes()
+    doc["nodes"] = [
+        {"id": "s", "type": "source", "params": {"name": "Ночь"}},
+        {"id": "s2", "type": "source", "params": {"name": "Ночь"}},
+        {"id": "m", "type": "merge", "params": {"inputs": 2}},
+        {"id": "e", "type": "output"},
+    ]
+    doc["edges"] = [
+        {"from": "s", "out": "out", "to": "m", "in": "i0"},
+        {"from": "s2", "out": "out", "to": "m", "in": "i1"},
+        {"from": "m", "out": "out", "to": "e", "in": "in"},
+    ]
+    with pytest.raises(GraphError, match="одинаково"):
         schema.check(doc)
+
+
+def test_двух_выходов_не_бывает():
+    """Назначение у набора одно. Ветки, которые надо собрать вместе, сводит
+    «Слияние» — и это видно на холсте, в отличие от двух «Выходов»."""
+    doc = two_nodes()
+    doc["nodes"].append({"id": "e2", "type": "output"})
+    doc["edges"].append({"from": "s", "out": "out", "to": "e2", "in": "in"})
+    with pytest.raises(GraphError, match="ровно один «Выход»"):
+        schema.check(doc)
+
+
+def test_двух_выходов_не_бывает_и_у_блока():
+    doc = {
+        "nodes": [
+            {"id": "i", "type": "input"},
+            {"id": "e", "type": "output"},
+            {"id": "e2", "type": "output"},
+        ],
+        "edges": [
+            {"from": "i", "out": "out", "to": "e", "in": "in"},
+            {"from": "i", "out": "out", "to": "e2", "in": "in"},
+        ],
+    }
+    with pytest.raises(GraphError, match="ровно один «Выход»"):
+        schema.check(doc, root=False)
 
 
 def test_без_выхода_собирать_нечего():

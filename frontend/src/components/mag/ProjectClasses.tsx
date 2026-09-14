@@ -22,6 +22,7 @@ import { useProject } from "./ProjectShell";
 import { plural } from "./ProjectsPage";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
+import Banner from "../Banner";
 
 // Что сейчас редактируется. null — ничего.
 //
@@ -91,18 +92,12 @@ export default function ProjectClasses() {
 
   return (
     <>
-      {error && <div className="mag-error">{error}</div>}
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
       <div className="mag-card">
         <div className="mag-card-h">
           <h4>Классы проекта <Sep /> {info.classes.length}</h4>
         </div>
-        <p className="mag-hint">
-          Идентификатор класса присваивается сам и не меняется: это его номер в
-          выгруженном data.yaml, и смена рассогласует проект с уже обученными
-          моделями. Порядок для обучения задаётся при экспорте.
-        </p>
-
         <div className="workspace-project-search">
           <input type="search" aria-label="Найти класс" placeholder="Название, номер или группа…" value={query} onChange={(e) => setQuery(e.target.value)} />
           <span role="status">{matching.length} из {info.classes.length}</span>
@@ -128,6 +123,7 @@ export default function ProjectClasses() {
             onEditGroup={() => setEditing({ kind: "superclass", sc })}
             onAddClass={() => setEditing({ kind: "new-class", superclassId: sc.id })}
             onEditClass={(cls) => setEditing({ kind: "class", cls })}
+            onMoveClass={(id) => void act(() => updateClass(code, id, { superclass_id: sc.id }))}
           />
         ))}
 
@@ -137,6 +133,7 @@ export default function ProjectClasses() {
           canEdit={canEdit}
           onAddClass={() => setEditing({ kind: "new-class", superclassId: null })}
           onEditClass={(cls) => setEditing({ kind: "class", cls })}
+          onMoveClass={(id) => void act(() => updateClass(code, id, { superclass_id: null }))}
         />
       </div>
 
@@ -216,6 +213,7 @@ function Group({
   onEditGroup,
   onAddClass,
   onEditClass,
+  onMoveClass,
 }: {
   sc: SuperclassItem | null;
   items: LabelClass[];
@@ -223,10 +221,36 @@ function Group({
   onEditGroup?: () => void;
   onAddClass: () => void;
   onEditClass: (cls: LabelClass) => void;
+  /** Класс перетащили сюда из другой группы. */
+  onMoveClass: (classId: string) => void;
 }) {
   const total = items.reduce((s, c) => s + c.annotations, 0);
+  // Подсветка цели: без неё непонятно, куда именно упадёт класс — групп на
+  // экране обычно больше трёх, и промах виден только по итогу.
+  const [over, setOver] = useState(false);
+
   return (
-    <div className="mag-group">
+    <div
+      className={`mag-group${over ? " drop" : ""}`}
+      onDragOver={(e) => {
+        if (!canEdit) return;
+        // Без preventDefault браузер не считает область приёмником и не даёт
+        // уронить: молчаливый отказ, который читается как «драг не работает».
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        setOver(false);
+        if (!canEdit) return;
+        e.preventDefault();
+        const id = e.dataTransfer.getData("text/plain");
+        // Свой же класс — не перенос: молча ничего не делаем, чтобы промах по
+        // родной группе не дёргал сервер.
+        if (!id || items.some((c) => c.id === id)) return;
+        onMoveClass(id);
+      }}
+    >
       <div className="mag-group-h">
         <span
           className="mag-swatch sm"
@@ -248,7 +272,14 @@ function Group({
         <table className="mag-table mag-classes-table">
           <tbody>
             {items.map((c) => (
-              <tr key={c.id}>
+              <tr
+                key={c.id}
+                draggable={canEdit}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData("text/plain", c.id);
+                  e.dataTransfer.effectAllowed = "move";
+                }}
+              >
                 <td className="mag-cls-id">{c.class_index}</td>
                 <td className="swatch">
                   <span className="mag-swatch" style={{ background: c.color }} />

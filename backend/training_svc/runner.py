@@ -25,7 +25,9 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl")
 
 from common import config, gpu, live  # noqa: E402
 from common.db import SessionLocal  # noqa: E402
-from common.models import TrainEpoch, TrainRun, TrainSet, utcnow  # noqa: E402
+from common.models import (  # noqa: E402
+    TrainEpoch, TrainRun, TrainSet, TrainSetFeed, utcnow,
+)
 from training_svc import metrics as metrics_lib, trainer  # noqa: E402
 
 HOT_EVERY = 0.8
@@ -256,7 +258,10 @@ def main():
         # памяти их избыток вызывает нехватку памяти в потоке закрепления.
         cores = os.cpu_count() or 2
         params = trainer.filter_params(run.params or {})
-        has_graph = bool(tset.graph_version_id or tset.val_graph_version_id)
+        has_graph = db.query(TrainSetFeed.id).filter(
+            TrainSetFeed.set_id == tset.id,
+            TrainSetFeed.graph_version_id.isnot(None),
+        ).first() is not None
         overrides, aug_mode = trainer.aug_overrides(params, has_graph)
         overrides["workers"] = min(8, cores) if is_cpu else min(4, cores)
         overrides.update(trainer.train_overrides(params))

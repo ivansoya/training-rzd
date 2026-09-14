@@ -189,10 +189,42 @@ export default function TrainSetView() {
               </div>
             )}
             <div className="mag-stat">
-              <b>{set.graph ? `${set.graph.name} — в${set.graph.version}` : "нет"}</b>
-              <span>граф аугментаций</span>
+              <b>{ru((set.feeds || []).length)}</b>
+              <span>строк сборки</span>
             </div>
           </div>
+        )}
+
+        {/* Паспорт набора: из чего он собран. Набор живёт вечно, а графы
+            правятся — без этой таблицы «пересобрать так же» через год
+            превратилось бы в слова. */}
+        {set && (set.feeds || []).length > 0 && (
+          <table className="t-feed-passport">
+            <thead>
+              <tr><th>часть</th><th>кладём</th><th>через что</th></tr>
+            </thead>
+            <tbody>
+              {set.feeds.map((row) =>
+                row.bindings.map((b, i) => (
+                  <tr key={`${row.part}-${row.position}-${i}`}>
+                    <td>{row.part === "train" ? "обучение" : "проверка"}</td>
+                    <td>
+                      {b.feed === "tags"
+                        ? `кадры с тагами (${b.tag_ids.length})`
+                        : b.feed === "train"
+                        ? "обучающую половину"
+                        : "проверочную половину"}
+                    </td>
+                    <td>
+                      {row.graph
+                        ? `${row.graph.name} — в${row.graph.version}`
+                        : "без графа"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         )}
         {warnings.map((w, i) => (
           <div className="mag-note" key={i}>

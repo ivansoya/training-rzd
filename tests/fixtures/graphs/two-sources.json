@@ -1,0 +1,33 @@
+{
+  "name": "Ночь и день · два источника",
+  "note": "Граф с двумя «Источниками»: при сборке в один вливают кадры с тагом «ночь», в другой — обучающую половину целиком. Ночные множатся втрое, дневные идут как есть, оба потока сходятся в одно «Слияние» и один «Выход». Множитель считается от того, что влили во ВСЕ источники: 3×1040 + 1040 на 2×1040 — это ровно 2.0.",
+  "base": 1040,
+  "doc": {
+    "v": 1,
+    "nodes": [
+      {"id": "night_src", "type": "source", "params": {"name": "Ночь"}},
+      {"id": "day_src", "type": "source", "params": {"name": "День"}},
+      {"id": "mul", "type": "multiply", "params": {"label": "Умножение", "times": 3}},
+      {"id": "mrg", "type": "merge", "params": {"label": "Слияние", "inputs": 2}},
+      {"id": "out", "type": "output", "params": {"label": "Выход"}}
+    ],
+    "edges": [
+      {"from": "night_src", "out": "out", "to": "mul", "in": "in"},
+      {"from": "mul", "out": "out", "to": "mrg", "in": "i0"},
+      {"from": "day_src", "out": "out", "to": "mrg", "in": "i1"},
+      {"from": "mrg", "out": "out", "to": "out", "in": "in"}
+    ]
+  },
+  "expect": {
+    "outputs": 4160,
+    "dropped": 0,
+    "multiplier": 2.0,
+    "nodes": 5,
+    "edges": {
+      "night_src:out->mul:in": 1040,
+      "mul:out->mrg:i0": 3120,
+      "day_src:out->mrg:i1": 1040,
+      "mrg:out->out:in": 4160
+    }
+  }
+}

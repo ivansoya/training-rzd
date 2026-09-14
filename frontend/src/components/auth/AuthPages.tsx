@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { ApiError, login, register, resendConfirmation } from "../../auth/api";
+import Banner from "../Banner";
 
 interface Props {
   onSignedIn: () => void;
@@ -194,8 +195,8 @@ export default function AuthPages({ onSignedIn }: Props) {
                 его и перейдите по ссылке — вход выполнится автоматически.
                 Ссылка действует 24 часа.
               </p>
-              {error && <div className="mag-error">{error}</div>}
-              {resent && <div className="mag-ok">Письмо отправлено ещё раз.</div>}
+              {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
+              {resent && <Banner onClose={() => setResent(false)}>Письмо отправлено ещё раз.</Banner>}
               <button
                 className="mag-btn"
                 type="button"
@@ -226,7 +227,7 @@ export default function AuthPages({ onSignedIn }: Props) {
               <p className="mag-sub">
                 Введите логин или почту, указанные при регистрации.
               </p>
-              {error && <div className="mag-error">{error}</div>}
+              {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
               <Field
                 id="li-identity"
                 label="Логин или почта"
@@ -260,7 +261,7 @@ export default function AuthPages({ onSignedIn }: Props) {
             <form onSubmit={handleRegister}>
               <h1>Регистрация</h1>
               <p className="mag-sub">Почта используется для входа и уведомлений.</p>
-              {error && <div className="mag-error">{error}</div>}
+              {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
               <Field
                 id="re-email"
                 label="Почта"

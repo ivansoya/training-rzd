@@ -15,16 +15,18 @@ import zipfile
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import func, or_, select, update
 
-from common import config, jobs, live
+from common import config, jobs, live, tags
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
     Annotation,
     Dataset,
     Image,
+    ImageTag,
     LabelClass,
     Project,
     Superclass,
+    Tag,
     Task,
     TaskEvent,
     TaskVideo,
@@ -1377,6 +1379,125 @@ def delete_class(code, class_id):
             "deleted_keys": usage["video_keys"],
             "deleted_singles": usage["video_singles"],
         })
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Таги
+# --------------------------------------------------------------------------- #
+@bp.get("/api/projects/<code>/tags")
+def list_tags(code):
+    db, project, err = _resolve(code)
+    if err:
+        return err
+    try:
+        rows = tags.project_tags(db, project.id)
+        counts = dict(db.execute(
+            select(ImageTag.tag_id, func.count(ImageTag.image_id))
+            .where(ImageTag.tag_id.in_([r.id for r in rows] or [None]))
+            .group_by(ImageTag.tag_id)
+        ).all()) if rows else {}
+        return jsonify({
+            "tags": [
+                {**tags.view(r), "images": counts.get(r.id, 0)} for r in rows
+            ],
+            "can_edit": has_role(_role(db, project), "editor"),
+        })
+    finally:
+        db.close()
+
+
+@bp.post("/api/projects/<code>/tags")
+def create_tag(code):
+    db, project, err = _resolve(code, "editor")
+    if err:
+        return err
+    try:
+        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "Укажите название тага."}), 400
+        if len(name) > 64:
+            return jsonify({"error": "Название тага длиннее 64 символов."}), 400
+        # Тот же таг, заведённый дважды из двух окон, — обычное дело: чип-пикер
+        # создаёт таг по ходу разметки. Отдаём существующий, а не ошибку.
+        row = db.execute(
+            select(Tag).where(Tag.project_id == project.id, Tag.name == name)
+        ).scalar_one_or_none()
+        if row is None:
+            row = Tag(project_id=project.id, name=name,
+                      created_by=current_user(db).id)
+            db.add(row)
+            db.commit()
+        return jsonify(tags.view(row)), 201
+    finally:
+        db.close()
+
+
+@bp.patch("/api/projects/<code>/tags/<tag_id>")
+def rename_tag(code, tag_id):
+    db, project, err = _resolve(code, "editor")
+    if err:
+        return err
+    try:
+        row = _get_by_uuid(db, Tag, tag_id)
+        if row is None or row.project_id != project.id:
+            return jsonify({"error": "Таг не найден."}), 404
+        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "Укажите название тага."}), 400
+        if db.execute(
+            select(Tag.id).where(Tag.project_id == project.id, Tag.name == name,
+                                 Tag.id != row.id)
+        ).first():
+            return jsonify({"error": "Таг с таким названием уже есть."}), 409
+        row.name = name
+        db.commit()
+        return jsonify(tags.view(row))
+    finally:
+        db.close()
+
+
+@bp.get("/api/projects/<code>/tags/<tag_id>/usage")
+def tag_usage(code, tag_id):
+    db, project, err = _resolve(code)
+    if err:
+        return err
+    try:
+        row = _get_by_uuid(db, Tag, tag_id)
+        if row is None or row.project_id != project.id:
+            return jsonify({"error": "Таг не найден."}), 404
+        return jsonify(tags.usage(db, row.id))
+    finally:
+        db.close()
+
+
+@bp.delete("/api/projects/<code>/tags/<tag_id>")
+def delete_tag(code, tag_id):
+    db, project, err = _resolve(code, "editor")
+    if err:
+        return err
+    try:
+        row = _get_by_uuid(db, Tag, tag_id)
+        if row is None or row.project_id != project.id:
+            return jsonify({"error": "Таг не найден."}), 404
+        used = tags.usage(db, row.id)
+        # Таг с CASCADE уносит только свои связи — кадры целы. Но набор,
+        # собранный по этому тагу, после удаления соберётся из пустоты, и это
+        # надо услышать заранее, а не по нулям в отчёте.
+        if used["images"] + used["videos"] and request.args.get("confirm") != "1":
+            return jsonify({
+                "error": (
+                    f"Таг снимется с кадров — {used['images']}, "
+                    f"с роликов — {used['videos']}. Строки сборки, которые "
+                    "брали кадры по нему, останутся пустыми."
+                ),
+                "code": "confirm_required",
+                **used,
+            }), 409
+        db.delete(row)
+        db.commit()
+        return jsonify({"ok": True, **used})
     finally:
         db.close()
 
