@@ -132,10 +132,15 @@ export function Progress({ counts }: { counts: TaskSummary["counts"] }) {
     <>
       <div className="mag-tprog">
         <i className="done" style={{ width: `${(counts.annotated / total) * 100}%` }} />
+        {/* Фон — кадр, на котором не нашлось ни одного объекта. Это сделанная
+            работа, а не пропуск, и без него полоса не доходила до конца, а
+            легенда не сходилась с числом кадров: 94 и 1 при 98 в таске. */}
+        <i className="nul" style={{ width: `${(counts.empty / total) * 100}%` }} />
         <i className="skip" style={{ width: `${(counts.skipped / total) * 100}%` }} />
       </div>
       <div className="mag-tlegend">
         <span><i className="done" />{counts.annotated} размечено</span>
+        {counts.empty > 0 && <span><i className="nul" />{counts.empty} фон</span>}
         {counts.skipped > 0 && <span><i className="skip" />{counts.skipped} отложено</span>}
         {counts.new > 0 && <span><i className="rest" />{counts.new} не тронуто</span>}
       </div>

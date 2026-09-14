@@ -98,11 +98,6 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .workspace-link.on .workspace-code { color: var(--accent-text); }
 .workspace-sidebar-foot { margin-top: auto; padding: 20px 10px 0; color: var(--faint); font-size: 11px; }
 .mag-topbar.workspace-topbar { position: fixed; top: 0; left: var(--workspace-width); right: 0; height: var(--workspace-header); min-height: var(--workspace-header); padding: 0 32px; z-index: 35; background: var(--paper); border-bottom: 1px solid var(--rule); gap: 20px; box-shadow: none; }
-/* Содержимое шапки живёт в той же колонке, что и страница под ней: сама полоса
-   тянется во всю ширину, а имя проекта и человек — нет. Поле растёт вместе с
-   экраном, поэтому обходимся без обёртки в разметке. Селектор из двух классов:
-   правило выше задаёт `padding` шорткатом и иначе перебивает это. */
-.mag-topbar.workspace-topbar { padding-inline: max(32px, calc((100% - var(--workspace-max)) / 2 + 32px)); }
 .workspace-project { color: var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; padding-right: 20px; border-right: 1px solid var(--rule); }
 .workspace-breadcrumb { color: var(--dim); font-size: 12px; }
 .workspace-topbar .mag-me { margin-left: auto; font-size: 12px; color: var(--ink); gap: 9px; }
@@ -685,3 +680,38 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 
 .mag-tagrow-edit { display: flex; align-items: center; gap: 10px; width: 100%; }
 .mag-tagrow-edit .mag-input { flex: 1; min-width: 0; }
+
+/* ===== Кто сейчас в сети ===== */
+/* Отдельный предмет рядом с заголовком, а не приписка внутри него: состав
+   проекта и присутствие — разные сведения, и стоя вплотную «12» и «3 в сети»
+   читались одним числом. */
+.mag-presence {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px 5px 10px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--sunk);
+  font-size: 12px;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+/* Единственное в шапке, что меняется само, пока на него смотрят, — поэтому
+   ореол дышит. Медленно и без смены цвета: это фоновый признак жизни, а не
+   призыв что-то сделать. */
+/* В шапке карточки последний элемент прижимается вправо — это для кнопки.
+   Без админских прав кнопки нет, и последним оказывается чип: он уезжал бы к
+   правому краю, оторвавшись от числа, рядом с которым и должен стоять. */
+.mag-card-h > .mag-presence:last-child { margin-left: 0; }
+.mag-presence .mag-dot.on { animation: presence-pulse 2.8s ease-in-out infinite; }
+
+@keyframes presence-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px rgba(34, 160, 76, .15); }
+  50% { box-shadow: 0 0 0 5px rgba(34, 160, 76, .05); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mag-presence .mag-dot.on { animation: none; }
+}

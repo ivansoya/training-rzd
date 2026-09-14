@@ -91,6 +91,7 @@
 .mag-tlegend span { display: inline-flex; align-items: center; gap: 5px; }
 .mag-tlegend i { width: 8px; height: 8px; border-radius: 2px; }
 .mag-tlegend i.done { background: #1a7f4b; }
+.mag-tlegend i.nul { background: #2f6fd0; }
 .mag-tlegend i.skip { background: #d09a3c; }
 .mag-tlegend i.rest { background: #d5dae0; }
 

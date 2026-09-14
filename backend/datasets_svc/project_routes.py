@@ -1393,9 +1393,17 @@ def list_tags(code):
         return err
     try:
         rows = tags.project_tags(db, project.id)
+        # Забракованные кадры под тагом не числятся. Связь в image_tags их
+        # переживает — кадр помечают до того, как решат, что он негодный, —
+        # и таг показывал 103 кадра там, где живых 98. Число рядом с тагом
+        # читают перед удалением: оно должно означать то, что можно потерять.
         counts = dict(db.execute(
             select(ImageTag.tag_id, func.count(ImageTag.image_id))
-            .where(ImageTag.tag_id.in_([r.id for r in rows] or [None]))
+            .join(Image, Image.id == ImageTag.image_id)
+            .where(
+                ImageTag.tag_id.in_([r.id for r in rows] or [None]),
+                Image.task_status != "deleted",
+            )
             .group_by(ImageTag.tag_id)
         ).all()) if rows else {}
         return jsonify({

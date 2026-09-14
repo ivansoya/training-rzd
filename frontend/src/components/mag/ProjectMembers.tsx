@@ -35,10 +35,17 @@ export default function ProjectMembers() {
     <>
       <div className="mag-card">
         <div className="mag-card-h">
-          <h4>
-            Участники <Sep /> {members.length}
-            {online > 0 && <span className="mag-online-n"> {online} в сети</span>}
-          </h4>
+          <h4>Участники <Sep /> {members.length}</h4>
+          {/* Присутствие — не часть состава, а то, что меняется само, пока на
+              него смотрят. Внутри заголовка оба числа стояли впритык и
+              читались как одно: «12 3 в сети». Здесь это отдельный предмет с
+              той же зелёной точкой, что и у людей в списке ниже. */}
+          {online > 0 && (
+            <span className="mag-presence">
+              <i className="mag-dot on" aria-hidden="true" />
+              {online} в сети
+            </span>
+          )}
           {isAdmin && (
             <button
               className="mag-btn mag-btn-inline"
