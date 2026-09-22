@@ -22,6 +22,7 @@ from sqlalchemy import select
 from common import polygon as polylib
 from common.splitting import (  # noqa: F401 — coverage_warnings нужен соседям
     FIXED_SPLITS, bucket_key, by_clusters, by_groups, coverage_warnings,
+    pinned_split, pinned_warnings,
 )
 from common import tags as taglib
 from common.models import Annotation, Image, LabelClass
@@ -52,6 +53,21 @@ def uuids(raw):
     return out
 
 
+def dataset_parts(raw, allowed):
+    """Закрепление датасетов за половинами, приведённое к счёту.
+
+    Ключ — строка uuid, потому что таким он приходит из формы и таким же
+    ложится в ``spec``: набор живёт дольше формы, и паспорт обязан читаться
+    без разбора типов.
+    """
+    keep = {str(item) for item in allowed}
+    out = {}
+    for key, part in (raw or {}).items():
+        if part in FIXED_SPLITS and str(key) in keep:
+            out[str(key)] = part
+    return out
+
+
 def parse(data):
     """Выбор человека, приведённый к пригодному для счёта виду."""
     ratio = data.get("val_ratio", VAL_DEFAULT)
@@ -71,8 +87,14 @@ def parse(data):
         seed = int(data.get("seed") or 0)
     except (TypeError, ValueError):
         seed = 0
+    picked = uuids(data.get("datasets"))
     return {
-        "datasets": uuids(data.get("datasets")),
+        "datasets": picked,
+        # Куда идёт датасет целиком: {uuid: "train"|"val"}. Датасета здесь
+        # нет — значит он общий, и его кадры делятся наравне со всеми.
+        # Закрепление только у ВЫБРАННЫХ: остальное — мусор из прошлого
+        # выбора, и молча делить по нему нечестно.
+        "dataset_parts": dataset_parts(data.get("dataset_parts"), picked),
         "classes": uuids(data.get("classes")),
         # Пусто — берём всё. Отмеченные таги СУЖАЮТ отбор и работают «любым
         # из»: кадр проходит, если на нём есть хоть один из отмеченных.
@@ -242,8 +264,36 @@ def gather(db, project, sel) -> Selection:
 # Деление
 # --------------------------------------------------------------------------- #
 def assign(selection, sel, *, cluster_of=None):
-    """Деление кадров. Возвращает (что_куда, доля_проверки, предупреждения)."""
-    rows = selection.images
+    """Деление кадров. Возвращает (что_куда, доля_проверки, предупреждения).
+
+    Датасет, закреплённый за половиной, уходит туда целиком: делению остаются
+    только те, что человек оставил общими. Так собирается набор, где синтетика
+    учит, а снятое камерой проверяет — деление вперемешку мерило бы, насколько
+    модель выучила генератор.
+
+    В «Вручную» и «keep» закрепление молчит: там половину задаёт сам кадр
+    (``images.split``), и два хозяина у одного поля — спор, который некому
+    рассудить.
+    """
+    mode = sel["split_mode"]
+    pinned = sel.get("dataset_parts") or {}
+    if not pinned or mode in ("manual", "keep"):
+        return _divide(selection, sel, selection.images, cluster_of=cluster_of)
+
+    forced, free = pinned_split(selection.images, pinned)
+    placed, _, warnings = _divide(selection, sel, free, cluster_of=cluster_of)
+    placed.update(forced)
+
+    # Доля — та, что вышла, а не та, что просили: закреплённое в неё входит,
+    # и просимое число человек бы не узнал ни из одной строки отчёта.
+    val = sum(1 for part in placed.values() if part == "val")
+    got = val / len(placed) if placed else sel["val_ratio"]
+    warnings.extend(pinned_warnings(forced, free, placed))
+    return placed, round(got, 4), warnings
+
+
+def _divide(selection, sel, rows, *, cluster_of=None):
+    """Четыре стратегии деления. ``rows`` — то, что делению отдали."""
     mode = sel["split_mode"]
     ratio = sel["val_ratio"]
     seed = sel.get("seed", 0)

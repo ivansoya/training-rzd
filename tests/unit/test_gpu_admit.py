@@ -3,7 +3,7 @@
 Ради этих проверок ``fits`` и вынесена отдельно от SQL. Видеокарты здесь нет,
 базы тоже — вся политика допуска закрывается числами за миллисекунды.
 """
-from common.gpu_rules import fits
+from common.gpu_rules import fits, for_tasks_mb
 
 # Карта на 24 ГБ: 2 ГБ неприкосновенный запас, 4 ГБ держит полуавтомат.
 BIG = dict(total_mb=24564, reserved_mb=2048, sam2_mb=4096, max_heavy=1)
@@ -88,3 +88,23 @@ def test_причина_написана_для_человека():
 def test_ровно_по_границе_проходит():
     assert ask(SMALL, held=1000, want=10264, heavy_request=False) is None
     assert ask(SMALL, held=1000, want=10265, heavy_request=False) is not None
+
+
+# --------------------------------------------------------------------------- #
+# Потолок карты: по нему диспетчер отличает «подожди» от «никогда»
+# --------------------------------------------------------------------------- #
+def test_потолок_совпадает_с_приговором_допуска():
+    """Если эти двое разойдутся, диспетчер станет ставить в очередь заявки,
+    которые сам же считает невыполнимыми, — и та встанет навсегда."""
+    for card in (BIG, SMALL):
+        top = for_tasks_mb(card["total_mb"], card["reserved_mb"], card["sam2_mb"])
+        assert "никогда" not in (ask(card, want=top) or "")
+        assert "никогда" in ask(card, want=top + 1)
+
+
+def test_потолок_не_зависит_от_занятого():
+    """Потолок — свойство карты. Занятое сейчас двигает «подожди», но не его:
+    иначе большое обучение то отвергалось бы, то вставало в очередь."""
+    top = for_tasks_mb(SMALL["total_mb"], SMALL["reserved_mb"], SMALL["sam2_mb"])
+    assert "никогда" in ask(SMALL, want=top + 1, held=0)
+    assert "никогда" in ask(SMALL, want=top + 1, held=4096)

@@ -11,6 +11,7 @@
 import { useCallback, useEffect } from "react";
 import type { Box } from "../../auth/api";
 import ShapeMini from "../mag/ShapeMini";
+import { useBackdrop } from "../useBackdrop";
 
 export interface ViewSample {
   name: string;
@@ -68,8 +69,8 @@ export default function SampleViewer({
   if (!item) return null;
 
   return (
-    <div className="mag-backdrop" onClick={onClose}>
-      <div className="s-view" onClick={(e) => e.stopPropagation()}>
+    <div className="mag-backdrop" {...useBackdrop(onClose)}>
+      <div className="s-view">
         <div className="s-view-top">
           <b>{item.name}</b>
           <span className="s-view-tag">{item.split}</span>

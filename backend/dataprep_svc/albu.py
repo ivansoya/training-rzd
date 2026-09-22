@@ -36,6 +36,18 @@ def available() -> bool:
 
 
 def _cls(op):
+    """Класс трансформа: сперва свои, потом библиотечные.
+
+    Свои идут первыми нарочно. Появись у albumentations узел с таким же именем,
+    но другим смыслом, сохранённые графы поехали бы молча: имя в графе то же,
+    поведение другое.
+    """
+    from dataprep_svc import ops
+
+    own = getattr(ops, op, None)
+    if own is not None:
+        return own
+
     import albumentations as A
 
     return getattr(A, op, None)

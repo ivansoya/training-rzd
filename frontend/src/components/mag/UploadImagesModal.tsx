@@ -4,6 +4,7 @@ import type { Tag } from "../../api/tags";
 import { plural } from "./ProjectsPage";
 import { useEscape } from "./useEscape";
 import { fmtBytes } from "./VideoCutModal";
+import { useBackdrop } from "../useBackdrop";
 
 /** Окно загрузки кадров: что грузим и с какими тагами.
  *
@@ -49,8 +50,8 @@ export default function UploadImagesModal({
   }
 
   return (
-    <div className="mag-backdrop" onClick={onCancel}>
-      <div className="mag-modal mag-up" onClick={(e) => e.stopPropagation()}>
+    <div className="mag-backdrop" {...useBackdrop(onCancel)}>
+      <div className="mag-modal mag-up">
         <h3>Загрузка кадров</h3>
         <p className="mag-sub">
           {files.length} {plural(files.length, "файл", "файла", "файлов")}

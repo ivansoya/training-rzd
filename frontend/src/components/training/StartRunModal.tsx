@@ -18,6 +18,7 @@ import type { ModelRow, ParamSpec, ParamValue } from "../../api/runs";
 import type { TrainSet } from "../../api/trainsets";
 import Sep from "../Sep";
 import Banner from "../Banner";
+import { useBackdrop } from "../useBackdrop";
 
 const TASK_OF: Record<string, "detect" | "segment"> = {
   bbox: "detect",
@@ -225,10 +226,9 @@ export default function StartRunModal({
   };
 
   return (
-    <div className="mag-backdrop" onClick={onClose}>
+    <div className="mag-backdrop" {...useBackdrop(onClose)}>
       <div
         className="mag-modal t-modal-wide"
-        onClick={(e) => e.stopPropagation()}
         role="dialog"
         aria-label="Запустить обучение"
       >

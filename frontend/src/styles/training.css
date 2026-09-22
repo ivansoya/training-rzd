@@ -217,6 +217,110 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Датасет и его половина. Половина живёт бейджем внутри самого чипа: она
+   свойство датасета, а не отдельная настройка рядом с ним. */
+.t-ds {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--hair);
+  border-radius: 100px;
+  overflow: hidden;
+}
+.t-ds.on { border-color: var(--red); background: var(--red-in); }
+
+.t-ds-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  padding: 5px 11px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--dim);
+  background: none;
+  cursor: pointer;
+}
+.t-ds.on .t-ds-name { color: var(--ink); }
+.t-ds-name span {
+  font: 400 10.5px/1 var(--mono);
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Бейдж половины: глобальный `.mag select` — контрол на всю ширину с
+   padding 10/34, внутри чипа он смотрелся бы кнопкой поверх кнопки. */
+.t-ds .t-ds-part {
+  width: auto;
+  margin: 0;
+  border: 0;
+  border-left: 1px solid var(--red);
+  border-radius: 0;
+  padding: 0 20px 0 9px;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 1;
+  color: var(--ink);
+  /* Фон непрозрачный: полупрозрачный список `<option>` наследует как есть, и
+     выпадашка приезжает светлой поверх тёмной страницы. */
+  background-color: var(--card);
+  background-position: right 7px center;
+  color-scheme: dark;
+  cursor: pointer;
+}
+/* Список рисует система, и от бейджа ему достаётся только фон с цветом —
+   задаём их явно, иначе он берёт системную светлую тему. */
+.t-ds .t-ds-part option {
+  background: var(--card);
+  color: var(--ink);
+}
+
+/* Доля проверки. Нативный ползунок в тёмной теме приходит серым от системы —
+   accent-color красит только заливку, дорожку и высоту задаём сами. */
+.t-slider {
+  flex: 1;
+  height: 4px;
+  margin: 0;
+  border-radius: 2px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: var(--hair);
+  cursor: pointer;
+}
+.t-slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--red);
+}
+.t-slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--red);
+}
+.t-slider:focus-visible { outline: 2px solid var(--red); outline-offset: 3px; }
+
+/* Ряд кнопок мастера. И `.mag-btn`, и `.mag-ghost` объявлены `width: 100%` —
+   в строке «Назад» забирала её целиком, а «Дальше» ужималась в три строки. */
+.t-nav {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  margin-top: 12px;
+}
+.t-nav button {
+  width: auto;
+  margin-top: 0;
+  white-space: nowrap;
+}
+.t-nav .mag-ghost { flex: 0 0 auto; }
+.t-nav .mag-btn { flex: 1; }
+
 .t-side {
   border: 1px solid var(--hair);
   border-radius: var(--radius-s);
@@ -669,6 +773,17 @@ details.t-fold > .t-form-grid { margin-top: 10px; }
 }
 .t-feed-arrow { color: var(--faint); font-size: 13px; text-align: center; }
 .t-feed-what, .t-feed-graph { min-width: 0; width: 100%; }
+/* Выпадашки строки — по мерке строки, а не глобального `.mag select`: тот
+   рассчитан на поле в форме (14px, padding 10/34), и в сетке из семи колонок
+   он и распирал её, и переносил подписи. */
+.t-feed select {
+  padding: 5px 24px 5px 9px;
+  font-size: 12.5px;
+  line-height: 1.2;
+  border-radius: 6px;
+  background-position: right 8px center;
+  text-overflow: ellipsis;
+}
 .t-feed-same {
   font-size: 12px; color: var(--faint); font-style: italic;
   padding-left: 2px;

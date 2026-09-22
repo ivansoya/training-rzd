@@ -19,6 +19,7 @@ import { listTags } from "../../api/tags";
 import type { Tag } from "../../api/tags";
 import Sep from "../Sep";
 import Banner from "../Banner";
+import { useBackdrop } from "../useBackdrop";
 
 interface Props {
   detail: ProjectDetail;
@@ -159,10 +160,9 @@ export default function ExportModal({ detail, onClose }: Props) {
     (preview?.images ?? 0) > 0;
 
   return (
-    <div className="mag-backdrop" onClick={handleBackdrop}>
+    <div className="mag-backdrop" {...useBackdrop(handleBackdrop)}>
       <div
         className={nudge ? "mag-modal mag-exp mag-modal-nudge" : "mag-modal mag-exp"}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className="mag-exp-pick">
           <h1>Экспорт проекта</h1>

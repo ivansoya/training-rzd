@@ -6,6 +6,7 @@ import { initials } from "../auth/AccountPage";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
 import Banner from "../Banner";
+import { useBackdrop } from "../useBackdrop";
 
 interface Props {
   onClose: () => void;
@@ -88,14 +89,13 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
   }
 
   return (
-    <div className="mag-backdrop" onClick={handleBackdrop}>
+    <div className="mag-backdrop" {...useBackdrop(handleBackdrop)}>
       <form
         className={
           nudge
             ? "mag-modal mag-modal-2col mag-modal-nudge"
             : "mag-modal mag-modal-2col"
         }
-        onClick={(e) => e.stopPropagation()}
         onSubmit={handleSubmit}
       >
         <div className="mag-modal-left">

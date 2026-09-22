@@ -13,6 +13,17 @@ def _gb(mb) -> str:
     return f"{mb / 1024:.1f} ГБ".replace(".", ",")
 
 
+def for_tasks_mb(total_mb, reserved_mb, sam2_mb) -> int:
+    """Потолок карты: сколько она отдаёт под задачи в самом лучшем случае.
+
+    Заявка больше этого числа не пройдёт никогда — очередь освобождает чужую
+    память, а не поднимает потолок. Отдельной функцией, чтобы диспетчер судил
+    о «никогда» ровно по той же формуле, что и допуск: разойдясь, они начали бы
+    ставить в очередь то, что сами же и отвергают.
+    """
+    return total_mb - reserved_mb - sam2_mb
+
+
 def fits(*, total_mb, reserved_mb, sam2_mb, held_mb, pledged_mb,
          heavy, max_heavy, want_mb, heavy_request):
     """Влезает ли работа на карту.
@@ -22,7 +33,7 @@ def fits(*, total_mb, reserved_mb, sam2_mb, held_mb, pledged_mb,
 
     ``pledged_mb`` — память, придержанная под тех, кто ждёт дольше всех.
     """
-    for_tasks = total_mb - reserved_mb - sam2_mb
+    for_tasks = for_tasks_mb(total_mb, reserved_mb, sam2_mb)
     if want_mb > for_tasks:
         return (
             f"не поместится никогда: под задачи отдаётся {_gb(for_tasks)}, "

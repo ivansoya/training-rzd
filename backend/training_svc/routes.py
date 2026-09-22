@@ -344,8 +344,12 @@ def stop_run(code, run_id):
         if run.status in ("done", "error", "stopped"):
             return jsonify({"ok": True, "status": run.status})
         run.cancel_requested = True
-        if run.status in ("queued", "waiting_gpu"):
-            # Ещё не начали — снимаем сразу и отпускаем бронь.
+        # Снимаем сразу всё, под чем ещё нет процесса обучения. Просьбу об
+        # остановке читает только `watch_run`, а он появляется вместе с
+        # процессом: пока `pid` пуст, флаг некому увидеть, и кнопка молчала бы
+        # вечно. Особенно в `preparing` — там ран ждёт карту, `claim_run` его
+        # уже не подберёт, и хозяина у него нет вовсе.
+        if run.status in ("queued", "waiting_gpu") or run.pid is None:
             run.status = "stopped"
             run.finished_at = utcnow()
             if run.gpu_lease_id:

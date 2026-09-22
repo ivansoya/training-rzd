@@ -30,7 +30,7 @@ from sqlalchemy import func, select
 # Правила допуска зовут как gpu.fits и gpu.signature — снаружи диспетчер один,
 # а то, что его считающее ядро лежит отдельно, знают только тесты.
 from common.gpu_rules import (  # noqa: F401
-    _gb, choose_row, fits, fresh_enough, ghosts_of, signature,
+    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, signature,
 )
 from common.models import (
     GpuDevice, GpuLease, GpuUsageHint, ModelCheck, TrainRun, utcnow,
@@ -217,6 +217,23 @@ def request(db, *, holder, kind, want_mb, ref_id=None, project_id=None,
     try_grant(db, lease.id)
     db.refresh(lease)
     return lease
+
+
+def capacity_mb(db) -> int:
+    """Сколько памяти карта отдаёт под задачи в самом лучшем случае.
+
+    Ноль — карт нет. Заявка больше этого числа не будет выдана никогда, сколько
+    ни жди: очередь освобождает чужую память, а не поднимает потолок карты.
+    Тому, кто просит больше, надо отвечать сразу, а не ставить в очередь.
+    """
+    devices, _held, _heavy = _load_state(db, lock=False)
+    return max(
+        (
+            for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb)
+            for d in devices
+        ),
+        default=0,
+    )
 
 
 def _fresh(row, now=None):

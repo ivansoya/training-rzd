@@ -11,7 +11,9 @@ import { getClasses, getProject } from "../../auth/api";
 import type { LabelClass, ProjectDetail } from "../../auth/api";
 import * as aug from "../../api/aug";
 import * as sets from "../../api/trainsets";
-import type { AnnKind, FeedRow, Preview, SplitMode } from "../../api/trainsets";
+import type {
+  AnnKind, DatasetPart, FeedRow, Preview, SplitMode,
+} from "../../api/trainsets";
 import { listTags } from "../../api/tags";
 import type { Tag } from "../../api/tags";
 import FeedRows from "./FeedRows";
@@ -51,6 +53,10 @@ export default function TrainSetWizard() {
   const [graphs, setGraphs] = useState<aug.GraphSummary[]>([]);
 
   const [datasets, setDatasets] = useState<string[]>([]);
+  // Закрепление датасета за половиной. Датасета здесь нет — он общий, и его
+  // кадры делятся наравне со всеми. Ради этого и заводилось: набор, где
+  // синтетика учит, а снятое камерой проверяет.
+  const [parts, setParts] = useState<Record<string, DatasetPart>>({});
   const [picked, setPicked] = useState<string[]>([]);
   const [kind, setKind] = useState<AnnKind>("bbox");
   const [mode, setMode] = useState<SplitMode>("balanced");
@@ -92,13 +98,14 @@ export default function TrainSetWizard() {
   const spec = useMemo(
     () => ({
       datasets,
+      dataset_parts: parts,
       classes: picked,
       ann_type: kind,
       split_mode: mode,
       val_ratio: ratio,
       feeds,
     }),
-    [datasets, picked, kind, mode, ratio, feeds]
+    [datasets, parts, picked, kind, mode, ratio, feeds]
   );
 
   // Предпросмотр считается на каждое изменение — по тому же коду, которым
@@ -242,23 +249,51 @@ export default function TrainSetWizard() {
                     Загрузите кадры на вкладке «Датасеты».
                   </span>
                 )}
-                {detail?.datasets.map((d) => (
-                  <button
-                    key={d.id}
-                    type="button"
-                    className={`t-chip${datasets.includes(d.id) ? " on" : ""}`}
-                    onClick={() =>
-                      setDatasets((old) =>
-                        old.includes(d.id)
-                          ? old.filter((x) => x !== d.id)
-                          : [...old, d.id]
-                      )
-                    }
-                  >
-                    {d.name}
-                    <span>{ru(d.images_count)}</span>
-                  </button>
-                ))}
+                {detail?.datasets.map((d) => {
+                  const on = datasets.includes(d.id);
+                  return (
+                    <span key={d.id} className={`t-ds${on ? " on" : ""}`}>
+                      <button
+                        type="button"
+                        className="t-ds-name"
+                        onClick={() => {
+                          setDatasets((old) =>
+                            on ? old.filter((x) => x !== d.id) : [...old, d.id]
+                          );
+                          // Датасет выключили — снимаем и закрепление. Иначе
+                          // оно доживёт до следующего включения и решит судьбу
+                          // кадров молча.
+                          if (on) {
+                            setParts(({ [d.id]: _off, ...rest }) => rest);
+                          }
+                        }}
+                      >
+                        {d.name}
+                        <span>{ru(d.images_count)}</span>
+                      </button>
+                      {on && mode !== "manual" && (
+                        <select
+                          className="t-ds-part"
+                          value={parts[d.id] ?? ""}
+                          aria-label={`где используется ${d.name}`}
+                          onChange={(e) =>
+                            setParts((old) => {
+                              const next = { ...old };
+                              const part = e.target.value as DatasetPart | "";
+                              if (part) next[d.id] = part;
+                              else delete next[d.id];
+                              return next;
+                            })
+                          }
+                        >
+                          <option value="">обе</option>
+                          <option value="train">обучение</option>
+                          <option value="val">проверка</option>
+                        </select>
+                      )}
+                    </span>
+                  );
+                })}
               </div>
 
               <div className="g-label" style={{ margin: "16px 0 10px" }}>
@@ -334,12 +369,12 @@ export default function TrainSetWizard() {
                   <span>Доля проверки</span>
                   <input
                     type="range"
+                    className="t-slider"
                     min={0.05}
                     max={0.5}
-                    step={0.05}
+                    step={0.01}
                     value={ratio}
                     onChange={(e) => setRatio(Number(e.target.value))}
-                    style={{ flex: 1, accentColor: "var(--red)" }}
                     aria-label="Доля проверки"
                   />
                   <b>{Math.round(ratio * 100)} %</b>
@@ -492,7 +527,7 @@ export default function TrainSetWizard() {
                 Имя набора
               </div>
               <input
-                
+                className="mag-input"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 style={{ width: "100%" }}
@@ -624,7 +659,7 @@ export default function TrainSetWizard() {
             </div>
           ))}
 
-          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+          <div className="t-nav">
             {step > 0 && (
               <button
                 type="button"
@@ -638,7 +673,6 @@ export default function TrainSetWizard() {
               <button
                 type="button"
                 className="mag-btn"
-                style={{ flex: 1 }}
                 disabled={Boolean(blocked)}
                 onClick={() => setStep((s) => s + 1)}
               >
@@ -648,7 +682,6 @@ export default function TrainSetWizard() {
               <button
                 type="button"
                 className="mag-btn"
-                style={{ flex: 1 }}
                 disabled={busy || Boolean(blocked)}
                 onClick={build}
               >

@@ -6,7 +6,9 @@
 """
 from collections import Counter
 
-from common.splitting import by_clusters, by_groups, bucket_key
+from common.splitting import (
+    by_clusters, by_groups, bucket_key, pinned_split, pinned_warnings,
+)
 
 
 class Frame:
@@ -166,3 +168,62 @@ def test_отпечаток_без_зерна_совпадает_со_стары
     ident = "img-0001"
     assert bucket_key(ident, 0) == hashlib.sha1(ident.encode()).hexdigest()
     assert bucket_key(ident, 5) != bucket_key(ident, 0)
+
+
+# --------------------------------------------------------------------------- #
+# Закрепление датасета за половиной
+# --------------------------------------------------------------------------- #
+class Shot:
+    """Кадр, у которого делению важны двое: номер и датасет."""
+
+    __slots__ = ("id", "dataset_id")
+
+    def __init__(self, n, dataset_id):
+        self.id = f"img-{n:04d}"
+        self.dataset_id = dataset_id
+
+
+def test_закреплённый_датасет_едет_целиком():
+    """То, ради чего закрепление и заводили: синтетика учит, съёмка проверяет."""
+    synth = [Shot(i, "ds-synth") for i in range(90)]
+    real = [Shot(100 + i, "ds-real") for i in range(20)]
+    forced, free = pinned_split(
+        synth + real, {"ds-synth": "train", "ds-real": "val"}
+    )
+    assert free == []
+    assert {forced[s.id] for s in synth} == {"train"}
+    assert {forced[r.id] for r in real} == {"val"}
+
+
+def test_незакреплённый_датасет_уходит_делению():
+    rows = [Shot(i, "ds-synth") for i in range(50)]
+    mixed = [Shot(100 + i, "ds-mixed") for i in range(100)]
+    forced, free = pinned_split(rows + mixed, {"ds-synth": "train"})
+    assert len(forced) == 50 and free == mixed
+
+    placed = by_groups(free, {f.id: "" for f in free}, 0.2, seed=0)
+    train, val = sides(placed, mixed)
+    assert val == 20 and train == 80
+
+
+def test_чужая_половина_в_закреплении_игнорируется():
+    """В словарь может прийти что угодно: половина кадра — только train/val."""
+    rows = [Shot(i, "ds-x") for i in range(4)]
+    forced, free = pinned_split(rows, {"ds-x": "обучение"})
+    assert forced == {} and free == rows
+
+
+def test_пустая_половина_названа():
+    rows = [Shot(i, "ds-synth") for i in range(10)]
+    forced, free = pinned_split(rows, {"ds-synth": "train"})
+    said = pinned_warnings(forced, free, forced)
+    assert any("проверке не осталось" in w for w in said)
+    assert any("Закреплено за половинами: 10" in w for w in said)
+
+
+def test_обе_половины_заполнены_молчание_про_пустоту():
+    rows = [Shot(i, "ds-a") for i in range(6)]
+    rows += [Shot(100 + i, "ds-b") for i in range(6)]
+    forced, free = pinned_split(rows, {"ds-a": "train", "ds-b": "val"})
+    said = pinned_warnings(forced, free, forced)
+    assert not any("не осталось" in w for w in said)

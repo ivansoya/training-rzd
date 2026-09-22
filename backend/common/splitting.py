@@ -126,6 +126,41 @@ def by_clusters(rows, cluster_of, classes_of, ratio):
     return out
 
 
+def pinned_split(rows, pinned):
+    """Кадры, чью половину задал выбор датасета, и все остальные.
+
+    Закрепление — это ответ на «синтетика учит, съёмка проверяет»: датасет
+    уходит в свою половину целиком, а делению остаётся то, что человек оставил
+    общим. Смешанное деление в таком наборе мерило бы, насколько хорошо модель
+    выучила генератор, и выглядело бы при этом прекрасно.
+    """
+    forced, free = {}, []
+    for img in rows:
+        part = pinned.get(str(img.dataset_id))
+        if part in FIXED_SPLITS:
+            forced[img.id] = part
+        else:
+            free.append(img)
+    return forced, free
+
+
+def pinned_warnings(forced, free, placed):
+    """Что человек должен узнать до сборки, а не по пустой таблице метрик."""
+    out = []
+    if forced:
+        out.append(
+            f"Закреплено за половинами: {len(forced)} кадров. "
+            f"Делению осталось {len(free)}."
+        )
+    for part, name in (("val", "проверке"), ("train", "обучении")):
+        if placed and not any(side == part for side in placed.values()):
+            out.append(
+                f"В {name} не осталось ни одного кадра. "
+                "Снимите закрепление хотя бы с одного датасета."
+            )
+    return out
+
+
 def coverage_warnings(rows):
     """Предупреждения о классах, по которым проверка ничего не измерит.
 

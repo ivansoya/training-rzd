@@ -68,8 +68,11 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-modal > h1 { font-size: 24px; font-weight: 650; margin-bottom: 8px; }
 .mag-modal-foot { padding-top: 18px; border-top: 1px solid var(--rule); }
 .t-modal-wide .mag-modal-foot { position: sticky; bottom: -28px; z-index: 1; background: var(--card); padding: 16px 0; box-shadow: 0 -8px 18px var(--card); }
-.t-modal-wide .t-form-grid { grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); }
-.t-modal-wide .t-form-grid .mag-field label { white-space: normal; overflow: visible; text-overflow: clip; min-height: 36px; }
+/* Поля в ряду выравниваются по нижнему краю самой сеткой. Раньше это делал
+   `min-height: 36px` у подписи — место под вторую строку, которая есть у
+   одной подписи из десяти, а дыра под однострочными стояла у всех. */
+.t-modal-wide .t-form-grid { grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); align-items: end; }
+.t-modal-wide .t-form-grid .mag-field label { white-space: normal; overflow: visible; text-overflow: clip; }
 .mag-exp-warn { background: #332B20; border-color: #756044; color: #F4CF92; }
 .mag-exp-done { background: #24352C; border-color: #4B705A; color: #B1EBC7; }
 .mag-exp-done span { color: #B1EBC7; }

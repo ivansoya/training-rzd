@@ -5,8 +5,17 @@ import { del, get, post } from "./http";
 export type SplitMode = "manual" | "random" | "balanced" | "smart";
 export type AnnKind = "bbox" | "polygon";
 
+/** Половина, за которой закреплён датасет целиком. */
+export type DatasetPart = "train" | "val";
+
 export interface SetSpec {
   datasets: string[];
+  /**
+   * Датасеты, закреплённые за половиной целиком. Датасета здесь нет — значит
+   * он общий, и его кадры делятся наравне со всеми. В режиме «Вручную»
+   * закрепление не действует: там половину задаёт сам кадр.
+   */
+  dataset_parts?: Record<string, DatasetPart>;
   classes: string[];
   ann_type: AnnKind;
   split_mode: SplitMode;

@@ -105,14 +105,27 @@ def claim_run(db):
     return run
 
 
-def start_run(db, run):
+def start_run(db, run) -> bool:
+    """Завести обучение. ``False`` — процесса нет: ждём карту или ран снят."""
+    # Человек мог нажать «Остановить», пока мы готовились: до запуска процесса
+    # его просьбу читать некому, и без этой проверки мы бы завели обучение,
+    # которое уже просили снять.
+    if run.cancel_requested:
+        run.status = "stopped"
+        run.finished_at = utcnow()
+        if run.gpu_lease_id:
+            gpu.cancel(db, run.gpu_lease_id, "Снято автором")
+        db.commit()
+        live.notify(db, "run", run.id, run.project_id, s="stopped")
+        return False
+
     tset = db.get(TrainSet, run.set_id)
     if tset is None or tset.status != "ready":
         run.status = "error"
         run.error = "Обучающий набор не готов."
         run.finished_at = utcnow()
         db.commit()
-        return
+        return False
 
     params = run.params or {}
     sig = gpu.signature(
@@ -126,6 +139,27 @@ def start_run(db, run):
             params.get("imgsz", 640), params.get("batch", 16),
         ),
     )
+    # Больше, чем карта отдаёт под задачи в принципе. Очередь такое не
+    # рассосёт: она освобождает чужую память, а не поднимает потолок карты.
+    # Раньше ран уходил в ожидание и возвращался сюда снова и снова.
+    ceiling = gpu.capacity_mb(db)
+    if ceiling and want > ceiling:
+        run.status = "error"
+        run.error = (
+            f"Не поместится на карту: нужно {gpu._gb(want)}, "
+            f"а под задачи отдаётся {gpu._gb(ceiling)}. "
+            "Уменьшите батч или размер входа."
+        )
+        run.finished_at = utcnow()
+        db.commit()
+        live.notify(db, "run", run.id, run.project_id, s="error")
+        return False
+
+    # Прошлая бронь этого рана больше не нужна: без отмены каждая попытка
+    # оставляла в очереди ещё одну запись, и они копились тысячами.
+    if run.gpu_lease_id:
+        gpu.cancel(db, run.gpu_lease_id, "Новая попытка")
+
     lease = gpu.request(
         db, holder="training", kind="train", want_mb=want, ref_id=run.id,
         project_id=run.project_id, user_id=run.created_by, priority=40,
@@ -137,7 +171,7 @@ def start_run(db, run):
         run.gpu_lease_id = lease.id
         db.commit()
         live.notify(db, "run", run.id, run.project_id, s="waiting_gpu")
-        return
+        return False
 
     run.gpu_lease_id = lease.id
     run.device = "cpu" if lease.device_id is None else "cuda:0"
@@ -156,6 +190,7 @@ def start_run(db, run):
         target=watch_run, args=(str(run.id), proc, str(lease.id), sig),
         daemon=True,
     ).start()
+    return True
 
 
 def watch_run(run_id, proc, lease_id, sig):
@@ -230,7 +265,13 @@ def runs_loop():
                 db.close()
                 _stop.wait(IDLE_SLEEP)
                 continue
-            start_run(db, run)
+            # Процесс не завёлся — ран ждёт карту. Ждать ему в том же темпе,
+            # что и простою: без паузы цикл перебирал его сотни раз в секунду
+            # и на каждом круге заводил новую бронь.
+            if not start_run(db, run):
+                db.close()
+                _stop.wait(IDLE_SLEEP)
+                continue
         except Exception:
             log.exception("не удалось запустить обучение")
         finally:
