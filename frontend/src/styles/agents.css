@@ -1,0 +1,208 @@
+/* Агенты разметки: редактор, полка весов, окно запуска и подписи рамок.
+ *
+ * Холст и карточки узлов — из graph.css (.g-*): редактор агента это тот же
+ * редактор с другим набором узлов. Здесь только своё — правая колонка с
+ * подокном классов сети. Классов у сети бывают десятки, поэтому колонка шире,
+ * чем инспектор графа аугментаций, а у подокна своя прокрутка.
+ */
+
+.g-ged.ag-ged { grid-template-columns: 180px minmax(0, 1fr) 380px; }
+
+.ag-side {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  border-left: 1px solid var(--hair);
+  background: var(--card);
+  min-height: 0;
+}
+.ag-side-tabs { display: flex; border-bottom: 1px solid var(--hair); }
+.ag-side-tabs button {
+  flex: 1;
+  padding: 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--dim);
+  font-size: 13px;
+}
+.ag-side-tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--red); }
+.ag-side-body { overflow: auto; padding: 14px; }
+
+.ag-muted { color: var(--faint); font-size: 12.5px; margin: 0; }
+.ag-warn-text { color: var(--skip); }
+.ag-node { display: grid; gap: 12px; align-content: start; }
+.ag-wide { width: 100%; margin: 0; }
+.ag-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ag-num { margin: 0; }
+.ag-num input { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.ag-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; display: inline-block; }
+.ag-merge { font: 600 11px var(--mono); color: var(--null); white-space: nowrap; }
+
+.ag-weights {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--sunk);
+  font-size: 12px;
+  color: var(--faint);
+}
+.ag-weights b { color: var(--ink); font-size: 13px; }
+
+/* --- подокно классов сети --- */
+.ag-cls { border: 1px solid var(--hair); border-radius: var(--radius); background: var(--sunk); }
+.ag-cls-h { display: grid; gap: 8px; padding: 9px 10px; border-bottom: 1px solid var(--hair); }
+.ag-cls-title { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+.ag-cls-title .mono { color: var(--faint); font-size: 12px; }
+.ag-search {
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-s);
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.ag-pills { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.ag-pills button {
+  padding: 1px 8px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--dim);
+  font-size: 12px;
+}
+.ag-pills button[aria-pressed="true"] { border-color: #F94D4D78; background: var(--accent-soft); color: var(--ink); }
+.ag-grow { flex: 1; }
+
+.ag-cr {
+  display: grid;
+  grid-template-columns: 16px 26px minmax(0, 1fr) minmax(0, 1.25fr);
+  gap: 6px;
+  align-items: center;
+  padding: 3px 10px;
+  border-top: 1px solid var(--hair);
+  font-size: 12.5px;
+}
+.ag-cr-head { border-top: 0; border-bottom: 1px solid var(--hair); color: var(--faint); font-size: 11px; padding-block: 5px; }
+.ag-cls-body { max-height: 320px; overflow: auto; }
+.ag-cls-body .ag-cr:first-child { border-top: 0; }
+.ag-cls-body .ag-muted { padding: 8px 10px; }
+.ag-cr input[type="checkbox"] { margin: 0; accent-color: var(--red); }
+.ag-id { color: var(--faint); font-size: 12px; text-align: right; }
+.ag-wn { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-an { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.ag-an input {
+  width: 100%;
+  min-width: 0;
+  padding: 2px 5px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+}
+.ag-an input:hover:not(:disabled), .ag-an input:focus { border-color: var(--rule); background: var(--paper); }
+.ag-cr.off .ag-wn, .ag-cr.off .ag-id { color: var(--faint); }
+.ag-cr.off .ag-an { opacity: 0.45; }
+
+/* --- вкладка «Классы агента» --- */
+.ag-ac {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 7px 10px;
+  border-top: 1px solid var(--hair);
+  font-size: 13px;
+}
+.ag-cls > .ag-ac:first-child { border-top: 0; }
+.ag-src { grid-column: 2 / 4; display: flex; flex-wrap: wrap; gap: 4px; }
+.ag-src span {
+  padding: 0 5px;
+  border: 1px solid var(--hair);
+  border-radius: 4px;
+  font: 11px var(--mono);
+  color: var(--faint);
+}
+
+/* --- полка весов --- */
+.mag-modal.ag-picker { width: 640px; }
+.ag-tabs { display: flex; gap: 6px; align-items: center; margin: 4px 0 12px; flex-wrap: wrap; }
+.ag-tabs button {
+  padding: 6px 12px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: none;
+  color: var(--dim);
+}
+.ag-tabs button[aria-selected="true"] { border-color: #F94D4D78; background: var(--accent-soft); color: var(--ink); }
+.ag-upload { margin-left: auto; width: auto; cursor: pointer; }
+.ag-list { display: grid; gap: 6px; max-height: 50vh; overflow: auto; }
+.ag-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  padding: 9px 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--sunk);
+}
+.ag-row.on { border-color: #F94D4D78; }
+.ag-row .mag-btn, .ag-row .mag-ghost { width: auto; margin: 0; padding: 5px 12px; }
+.ag-row-main { display: grid; gap: 2px; min-width: 0; }
+.ag-row-main b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-row-main span { color: var(--faint); font-size: 12px; }
+.ag-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.ag-foot .mag-btn, .ag-foot .mag-ghost { width: auto; margin: 0; }
+
+/* --- окно запуска в таске --- */
+.mag-modal.ag-run { width: 760px; }
+.ag-run-sec { margin-top: 14px; }
+.ag-run-sec > .g-label { display: block; margin-bottom: 6px; }
+.ag-blk {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--sunk);
+}
+.ag-blk + .ag-blk { margin-top: 6px; }
+.ag-blk input { accent-color: var(--red); }
+.ag-blk .n { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+.ag-blk .n small { display: block; color: var(--faint); font-size: 11.5px; }
+.ag-map { width: 100%; border-collapse: collapse; }
+.ag-map td { padding: 5px 10px 5px 0; border-top: 1px solid var(--hair); font-size: 13px; }
+.ag-map select { max-width: 240px; }
+.ag-map .auto { color: var(--done); font-size: 11.5px; }
+.ag-map-scroll { max-height: 34vh; overflow: auto; }
+
+/* --- ход прогона в шапке таски --- */
+.ag-progress { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12.5px; }
+.ag-progress .bar { flex: 1 1 160px; height: 4px; border-radius: 2px; background: var(--hair); overflow: hidden; }
+.ag-progress .bar i { display: block; height: 100%; background: var(--red); }
+
+/* --- подпись агента у кадра и рамки --- */
+.ag-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  border: 1px solid #8b73ff66;
+  border-radius: 5px;
+  background: #1d1733;
+  color: #b9a4ff;
+  font: 600 11px var(--mono);
+  white-space: nowrap;
+}
+.ag-who { display: block; font-size: 11.5px; color: var(--faint); }
+/* В строке объекта редактора подпись — своей строкой под именем класса. */
+.mag-ed-obj:has(.ag-who) { flex-wrap: wrap; row-gap: 2px; }
+.mag-ed-obj .ag-who { order: 5; flex: 1 0 100%; padding-left: 19px; line-height: 1.35; }
+.ag-who .agent { color: #b9a4ff; }
+.ag-who .fix { color: var(--skip); }

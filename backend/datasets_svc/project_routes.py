@@ -686,8 +686,11 @@ def _shapes_by_image(db, ids):
         wire = shapes.to_wire(ann.ann_type, ann.geometry)
         if not wire:
             continue
+        # Номер рамки едет к клиенту и обратно: по нему сохранение узнаёт
+        # нетронутую рамку агента и не стирает её автора.
         by_image[ann.image_id].append({
-            **wire, "class_index": idx, "name": name, "color": color,
+            "id": str(ann.id), **wire, "class_index": idx, "name": name,
+            "color": color,
         })
     return by_image
 

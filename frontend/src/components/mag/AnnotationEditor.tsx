@@ -21,6 +21,22 @@ import { useAutoLabel } from "./useAutoLabel";
 import { useLive } from "../../live/LiveProvider";
 import type { AutoRefine } from "../../auth/api";
 import Sep from "../Sep";
+import type { TaskBox } from "../../auth/api";
+
+/** Кто поставил рамку: человек, агент человека или человек после агента. */
+function Who({ box }: { box?: TaskBox }) {
+  if (!box?.author && !box?.agent) return null;
+  const agent = box.agent ? `«${box.agent.name}» v${box.agent.version}` : "";
+  return (
+    <span className="ag-who">
+      {box.author}
+      {/* Тире, а не <Sep />: в строке объекта любой <i> красится как
+          цветовая метка класса. */}
+      {box.agent && box.source === "model" && <> — <span className="agent">агент {agent}</span></>}
+      {box.agent && box.source !== "model" && <> — <span className="fix">поправлено после {agent}</span></>}
+    </span>
+  );
+}
 
 /** Управление редактором: клавиша и что она делает.
  *
@@ -208,7 +224,7 @@ export default function AnnotationEditor({
   useEffect(() => {
     setBoxes(
       (image?.boxes || []).map((b) => ({
-        class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
+        id: b.id, class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
         ...(b.kind === "polygon" && b.parts?.length
           ? { kind: "polygon" as const, parts: b.parts }
           : {}),
@@ -232,6 +248,15 @@ export default function AnnotationEditor({
     [byIndex]
   );
 
+  // Подпись рамки — по её номеру: кто поставил и каким агентом.
+  const meta = useMemo(
+    () => new Map((image?.boxes || []).map((b) => [b.id, b])),
+    [image?.boxes]
+  );
+  const agentFrame =
+    image?.task_status === "new" &&
+    (image?.boxes || []).some((b) => b.source === "model" && b.agent);
+
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return classes;
@@ -251,18 +276,20 @@ export default function AnnotationEditor({
         ...image,
         annotations: res.saved,
         task_status: res.task_status as ImageTaskStatus,
+        // Номер рамки — настоящий, если он был: по нему сервер узнаёт
+        // нетронутую рамку агента при следующем сохранении этого кадра.
         boxes: boxes.map((b, i) => ({
-          id: String(i),
+          ...(meta.get(b.id ?? "") ?? { source: "human" }),
           ...b,
+          id: b.id ?? `new-${i}`,
           name: labelOf(b.class_index).name,
           color: labelOf(b.class_index).color,
-          source: "human",
         })),
       });
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [boxes, image, labelOf, onChanged]);
+  }, [boxes, image, labelOf, onChanged, meta]);
 
   useEffect(() => {
     if (!dirty.current) return;
@@ -807,6 +834,17 @@ export default function AnnotationEditor({
         </span>
         {/* Приговоры кадру — одной группой: это решения, а не настройки вида. */}
         <span className="mag-ed-verdict">
+          {agentFrame && (
+            <button
+              className="mag-ed-btn"
+              type="button"
+              disabled={frozen}
+              title="Разметка агента верна — кадр размечен"
+              onClick={() => verdict("annotated", true)}
+            >
+              Принять
+            </button>
+          )}
           <button
             className={isEmpty ? "mag-ed-btn nul on" : "mag-ed-btn nul"}
             type="button"
@@ -1235,6 +1273,7 @@ export default function AnnotationEditor({
                     {labelOf(b.class_index).name || `класс ${b.class_index}`}
                   </span>
                   <span className="sp">{Math.round(b.w)}×{Math.round(b.h)}</span>
+                  <Who box={meta.get(b.id ?? "")} />
                   {!frozen && (
                     <button
                       className="mag-ed-obj-x"

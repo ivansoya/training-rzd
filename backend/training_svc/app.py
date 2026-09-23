@@ -10,6 +10,7 @@ from flask_cors import CORS
 
 from common import config, live
 from common.db import wait_for_db
+from training_svc.agents import bp as agents_bp
 from training_svc.routes import bp
 
 wait_for_db()
@@ -21,6 +22,7 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = None
 CORS(app)
 app.register_blueprint(bp)
+app.register_blueprint(agents_bp)
 
 
 @app.after_request

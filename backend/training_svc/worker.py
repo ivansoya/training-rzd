@@ -23,7 +23,7 @@ from common import config, gpu, live
 from common.db import SessionLocal, wait_for_db
 from common.models import DataprepJob, TrainRun, TrainSet, utcnow
 from common import prep_queue
-from training_svc import embed, trainer
+from training_svc import agent_runner, embed, trainer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -368,6 +368,25 @@ class _pulse:
         return False
 
 
+def agents_loop():
+    """Прогоны агентов. Своя нить: прогон по тысяче кадров не должен держать
+    ни обучение, ни счёт признаков — у каждого своя очередь к карте."""
+    while not _stop.is_set():
+        db = SessionLocal()
+        try:
+            run = agent_runner.claim(db, me())
+            if run is None or not agent_runner.execute(db, run):
+                # Нет работы или карта занята — ждём в темпе простоя, иначе
+                # цикл перебирал бы ждущий прогон сотни раз в секунду.
+                db.close()
+                _stop.wait(IDLE_SLEEP)
+                continue
+        except Exception:
+            log.exception("прогон агента не удался")
+        finally:
+            db.close()
+
+
 def prep_loop():
     while not _stop.is_set():
         db = SessionLocal()
@@ -409,6 +428,7 @@ def main():
         threading.Thread(target=reaper, name="reaper", daemon=True),
         threading.Thread(target=runs_loop, name="runs", daemon=True),
         threading.Thread(target=prep_loop, name="embed", daemon=True),
+        threading.Thread(target=agents_loop, name="agents", daemon=True),
     ]
     for t in threads:
         t.start()

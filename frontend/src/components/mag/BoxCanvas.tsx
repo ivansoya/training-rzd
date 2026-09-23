@@ -56,6 +56,9 @@ export interface CanvasBox {
 export interface CanvasShape extends CanvasBox {
   kind?: "bbox" | "polygon";
   parts?: Ring[];
+  /** Номер рамки в базе. Холсту он не нужен, но переносится вместе с рамкой:
+   *  по нему сервер сохраняет автора нетронутой рамки агента. */
+  id?: string;
 }
 
 type Drag =

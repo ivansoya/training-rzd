@@ -110,6 +110,14 @@ CHECK_STATUS_ENUM = sa.Enum(
     "queued", "waiting_gpu", "running", "done", "error", "stopped",
     name="model_check_status",
 )
+AGENT_RUN_STATUS_ENUM = sa.Enum(
+    "queued", "waiting_gpu", "running", "done", "error", "stopped",
+    name="agent_run_status",
+)
+# Что за граф лежит в строке `aug_graphs`: рецепт аугментаций или агент
+# разметки. Одна таблица на оба ради общего механизма черновика и версий —
+# две копии этого механизма разошлись бы на первой правке.
+GRAPH_KINDS = ("aug", "agent")
 # Бронь памяти на карте. «denied» — отказ навсегда (карт нет вовсе, а работа
 # без карты не идёт); «queued» — ждём, места сейчас нет.
 GPU_LEASE_STATUS_ENUM = sa.Enum(
@@ -415,6 +423,13 @@ class Annotation(Base, AuditMixin):
     source: Mapped[str] = mapped_column(
         ANN_SOURCE_ENUM, nullable=False, default="human", server_default="human"
     )
+    # Какая версия агента поставила рамку. При `source='model'` рамка агента,
+    # автор — владелец агента (`created_by`). При `source='human'` это
+    # происхождение: человек поправил рамку агента, и она стала его. Задаёт
+    # поле только сервер — от клиента оно не принимается.
+    agent_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="SET NULL")
+    )
 
 
 class Task(Base, AuditMixin):
@@ -711,6 +726,10 @@ class VideoAnnotation(Base, AuditMixin):
     source: Mapped[str] = mapped_column(
         ANN_SOURCE_ENUM, nullable=False, default="human", server_default="human"
     )
+    # То же, что у `annotations`: агент, поставивший рамку на кадр ролика.
+    agent_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="SET NULL")
+    )
 
 
 class TaskEvent(Base):
@@ -985,13 +1004,19 @@ class AugGraph(Base, AuditMixin):
 
     __tablename__ = "aug_graphs"
     __table_args__ = (
-        sa.UniqueConstraint("owner_id", "name", name="uq_aug_graph_name"),
-        sa.Index("ix_aug_graphs_owner", "owner_id", "archived_at"),
+        sa.UniqueConstraint("owner_id", "kind", "name", name="uq_aug_graph_name"),
+        sa.Index("ix_aug_graphs_owner", "owner_id", "kind", "archived_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
     owner_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    # «aug» — граф аугментаций, «agent» — агент разметки (см. GRAPH_KINDS).
+    # Каждый список и каждая ссылка на версию обязаны смотреть на род: агент,
+    # попавший в мастер набора, собрал бы набор детектором вместо аугментаций.
+    kind: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="aug", server_default="aug"
     )
     name: Mapped[str] = mapped_column(sa.String(160), nullable=False)
     description: Mapped[str | None] = mapped_column(sa.Text)
@@ -1509,6 +1534,128 @@ class ModelCheck(Base, AuditMixin):
     lease_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     worker_id: Mapped[str | None] = mapped_column(sa.String(64))
     pid: Mapped[int | None] = mapped_column(sa.Integer)
+    cancel_requested: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class AgentWeights(Base, AuditMixin):
+    """Файл весов на личной полке человека — то, чем работает узел «Сеть».
+
+    Полка своя, а не ссылка на обучение: обучение живёт в проекте и умирает
+    вместе с ним, а агент принадлежит человеку и обязан это пережить. Файл
+    из обучения попадает сюда жёсткой ссылкой — место на диске не тратится.
+
+    Одинаковый файл лежит один раз (`sha256` уникален у владельца). Имена
+    классов, задача и размер входа сняты с весов при загрузке — чтобы
+    редактор агента показывал классы, не открывая `.pt`.
+    """
+
+    __tablename__ = "agent_weights"
+    __table_args__ = (
+        sa.UniqueConstraint("owner_id", "sha256", name="uq_agent_weights_file"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    # Относительно DATA_DIR, как у кадров.
+    file_path: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(sa.BigInteger, nullable=False)
+    # detect / segment / obb — как называет ultralytics.
+    task: Mapped[str] = mapped_column(sa.String(16), nullable=False)
+    imgsz: Mapped[int | None] = mapped_column(sa.Integer)
+    # Имена классов по номерам: names[i] — класс номер i в весах.
+    names: Mapped[list] = mapped_column(JsonCol, nullable=False)
+    source_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("train_runs.id", ondelete="SET NULL")
+    )
+
+
+class AgentClassMap(Base):
+    """Как классы агента ложатся на классы проекта.
+
+    Пара «агент + проект», а не агент: у каждого проекта свои классы и свои
+    номера. Значение — id класса проекта или null («не размечать»).
+    Спрашивается при первом запуске в проекте и дальше помнится.
+    """
+
+    __tablename__ = "agent_class_maps"
+
+    graph_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graphs.id", ondelete="CASCADE"), primary_key=True
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), primary_key=True
+    )
+    mapping: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow,
+        server_default=sa.func.now(),
+    )
+
+
+class AgentRun(Base, AuditMixin):
+    """Прогон агента по блокам таски.
+
+    Версия и сопоставление классов снимаются в строку при запуске: правка
+    агента или сопоставления посреди прогона не должна менять то, что
+    размечается. Один активный прогон на таску — два агента, идущие по тем же
+    кадрам, заменяли бы рамки друг друга.
+    """
+
+    __tablename__ = "agent_runs"
+    __table_args__ = (
+        sa.Index(
+            "uq_agent_run_active", "task_id",
+            unique=True,
+            postgresql_where=sa.text(
+                "status IN ('queued', 'waiting_gpu', 'running')"
+            ),
+        ),
+        sa.Index(
+            "ix_agent_runs_pick", "status", "created_at",
+            postgresql_where=sa.text("status IN ('queued', 'waiting_gpu')"),
+        ),
+        sa.Index("ix_agent_runs_task", "task_id", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    graph_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graphs.id", ondelete="SET NULL")
+    )
+    version_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="SET NULL")
+    )
+    # {"sources": ["files", "videos"], "mapping": {класс агента: id класса}}
+    params: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    status: Mapped[str] = mapped_column(
+        AGENT_RUN_STATUS_ENUM, nullable=False, default="queued", server_default="queued"
+    )
+    queue_reason: Mapped[str | None] = mapped_column(sa.String(200))
+    processed: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
+    total: Mapped[int | None] = mapped_column(sa.Integer)
+    # {"boxes": рамок поставлено, "frames": кадров с рамками}
+    stats: Mapped[dict | None] = mapped_column(JsonCol)
+    gpu_lease_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("gpu_leases.id", ondelete="SET NULL")
+    )
+    lease_until: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    worker_id: Mapped[str | None] = mapped_column(sa.String(64))
     cancel_requested: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )

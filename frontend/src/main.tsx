@@ -2,6 +2,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AccountPage from "./components/auth/AccountPage";
+import AgentEditor from "./components/agents/AgentEditor";
+import AgentList from "./components/agents/AgentList";
 import AugGraphEditor from "./components/aug/AugGraphEditor";
 import AugGraphList from "./components/aug/AugGraphList";
 import HardwarePage from "./components/hardware/HardwarePage";
@@ -36,6 +38,7 @@ import "./styles/video.css";
 import "./styles/export.css";
 import "./styles/graph.css";
 import "./styles/training.css";
+import "./styles/agents.css";
 // Общая палитра и компоновка подключаются после стилей компонентов.
 import "./styles/gabarit.css";
 import "./styles/workspace.css";
@@ -142,6 +145,23 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   element={
                     <MagShell>
                       <AugGraphEditor />
+                    </MagShell>
+                  }
+                />
+                {/* Агенты разметки — тоже личные: агент принадлежит человеку. */}
+                <Route
+                  path="/agents"
+                  element={
+                    <MagShell>
+                      <AgentList />
+                    </MagShell>
+                  }
+                />
+                <Route
+                  path="/agents/:graphId"
+                  element={
+                    <MagShell>
+                      <AgentEditor />
                     </MagShell>
                   }
                 />

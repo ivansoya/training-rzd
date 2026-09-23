@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import {
+  acceptAgentFrames,
   closeVideoAnnotation,
   dropVideoFrames,
   getTask,
@@ -34,6 +35,8 @@ import VideoAnnotator from "./VideoAnnotator";
 import VideoCutModal from "./VideoCutModal";
 import Sep from "../Sep";
 import Banner from "../Banner";
+import AgentRunDialog, { AgentRunBar } from "../agents/AgentRunDialog";
+import { runContext, type RunView } from "../../api/agents";
 
 const NEXT: Record<TaskStatus, { to: TaskStatus; label: string; hint: string }[]> = {
   queued: [{ to: "in_progress", label: "Взять в работу", hint: "" }],
@@ -93,6 +96,9 @@ export default function TaskPage() {
   const [editing, setEditing] = useState<{ list: TaskImage[]; index: number } | null>(null);
   const [cutting, setCutting] = useState<{ video: TaskVideoItem; at?: number } | null>(null);
   const [annotating, setAnnotating] = useState<TaskVideoItem | null>(null);
+  // Агент: окно запуска и последний прогон по этой таске.
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [agentRun, setAgentRun] = useState<RunView | null>(null);
 
   const fileRef = useRef<HTMLInputElement>(null);
   // Два поля выбора файла на две вкладки: режим ролика решает вкладка, а не
@@ -127,6 +133,29 @@ export default function TaskPage() {
   }, [taskId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Идущий прогон видно и после перезагрузки страницы: строка хода
+  // показывается, пока он не кончится. Законченный старый — нет.
+  useEffect(() => {
+    if (!taskId) return;
+    runContext(taskId)
+      .then((ctx) => {
+        const last = ctx.runs[0];
+        if (last && ["queued", "waiting_gpu", "running"].includes(last.status)) setAgentRun(last);
+      })
+      .catch(() => undefined);
+  }, [taskId]);
+
+  const acceptAgent = useCallback(async (source: string) => {
+    if (!taskId) return;
+    try {
+      const got = await acceptAgentFrames(taskId, { source });
+      setNotice(`Принято кадров: ${got.accepted}.`);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [taskId, load]);
 
   useEffect(() => {
     if (tab === "log" && taskId) getTaskEvents(taskId).then(setEvents).catch(() => {});
@@ -407,6 +436,9 @@ export default function TaskPage() {
           {task.counts.empty > 0 && <div><b>{task.counts.empty}</b><span>фон</span></div>}
           <div><b>{task.counts.skipped}</b><span>отложено</span></div>
           <div><b>{task.counts.new}</b><span>не тронуто</span></div>
+          {(task.counts.agent || 0) > 0 && (
+            <div><b>{task.counts.agent}</b><span>агент, не проверено</span></div>
+          )}
           {task.counts.accepted > 0 && (
             <div><b>{task.counts.accepted}</b><span>в проекте</span></div>
           )}
@@ -427,6 +459,13 @@ export default function TaskPage() {
         </div>
 
         <div className="mag-task-submit">
+          {task.status !== "closed" && (
+            <button className="mag-ghost mag-ghost-inline" type="button"
+              disabled={busy || !task.can_work || Boolean(agentRun && ["queued", "waiting_gpu", "running"].includes(agentRun.status))}
+              onClick={() => setAgentOpen(true)}>
+              Агент
+            </button>
+          )}
           {NEXT[task.status].map((s) => (
             <button key={s.to} className="mag-btn mag-btn-inline" type="button"
               disabled={busy || !task.can_work} title={s.hint} onClick={() => move(s.to)}>
@@ -440,6 +479,10 @@ export default function TaskPage() {
             </button>
           )}
         </div>
+
+        {agentRun && (
+          <AgentRunBar taskId={task.id} run={agentRun} onRun={setAgentRun} onFinished={load} />
+        )}
 
         <div className="mag-tprog mag-task-bar">
           <i className="done" style={{ width: `${(task.counts.annotated / total) * 100}%` }} />
@@ -457,6 +500,17 @@ export default function TaskPage() {
           </button>
         ))}
       </nav>
+
+      {agentOpen && (
+        <AgentRunDialog
+          taskId={task.id}
+          onClose={() => setAgentOpen(false)}
+          onStarted={(run) => {
+            setAgentOpen(false);
+            setAgentRun(run);
+          }}
+        />
+      )}
 
       {picked && task && (
         <UploadImagesModal
@@ -530,7 +584,8 @@ export default function TaskPage() {
                   onCut={block.videos ? (video) => setCutting({ video }) : undefined}
                   onDelete={block.videos ? (video) => removeVideo(video) : undefined}
                   onVideoTags={(video, ids) => void saveVideoTags(video, ids)}
-                  onTagCreated={(tag) => setTags((prev) => [...prev, tag])} />
+                  onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
+                  onAcceptAgent={() => void acceptAgent(block.key)} />
               ))}
             </div>
           )}

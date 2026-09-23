@@ -19,11 +19,13 @@ import uuid
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import case, func, select
 
-from common import config, jobs, tags
+from common import attribution, config, jobs, tags, task_frames
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
     Annotation,
+    AugGraph,
+    AugGraphVersion,
     Dataset,
     Image,
     LabelClass,
@@ -154,8 +156,15 @@ def _counts(db, task_id):
         )
     ).scalar_one()
     deleted = rows.get("deleted", 0)
+    agent = db.execute(
+        select(func.count(Image.id)).where(
+            Image.task_id == task_id, task_frames.agent_pending()
+        )
+    ).scalar_one()
     # Забракованные не в общем числе: иначе прогресс не дойдёт до конца никогда.
     return {
+        # Часть «new»: кадры с рамками агента, которые ещё никто не принял.
+        "agent": agent,
         "total": sum(rows.values()) - deleted,
         "new": rows.get("new", 0),
         "skipped": rows.get("skipped", 0),
@@ -358,6 +367,14 @@ def get_task(task_id):
         for source_id, count in accepted:
             key = str(source_id) if source_id else "files"
             buckets.setdefault(key, {})["accepted"] = count
+        agent_rows = db.execute(
+            select(Image.source_video_id, func.count(Image.id))
+            .where(Image.task_id == task.id, task_frames.agent_pending())
+            .group_by(Image.source_video_id)
+        ).all()
+        for source_id, count in agent_rows:
+            key = str(source_id) if source_id else "files"
+            buckets.setdefault(key, {})["agent"] = count
         # Самый ранний кадр источника: по нему блоки выстраиваются во времени.
         first_seen = db.execute(
             select(Image.source_video_id, func.min(Image.created_at))
@@ -1082,25 +1099,16 @@ def task_images(task_id):
         limit = min(int(request.args.get("limit", 60)), 200)
         offset = int(request.args.get("offset", 0))
         q = select(Image).where(Image.task_id == task.id)
-        if status:
+        if status == "agent":
+            q = q.where(task_frames.agent_pending())
+        elif status:
             q = q.where(Image.task_status == status)
-        # «files» — загруженные файлами, «videos» — все нарезаемые ролики
-        # разом, иначе идентификатор одного ролика.
         source = request.args.get("source")
-        if source == "files":
-            q = q.where(Image.source_video_id.is_(None))
-        elif source == "videos":
-            # Именно нарезаемые: кадры размечаемого ролика приходят в таску
-            # уже размеченными и своим источником во вкладке «Кадры» не
-            # значатся — у них своя вкладка и свой редактор.
-            q = q.where(Image.source_video_id.in_(
-                select(TaskVideo.id).where(
-                    TaskVideo.task_id == task.id, TaskVideo.mode == "cut"
-                )
-            ))
-        elif source:
-            sid = _uuid_or_none(source)
-            q = q.where(Image.source_video_id == sid)
+        if source and source not in task_frames.SOURCES:
+            source = _uuid_or_none(source)
+        clause = task_frames.source_clause(task.id, source)
+        if clause is not None:
+            q = q.where(clause)
         matched = db.execute(
             select(func.count()).select_from(q.subquery())
         ).scalar_one()
@@ -1111,12 +1119,14 @@ def task_images(task_id):
         ids = [i.id for i in images]
         by_image = {i: [] for i in ids}
         if ids:
-            for ann, idx, name, color in db.execute(
+            found = db.execute(
                 select(Annotation, LabelClass.class_index, LabelClass.name,
                        LabelClass.color)
                 .join(LabelClass, LabelClass.id == Annotation.class_id)
                 .where(Annotation.image_id.in_(ids))
-            ).all():
+            ).all()
+            authors, agents = _authorship(db, [row[0] for row in found])
+            for ann, idx, name, color in found:
                 wire = shapes.to_wire(ann.ann_type, ann.geometry)
                 if not wire:
                     continue
@@ -1124,6 +1134,10 @@ def task_images(task_id):
                     "id": str(ann.id), **wire,
                     "class_index": idx, "name": name, "color": color,
                     "source": ann.source,
+                    "author": authors.get(ann.created_by),
+                    # Рамка агента или поправленная рамка агента: что именно,
+                    # говорит `source`.
+                    "agent": agents.get(ann.agent_version_id),
                 })
         img_tags = tags.of(db, "image", ids)
         return jsonify({
@@ -1215,6 +1229,16 @@ def save_annotations(image_id):
 
         fresh = []
         clamped = 0
+        existing = {
+            str(a.id): {
+                "class_id": a.class_id, "ann_type": a.ann_type,
+                "geometry": a.geometry, "source": a.source,
+                "created_by": a.created_by, "agent_version_id": a.agent_version_id,
+            }
+            for a in db.execute(
+                select(Annotation).where(Annotation.image_id == image.id)
+            ).scalars()
+        }
         # Ключ запроса остался «boxes»: он давно в клиенте и в тестах, а под
         # ним теперь идут обе фигуры. Что именно пришло, говорит `kind`.
         for raw in data.get("boxes") or []:
@@ -1231,22 +1255,24 @@ def save_annotations(image_id):
                 or round(float(raw.get("x", 0)), 2) != geometry["x"]
             ):
                 clamped += 1
-            fresh.append((cls.id, ann_type, geometry, area,
-                          raw.get("source") or "human"))
+            fresh.append({
+                "id": str(raw.get("id") or ""), "class_id": cls.id,
+                "ann_type": ann_type, "geometry": geometry, "area": area,
+                "source": raw.get("source"),
+            })
 
+        # Разметка по-прежнему заменяется целиком, но автор переживает замену:
+        # нетронутая рамка агента остаётся его, поправленная — того, кто правил.
+        settled = attribution.settle(existing, fresh, user.id)
         db.execute(
             Annotation.__table__.delete().where(Annotation.image_id == image.id)
         )
-        for class_id, ann_type, geometry, area, source in fresh:
-            db.add(Annotation(
-                image_id=image.id,
-                class_id=class_id,
-                ann_type=ann_type,
-                geometry=geometry,
-                area=area,
-                source=source,
-                created_by=user.id,
-            ))
+        for item, row in zip(fresh, settled):
+            # Номер рамки прежний, если она пришла со своим: по нему редактор
+            # узнаёт её при следующем сохранении.
+            ann_id = _uuid_or_none(row.pop("id"))
+            db.add(Annotation(image_id=image.id, area=item["area"], **row,
+                              **({"id": ann_id} if ann_id else {})))
 
         # Статус кадра идёт за содержимым: появились боксы — размечен, стёрли
         # все — снова нетронутый, если его не откладывали осознанно. У
@@ -1259,6 +1285,64 @@ def save_annotations(image_id):
         db.commit()
         return jsonify({"saved": len(fresh), "clamped": clamped,
                         "task_status": image.task_status})
+    finally:
+        db.close()
+
+
+def _authorship(db, anns):
+    """Подписи к рамкам: ({user_id: имя}, {agent_version_id: {name, version}})."""
+    user_ids = {a.created_by for a in anns if a.created_by}
+    version_ids = {a.agent_version_id for a in anns if a.agent_version_id}
+    authors = {
+        u.id: u.display_name
+        for u in db.execute(select(User).where(User.id.in_(user_ids))).scalars()
+    } if user_ids else {}
+    agents = {}
+    if version_ids:
+        for version, graph in db.execute(
+            select(AugGraphVersion, AugGraph)
+            .join(AugGraph, AugGraph.id == AugGraphVersion.graph_id)
+            .where(AugGraphVersion.id.in_(version_ids))
+        ).all():
+            agents[version.id] = {"name": graph.name, "version": version.version}
+    return authors, agents
+
+
+@bp.post("/api/tasks/<task_id>/accept-agent")
+def accept_agent(task_id):
+    """«Принять разметку агента»: кадры, которые агент разметил и никто не
+    трогал, становятся размеченными — и уходят в датасет на «Готово».
+
+    Пачкой: по блоку (`source`) или по списку кадров (`image_ids`). Кадр,
+    который человек успел отложить или забраковать, не трогается — условие
+    то же, что у фильтра «агент, не проверено».
+    """
+    db, task, project, user, role, err = _resolve_task(task_id, "editor")
+    if err:
+        return err
+    try:
+        if task.status == "closed":
+            return jsonify({"error": "Таска закрыта, кадры заморожены."}), 409
+        if not _may_work(task, user, role):
+            return jsonify({"error": "Это не ваша таска."}), 403
+        data = request.get_json(silent=True) or {}
+        q = select(Image).where(Image.task_id == task.id, task_frames.agent_pending())
+        source = data.get("source")
+        if source and source not in task_frames.SOURCES:
+            source = _uuid_or_none(source)
+        clause = task_frames.source_clause(task.id, source)
+        if clause is not None:
+            q = q.where(clause)
+        if data.get("image_ids") is not None:
+            wanted = [i for i in map(_uuid_or_none, data["image_ids"]) if i]
+            q = q.where(Image.id.in_(wanted))
+        images = db.execute(q).scalars().all()
+        for image in images:
+            image.task_status = "annotated"
+        if images:
+            _log(db, task, user, "agent_accepted", count=len(images))
+        db.commit()
+        return jsonify({"accepted": len(images), "counts": _counts(db, task.id)})
     finally:
         db.close()
 

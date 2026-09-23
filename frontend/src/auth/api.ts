@@ -494,7 +494,8 @@ export interface DatasetImage {
   height: number | null;
   size_bytes: number | null;
   annotations: number;
-  boxes: Box[];
+  /** `id` — номер рамки в базе: сохранение по нему сохраняет автора. */
+  boxes: (Box & { id?: string })[];
 }
 
 export interface DatasetStats {
@@ -722,6 +723,8 @@ export interface TaskCounts {
   empty: number;
   deleted: number;
   accepted: number;
+  /** Часть «new»: кадры с рамками агента, которые ещё никто не принял. */
+  agent?: number;
 }
 
 export interface TaskSummary {
@@ -831,7 +834,7 @@ export interface TaskDetail extends TaskSummary {
    *  Считается на сервере, потому что клиент видит лишь первую страницу. */
   by_source: Record<string, {
     new?: number; annotated?: number; empty?: number; skipped?: number;
-    deleted?: number; accepted?: number; first_at?: string;
+    deleted?: number; accepted?: number; agent?: number; first_at?: string;
   }>;
   classes: { class_index: number; name: string; color: string; annotations: number }[];
   /** Справочник тагов проекта. Едет вместе с таской: его спрашивают три места
@@ -882,8 +885,17 @@ export interface TaskImage {
    *  того, как кадр ушёл в датасет, тоже. */
   tag_ids: string[];
   annotations: number;
-  boxes: (Box & { id: string; source: string })[];
+  boxes: TaskBox[];
 }
+
+/** Рамка кадра таски с подписью. `agent` — версия агента: при `source`
+ *  «model» рамку поставил он, при «human» человек поправил рамку агента. */
+export type TaskBox = Box & {
+  id: string;
+  source: string;
+  author?: string | null;
+  agent?: { name: string; version: number } | null;
+};
 
 export interface Segment {
   start_ms: number;
@@ -1478,6 +1490,8 @@ export async function autoPredict(
 export async function saveAnnotations(
   imageId: string,
   boxes: {
+    /** Номер рамки из базы: по нему сервер сохраняет автора нетронутой. */
+    id?: string;
     class_index: number;
     x: number; y: number; w: number; h: number;
     kind?: "bbox" | "polygon";
@@ -1504,6 +1518,14 @@ export async function setImageTaskStatus(
       body: JSON.stringify({ status }),
     })
   );
+}
+
+/** «Принять разметку агента» пачкой: по блоку или по списку кадров. */
+export async function acceptAgentFrames(
+  taskId: string,
+  body: { source?: string; image_ids?: string[] }
+): Promise<{ accepted: number; counts: TaskCounts }> {
+  return asJson(await post(`tasks/${taskId}/accept-agent`, body));
 }
 
 // В живой таске удаление мягкое: ответ говорит, кадр помечен или стёрт совсем.

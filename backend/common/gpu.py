@@ -33,7 +33,7 @@ from common.gpu_rules import (  # noqa: F401
     _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, signature,
 )
 from common.models import (
-    GpuDevice, GpuLease, GpuUsageHint, ModelCheck, TrainRun, utcnow,
+    AgentRun, GpuDevice, GpuLease, GpuUsageHint, ModelCheck, TrainRun, utcnow,
 )
 
 # Аренда и её продление. Аренда вчетверо длиннее удара сердца: одна пропущенная
@@ -545,7 +545,7 @@ def kill(db, lease_id) -> bool:
     lease = db.get(GpuLease, lease_id)
     if lease is None or lease.ref_id is None:
         return False
-    for model in (TrainRun, ModelCheck):
+    for model in (TrainRun, ModelCheck, AgentRun):
         row = db.get(model, lease.ref_id)
         if row is not None:
             row.cancel_requested = True

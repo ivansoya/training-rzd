@@ -15,12 +15,13 @@ import uuid
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import String, cast, func, select
 
+from common import agent_graph
 from common import selection as sel_lib
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
-    AugGraph, AugGraphUse, AugGraphVersion, DataprepJob, Project,
-    ProjectAugGraph, TrainSet, TrainSetFeed, User, utcnow,
+    GRAPH_KINDS, AgentWeights, AugGraph, AugGraphUse, AugGraphVersion,
+    DataprepJob, Project, ProjectAugGraph, TrainSet, TrainSetFeed, User, utcnow,
 )
 from common import config, live
 from common import prep_queue as queue
@@ -129,6 +130,7 @@ def _graph_view(db, graph, head=None):
     ).scalar() or 0
     return {
         "id": str(graph.id),
+        "kind": graph.kind,
         "name": graph.name,
         "description": graph.description,
         "owner": owner.display_name if owner else None,
@@ -149,9 +151,11 @@ def list_graphs():
     if err:
         return err
     try:
+        kind = request.args.get("kind") or "aug"
         rows = db.execute(
             select(AugGraph)
-            .where(AugGraph.owner_id == user.id, AugGraph.archived_at.is_(None))
+            .where(AugGraph.owner_id == user.id, AugGraph.kind == kind,
+                   AugGraph.archived_at.is_(None))
             .order_by(AugGraph.created_at.desc())
         ).scalars().all()
         return jsonify({"graphs": [_graph_view(db, g) for g in rows]})
@@ -167,23 +171,36 @@ def create_graph():
     try:
         data = request.get_json(silent=True) or {}
         name = (data.get("name") or "").strip()
+        kind = data.get("kind") or "aug"
+        if kind not in GRAPH_KINDS:
+            return jsonify({"error": "Неизвестный род графа."}), 400
         if not name:
             return jsonify({"error": "У графа должно быть имя."}), 400
         taken = db.execute(
             select(AugGraph).where(
-                AugGraph.owner_id == user.id, AugGraph.name == name
+                AugGraph.owner_id == user.id, AugGraph.kind == kind,
+                AugGraph.name == name,
             )
         ).scalar_one_or_none()
         if taken is not None:
-            return jsonify({"error": "Граф с таким именем уже есть."}), 409
+            return jsonify({"error": "Такое имя уже занято."}), 409
 
         graph = AugGraph(
-            owner_id=user.id, name=name,
+            owner_id=user.id, name=name, kind=kind,
             description=(data.get("description") or "").strip() or None,
             created_by=user.id,
         )
         db.add(graph)
         db.commit()
+
+        if kind == "agent":
+            # У нового агента ещё нет весов, а версия без весов не проходит
+            # проверку. Поэтому он рождается черновиком, без версии: версия
+            # появится, когда человек выберет веса и нажмёт «Сохранить».
+            graph.draft = _starter("agent")
+            graph.draft_at = utcnow()
+            db.commit()
+            return jsonify(_graph_view(db, graph)), 201
 
         doc = data.get("doc") or _starter()
         version, error = _save_version(db, graph, doc, user, note="Начало")
@@ -194,12 +211,28 @@ def create_graph():
         db.close()
 
 
-def _starter():
+def _starter(kind="aug"):
     """Пустой граф: источник, один поток и выход.
 
     Не «совсем пустой холст»: три узла сразу показывают, что по проводу идёт
     поток и что у него есть начало и конец. Пустой холст этого не объясняет.
+    У агента — кадр, сеть без весов и выход: с этого начинается любой агент.
     """
+    if kind == "agent":
+        return {
+            "v": 1,
+            "nodes": [
+                {"id": "frame", "type": "frame", "params": {}, "pos": [60, 180]},
+                {"id": "net", "type": "net",
+                 "params": {"weights": None, "classes": [], "conf": 0.25,
+                            "iou": 0.6}, "pos": [320, 180]},
+                {"id": "out", "type": "output", "params": {}, "pos": [600, 180]},
+            ],
+            "edges": [
+                {"from": "frame", "out": "out", "to": "net", "in": "in"},
+                {"from": "net", "out": "out", "to": "out", "in": "in"},
+            ],
+        }
     return {
         "v": 1,
         "nodes": [
@@ -217,15 +250,54 @@ def _starter():
     }
 
 
+def _aug_version(db, version_id):
+    """Версия графа аугментаций — или None, в том числе для версии агента.
+
+    Все пути «версия → набор» идут через неё: агент, вставленный блоком или
+    указанный строкой сборки, собрал бы набор детектором вместо трансформов.
+    """
+    row = db.get(AugGraphVersion, version_id) if version_id else None
+    if row is None:
+        return None
+    graph = db.get(AugGraph, row.graph_id)
+    return row if graph is not None and graph.kind == "aug" else None
+
+
 def _loader(db):
     def load(graph_id, version_id):
-        row = db.get(AugGraphVersion, _uuid(version_id)) if version_id else None
+        row = _aug_version(db, _uuid(version_id))
         return row.doc if row is not None else None
     return load
 
 
+def _agent_stats(db, graph, doc):
+    """Проверить агента и снять его паспорт. Бросает AgentGraphError."""
+    weights = {
+        str(w.id): len(w.names or [])
+        for w in db.execute(
+            select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)
+        ).scalars()
+    }
+    agent_graph.check(doc, weights=weights)
+    return {
+        # Классы агента — в паспорт версии: окно запуска сопоставляет их с
+        # классами проекта, не разбирая документ.
+        "classes": [c["name"] for c in agent_graph.classes(doc)],
+        "nets": sum(1 for n in doc["nodes"] if n["type"] == "net"),
+        "nodes": len(doc["nodes"]),
+    }
+
+
 def _save_version(db, graph, doc, user, note=None):
     """Новая версия графа. Возвращает (версия, ошибка)."""
+    if graph.kind == "agent":
+        try:
+            stats = _agent_stats(db, graph, doc)
+        except agent_graph.AgentGraphError as exc:
+            return None, (jsonify({"error": str(exc)}), 400)
+        return _store_version(db, graph, doc, user, note, stats,
+                              {"in": [], "out": []})
+
     loader = _loader(db)
     try:
         ports = planlib.group_ports_for(doc, loader)
@@ -241,7 +313,11 @@ def _save_version(db, graph, doc, user, note=None):
         ]
     except GraphError as exc:
         return None, (jsonify({"error": str(exc)}), 400)
+    return _store_version(db, graph, doc, user, note, stats,
+                          planlib.port_names(doc))
 
+
+def _store_version(db, graph, doc, user, note, stats, port_names):
     digest = digest_of(doc)
     same = db.execute(
         select(AugGraphVersion).where(
@@ -261,7 +337,7 @@ def _save_version(db, graph, doc, user, note=None):
     ).scalar() or 0
     version = AugGraphVersion(
         graph_id=graph.id, version=int(top) + 1, doc=doc, digest=digest,
-        stats=stats, port_names=planlib.port_names(doc),
+        stats=stats, port_names=port_names,
         note=(note or "").strip() or None, created_by=user.id,
     )
     db.add(version)
@@ -293,7 +369,8 @@ def get_graph(graph_id):
         return err
     try:
         graph = db.get(AugGraph, _uuid(graph_id))
-        if graph is None:
+        # Агента видит только владелец: делиться агентами пока не решено.
+        if graph is None or (graph.kind == "agent" and graph.owner_id != user.id):
             return jsonify({"error": "Граф не найден."}), 404
         asked = _uuid(request.args.get("version") or "")
         want = asked or graph.head_version_id
@@ -304,7 +381,7 @@ def get_graph(graph_id):
         # на каждой правке. Черновик виден только владельцу: чужой граф
         # смотрят по версиям, недоделанное — его личное дело.
         mine = bool(user.id == graph.owner_id)
-        head_doc = version.doc if version else _starter()
+        head_doc = version.doc if version else _starter(graph.kind)
         draft = graph.draft if (mine and asked is None) else None
         return jsonify({
             **_graph_view(db, graph, version),
@@ -342,7 +419,8 @@ def save_draft(graph_id):
         db.commit()
         return jsonify({
             "draft_at": graph.draft_at.isoformat(),
-            "changed": digest_of(doc) != digest_of(head.doc if head else _starter()),
+            "changed": digest_of(doc) != digest_of(
+                head.doc if head else _starter(graph.kind)),
         })
     finally:
         db.close()
@@ -354,9 +432,12 @@ def list_versions(graph_id):
     if err:
         return err
     try:
+        graph = db.get(AugGraph, _uuid(graph_id))
+        if graph is None or (graph.kind == "agent" and graph.owner_id != user.id):
+            return jsonify({"error": "Граф не найден."}), 404
         rows = db.execute(
             select(AugGraphVersion)
-            .where(AugGraphVersion.graph_id == _uuid(graph_id))
+            .where(AugGraphVersion.graph_id == graph.id)
             .order_by(AugGraphVersion.version.desc())
         ).scalars().all()
         names = {
@@ -457,6 +538,21 @@ def delete_graph(graph_id):
                   AugGraphVersion.id == TrainSetFeed.graph_version_id)
             .where(AugGraphVersion.graph_id == graph.id)
         ).scalar() or 0
+        if graph.kind == "agent":
+            # Рамки хранят ссылку на версию агента; удаление обнулило бы её,
+            # и подпись «агент „Путеец“ v3» превратилась бы в безымянную.
+            marked = db.execute(
+                select(func.count(Annotation.id))
+                .join(AugGraphVersion, AugGraphVersion.id == Annotation.agent_version_id)
+                .where(AugGraphVersion.graph_id == graph.id)
+            ).scalar() or 0
+            if marked:
+                return jsonify({
+                    "error": (
+                        f"Агента нельзя удалить: его рамок в проектах — {marked}. "
+                        "Уберите его в архив, он перестанет предлагаться."
+                    )
+                }), 409
         if used:
             return jsonify({
                 "error": (
@@ -689,12 +785,14 @@ def project_graphs(code):
         rows = db.execute(
             select(AugGraph)
             .join(ProjectAugGraph, ProjectAugGraph.graph_id == AugGraph.id)
-            .where(ProjectAugGraph.project_id == project.id)
+            .where(ProjectAugGraph.project_id == project.id,
+                   AugGraph.kind == "aug")
             .order_by(AugGraph.name)
         ).scalars().all()
         mine = db.execute(
             select(AugGraph).where(
-                AugGraph.owner_id == user.id, AugGraph.archived_at.is_(None)
+                AugGraph.owner_id == user.id, AugGraph.kind == "aug",
+                AugGraph.archived_at.is_(None),
             ).order_by(AugGraph.name)
         ).scalars().all()
         linked = {g.id for g in rows}
@@ -717,7 +815,7 @@ def link_graph(code):
     try:
         data = request.get_json(silent=True) or {}
         graph = db.get(AugGraph, _uuid(data.get("graph_id")))
-        if graph is None:
+        if graph is None or graph.kind != "aug":
             return jsonify({"error": "Граф не найден."}), 404
         if db.get(ProjectAugGraph, (project.id, graph.id)) is None:
             db.add(ProjectAugGraph(
@@ -900,7 +998,7 @@ def preview_set(code):
         rows = feeds.parse(data.get("feeds"))
         docs = {}
         for version_id in feeds.versions_of(rows):
-            version = db.get(AugGraphVersion, version_id)
+            version = _aug_version(db, version_id)
             if version is not None:
                 docs[version_id] = version.doc
         units = feeds.plan_units(
@@ -1020,7 +1118,7 @@ def create_set(code):
 
         rows = feeds.parse(data.get("feeds"))
         for version_id in feeds.versions_of(rows):
-            if db.get(AugGraphVersion, version_id) is None:
+            if _aug_version(db, version_id) is None:
                 return jsonify({"error": "Версия графа не найдена."}), 404
 
         seed = data.get("seed")

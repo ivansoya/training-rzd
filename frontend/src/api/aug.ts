@@ -51,6 +51,7 @@ export interface GraphStats {
 
 export interface GraphSummary {
   id: string;
+  kind?: "aug" | "agent";
   name: string;
   description: string | null;
   owner: string | null;
@@ -115,11 +116,14 @@ export interface Catalogue {
 
 export const catalogue = () => get<Catalogue>("aug/catalogue");
 
-export const listGraphs = () =>
-  get<{ graphs: GraphSummary[] }>("aug/graphs");
+export const listGraphs = (kind: "aug" | "agent" = "aug") =>
+  get<{ graphs: GraphSummary[] }>(`aug/graphs?kind=${kind}`);
 
-export const createGraph = (name: string, description?: string) =>
-  post<GraphSummary>("aug/graphs", { name, description });
+export const createGraph = (
+  name: string,
+  description?: string,
+  kind: "aug" | "agent" = "aug"
+) => post<GraphSummary>("aug/graphs", { name, description, kind });
 
 export const getGraph = (id: string, version?: string) =>
   get<GraphDetail>(`aug/graphs/${id}${version ? `?version=${version}` : ""}`);

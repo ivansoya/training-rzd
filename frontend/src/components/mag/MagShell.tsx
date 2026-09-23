@@ -10,6 +10,7 @@ export default function MagShell({ children }: { children: ReactNode }) {
   const { me } = useAuth();
   const { pathname } = useLocation();
   const graphEditor = Boolean(matchPath("/augment/:graphId", pathname));
+  const agentEditor = Boolean(matchPath("/agents/:graphId", pathname));
   const code = matchPath("/projects/:code/*", pathname)?.params.code;
   const projectPath = code ? "/projects/" + encodeURIComponent(code) : "";
   const projectName = me.projects.find((p) => p.code === code)?.name ?? code;
@@ -26,11 +27,12 @@ export default function MagShell({ children }: { children: ReactNode }) {
     ? projectLinks.find(([suffix]) => suffix && pathname.startsWith(projectPath + suffix))?.[1]
       ?? (pathname.includes("/trainsets/") ? "Обучающий набор" : pathname.endsWith("/import") ? "Импорт" : "Обзор проекта")
     : pathname.startsWith("/augment") ? "Библиотека аугментаций"
+      : pathname.startsWith("/agents") ? "Агенты разметки"
       : pathname.startsWith("/hardware") ? "Оборудование"
         : pathname.startsWith("/account") ? "Личный кабинет" : "Проекты";
 
   return (
-    <div className={`mag mag-page workspace${graphEditor ? " workspace-graph" : ""}`}>
+    <div className={`mag mag-page workspace${graphEditor || agentEditor ? " workspace-graph" : ""}`}>
       <a className="workspace-skip" href="#workspace-content">К содержимому</a>
       <aside className="workspace-sidebar" aria-label="Навигация рабочей среды">
         <Link to="/" className="mag-mark mag-mark-link workspace-brand">
@@ -51,13 +53,14 @@ export default function MagShell({ children }: { children: ReactNode }) {
         <nav className="workspace-nav" aria-label="Инструменты и профиль">
           <span className="workspace-caption">Инструменты</span>
           <NavLink to="/augment" className={nav}><span className="workspace-code">ГР</span>Мои графы</NavLink>
+          <NavLink to="/agents" className={nav}><span className="workspace-code">АГ</span>Мои агенты</NavLink>
           {me.user.is_staff && <NavLink to="/hardware" className={nav}><span className="workspace-code">GPU</span>Оборудование</NavLink>}
           <NavLink to="/account" className={nav}><span className="workspace-code">ЛК</span>Кабинет</NavLink>
         </nav>
         <div className="workspace-sidebar-foot">Данные <Sep /> разметка <Sep /> обучение</div>
       </aside>
       <header className="mag-topbar workspace-topbar">
-        {graphEditor ? <Link to="/augment" className="workspace-project">← Мои графы</Link> : code ? <Link to={projectPath} className="workspace-project" title={code}>{projectName}</Link> : <span className="workspace-project">Рабочая среда</span>}
+        {graphEditor ? <Link to="/augment" className="workspace-project">← Мои графы</Link> : agentEditor ? <Link to="/agents" className="workspace-project">← Мои агенты</Link> : code ? <Link to={projectPath} className="workspace-project" title={code}>{projectName}</Link> : <span className="workspace-project">Рабочая среда</span>}
         <span className="workspace-breadcrumb">{section}</span>
         <Link to="/account" className="mag-me mag-me-link">
           <span className="mag-ava">{initials(me.user.display_name)}</span>

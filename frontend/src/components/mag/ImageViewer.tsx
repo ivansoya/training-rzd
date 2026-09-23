@@ -86,7 +86,7 @@ export default function ImageViewer({
       // показывать то же, что редактор, иначе объект «меняет форму» при
       // переходе между экранами.
       (image?.boxes || []).map((b) => ({
-        class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
+        id: b.id, class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
         ...(b.kind === "polygon" && b.parts?.length
           ? { kind: "polygon" as const, parts: b.parts }
           : {}),
@@ -111,8 +111,8 @@ export default function ImageViewer({
         ...image,
         annotations: res.saved,
         boxes: boxes.map((b, i) => ({
-          id: String(i),
           ...b,
+          id: b.id ?? `new-${i}`,
           name: labelOf(b.class_index).name,
           color: labelOf(b.class_index).color,
           source: "human",

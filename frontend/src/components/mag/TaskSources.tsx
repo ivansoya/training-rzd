@@ -86,6 +86,8 @@ export interface SourceCounts {
   skipped?: number;
   deleted?: number;
   accepted?: number;
+  /** Часть «new»: рамки агента есть, человек их ещё не принял. */
+  agent?: number;
   first_at?: string;
 }
 
@@ -145,7 +147,7 @@ export function buildSources(task: TaskDetail): SourceBlock[] {
     let bornAt = Infinity;
     for (const video of videos) {
       const own = (task.by_source || {})[video.id] || {};
-      for (const key of ["new", "annotated", "empty", "skipped", "deleted", "accepted"] as const) {
+      for (const key of ["new", "annotated", "empty", "skipped", "deleted", "accepted", "agent"] as const) {
         counts[key] = (counts[key] || 0) + (own[key] || 0);
       }
       bornAt = Math.min(bornAt, at(video.created_at));
@@ -187,6 +189,7 @@ export function SourceCard({
   onDelete,
   onVideoTags,
   onTagCreated,
+  onAcceptAgent,
 }: {
   taskId: string;
   /** Код проекта — чип-пикер заводит таги по ходу дела. */
@@ -203,6 +206,8 @@ export function SourceCard({
   /** Таги ролика. Достанутся кадрам, нарезанным ПОСЛЕ правки. */
   onVideoTags: (video: TaskVideoItem, tagIds: string[]) => void;
   onTagCreated: (tag: Tag) => void;
+  /** «Принять разметку агента» у всего блока разом. */
+  onAcceptAgent?: () => void;
 }) {
   const { counts, total } = block;
   const videos = block.videos || [];
@@ -257,6 +262,12 @@ export function SourceCard({
               day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
             })}
           </span>
+        )}
+        {editable && onAcceptAgent && (counts.agent || 0) > 0 && (
+          <button className="mag-ghost mag-ghost-inline" type="button" onClick={onAcceptAgent}
+            title="Кадры с непроверенной разметкой агента станут размеченными">
+            Принять агента <Sep /> {counts.agent}
+          </button>
         )}
         {editable && total > 0 && (
           <button className="mag-btn mag-btn-inline" type="button" onClick={onAnnotate}>
@@ -398,6 +409,10 @@ export function SourceCard({
             )}
             <div><span className="g-dot" style={{ background: "var(--hair)" }} />
               <em>{counts.new || 0}</em> не тронуто</div>
+            {(counts.agent || 0) > 0 && (
+              <div><span className="ag-badge">агент</span>{" "}
+                <em>{counts.agent}</em> не проверено</div>
+            )}
             {(counts.deleted || 0) > 0 && (
               <div><em>{counts.deleted}</em> забраковано</div>
             )}
