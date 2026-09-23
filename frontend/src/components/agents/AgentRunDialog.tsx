@@ -3,6 +3,11 @@
 // Сопоставление классов агента с классами проекта спрашивается целиком при
 // первом запуске в проекте и дальше приходит запомненным — сервер хранит его
 // на пару «агент + проект». Одинаковые имена подставляются сами.
+//
+// Три режима (решения владельца 24.09.2026): новые кадры таски; каждый N-й
+// кадр размечаемого ролика, кроме тех, где уже работал человек; разведка —
+// агент смотрит ролики любого режима и отмечает, где что нашлось. Разведке
+// сопоставление не нужно: в разметку она не пишет ничего.
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
@@ -47,6 +52,10 @@ export default function AgentRunDialog({
   const [agentId, setAgentId] = useState<string>("");
   const [versionId, setVersionId] = useState<string>("");
   const [sources, setSources] = useState<Set<"files" | "videos">>(new Set());
+  const [mode, setMode] = useState<api.RunMode>("frames");
+  const [videos, setVideos] = useState<Set<string>>(new Set());
+  const [step, setStep] = useState(25);
+  const [gap, setGap] = useState(2);
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -82,7 +91,12 @@ export default function AgentRunDialog({
     return new Set(names.filter((n) => saved?.[n] === undefined && mapping[n]));
   }, [ctx, agent, names, mapping]);
 
-  const total = ctx ? [...sources].reduce((sum, s) => sum + ctx.sources[s].new, 0) : 0;
+  const eligible = (ctx?.videos ?? []).filter((v) => mode === "scout" || (v.mode === "annotate" && !v.closed));
+  const chosen = eligible.filter((v) => videos.has(v.id));
+  const total =
+    mode === "frames"
+      ? ctx ? [...sources].reduce((sum, s) => sum + ctx.sources[s].new, 0) : 0
+      : chosen.reduce((sum, v) => sum + Math.floor((v.frames ?? 0) / Math.max(1, step)) + 1, 0);
   const mapped = Object.values(mapping).filter(Boolean).length;
   const replacing = ctx ? [...sources].reduce((sum, s) => sum + ctx.sources[s].agent, 0) : 0;
 
@@ -95,7 +109,11 @@ export default function AgentRunDialog({
         await api.startRun(taskId, {
           graph_id: agent.id,
           version_id: version.id,
+          mode,
           sources: [...sources],
+          videos: chosen.map((v) => v.id),
+          step,
+          gap,
           mapping,
         })
       );
@@ -152,31 +170,93 @@ export default function AgentRunDialog({
               </div>
             </div>
 
-            <div className="ag-run-sec">
-              <span className="g-label">Что размечать</span>
-              {(["files", "videos"] as const).map((s) => (
-                <label key={s} className="ag-blk">
-                  <input
-                    type="checkbox"
-                    checked={sources.has(s)}
-                    disabled={ctx.sources[s].new === 0}
-                    onChange={(e) => {
-                      const next = new Set(sources);
-                      if (e.target.checked) next.add(s);
-                      else next.delete(s);
-                      setSources(next);
-                    }}
-                  />
-                  <span>{SOURCE_TITLE[s]}</span>
-                  <span className="n">
-                    {ctx.sources[s].new}
-                    <small>новых кадров</small>
-                  </span>
-                </label>
+            <div className="g-pv-seg ag-modes" role="group" aria-label="Режим">
+              {(
+                [
+                  ["frames", "Кадры"],
+                  ["annotate", "Разметка ролика"],
+                  ["scout", "Разведка"],
+                ] as const
+              ).map(([m, label]) => (
+                <button key={m} type="button" aria-pressed={mode === m} onClick={() => {
+                  setMode(m);
+                  setVideos(new Set());
+                }}>
+                  {label}
+                </button>
               ))}
             </div>
 
-            <div className="ag-run-sec">
+            {mode === "frames" ? (
+              <div className="ag-run-sec">
+                <span className="g-label">Что размечать</span>
+                {(["files", "videos"] as const).map((s) => (
+                  <label key={s} className="ag-blk">
+                    <input
+                      type="checkbox"
+                      checked={sources.has(s)}
+                      disabled={ctx.sources[s].new === 0}
+                      onChange={(e) => {
+                        const next = new Set(sources);
+                        if (e.target.checked) next.add(s);
+                        else next.delete(s);
+                        setSources(next);
+                      }}
+                    />
+                    <span>{SOURCE_TITLE[s]}</span>
+                    <span className="n">
+                      {ctx.sources[s].new}
+                      <small>новых кадров</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            ) : (
+              <div className="ag-run-sec">
+                <span className="g-label">
+                  {mode === "annotate" ? "Размечаемые ролики с незакрытой разметкой" : "Ролики таски"}
+                </span>
+                {eligible.length === 0 && <p className="ag-muted">Подходящих роликов нет.</p>}
+                {eligible.map((v) => (
+                  <label key={v.id} className="ag-blk">
+                    <input
+                      type="checkbox"
+                      checked={videos.has(v.id)}
+                      onChange={(e) => {
+                        const next = new Set(videos);
+                        if (e.target.checked) next.add(v.id);
+                        else next.delete(v.id);
+                        setVideos(next);
+                      }}
+                    />
+                    <span className="mono ag-vname" title={v.file_name}>{v.file_name}</span>
+                    <span className="n">
+                      {v.frames ?? "—"}
+                      <small>{v.mode === "cut" ? "кадров · нарезка" : "кадров · разметка"}</small>
+                    </span>
+                  </label>
+                ))}
+                <div className="ag-two">
+                  <div className="mag-field ag-num">
+                    <label htmlFor="ag-step">Каждый N-й кадр</label>
+                    <input id="ag-step" type="number" min={1} step={1} value={step}
+                      onChange={(e) => setStep(Math.max(1, Number(e.target.value) || 1))} />
+                  </div>
+                  {mode === "scout" && (
+                    <div className="mag-field ag-num">
+                      <label htmlFor="ag-gap">Склеивать разрывы до, с</label>
+                      <input id="ag-gap" type="number" min={0} step={0.5} value={gap}
+                        onChange={(e) => setGap(Math.max(0, Number(e.target.value) || 0))} />
+                    </div>
+                  )}
+                </div>
+                {mode === "annotate" && (
+                  <p className="mag-note">Кадры, где уже работал человек, агент пропустит. Его рамки уйдут на проверку при закрытии разметки.</p>
+                )}
+              </div>
+            )}
+
+            {mode !== "scout" && <div className="ag-run-sec">
               <span className="g-label">
                 Классы агента → классы проекта
                 {auto.size > 0 && <> <Sep /> {auto.size} подставлено по имени</>}
@@ -207,9 +287,9 @@ export default function AgentRunDialog({
                   </tbody>
                 </table>
               </div>
-            </div>
+            </div>}
 
-            {replacing > 0 && (
+            {mode === "frames" && replacing > 0 && (
               <p className="mag-note">
                 На {replacing} {plural(replacing, "кадре", "кадрах", "кадрах")} уже есть непроверенная разметка агента — она будет заменена.
                 Разметку людей агент не трогает.
@@ -226,11 +306,13 @@ export default function AgentRunDialog({
             <button
               type="button"
               className="mag-btn"
-              disabled={busy || !ctx.can_run || total === 0 || mapped === 0}
-              title={mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}
+              disabled={busy || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
+              title={mode !== "scout" && mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}
               onClick={start}
             >
-              Разметить {total} {plural(total, "кадр", "кадра", "кадров")}
+              {mode === "scout"
+                ? `Разведать ${chosen.length} ${plural(chosen.length, "ролик", "ролика", "роликов")}`
+                : `Разметить ${mode === "annotate" ? "до " : ""}${total} ${plural(total, "кадр", "кадра", "кадров")}`}
             </button>
           )}
         </div>
@@ -295,7 +377,9 @@ export function AgentRunBar({
         <>
           <Sep />
           <span>
-            {run.stats.boxes ?? 0} рамок на {run.stats.frames ?? 0} кадрах
+            {run.mode === "scout"
+              ? `разведано роликов: ${run.stats.videos ?? 0}, находки на ${run.stats.frames ?? 0} кадрах`
+              : `${run.stats.boxes ?? 0} рамок на ${run.stats.frames ?? 0} кадрах`}
           </span>
         </>
       )}

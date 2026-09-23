@@ -6,7 +6,7 @@
 """
 import pytest
 
-from datasets_svc.video_tracks import (
+from common.video_tracks import (
     MAX_TRACK_FRAMES,
     TrackError,
     box_at,

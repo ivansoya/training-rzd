@@ -15,6 +15,7 @@ import VideoStrip from "./VideoStrip";
 import TagPicker from "./TagPicker";
 import type { Tag } from "../../api/tags";
 import Sep from "../Sep";
+import { ScoutLine, useScouts } from "../agents/scout";
 
 /** Блоки вкладки «Кадры» и карточки вкладки «Видео».
  *
@@ -209,6 +210,7 @@ export function SourceCard({
   /** «Принять разметку агента» у всего блока разом. */
   onAcceptAgent?: () => void;
 }) {
+  const scouts = useScouts(taskId);
   const { counts, total } = block;
   const videos = block.videos || [];
   // Подробности плана — по требованию: на пяти роликах пять таблиц сразу
@@ -317,6 +319,7 @@ export function SourceCard({
                         }} />
                       ))}
                     </span>
+                    <ScoutLine scout={scouts[video.id]} />
                     {/* Подготовка живёт под именем, а не отдельной ячейкой:
                         ячейка появлялась и исчезала вместе с работой сервера,
                         и сетка на шесть колонок то и дело переносила кнопки. */}
@@ -479,6 +482,7 @@ export function VideoCard({
   onTagCreated: (tag: Tag) => void;
 }) {
   const closed = video.annotation_closed_at !== null;
+  const scouts = useScouts(taskId);
   const lastFrame = Math.max(1, (video.frame_count || 1) - 1);
   const marks = [0, 0.25, 0.5, 0.75, 1];
 
@@ -489,6 +493,7 @@ export function VideoCard({
         <span className={closed ? "g-chip done" : "g-chip mark"}>
           {closed ? "разметка закрыта" : "размечается"}
         </span>
+        <ScoutLine scout={scouts[video.id]} />
         <PrepareLine prepare={video.prepare} />
         <span className="g-sp" />
         {editable && !closed && (

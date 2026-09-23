@@ -18,7 +18,7 @@ import threading
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import func, select
 
-from common import config, jobs
+from common import attribution, config, jobs
 from common.db import SessionLocal
 from common.models import (
     Image,
@@ -36,7 +36,7 @@ from datasets_svc import video_chunks as chunklib
 from datasets_svc import video_index
 from common import shapes
 from datasets_svc import video_queue as queue
-from datasets_svc import video_tracks as tracklib
+from common import video_tracks as tracklib
 from datasets_svc.materialize import collect, frame_is_free
 from datasets_svc.task_routes import (
     _clamp_box,
@@ -1041,26 +1041,31 @@ def put_frame_boxes(task_id, video_id, frame_no):
             if parsed is None:
                 continue
             ann_type, geometry, _area = parsed
-            fresh.append((cls.id, ann_type, geometry, raw.get("source") or "human"))
+            fresh.append({"id": str(raw.get("id") or ""), "class_id": cls.id,
+                          "ann_type": ann_type, "geometry": geometry,
+                          "source": raw.get("source")})
 
-        db.execute(
-            VideoAnnotation.__table__.delete().where(
-                VideoAnnotation.video_id == video.id,
-                VideoAnnotation.track_id.is_(None),
-                VideoAnnotation.frame_no == frame_no,
-            )
-        )
-        for class_id, ann_type, geometry, source in fresh:
-            db.add(VideoAnnotation(
-                video_id=video.id,
-                track_id=None,
-                frame_no=frame_no,
-                class_id=class_id,
-                ann_type=ann_type,
-                geometry=geometry,
-                source=source,
-                created_by=user.id,
-            ))
+        single = (VideoAnnotation.video_id == video.id,
+                  VideoAnnotation.track_id.is_(None),
+                  VideoAnnotation.frame_no == frame_no)
+        existing = {
+            str(a.id): {
+                "class_id": a.class_id, "ann_type": a.ann_type,
+                "geometry": a.geometry, "source": a.source,
+                "created_by": a.created_by, "agent_version_id": a.agent_version_id,
+            }
+            for a in db.execute(select(VideoAnnotation).where(*single)).scalars()
+        }
+        # Тот же закон авторства, что у кадра таски: рамка агента, которую
+        # не трогали, остаётся его, и при закрытии разметки её кадр уйдёт на
+        # проверку, а не в датасет. Прежде `source` брался у клиента, а версия
+        # агента терялась на первом же сохранении кадра.
+        settled = attribution.settle(existing, fresh, user.id)
+        db.execute(VideoAnnotation.__table__.delete().where(*single))
+        for row in settled:
+            ann_id = _uuid_or_none(row.pop("id"))
+            db.add(VideoAnnotation(video_id=video.id, track_id=None, frame_no=frame_no,
+                                   **row, **({"id": ann_id} if ann_id else {})))
         db.commit()
         return jsonify({"saved": len(fresh)})
     finally:

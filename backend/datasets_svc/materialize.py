@@ -17,7 +17,7 @@ import os
 
 from sqlalchemy import select
 
-from common import config, tags
+from common import config, tags, task_frames
 from common.models import (
     Annotation,
     Image,
@@ -28,7 +28,7 @@ from common.models import (
 )
 from common import polygon as polylib
 from datasets_svc import video as videolib
-from datasets_svc import video_tracks as tracklib
+from common import video_tracks as tracklib
 
 
 def _last_frame(video):
@@ -39,50 +39,6 @@ def _last_frame(video):
     return None
 
 
-def _payload(db, video):
-    """Треки и одиночная разметка ролика — в том виде, в каком их ждёт tracklib."""
-    tracks = db.execute(
-        select(VideoTrack).where(VideoTrack.video_id == video.id)
-    ).scalars().all()
-    rows = db.execute(
-        select(VideoAnnotation).where(VideoAnnotation.video_id == video.id)
-        .order_by(VideoAnnotation.frame_no)
-    ).scalars().all()
-
-    keys_by_track = {}
-    singles = []
-    for row in rows:
-        if row.track_id is None:
-            singles.append({
-                "frame_no": row.frame_no,
-                "class_id": row.class_id,
-                "ann_type": row.ann_type,
-                "geometry": row.geometry,
-                "source": row.source,
-            })
-        else:
-            keys_by_track.setdefault(row.track_id, []).append({
-                "frame_no": row.frame_no,
-                "geometry": row.geometry,
-                "source": row.source,
-            })
-
-    payload = [
-        {
-            "id": t.id,
-            "class_id": t.class_id,
-            "start_frame": t.start_frame,
-            "end_frame": t.end_frame,
-            "interpolate": t.interpolate,
-            "export_step": t.export_step,
-            "hidden_ranges": t.hidden_ranges or [],
-            "keys": keys_by_track.get(t.id, []),
-        }
-        for t in tracks
-    ]
-    return payload, singles
-
-
 def collect(db, video):
     """Что уйдёт в таску: ``({кадр: [боксы]}, [фоновые кадры])``.
 
@@ -91,7 +47,7 @@ def collect(db, video):
     уходит другое; поэтому и фоновые кадры отбираются здесь же, а не у каждого
     вызывающего по-своему.
     """
-    payload, singles = _payload(db, video)
+    payload, singles = task_frames.video_payload(db, video)
     return (
         tracklib.plan(payload, singles, _last_frame(video)),
         tracklib.empty_frames(payload, singles, video.empty_frames),
@@ -104,7 +60,7 @@ def frame_is_free(db, video, frame_no):
     Нужно пометке «фоновый»: спрашивать об этом планом нельзя, шаг выгрузки
     трека выбрасывает из плана кадры, на которых объект есть.
     """
-    payload, singles = _payload(db, video)
+    payload, singles = task_frames.video_payload(db, video)
     return bool(tracklib.empty_frames(payload, singles, [frame_no]))
 
 
@@ -132,7 +88,7 @@ def pending_summary(db, task):
     """
     out = []
     for video in open_videos(db, task):
-        payload, singles = _payload(db, video)
+        payload, singles = task_frames.video_payload(db, video)
         last = _last_frame(video)
         # Имя и цвет берём здесь: в сводке таски классы считаются по уже
         # созданным аннотациям, а у незакрытого ролика их ещё нет — экран
@@ -221,6 +177,13 @@ def run_video(db, task, video, user_id, progress=None):
 
     base = config.image_base_dir(task.project_id, task.id)
     created = {}
+    # Кадр, на котором одни нетронутые рамки агента, уходит в таску новым —
+    # на проверку, как кадр изображений после агента. Любая работа человека на
+    # кадре (своя рамка, правка агентовой, трек) делает его размеченным.
+    unchecked = {
+        f for f, items in by_frame.items()
+        if items and all(i.get("agent_version_id") and i.get("source") == "model" for i in items)
+    }
     # Таги ролика — один раз на всю материализацию, а не на кадр.
     video_tags = tags.ids_of(db, "video", video.id)
 
@@ -229,7 +192,8 @@ def run_video(db, task, video, user_id, progress=None):
             project_id=task.project_id,
             dataset_id=None,
             task_id=task.id,
-            task_status="empty" if frame_no in empty_set else "annotated",
+            task_status=("empty" if frame_no in empty_set
+                         else "new" if frame_no in unchecked else "annotated"),
             file_name=_file_name(video, frame_no),
             file_path="",
             split="other",
@@ -278,7 +242,8 @@ def run_video(db, task, video, user_id, progress=None):
                 geometry=geometry,
                 area=round(area, 2),
                 source=item.get("source") or "human",
-                created_by=user_id,
+                agent_version_id=item.get("agent_version_id"),
+                created_by=item.get("created_by") or user_id,
             ))
             boxes += 1
 

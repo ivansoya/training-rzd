@@ -49,6 +49,7 @@ import {
   trackEnd,
 } from "./trackMath";
 import Sep from "../Sep";
+import { scoutLanes, useScouts } from "../agents/scout";
 
 /** Управление редактором: клавиша и что она делает.
  *
@@ -161,6 +162,7 @@ export default function VideoAnnotator({
   // а не из прикидки по длительности: разметка адресуется номером кадра, и
   // «примерно столько» тут не годится.
   const clip = useClip(taskId, video.id);
+  const scout = scoutLanes(useScouts(taskId)[video.id]);
   const lastFrame = Math.max(
     0,
     (clip.manifest?.frame_count ?? video.frame_count ?? msToFrame(video.duration_ms || 0, fps)) - 1
@@ -338,10 +340,13 @@ export default function VideoAnnotator({
     [guard, taskId, video.id, frame, load]
   );
 
-  /** Одиночная фигура в том виде, в каком она уходит на сервер. */
+  /** Одиночная фигура в том виде, в каком она уходит на сервер. `id` — по
+   *  нему сервер узнаёт рамку агента: нетронутая остаётся агентовой, правленая
+   *  становится вашей (common/attribution.py). */
   const asWire = useCallback(
-    (s: { class_index: number | null; shape?: unknown; geometry: unknown }): SingleWire => ({
+    (s: { id?: string; class_index: number | null; shape?: unknown; geometry: unknown }): SingleWire => ({
       ...((s.shape ?? s.geometry) as Omit<SingleWire, "class_index">),
+      id: s.id,
       class_index: s.class_index as number,
     }),
     []
@@ -400,6 +405,7 @@ export default function VideoAnnotator({
           singlesHere.map((s) =>
             s.id === item.box.id
               ? {
+                  id: s.id,
                   class_index: box.class_index,
                   x: box.x, y: box.y, w: box.w, h: box.h,
                   ...(box.parts?.length
@@ -1261,6 +1267,7 @@ export default function VideoAnnotator({
           onAction={onLane}
           onSeek={(next) => { stop(); setFrame(next); }}
           marks={marks}
+          scout={scout}
         />
       </div>
 

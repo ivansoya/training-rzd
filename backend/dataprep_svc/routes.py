@@ -27,7 +27,7 @@ from common import config, live
 from common import prep_queue as queue
 from common import similarity
 from common import polygon as polylib
-from common.models import Annotation, Image, LabelClass, ProjectMember
+from common.models import Annotation, Image, LabelClass, ProjectMember, VideoAnnotation
 from dataprep_svc import albu, engine, feeds, preview as previewlib
 from dataprep_svc import samples as samples_lib, testframe
 from dataprep_svc.graph import plan as planlib
@@ -541,11 +541,13 @@ def delete_graph(graph_id):
         if graph.kind == "agent":
             # Рамки хранят ссылку на версию агента; удаление обнулило бы её,
             # и подпись «агент „Путеец“ v3» превратилась бы в безымянную.
-            marked = db.execute(
-                select(func.count(Annotation.id))
-                .join(AugGraphVersion, AugGraphVersion.id == Annotation.agent_version_id)
+            # Считаются и рамки на незакрытых роликах: их кадров ещё нет, но
+            # происхождение потерялось бы так же.
+            marked = sum(db.execute(
+                select(func.count(table.id))
+                .join(AugGraphVersion, AugGraphVersion.id == table.agent_version_id)
                 .where(AugGraphVersion.graph_id == graph.id)
-            ).scalar() or 0
+            ).scalar() or 0 for table in (Annotation, VideoAnnotation))
             if marked:
                 return jsonify({
                     "error": (

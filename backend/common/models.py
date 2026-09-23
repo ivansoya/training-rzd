@@ -1694,3 +1694,33 @@ class AgentPreview(Base):
         sa.DateTime(timezone=True), nullable=False, default=utcnow, server_default=sa.func.now()
     )
 
+
+class VideoScout(Base):
+    """Последняя разведка ролика агентом: информация, а не разметка.
+
+    `frames` — {кадр: [[класс, уверенность, x, y, w, h], ...]} по проверенным
+    кадрам; `segments` — {класс агента: [[от, до, попаданий], ...]}, кадры
+    включительно (см. `agent_graph.segments`). Повторная разведка заменяет.
+    """
+
+    __tablename__ = "video_scouts"
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    video_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
+    run_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("agent_runs.id", ondelete="SET NULL")
+    )
+    version_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="SET NULL")
+    )
+    agent_name: Mapped[str | None] = mapped_column(sa.String(255))
+    step: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    gap_s: Mapped[float] = mapped_column(sa.Float, nullable=False)
+    last_frame: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    frames: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    segments: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow, server_default=sa.func.now()
+    )

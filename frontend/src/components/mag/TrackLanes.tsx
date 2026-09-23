@@ -3,6 +3,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import type { VideoTrack } from "../../auth/api";
 import { hiddenRanges, trackEnd } from "./trackMath";
 import { extensionFrame, timelineFrame, timelineTicks, visibleSpans } from "./timelineMath";
+import type { ScoutLane } from "../agents/scout";
 import Sep from "../Sep";
 
 export interface LaneAction {
@@ -23,13 +24,16 @@ const RULER = 25;
  * Ручки продления стоят слева и справа от края трека, на линии ключей, и
  * отодвинуты от неё: у трека из одного ключа ручка и ромб не должны делить
  * хитбокс. Пиксели в кадры переводит timelineMath — тот же, что и у шкалы. */
-export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected, editable, onSelect, onAction, onSeek, marks }: {
+export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected, editable, onSelect, onAction, onSeek, marks, scout = [] }: {
   tracks: VideoTrack[]; frame: number; lastFrame: number;
   labelOf: (ci: number) => { name: string; color: string };
   selected: string | null; editable: boolean;
   onSelect: (id: string) => void; onAction: (action: LaneAction) => void; onSeek: (frame: number) => void;
   /** Кадры, помеченные фоновыми. `on` — пометка действует: кадр свободен. */
   marks: { frame: number; on: boolean }[];
+  /** Разведка агента: полосы по классам, только для чтения — это информация,
+   *  а не разметка. Клик по полосе — на её начало. */
+  scout?: ScoutLane[];
 }) {
   const grid = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -106,6 +110,13 @@ export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected
           style={{ left: pct(m.frame) }}
           title={m.on ? `Кадр ${m.frame}: фоновый` : `Кадр ${m.frame}: помечен фоновым, но на нём есть объект`} />)}
       </div>
+      {scout.map(lane => <div key={`scout:${lane.name}`} className="vt-row vt-scout">
+        <span className="vt-name" title={`Разведка агента: ${lane.name}`}><i style={{background:lane.color}} /><span>{lane.name}</span></span>
+        <div className="vt-lane">
+          {lane.spans.map(([a,b,n]) => <span key={a} className="vt-life" title={`${lane.name}: кадры ${a}–${b}, попаданий ${n}`}
+            style={{left:pct(a),width:pct(b-a+1),background:lane.color}} onPointerDown={e => { e.stopPropagation(); onSeek(a); }} />)}
+        </div>
+      </div>)}
       {tracks.map(track => {
         const label = labelOf(track.class_index ?? -1), end = trackEnd(track), on = track.id === selected;
         const ghost = preview?.drag.trackId === track.id ? preview : null;

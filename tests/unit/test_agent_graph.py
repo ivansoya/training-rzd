@@ -239,3 +239,32 @@ def test_таблица_классов_сверяется_с_весами():
     with pytest.raises(ag.AgentGraphError, match="полке"):
         ag.check(_doc(), weights={"w-vagon": 2})
     ag.check(_doc(), weights={"w-vagon": 2, "w-put": 4})
+
+
+def test_ролик_каждый_n_й_кадр_кроме_занятых():
+    assert ag.sampled(100, 25) == [0, 25, 50, 75, 100]
+    assert ag.sampled(99, 25, skip={25}) == [0, 50, 75]
+
+
+def test_разведка_склеивает_разрывы_до_допуска():
+    hits = {0: {"человек"}, 25: {"человек"}, 50: {"человек"}, 75: {"инструмент"},
+            150: {"человек"}}
+    got = ag.segments(hits, step=25, gap_frames=50, last_frame=160)
+    # между 50 и 150 пустоты 75 кадров — больше допуска в 50: два участка;
+    # края расширены на полшага и прижаты к концу ролика
+    assert got["человек"] == [[0, 62, 3], [138, 160, 1]]
+    assert got["инструмент"] == [[63, 87, 1]]
+    # допуск шире — один участок
+    assert ag.segments(hits, 25, 100, 160)["человек"] == [[0, 160, 4]]
+
+
+def test_кадры_где_работал_человек():
+    from common.video_tracks import human_frames
+    track = {"start_frame": 10, "end_frame": None, "interpolate": True, "hidden_ranges": [],
+             "keys": [{"frame_no": 10, "geometry": {"x": 0, "y": 0, "w": 5, "h": 5}},
+                      {"frame_no": 20, "geometry": {"x": 5, "y": 0, "w": 5, "h": 5}}]}
+    singles = [{"frame_no": 30, "source": "human", "agent_version_id": None},
+               {"frame_no": 0, "source": "model", "agent_version_id": "v1"},     # рамка агента — не занят
+               {"frame_no": 35, "source": "human", "agent_version_id": "v1"}]    # правленая агентова — занят
+    busy = human_frames([track], singles, marks=[25], frames=[0, 10, 15, 20, 25, 30, 35, 40])
+    assert busy == {10, 15, 20, 25, 30, 35}

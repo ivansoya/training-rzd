@@ -24,7 +24,7 @@ from common.auth import current_user, has_role, role_in
 from common.db import SessionLocal
 from common.models import (
     AgentClassMap, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, Image,
-    LabelClass, Project, ProjectMember, Task, TrainRun, utcnow,
+    LabelClass, Project, ProjectMember, Task, TaskVideo, TrainRun, VideoScout, utcnow,
 )
 from training_svc import agent_preview as agent_preview_lib, pt_guard
 
@@ -336,6 +336,8 @@ def _run_view(db, run):
         "agent": graph.name if graph else None,
         "version": version.version if version else None,
         "sources": run.params.get("sources") or [],
+        "mode": run.params.get("mode") or "frames",
+        "videos": run.params.get("videos") or [],
         "created_at": run.created_at.isoformat(),
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
     }
@@ -402,8 +404,17 @@ def run_context(task_id):
             select(AgentRun).where(AgentRun.task_id == task.id)
             .order_by(AgentRun.created_at.desc()).limit(5)
         ).scalars().all()
+        videos = [
+            {"id": str(v.id), "file_name": v.file_name, "mode": v.mode,
+             "closed": v.annotation_closed_at is not None,
+             "frames": v.frame_count or (round(v.duration_ms / 1000 * v.fps) if v.duration_ms and v.fps else None)}
+            for v in db.execute(
+                select(TaskVideo).where(TaskVideo.task_id == task.id).order_by(TaskVideo.created_at)
+            ).scalars()
+        ]
         return jsonify({
             "agents": agents,
+            "videos": videos,
             "classes": classes,
             "mappings": maps,
             "sources": _source_counts(db, task),
@@ -434,9 +445,32 @@ def start_agent_run(task_id):
         version = db.get(AugGraphVersion, _uuid(data.get("version_id")))
         if version is None or version.graph_id != graph.id:
             return jsonify({"error": "Версия не от этого агента."}), 404
+        mode = data.get("mode") or "frames"
+        if mode not in ("frames", "annotate", "scout"):
+            return jsonify({"error": "Неизвестный режим прогона."}), 400
         sources = [s for s in data.get("sources") or [] if s in task_frames.SOURCES]
-        if not sources:
+        if mode == "frames" and not sources:
             return jsonify({"error": "Выберите, что размечать."}), 400
+        videos = []
+        if mode != "frames":
+            # Разведка смотрит ролики обоих режимов; разметка — только
+            # размечаемые и ещё не закрытые: у закрытого кадры уже в таске.
+            for vid in data.get("videos") or []:
+                video = db.get(TaskVideo, _uuid(vid))
+                if video is None or video.task_id != task.id:
+                    continue
+                if mode == "annotate" and (video.mode != "annotate" or video.annotation_closed_at):
+                    continue
+                videos.append(str(video.id))
+            if not videos:
+                return jsonify({"error": "Выберите ролики." if mode == "scout" else
+                                "Выберите размечаемые ролики с незакрытой разметкой."}), 400
+        try:
+            step = max(1, min(10000, int(data.get("step") or agent_graph.VIDEO_STEP)))
+            gap = max(0.0, min(60.0, float(data.get("gap") if data.get("gap") is not None
+                                           else agent_graph.SCOUT_GAP_S)))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Шаг и допуск — числа."}), 400
 
         # Сопоставление: только классы этой версии и только классы проекта.
         agent_classes = (version.stats or {}).get("classes") or []
@@ -450,31 +484,38 @@ def start_agent_run(task_id):
         for name in agent_classes:
             target = raw.get(name)
             mapping[name] = target if target in project_classes else None
-        if not any(mapping.values()):
+        # Разведке сопоставление не нужно: она хранит имена классов агента и в
+        # разметку не пишет ничего.
+        if mode != "scout" and not any(mapping.values()):
             return jsonify({"error": "Ни один класс агента не сопоставлен с классом проекта."}), 400
 
-        total = sum(
-            db.execute(
-                select(func.count(Image.id)).where(
-                    Image.task_id == task.id, Image.task_status == "new",
-                    task_frames.source_clause(task.id, s))
-            ).scalar_one()
-            for s in sources
-        )
-        if not total:
-            return jsonify({"error": "В выбранных блоках нет новых кадров."}), 400
+        total = None
+        if mode == "frames":
+            total = sum(
+                db.execute(
+                    select(func.count(Image.id)).where(
+                        Image.task_id == task.id, Image.task_status == "new",
+                        task_frames.source_clause(task.id, s))
+                ).scalar_one()
+                for s in sources
+            )
+            if not total:
+                return jsonify({"error": "В выбранных блоках нет новых кадров."}), 400
 
         # Сопоставление помнится на пару «агент + проект»: в следующий раз
         # окно откроется уже заполненным. Старые ключи других версий не
         # теряются — у версии 2 мог быть класс, которого нет у версии 3.
+        # Разведка сопоставления не спрашивает — и помнить ей нечего.
         saved = db.get(AgentClassMap, (graph.id, project.id))
-        if saved is None:
+        if mode != "scout" and saved is None:
             db.add(AgentClassMap(graph_id=graph.id, project_id=project.id, mapping=mapping))
-        else:
+        elif mode != "scout":
             saved.mapping = {**(saved.mapping or {}), **mapping}
         run = AgentRun(
             project_id=project.id, task_id=task.id, graph_id=graph.id,
-            version_id=version.id, params={"sources": sources, "mapping": mapping},
+            version_id=version.id,
+            params={"mode": mode, "sources": sources, "videos": videos, "step": step,
+                    "gap": gap, "mapping": mapping},
             total=total, created_by=user.id,
         )
         db.add(run)
@@ -621,3 +662,37 @@ def agent_preview():
     finally:
         db.close()
 
+
+# --------------------------------------------------------------------------- #
+# Разведка роликов: полосы на шкале, сводка, план нарезки
+# --------------------------------------------------------------------------- #
+@bp.get("/api/agents/tasks/<task_id>/scouts")
+def task_scouts(task_id):
+    """Последняя разведка каждого ролика таски: участки по классам агента.
+
+    Покадровые находки не отдаём — шкале и плану нужны участки, а кадров у
+    часового ролика тысячи."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        task, _project, err = _task(db, user, task_id)
+        if err:
+            return err
+        out = {}
+        for scout, video in db.execute(
+            select(VideoScout, TaskVideo).join(TaskVideo, TaskVideo.id == VideoScout.video_id)
+            .where(TaskVideo.task_id == task.id)
+        ).all():
+            out[str(video.id)] = {
+                "agent": scout.agent_name,
+                "step": scout.step,
+                "gap_s": scout.gap_s,
+                "last_frame": scout.last_frame,
+                "fps": video.fps,
+                "segments": scout.segments,
+                "created_at": scout.created_at.isoformat(),
+            }
+        return jsonify({"scouts": out})
+    finally:
+        db.close()

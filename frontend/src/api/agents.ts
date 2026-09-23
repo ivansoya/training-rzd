@@ -57,18 +57,32 @@ export interface RunView {
   status: "queued" | "waiting_gpu" | "running" | "done" | "error" | "stopped";
   processed: number;
   total: number | null;
-  stats: { boxes?: number; frames?: number };
+  stats: { boxes?: number; frames?: number; videos?: number };
   error: string | null;
   queue_reason: string | null;
   agent: string | null;
   version: number | null;
   sources: string[];
+  mode: RunMode;
+  videos: string[];
   created_at: string;
   finished_at: string | null;
 }
 
+/** Кадры таски, каждый N-й кадр размечаемого ролика или разведка роликов. */
+export type RunMode = "frames" | "annotate" | "scout";
+
+export interface TaskVideoRow {
+  id: string;
+  file_name: string;
+  mode: "cut" | "annotate";
+  closed: boolean;
+  frames: number | null;
+}
+
 export interface RunContext {
   agents: { id: string; name: string; head: string; versions: AgentVersion[] }[];
+  videos: TaskVideoRow[];
   classes: { id: string; class_index: number; name: string; color: string }[];
   /** Сопоставление, запомненное на пару «агент + проект». */
   mappings: Record<string, Record<string, string | null>>;
@@ -84,10 +98,28 @@ export const startRun = (
   body: {
     graph_id: string;
     version_id: string;
+    mode: RunMode;
     sources: string[];
+    videos: string[];
+    step: number;
+    gap: number;
     mapping: Record<string, string | null>;
   }
 ) => post<RunView>(`agents/tasks/${taskId}/runs`, body);
+
+/** Разведка ролика: участки по классам агента, кадры включительно. */
+export interface Scout {
+  agent: string | null;
+  step: number;
+  gap_s: number;
+  last_frame: number;
+  fps: number | null;
+  segments: Record<string, [number, number, number][]>;
+  created_at: string;
+}
+
+export const taskScouts = (taskId: string) =>
+  get<{ scouts: Record<string, Scout> }>(`agents/tasks/${taskId}/scouts`);
 
 export const stopRun = (runId: string) => post<RunView>(`agents/runs/${runId}/stop`);
 

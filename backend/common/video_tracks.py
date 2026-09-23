@@ -237,6 +237,10 @@ def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None)
             "ann_type": single.get("ann_type") or "bbox",
             "geometry": dict(single["geometry"]),
             "source": single.get("source", "human"),
+            # Происхождение рамки агента — до кадра таски: по нему закрытие
+            # решает, уходит ли кадр на проверку.
+            "agent_version_id": single.get("agent_version_id"),
+            "created_by": single.get("created_by"),
             "track_id": None,
         })
 
@@ -267,3 +271,23 @@ def empty_frames(tracks: list[dict], singles: list[dict], marks) -> list[int]:
             continue
         out.append(frame_no)
     return out
+
+
+def human_frames(tracks: list[dict], singles: list[dict], marks, frames) -> set[int]:
+    """Из `frames` — те, где уже поработал человек: его одиночная фигура,
+    видимый объект трека или пометка «пустой».
+
+    Агент такие кадры не трогает — как кадры изображений не `new`. Рамка
+    агента, поправленная человеком, уже человеческая (`source='human'`), и
+    кадр с ней тоже занят.
+    """
+    wanted = {int(f) for f in frames}
+    busy = {int(m) for m in marks or []} & wanted
+    for s in singles:
+        if not (s.get("source") == "model" and s.get("agent_version_id")):
+            busy.add(int(s["frame_no"]))
+    prepared = [(t, sorted(t.get("keys") or [], key=lambda k: k["frame_no"])) for t in tracks]
+    for f in wanted - busy:
+        if any(box_at(t, keys, f) for t, keys in prepared):
+            busy.add(f)
+    return busy & wanted

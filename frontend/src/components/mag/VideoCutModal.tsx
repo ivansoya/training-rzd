@@ -11,6 +11,7 @@ import { plural } from "./ProjectsPage";
 import VideoStrip from "./VideoStrip";
 import Sep from "../Sep";
 import Banner from "../Banner";
+import { ScoutBars, useScouts } from "../agents/scout";
 
 const COLORS = ["#e21a1a", "#1f6feb", "#1a7f4b", "#8957e5", "#e8590c"];
 const STEPS_MS = [100, 250, 500, 1000, 2000, 5000];
@@ -238,6 +239,7 @@ export default function VideoCutModal({
 }) {
   const duration = video.duration_ms || 0;
   const frameMs = 1000 / (video.fps || 25);
+  const scout = useScouts(taskId)[video.id];
   const minSpan = Math.max(500, frameMs * 20);
 
   // Сохранённый план — то, из чего таска нарезана; открываем ровно его.
@@ -916,6 +918,11 @@ export default function VideoCutModal({
               <span>{zoomed ? `окно ${fmtTime(view.span)} — колесо — масштаб` : "колесо — масштаб, протяжка — сдвиг"}</span>
               <span>{fmtTime(view.start + view.span)}</span>
             </div>
+
+            {scout && (
+              <ScoutBars scout={scout} pct={pct} span={view.span} editable={editable} onSeek={seek}
+                onPlan={(ranges) => ranges.forEach(([a, b]) => addSeg(a, Math.min(b, duration)))} />
+            )}
 
             {menu && (
               <>

@@ -6,7 +6,7 @@
 """
 from sqlalchemy import and_, exists, select
 
-from common.models import Annotation, Image, TaskVideo
+from common.models import Annotation, Image, TaskVideo, VideoAnnotation, VideoTrack
 
 # Блоки вкладки «Кадры». Идентификатор ролика тоже годится как источник.
 SOURCES = ("files", "videos")
@@ -49,3 +49,51 @@ def agent_pending():
     предложением, и принятым его делает человек — сохранением или «Принять».
     """
     return and_(Image.task_status == "new", agent_marked())
+
+
+def video_payload(db, video):
+    """Треки и одиночная разметка ролика — в том виде, в каком их ждёт
+    `common.video_tracks`. Закрытие разметки и агент на ролике смотрят на
+    ролик одинаково: что уйдёт в таску и где уже поработал человек."""
+    tracks = db.execute(
+        select(VideoTrack).where(VideoTrack.video_id == video.id)
+    ).scalars().all()
+    rows = db.execute(
+        select(VideoAnnotation).where(VideoAnnotation.video_id == video.id)
+        .order_by(VideoAnnotation.frame_no)
+    ).scalars().all()
+
+    keys_by_track = {}
+    singles = []
+    for row in rows:
+        if row.track_id is None:
+            singles.append({
+                "frame_no": row.frame_no,
+                "class_id": row.class_id,
+                "ann_type": row.ann_type,
+                "geometry": row.geometry,
+                "source": row.source,
+                "agent_version_id": row.agent_version_id,
+                "created_by": row.created_by,
+            })
+        else:
+            keys_by_track.setdefault(row.track_id, []).append({
+                "frame_no": row.frame_no,
+                "geometry": row.geometry,
+                "source": row.source,
+            })
+
+    payload = [
+        {
+            "id": t.id,
+            "class_id": t.class_id,
+            "start_frame": t.start_frame,
+            "end_frame": t.end_frame,
+            "interpolate": t.interpolate,
+            "export_step": t.export_step,
+            "hidden_ranges": t.hidden_ranges or [],
+            "keys": keys_by_track.get(t.id, []),
+        }
+        for t in tracks
+    ]
+    return payload, singles

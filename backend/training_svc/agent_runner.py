@@ -24,10 +24,11 @@ from contextlib import contextmanager
 
 from sqlalchemy import select
 
-from common import agent_graph, config, gpu, live, shapes, task_frames
+from common import agent_graph, config, gpu, live, shapes, task_frames, video_frames, video_tracks
 from common.db import SessionLocal
 from common.models import (
-    AgentRun, AgentWeights, Annotation, AugGraphVersion, Image, utcnow,
+    AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, Image, TaskVideo,
+    VideoAnnotation, VideoScout, utcnow,
 )
 
 log = logging.getLogger("training")
@@ -153,32 +154,27 @@ def execute(db, run):
     device = "cpu" if lease.device_id is None else 0
     peak = 0
     try:
-        ids = frames(db, run)
-        run.total = len(ids)
+        mode = run.params.get("mode") or "frames"
+        ids = frames(db, run) if mode == "frames" else None
+        plan = _video_plan(db, run, mode) if ids is None else None
+        run.total = len(ids) if ids is not None else sum(len(f) for _, f in plan)
         db.commit()
         with _beating(lease.id):
             models = _load(weights)
-            models.update({name: _load_sam(name, device) for name in sams})
+            # Разведке нужны где и что, а не контур: SAM не грузим вовсе.
+            if mode != "scout":
+                models.update({name: _load_sam(name, device) for name in sams})
+        tick = _ticker(db, run, lease.id)
         mapping = run.params.get("mapping") or {}
-        boxes = marked = 0
-        last = 0.0
-        for n, image_id in enumerate(ids, 1):
-            db.refresh(run)
-            if run.cancel_requested:
-                raise Stopped()
-            put = _one(db, run, image_id, doc, order, models, weights, mapping, device)
-            if put:
+        if ids is not None:
+            boxes = marked = 0
+            for image_id in ids:
+                put = _one(db, run, image_id, doc, order, models, weights, mapping, device)
                 boxes += put
-                marked += 1
-            run.processed = n
-            run.stats = {"boxes": boxes, "frames": marked}
-            run.lease_until = utcnow()
-            db.commit()
-            now = time.monotonic()
-            if now - last >= NOTIFY_EVERY:
-                gpu.beat(db, lease.id)
-                live.notify(db, "agent", run.id, run.project_id, n=n)
-                last = now
+                marked += bool(put)
+                tick({"boxes": boxes, "frames": marked})
+        else:
+            _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, tick)
         peak = _peak_mb(device)
         _finish(db, run, "done")
     except Stopped:
@@ -209,12 +205,13 @@ def _one(db, run, image_id, doc, order, models, weights, mapping, device):
     return _write(db, run, image, found, mapping)
 
 
-def frame_fns(path, file_name, models, weights, device):
+def frame_fns(path, file_name, models, weights, device, picture=None):
     """(predict, segment) для одного кадра — их зовёт `agent_graph.run`.
 
     Общие у прогона и превью: превью обязано показывать ровно то, что ляжет
     в разметку. `models` — {узел сети: YOLO, имя SAM: предиктор}, `weights` —
-    {узел сети: строка полки}."""
+    {узел сети: строка полки}. `picture` — кадр ролика, уже распакованный
+    декодером (PIL, RGB); тогда `path` не читается."""
     frame = []
 
     def predict(node):
@@ -222,7 +219,8 @@ def frame_fns(path, file_name, models, weights, device):
         import numpy as np
 
         if not frame:
-            got = cv2.imread(path)
+            got = (np.ascontiguousarray(np.asarray(picture.convert("RGB"))[:, :, ::-1])
+                   if picture is not None else cv2.imread(path))
             if got is None:
                 raise RuntimeError(f"Кадр не читается: {file_name}")
             frame.append(got)
@@ -262,9 +260,12 @@ def frame_fns(path, file_name, models, weights, device):
         # Кодировщик кадра — дорогая часть; считаем его один раз на кадр и
         # модель, а рамки декодируются за миллисекунды.
         if name not in encoded:
-            from PIL import Image as PilImage
-            with PilImage.open(path) as img:
-                predictor.set_image(np.array(img.convert("RGB")))
+            if picture is not None:
+                predictor.set_image(np.array(picture.convert("RGB")))
+            else:
+                from PIL import Image as PilImage
+                with PilImage.open(path) as img:
+                    predictor.set_image(np.array(img.convert("RGB")))
             encoded.add(name)
         x, y, w, h = box
         masks, scores, _ = predictor.predict(
@@ -301,6 +302,132 @@ def _write(db, run, image, found, mapping):
             image_id=image.id, class_id=_uuid(class_id), ann_type=ann_type,
             geometry=geometry, area=area, source="model",
             attributes=attributes,
+            agent_version_id=run.version_id, created_by=run.created_by,
+        ))
+        put += 1
+    db.commit()
+    return put
+
+
+def _ticker(db, run, lease_id):
+    """Шаг хода: +1 кадр, статистика, отмена кнопкой, пульс брони и живой связи."""
+    last = [0.0]
+
+    def tick(stats):
+        db.refresh(run)
+        if run.cancel_requested:
+            raise Stopped()
+        run.processed += 1
+        run.stats = stats
+        run.lease_until = utcnow()
+        db.commit()
+        now = time.monotonic()
+        if now - last[0] >= NOTIFY_EVERY:
+            gpu.beat(db, lease_id)
+            live.notify(db, "agent", run.id, run.project_id, n=run.processed)
+            last[0] = now
+
+    return tick
+
+
+# --------------------------------------------------------------------------- #
+# Ролики: разметка каждого N-го кадра и разведка
+#
+# Решения владельца (24.09.2026). Разметка — одиночные рамки в
+# `video_annotations` на каждый N-й кадр, кроме кадров, где уже поработал
+# человек; повторный прогон заменяет только нетронутые рамки агентов. Разведка
+# — информация, а не разметка: где и что нашлось, участки по классам агента,
+# SAM не участвует. Кадры достаёт тот же декодер, что и закрытие разметки
+# (`common.video_frames`): номер кадра обязан совпасть до единицы.
+# --------------------------------------------------------------------------- #
+def _last_frame(video):
+    if video.frame_count:
+        return max(0, int(video.frame_count) - 1)
+    if video.duration_ms and video.fps:
+        return max(0, video_tracks.ms_to_frame(video.duration_ms, video.fps) - 1)
+    raise RuntimeError(f"У ролика «{video.file_name}» неизвестна длина — кадры не пересчитать.")
+
+
+def _video_plan(db, run, mode):
+    """[(ролик, [кадры])] в порядке, заданном при запуске."""
+    step = int(run.params.get("step") or agent_graph.VIDEO_STEP)
+    out = []
+    for vid in run.params.get("videos") or []:
+        video = db.get(TaskVideo, _uuid(vid))
+        if video is None or video.task_id != run.task_id:
+            continue
+        last = _last_frame(video)
+        every = agent_graph.sampled(last, step)
+        if mode == "annotate":
+            tracks, singles = task_frames.video_payload(db, video)
+            busy = video_tracks.human_frames(tracks, singles, video.empty_frames, every)
+            every = [f for f in every if f not in busy]
+        out.append((video, every))
+    return out
+
+
+def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, tick):
+    step = int(run.params.get("step") or agent_graph.VIDEO_STEP)
+    gap_s = float(run.params.get("gap") if run.params.get("gap") is not None else agent_graph.SCOUT_GAP_S)
+    version = db.get(AugGraphVersion, run.version_id)
+    graph = db.get(AugGraph, version.graph_id) if version else None
+    stats = {"videos": 0, "boxes": 0, "frames": 0}
+    for video, wanted in plan:
+        if mode == "annotate":
+            db.execute(VideoAnnotation.__table__.delete().where(
+                VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
+                VideoAnnotation.source == "model", VideoAnnotation.agent_version_id.isnot(None)))
+            db.commit()
+        hits, seen = {}, {}
+
+        def on_frame(frame_no, _time_ms, picture):
+            predict, segment = frame_fns(None, f"{video.file_name} #{frame_no}", models, weights,
+                                         device, picture=picture)
+            found = agent_graph.run(doc, predict, order, segment if mode == "annotate" else None)
+            if mode == "annotate":
+                put = _write_video(db, run, video, frame_no, found, mapping)
+                stats["boxes"] += put
+                stats["frames"] += bool(put)
+            else:
+                seen[str(frame_no)] = [[d["cls"], round(d["conf"], 3), *[round(v, 1) for v in d["box"]]]
+                                       for d in found]
+                if found:
+                    hits[frame_no] = {d["cls"] for d in found}
+                    stats["frames"] += 1
+            tick(dict(stats))
+
+        if wanted:
+            video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted, on_frame)
+        if mode == "scout":
+            last = _last_frame(video)
+            db.execute(VideoScout.__table__.delete().where(VideoScout.video_id == video.id))
+            db.add(VideoScout(
+                video_id=video.id, run_id=run.id, version_id=run.version_id,
+                agent_name=graph.name if graph else None, step=step, gap_s=gap_s, last_frame=last,
+                frames=seen,
+                segments=agent_graph.segments(hits, step, round(gap_s * (video.fps or 25)), last),
+            ))
+        stats["videos"] += 1
+        run.stats = dict(stats)
+        db.commit()
+
+
+def _write_video(db, run, video, frame_no, found, mapping):
+    put = 0
+    for det in found:
+        class_id = mapping.get(det["cls"])
+        if not class_id:
+            continue
+        x, y, w, h = det["box"]
+        wire = ({"kind": "polygon", "parts": det["parts"]} if det.get("parts")
+                else {"kind": "bbox", "x": x, "y": y, "w": w, "h": h})
+        parsed = shapes.from_wire(wire, video.width or 0, video.height or 0)
+        if parsed is None:
+            continue
+        ann_type, geometry, _area = parsed
+        db.add(VideoAnnotation(
+            video_id=video.id, track_id=None, frame_no=frame_no, class_id=_uuid(class_id),
+            ann_type=ann_type, geometry=geometry, source="model",
             agent_version_id=run.version_id, created_by=run.created_by,
         ))
         put += 1

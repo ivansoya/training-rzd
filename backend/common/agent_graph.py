@@ -428,10 +428,54 @@ def run(doc, predict, order=None, segment=None, trace=None):
         elif kind == "filter":
             value[nid] = filter_dets(ins[0], node.get("params") or {})
         elif kind == "sam":
+            # Без `segment` — разведка: ей нужны где и что, а не контур, и SAM
+            # на каждой рамке каждого кадра только тратил бы время.
             params = node.get("params") or {}
-            value[nid] = [outline(d, *segment(node, d["box"]), params) for d in ins[0]]
+            value[nid] = ([outline(d, *segment(node, d["box"]), params) for d in ins[0]]
+                          if segment else ins[0])
         else:
             result = value[nid] = ins[0]
         if trace is not None:
             trace[nid] = {"in": [d for branch in ins for d in branch], "out": value[nid]}
     return result
+
+
+# --------------------------------------------------------------------------- #
+# Ролик: какие кадры смотреть и как собрать разведку в участки
+# --------------------------------------------------------------------------- #
+VIDEO_STEP = 25
+SCOUT_GAP_S = 2.0
+
+
+def sampled(last_frame, step, skip=()):
+    """Каждый `step`-й кадр от нуля до `last_frame` включительно, кроме `skip`."""
+    step = max(1, int(step))
+    skip = set(skip)
+    return [f for f in range(0, int(last_frame) + 1, step) if f not in skip]
+
+
+def segments(hits, step, gap_frames, last_frame):
+    """Попадания разведки → участки по классам агента.
+
+    `hits` — {кадр: {классы}} по проверенным кадрам. Два попадания одного
+    класса — один участок, если пустоты между ними не больше `gap_frames`:
+    объект мог на миг загородиться, а сеть — моргнуть. Края расширяются на
+    полшага: участок покрывает момент, а не только проверенные кадры.
+    Возвращает {класс: [[от, до, попаданий], ...]} — кадры включительно.
+    """
+    half = max(1, int(step)) // 2
+    by_cls = {}
+    for frame in sorted(hits):
+        for cls in hits[frame]:
+            by_cls.setdefault(cls, []).append(frame)
+    out = {}
+    for cls, frames in by_cls.items():
+        spans = []
+        for f in frames:
+            if spans and f - spans[-1][1] - step <= gap_frames:
+                spans[-1][1] = f
+                spans[-1][2] += 1
+            else:
+                spans.append([f, f, 1])
+        out[cls] = [[max(0, a - half), min(int(last_frame), b + half), n] for a, b, n in spans]
+    return out

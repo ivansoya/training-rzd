@@ -1307,6 +1307,8 @@ export async function hideTrackSpan(
  *  теперь обе формы: одиночную разметку кадра размечают и рамкой, и контуром.
  *  Трек — только рамка, у него своя ручка. */
 export interface SingleWire {
+  /** Номер рамки с сервера — по нему сохраняется её авторство. */
+  id?: string;
   class_index: number;
   x: number;
   y: number;
