@@ -120,7 +120,11 @@ def execute(db, run):
 
     sams = sorted({(n.get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
                    for n in doc["nodes"] if n["type"] == "sam"})
-    sig = f"agent:{len(nets)}:{','.join(sams)}"
+    # Плитки и TTA гонят вырезки пачкой — памяти нужно больше, и замер
+    # диспетчера не должен смешиваться с замером одиночного прохода.
+    batch = max(len(agent_graph.variants(n["params"])) * (8 if n["params"].get("tiles") else 1)
+                for n in nets)
+    sig = f"agent:{len(nets)}:b{batch}:{','.join(sams)}"
     want, _ = gpu.estimate(db, "agent", sig, NET_VRAM_MB * len(nets) + SAM_VRAM_MB * len(sams))
     # Прошлая бронь больше не нужна — та же причина, что у обучения: без
     # отмены каждая попытка оставляла в очереди ещё одну запись. А пока ждём,
@@ -200,23 +204,42 @@ def _one(db, run, image_id, doc, order, models, weights, mapping, device):
         db.rollback()
         return 0
     path = os.path.join(config.DATA_DIR, image.file_path)
+    frame = []
 
     def predict(node):
+        import cv2
+        import numpy as np
+
+        if not frame:
+            got = cv2.imread(path)
+            if got is None:
+                raise RuntimeError(f"Кадр не читается: {image.file_name}")
+            frame.append(got)
+        pixels = frame[0]
         params = node.get("params") or {}
-        row = weights[node["id"]]
-        result = models[node["id"]].predict(
-            path, verbose=False, device=device,
-            conf=float(params.get("conf") or 0.25),
-            iou=float(params.get("iou") or 0.6),
-            imgsz=int(params.get("imgsz") or row.imgsz or 640),
-        )[0]
-        out = []
-        for cls, conf, (x1, y1, x2, y2) in zip(
-            result.boxes.cls.tolist(), result.boxes.conf.tolist(),
-            result.boxes.xyxy.tolist(),
-        ):
-            out.append((int(cls), conf, x1, y1, x2 - x1, y2 - y1))
-        return out
+        side = int(params.get("imgsz") or weights[node["id"]].imgsz or 640)
+
+        def infer(jobs, scale):
+            crops = []
+            for (x0, y0, x1, y1), flip in jobs:
+                crop = pixels[y0:y1, x0:x1]
+                # Отрицательный шаг отражения cv2 внутри ultralytics не примет.
+                crops.append(np.ascontiguousarray(crop[:, ::-1] if flip else crop))
+            results = models[node["id"]].predict(
+                crops, verbose=False, device=device,
+                conf=float(params.get("conf") or 0.25),
+                iou=float(params.get("iou") or 0.6),
+                # ultralytics требует кратность шагу сети — 32.
+                imgsz=max(32, round(side * scale / 32) * 32),
+            )
+            return [
+                [(c, p, x1, y1, x2 - x1, y2 - y1) for c, p, (x1, y1, x2, y2) in zip(
+                    r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist())]
+                for r in results
+            ]
+
+        h, w = pixels.shape[:2]
+        return agent_graph.detect(params, w, h, side, infer)
 
     encoded = set()
 

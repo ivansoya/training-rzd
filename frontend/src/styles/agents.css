@@ -222,3 +222,4 @@
 .ag-conf:disabled { opacity: 0.45; }
 .ag-check { display: flex; align-items: center; gap: 6px; align-self: end; padding-bottom: 7px; font-size: 12.5px; }
 .ag-check input { margin: 0; accent-color: var(--red); }
+.ag-flag { align-self: auto; padding: 2px 0; }

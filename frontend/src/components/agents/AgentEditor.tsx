@@ -48,6 +48,8 @@ const freshId = (kind: string) => `${kind}${++seq}${Date.now() % 1000}`;
 const occupies = (e: Edge, c: { target?: string | null; targetHandle?: string | null }) =>
   e.target === c.target && (e.targetHandle ?? null) === (c.targetHandle ?? null);
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+// Проходов TTA на вид — как agent_graph.variants на сервере.
+const tta = (p: Record<string, unknown>) => (p.tta_flip ? 2 : 1) * (p.tta_scales ? 3 : 1);
 
 function toFlow(doc: GraphDoc): [Node[], Edge[]] {
   return [
@@ -215,7 +217,11 @@ function Editor() {
             ...d,
             caption: w ? w.name.replace(/\.pt$/i, "") : undefined,
             why: w
-              ? `${w.task}, ${num(d.params.imgsz, w.imgsz ?? 640)}, conf ${String(num(d.params.conf, 0.25)).replace(".", ",")}`
+              ? [
+                  `${w.task}, ${num(d.params.imgsz, w.imgsz ?? 640)}, conf ${String(num(d.params.conf, 0.25)).replace(".", ",")}`,
+                  d.params.tiles ? "плитки" : null,
+                  tta(d.params) > 1 ? `TTA ×${tta(d.params)}` : null,
+                ].filter(Boolean).join(", ")
               : undefined,
             badge: w ? `${rows.filter((r) => r.on).length}/${w.names.length}` : undefined,
           },
@@ -607,6 +613,25 @@ function NodePanel({
             {field("iou", "IoU для NMS", num(p.iou, 0.6), 0.05)}
           </div>
           {field("imgsz", "Размер входа", num(p.imgsz, weights?.imgsz ?? 640), 32)}
+          {(
+            [
+              ["tiles", "Плитки размером со вход и целый кадр"],
+              ["tta_flip", "TTA: отражение по горизонтали"],
+              ["tta_scales", "TTA: масштабы ×0,8 и ×1,25"],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="ag-check ag-flag">
+              <input type="checkbox" checked={Boolean(p[key])} disabled={readOnly}
+                onChange={(e) => onChange({ [key]: e.target.checked })} />
+              {label}
+            </label>
+          ))}
+          {Boolean(p.tiles) && (
+            <div className="ag-two">
+              {field("overlap", "Перекрытие плиток", num(p.overlap, 0.2), 0.05)}
+              {field("glue", "Склейка от, IoS", num(p.glue, 0.5), 0.05)}
+            </div>
+          )}
         </>
       )}
 

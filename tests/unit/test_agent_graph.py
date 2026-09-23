@@ -176,6 +176,55 @@ def test_sam_в_графе_и_проверка_модели():
         ag.check(doc)
 
 
+def test_плитки_кадра_рсм_при_входе_1280():
+    got = ag.tiles(2688, 1520, 1280)
+    assert [(x0, y0) for x0, y0, _, _ in got] == [(0, 0), (704, 0), (1408, 0), (0, 240), (704, 240), (1408, 240)]
+    assert all(x1 - x0 == 1280 and y1 - y0 == 1280 for x0, y0, x1, y1 in got)
+    assert ag.tiles(1280, 720, 1280) == []           # кадр влезает во вход — плиток нет
+    assert ag.views({"tiles": True}, 2688, 1520, 1280)[0] == (0, 0, 2688, 1520)   # целый кадр первым
+    assert len(ag.views({}, 2688, 1520, 1280)) == 1
+
+
+def test_tta_проходы():
+    assert ag.variants({}) == [(False, 1.0)]
+    assert len(ag.variants({"tta_flip": True, "tta_scales": True})) == 6
+
+
+def test_wbf_усредняет_и_штрафует_случайную_находку():
+    dets = [(0, 0.9, (100, 100, 50, 50)), (0, 0.6, (104, 100, 50, 50)),   # два прохода видят одно
+            (0, 0.9, (400, 400, 20, 20))]                                  # один проход из двух
+    out = sorted(ag.wbf(dets, passes=2), key=lambda d: d[2][0])
+    cls, conf, box = out[0]
+    assert conf == pytest.approx(0.75) and box[0] == pytest.approx(101.6)
+    assert out[1][1] == pytest.approx(0.45)
+
+
+def test_склейка_сращивает_обрывки_и_гасит_дубль_целого():
+    whole = (0, 0.8, (100, 100, 200, 100))
+    left, right = (0, 0.9, (100, 100, 110, 100)), (0, 0.7, (190, 100, 110, 100))
+    other = (1, 0.9, (100, 100, 110, 100))                                   # другой класс не трогаем
+    out = ag.glue([whole, left, right, other])
+    assert sorted(out) == [(0, 0.9, (100, 100, 200, 100)), (1, 0.9, (100, 100, 110, 100))]
+
+
+def test_detect_снимает_отражение_и_сдвиг_плитки():
+    asked = []
+
+    def infer(jobs, scale):
+        asked.append((len(jobs), scale))
+        # в каждом вырезке объект у левого края; в отражённом — у правого
+        return [[(0, 0.9, (x1 - x0) - 60 if flip else 10, 20, 50, 40)] for (x0, _, x1, _), flip in jobs]
+
+    params = {"tiles": True, "tta_flip": True}
+    out = ag.detect(params, 2688, 1520, 1280, infer)
+    assert asked == [(14, 1.0)]                       # 7 видов × 2 отражения одной пачкой
+    got = sorted((round(x), round(y)) for _, _, x, y, _, _ in out)
+    # после снятия отражения оба прохода совпали (x = 10 внутри вырезка) и
+    # слились; целый кадр и первая плитка видят одно место — склеились в одну
+    assert got == [(10, 20), (10, 260), (714, 20), (714, 260), (1418, 20), (1418, 260)]
+    assert all(conf == pytest.approx(0.9) for _, conf, *_ in out)
+
+
 def test_таблица_классов_сверяется_с_весами():
     with pytest.raises(ag.AgentGraphError, match="не совпадает"):
         ag.check(_doc(), weights={"w-vagon": 3, "w-put": 4})

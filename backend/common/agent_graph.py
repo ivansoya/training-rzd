@@ -21,6 +21,7 @@
 Сеть сюда приходит функцией `predict(node) -> [(номер, уверенность, x, y, w, h)]`,
 SAM — функцией `segment(node, box) -> (маски, оценки)`.
 """
+import math
 
 KINDS = ("frame", "net", "merge", "filter", "sam", "output")
 MAX_NODES = 100
@@ -269,6 +270,130 @@ def outline(det, masks, scores, params):
     if not parts:
         return det
     return {**det, "box": contours.mask_bounds(clipped), "parts": parts, "sam": round(score, 3)}
+
+
+# --------------------------------------------------------------------------- #
+# Плитки и TTA узла «Сеть»
+#
+# Плитка — ровно вход сети в пикселях кадра, без масштаба: ради этого плитки и
+# режут — чтобы мелкий объект не ужимался вместе с кадром 2688×1520 до 1280.
+# Целый кадр идёт отдельным проходом всегда: крупный объект плитка режет, и
+# его половинки нашлись бы двумя обрывками.
+#
+# Сводятся проходы в два шага, и шаги разные нарочно. Проходы TTA смотрят на
+# один вид — их рамки на объекте почти совпадают, поэтому WBF: координаты
+# усредняются, уверенность делится на число проходов, и случайная находка
+# одного прохода из шести не выдаётся за уверенную. Виды (кадр и плитки)
+# видят объект по-разному — целиком и обрывками, у обрывка с целым IoU мал,
+# и NMS его не погасит; поэтому склейка по доле перекрытия меньшей рамки в
+# охватывающую, как GREEDYNMM у SAHI.
+# --------------------------------------------------------------------------- #
+TILE_OVERLAP = 0.2
+GLUE_IOS = 0.5
+TTA_SCALES = (0.8, 1.25)
+
+
+def tiles(width, height, side, overlap=TILE_OVERLAP):
+    """Плитки (x0, y0, x1, y1). Кадр не больше плитки — плиток нет."""
+    if width <= side and height <= side:
+        return []
+
+    def starts(length):
+        if length <= side:
+            return [0]
+        n = math.ceil((length - side) / (side * (1 - overlap))) + 1
+        return [round(i * (length - side) / (n - 1)) for i in range(n)]
+
+    return [(x, y, min(width, x + side), min(height, y + side))
+            for y in starts(height) for x in starts(width)]
+
+
+def variants(params):
+    """Проходы TTA на вид: [(отражение, масштаб входа)]; первый — как есть."""
+    scales = (1.0, *TTA_SCALES) if params.get("tta_scales") else (1.0,)
+    flips = (False, True) if params.get("tta_flip") else (False,)
+    return [(f, s) for s in scales for f in flips]
+
+
+def views(params, width, height, side):
+    """Виды кадра: целый первым, затем плитки, если они включены."""
+    whole = [(0, 0, width, height)]
+    if not params.get("tiles"):
+        return whole
+    overlap = _num(params.get("overlap"), TILE_OVERLAP)
+    return whole + tiles(width, height, side, max(0.0, min(0.9, overlap)))
+
+
+def ios(a, b):
+    """Пересечение к площади меньшей рамки: обрывок внутри целой — 1."""
+    ax, ay, aw, ah = a
+    bx, by, bw, bh = b
+    ix = max(0.0, min(ax + aw, bx + bw) - max(ax, bx))
+    iy = max(0.0, min(ay + ah, by + bh) - max(ay, by))
+    small = min(aw * ah, bw * bh)
+    return ix * iy / small if small > 0 else 0.0
+
+
+def wbf(dets, passes, threshold=MERGE_IOU):
+    """Взвешенное слияние проходов одного вида. `dets` — [(cls, conf, box)] всех
+    проходов вместе; уверенность итога — средняя по членам, умноженная на долю
+    проходов, что объект увидели."""
+    clusters = []   # [cls, [members], fused_box]
+    for cls, conf, box in sorted(dets, key=lambda d: -d[1]):
+        home = next((c for c in clusters if c[0] == cls and iou(c[2], box) >= threshold), None)
+        if home is None:
+            clusters.append([cls, [(conf, box)], box])
+            continue
+        home[1].append((conf, box))
+        total = sum(c for c, _ in home[1])
+        home[2] = tuple(sum(c * b[k] for c, b in home[1]) / total for k in range(4))
+    out = []
+    for cls, members, box in clusters:
+        mean = sum(c for c, _ in members) / len(members)
+        out.append((cls, mean * min(len(members), passes) / passes, box))
+    return out
+
+
+def glue(dets, threshold=GLUE_IOS):
+    """Склейка видов: рамки одного класса, где меньшая перекрыта на `threshold`,
+    заменяются охватывающей с наибольшей уверенностью."""
+    kept = []
+    for cls, conf, box in sorted(dets, key=lambda d: -d[1]):
+        home = next((k for k in kept if k[0] == cls and ios(k[2], box) >= threshold), None)
+        if home is None:
+            kept.append([cls, conf, box])
+            continue
+        (ax, ay, aw, ah), (bx, by, bw, bh) = home[2], box
+        x0, y0 = min(ax, bx), min(ay, by)
+        home[2] = (x0, y0, max(ax + aw, bx + bw) - x0, max(ay + ah, by + bh) - y0)
+    return [tuple(k) for k in kept]
+
+
+def detect(params, width, height, side, infer):
+    """Все проходы одной «Сети» по кадру → [(номер, уверенность, x, y, w, h)].
+
+    `infer(jobs, scale)` — сеть: `jobs` — [(вид, отражён ли)], ответ — по списку
+    рамок на каждый в координатах самого вырезка (отражённого, если отражён).
+    Масштаб один на вызов, чтобы воркер гнал вырезки одной пачкой.
+    """
+    vs = views(params, width, height, side)
+    var = variants(params)
+    per_view = [[] for _ in vs]
+    for scale in dict.fromkeys(s for _, s in var):
+        jobs = [(i, flip) for i in range(len(vs)) for flip, s in var if s == scale]
+        answers = infer([(vs[i], flip) for i, flip in jobs], scale)
+        for (i, flip), found in zip(jobs, answers):
+            x0, y0, x1, _ = vs[i]
+            for cls, conf, x, y, w, h in found:
+                if flip:
+                    x = (x1 - x0) - x - w
+                per_view[i].append((int(cls), float(conf), (x + x0, y + y0, w, h)))
+    if len(var) > 1:
+        per_view = [wbf(dets, len(var)) for dets in per_view]
+    fused = [d for dets in per_view for d in dets]
+    if len(vs) > 1:
+        fused = glue(fused, _num(params.get("glue"), GLUE_IOS))
+    return [(cls, conf, *box) for cls, conf, box in fused]
 
 
 def run(doc, predict, order=None, segment=None):
