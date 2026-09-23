@@ -23,7 +23,7 @@ from common import config, gpu, live
 from common.db import SessionLocal, wait_for_db
 from common.models import DataprepJob, TrainRun, TrainSet, utcnow
 from common import prep_queue
-from training_svc import agent_runner, embed, trainer
+from training_svc import agent_preview, agent_runner, embed, trainer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -429,6 +429,7 @@ def main():
         threading.Thread(target=runs_loop, name="runs", daemon=True),
         threading.Thread(target=prep_loop, name="embed", daemon=True),
         threading.Thread(target=agents_loop, name="agents", daemon=True),
+        threading.Thread(target=agent_preview.loop, args=(_stop,), name="agent-preview", daemon=True),
     ]
     for t in threads:
         t.start()

@@ -92,3 +92,47 @@ export const startRun = (
 export const stopRun = (runId: string) => post<RunView>(`agents/runs/${runId}/stop`);
 
 export const ACTIVE: RunView["status"][] = ["queued", "waiting_gpu", "running"];
+
+// --- превью агента в редакторе --------------------------------------------
+
+export interface PreviewDet {
+  id: string;
+  cls: string;
+  conf: number;
+  box: [number, number, number, number];
+  /** После «Уточнения SAM»: обводка кольцами точек и оценка маски. */
+  parts?: [number, number][][];
+  sam?: number;
+}
+
+export interface HumanShape {
+  cls: string;
+  color: string;
+  type: "bbox" | "polygon" | string;
+  geometry: { x?: number; y?: number; w?: number; h?: number; parts?: [number, number][][] };
+}
+
+export interface AgentPreview {
+  image: { id: string; file_name: string; width: number; height: number };
+  human: HumanShape[];
+  /** Вход и выход каждого узла. */
+  nodes: Record<string, { in: PreviewDet[]; out: PreviewDet[] }>;
+  device: "cuda" | "cpu";
+  /** Почему на процессоре: чем занята карта. */
+  note: string | null;
+  ms: number;
+}
+
+export const previewProjects = () =>
+  get<{ projects: { code: string; name: string; images: number }[] }>("agents/preview/projects");
+
+export const runPreview = (
+  body: {
+    graph_id: string;
+    doc: unknown;
+    project: string;
+    image_id: string | null;
+    step: "same" | "next" | "prev" | "random";
+  },
+  signal?: AbortSignal
+) => post<AgentPreview>("agents/preview", body, signal);

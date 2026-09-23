@@ -33,6 +33,7 @@ import Banner from "../Banner";
 import Sep from "../Sep";
 import { SAM_DEFAULTS, SAM_MODELS, agentClasses, rowsOf, upstream, type FilterRow, type NetRow } from "./agentDoc";
 import { TITLES, agentNodeTypes, mergeInputs, type AgentNodeData } from "./AgentNodes";
+import AgentPreview from "./AgentPreview";
 import WeightsPicker from "./WeightsPicker";
 
 const DRAFT_WAIT_MS = 700;
@@ -450,6 +451,15 @@ function Editor() {
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
+
+        {graphId && (
+          <AgentPreview
+            graphId={graphId}
+            doc={draft}
+            node={current ? { id: current.id, data: current.data as AgentNodeData } : null}
+            colorOf={colorOf}
+          />
+        )}
       </div>
 
       <aside className="ag-side">

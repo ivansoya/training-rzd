@@ -10,20 +10,23 @@
 """
 import hashlib
 import os
+import time
 import uuid
+from datetime import timedelta
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
+from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
 
-from common import config, live, task_frames
+from common import agent_graph, config, live, task_frames
 from common.auth import current_user, has_role, role_in
 from common.db import SessionLocal
 from common.models import (
-    AgentClassMap, AgentRun, AgentWeights, AugGraph, AugGraphVersion, Image,
+    AgentClassMap, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, Image,
     LabelClass, Project, ProjectMember, Task, TrainRun, utcnow,
 )
-from training_svc import pt_guard
+from training_svc import agent_preview as agent_preview_lib, pt_guard
 
 bp = Blueprint("agents", __name__)
 
@@ -509,3 +512,112 @@ def stop_agent_run(run_id):
         return jsonify(_run_view(db, run))
     finally:
         db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Превью агента в редакторе
+#
+# Считает `training-worker` (training_svc/agent_preview.py) — у него карта и
+# тёплые модели. Здесь выбор кадра, ручная разметка кадра для сравнения и
+# ожидание ответа воркера в строке `agent_previews`.
+# --------------------------------------------------------------------------- #
+PREVIEW_WAIT_S = 180   # первая загрузка SAM2 large с HuggingFace — минуты
+PREVIEW_KEEP_MIN = 10
+
+
+@bp.get("/api/agents/preview/projects")
+def preview_projects():
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        rows = db.execute(
+            select(Project.code, Project.name, func.count(Image.id))
+            .join(ProjectMember, ProjectMember.project_id == Project.id)
+            .join(Image, Image.project_id == Project.id)
+            .where(ProjectMember.user_id == user.id)
+            .group_by(Project.id).order_by(Project.name)
+        ).all()
+        return jsonify({"projects": [{"code": c, "name": n, "images": k} for c, n, k in rows]})
+    finally:
+        db.close()
+
+
+def _preview_frame(db, project, image_id, step):
+    """Кадр проекта: тот же, соседний по имени файла или случайный."""
+    in_project = select(Image).where(Image.project_id == project.id)
+    current = db.execute(in_project.where(Image.id == _uuid(image_id))).scalars().first() \
+        if image_id else None
+    if current is not None and step in ("next", "prev"):
+        key = (Image.file_name, Image.id)
+        here = sa_tuple(*key)
+        there = sa_tuple(current.file_name, current.id)
+        q = in_project.where(here > there).order_by(*key) if step == "next" \
+            else in_project.where(here < there).order_by(*(k.desc() for k in key))
+        return db.execute(q.limit(1)).scalars().first() or current
+    if current is not None and step == "same":
+        return current
+    return db.execute(in_project.order_by(func.random()).limit(1)).scalars().first()
+
+
+@bp.post("/api/agents/preview")
+def agent_preview():
+    """Один кадр через черновик агента: вход и выход каждого узла."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        data = request.get_json(silent=True) or {}
+        graph = db.get(AugGraph, _uuid(data.get("graph_id")))
+        if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
+            return jsonify({"error": "Агент не найден."}), 404
+        doc = data.get("doc")
+        shelf = {str(w.id): len(w.names or []) for w in db.execute(
+            select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars()}
+        try:
+            agent_graph.check(doc, weights=shelf)
+        except agent_graph.AgentGraphError as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        project = db.execute(select(Project).where(Project.code == data.get("project"))).scalar_one_or_none()
+        if project is None or not has_role(role_in(db, user, project), "viewer"):
+            return jsonify({"error": "Проект не найден."}), 404
+        image = _preview_frame(db, project, data.get("image_id"), data.get("step") or "same")
+        if image is None:
+            return jsonify({"error": "В проекте нет кадров."}), 404
+
+        classes = {c.id: c for c in db.execute(
+            select(LabelClass).where(LabelClass.project_id == project.id)).scalars()}
+        human = [
+            {"cls": classes[a.class_id].name, "color": classes[a.class_id].color,
+             "type": a.ann_type, "geometry": a.geometry}
+            for a in db.execute(select(Annotation).where(Annotation.image_id == image.id)).scalars()
+            if a.class_id in classes and a.source != "model"
+        ]
+
+        db.execute(AgentPreview.__table__.delete().where(
+            AgentPreview.created_at < utcnow() - timedelta(minutes=PREVIEW_KEEP_MIN)))
+        row = AgentPreview(user_id=user.id, image_id=image.id, doc=doc)
+        db.add(row)
+        db.flush()
+        db.execute(text(f"NOTIFY {agent_preview_lib.CHANNEL}"))
+        db.commit()
+
+        deadline = time.monotonic() + PREVIEW_WAIT_S
+        while time.monotonic() < deadline:
+            db.refresh(row)
+            if row.status != "queued":
+                break
+            time.sleep(0.05)
+        frame = {"id": str(image.id), "file_name": image.file_name,
+                 "width": image.width, "height": image.height}
+        if row.status == "superseded":
+            return jsonify({"superseded": True}), 409
+        if row.status == "queued":
+            return jsonify({"error": "Воркер не ответил — он запущен?"}), 504
+        if row.status == "error":
+            return jsonify({"error": row.error, "image": frame, "human": human}), 422
+        return jsonify({"image": frame, "human": human, **row.result})
+    finally:
+        db.close()
+

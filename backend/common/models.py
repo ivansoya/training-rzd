@@ -1662,3 +1662,35 @@ class AgentRun(Base, AuditMixin):
     error: Mapped[str | None] = mapped_column(sa.Text)
     started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class AgentPreview(Base):
+    """Запрос превью агента: веб кладёт, `training-worker` отвечает в ту же строку.
+
+    Статусы: queued → done | error; queued → superseded, если человек успел
+    поправить граф раньше, чем воркер взялся, — устаревшее не считаем.
+    """
+
+    __tablename__ = "agent_previews"
+    __table_args__ = (
+        sa.Index("ix_agent_previews_queued", "created_at",
+                 postgresql_where=sa.text("status = 'queued'")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    image_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("images.id", ondelete="CASCADE"), nullable=False
+    )
+    doc: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    status: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="queued", server_default="queued"
+    )
+    result: Mapped[dict | None] = mapped_column(JsonCol)
+    error: Mapped[str | None] = mapped_column(sa.Text)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow, server_default=sa.func.now()
+    )
+

@@ -396,10 +396,13 @@ def detect(params, width, height, side, infer):
     return [(cls, conf, *box) for cls, conf, box in fused]
 
 
-def run(doc, predict, order=None, segment=None):
+def run(doc, predict, order=None, segment=None, trace=None):
     """Прогнать один кадр. Возвращает обнаружения «Выхода»:
-    [{"cls": имя класса агента, "conf": float, "box": (x, y, w, h)}] и, после
-    SAM, ещё `parts` — обводка кольцами точек и `sam` — оценка маски."""
+    [{"id", "cls": имя класса агента, "conf": float, "box": (x, y, w, h)}] и,
+    после SAM, ещё `parts` — обводка кольцами точек и `sam` — оценка маски.
+
+    `id` — «узел сети.номер»: по нему превью видит, что узел отсеял. `trace`,
+    если передан, получает {узел: {"in": [...], "out": [...]}}."""
     by_id = {n["id"]: n for n in doc["nodes"]}
     order = order or check(doc)
     feeds = {(e["to"], e["in"]): e["from"] for e in doc["edges"]}
@@ -414,8 +417,8 @@ def run(doc, predict, order=None, segment=None):
         elif kind == "net":
             table = dict(net_classes(node))
             own = [
-                {"cls": table[int(c)], "conf": float(conf), "box": (x, y, w, h)}
-                for c, conf, x, y, w, h in predict(node)
+                {"id": f"{nid}.{k}", "cls": table[int(c)], "conf": float(conf), "box": (x, y, w, h)}
+                for k, (c, conf, x, y, w, h) in enumerate(predict(node))
                 if int(c) in table
             ]
             value[nid] = ins[0] + own
@@ -428,5 +431,7 @@ def run(doc, predict, order=None, segment=None):
             params = node.get("params") or {}
             value[nid] = [outline(d, *segment(node, d["box"]), params) for d in ins[0]]
         else:
-            result = ins[0]
+            result = value[nid] = ins[0]
+        if trace is not None:
+            trace[nid] = {"in": [d for branch in ins for d in branch], "out": value[nid]}
     return result

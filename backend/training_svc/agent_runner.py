@@ -203,7 +203,18 @@ def _one(db, run, image_id, doc, order, models, weights, mapping, device):
     if image is None or image.task_status != "new":
         db.rollback()
         return 0
-    path = os.path.join(config.DATA_DIR, image.file_path)
+    predict, segment = frame_fns(os.path.join(config.DATA_DIR, image.file_path),
+                                 image.file_name, models, weights, device)
+    found = agent_graph.run(doc, predict, order, segment)
+    return _write(db, run, image, found, mapping)
+
+
+def frame_fns(path, file_name, models, weights, device):
+    """(predict, segment) для одного кадра — их зовёт `agent_graph.run`.
+
+    Общие у прогона и превью: превью обязано показывать ровно то, что ляжет
+    в разметку. `models` — {узел сети: YOLO, имя SAM: предиктор}, `weights` —
+    {узел сети: строка полки}."""
     frame = []
 
     def predict(node):
@@ -213,7 +224,7 @@ def _one(db, run, image_id, doc, order, models, weights, mapping, device):
         if not frame:
             got = cv2.imread(path)
             if got is None:
-                raise RuntimeError(f"Кадр не читается: {image.file_name}")
+                raise RuntimeError(f"Кадр не читается: {file_name}")
             frame.append(got)
         pixels = frame[0]
         params = node.get("params") or {}
@@ -260,8 +271,10 @@ def _one(db, run, image_id, doc, order, models, weights, mapping, device):
             box=np.array([x, y, x + w, y + h], dtype=np.float32), multimask_output=True)
         return masks, scores
 
-    found = agent_graph.run(doc, predict, order, segment)
+    return predict, segment
 
+
+def _write(db, run, image, found, mapping):
     db.execute(
         Annotation.__table__.delete().where(
             Annotation.image_id == image.id,

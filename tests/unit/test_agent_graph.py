@@ -171,6 +171,14 @@ def test_sam_в_графе_и_проверка_модели():
     out = ag.run(doc, lambda node: [(0, 0.9, 40, 40, 100, 80), (0, 0.9, 0, 0, 10, 10)], segment=segment)
     assert asked == [(40, 40, 100, 80)]   # мелкую рамку фильтр отсеял раньше SAM
     assert [d["box"] for d in out] == [(45, 45, 90, 70)] and out[0]["parts"]
+    # трасса для превью: фильтр видно по тому, чего нет на выходе; у SAM имя
+    # обнаружения то же, но уже с обводкой
+    trace = {}
+    ag.run(doc, lambda node: [(0, 0.9, 40, 40, 100, 80), (0, 0.9, 0, 0, 10, 10)], segment=segment, trace=trace)
+    assert [d["id"] for d in trace["flt"]["in"]] == ["a.0", "a.1"]
+    assert [d["id"] for d in trace["flt"]["out"]] == ["a.0"]
+    assert "parts" not in trace["s"]["in"][0] and trace["s"]["out"][0]["id"] == "a.0"
+    assert trace["s"]["out"][0]["parts"] and trace["o"]["out"] == trace["s"]["out"]
     doc["nodes"][3]["params"]["model"] = "sam3"
     with pytest.raises(ag.AgentGraphError, match="неизвестная модель"):
         ag.check(doc)

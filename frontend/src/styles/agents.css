@@ -223,3 +223,41 @@
 .ag-check { display: flex; align-items: center; gap: 6px; align-self: end; padding-bottom: 7px; font-size: 12.5px; }
 .ag-check input { margin: 0; accent-color: var(--red); }
 .ag-flag { align-self: auto; padding: 2px 0; }
+
+/* --- превью агента: док — общий .g-pv из graph.css, сцена своя --- */
+.ag-pv:not([style]) { height: auto; }
+.ag-pv-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.ag-pv-body .g-pv-warn.block { margin: 8px 12px 0; }
+.ag-pv-body .g-pv-stage { flex: 1; }
+.ag-pv-frame {
+  position: relative;
+  width: min(100cqw, calc(100cqh * var(--ar, 16 / 9)));
+  aspect-ratio: var(--ar, 16 / 9);
+}
+.ag-pv-frame.busy img, .ag-pv-frame.busy svg { opacity: 0.6; transition: opacity 0.15s; }
+.ag-pv-frame img, .ag-pv-frame svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.ag-pv-frame svg { fill: none; }
+.ag-pv-frame svg rect, .ag-pv-frame svg polygon { stroke-width: 2px; vector-effect: non-scaling-stroke; }
+.ag-pv-frame svg text {
+  stroke: var(--paper);
+  stroke-width: 3px;
+  paint-order: stroke;
+  font-family: var(--mono);
+  font-weight: 600;
+  dominant-baseline: text-after-edge;
+}
+.ag-pv-frame svg .ag-pv-human { stroke: #fff; stroke-width: 1px; opacity: 0.85; }
+.ag-pv-name {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: #0F0F15d0;
+  color: var(--dim);
+  font-size: 11px;
+  max-width: calc(100% - 16px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
