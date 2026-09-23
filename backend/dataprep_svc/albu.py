@@ -201,7 +201,8 @@ def build_op(op, args, chance=0.5):
         raise ValueError(f"Узел «{op}»: {exc}") from exc
 
 
-def compose(ops, *, with_boxes=True, with_masks=False, min_visibility=0.15):
+def compose(ops, *, with_boxes=True, with_masks=False, min_visibility=0.15,
+            trace=False):
     """Цепочка трансформов с правилами переноса разметки.
 
     ``min_visibility`` — сколько объекта должно остаться в кадре, чтобы его
@@ -222,6 +223,11 @@ def compose(ops, *, with_boxes=True, with_masks=False, min_visibility=0.15):
     # Маски не требуют своих параметров: albumentations возит их вместе с
     # картинкой тем же преобразованием. Контур мы снимаем обратно сами —
     # см. ``masks.py``.
+    #
+    # Запись сработавших трансформов случайность не трогает: на одном зерне
+    # картинка побайтно та же, что без неё (tests/unit/test_node_preview.py).
+    if trace:
+        kwargs["save_applied_params"] = True
     return A.Compose(steps, **kwargs)
 
 

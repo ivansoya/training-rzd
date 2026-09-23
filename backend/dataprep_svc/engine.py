@@ -32,19 +32,30 @@ class Sample:
     картинки. Оба вида везутся вместе: полигон всегда несёт и свою
     охватывающую рамку, потому что по ней стоит подпись класса и по ней же
     считает боксовая выгрузка.
+
+    ``prev`` и ``step`` — родословная: из какого образца получен этот и каким
+    шагом (``{"node", "fired"}`` у преобразования, ``{"node", "copy"}`` у
+    «Умножения»). Нужна превью: «вход узла» и путь образца читаются по ней, а
+    не пересчитываются. Сборке она ничего не стоит — предки и так живут в
+    гнёздах ``run_frame`` до конца кадра.
     """
 
-    __slots__ = ("image", "boxes", "polys", "sid", "ordinal", "ops")
+    __slots__ = ("image", "boxes", "polys", "sid", "ordinal", "ops",
+                 "prev", "step")
 
-    def __init__(self, image, boxes, polys, sid="", ordinal=0, ops=()):
+    def __init__(self, image, boxes, polys, sid="", ordinal=0, ops=(),
+                 prev=None, step=None):
         self.image = image
         self.boxes = list(boxes)
         self.polys = list(polys)
         self.sid = sid
         self.ordinal = ordinal
         self.ops = tuple(ops)
+        self.prev = prev
+        self.step = step
 
-    def copy_with(self, image, boxes, polys, sid=None, ordinal=None, op=None):
+    def copy_with(self, image, boxes, polys, sid=None, ordinal=None, op=None,
+                  step=None):
         return Sample(
             image,
             boxes,
@@ -52,6 +63,8 @@ class Sample:
             sid if sid is not None else self.sid,
             ordinal if ordinal is not None else self.ordinal,
             self.ops + ((op,) if op else ()),
+            self,
+            step,
         )
 
     @property
@@ -84,12 +97,15 @@ class Compiled:
 
 
 def compile_graph(doc, load_version=None, *, min_visibility=0.15,
-                  with_masks=False):
+                  with_masks=False, trace=False):
     """Разложить граф в план и заранее собрать все преобразования.
 
     Преобразования собираются один раз на сборку, а не на каждый кадр: сборка
     объекта albumentations стоит микросекунды против миллисекунд самой работы,
     но на сотне тысяч кадров и микросекунды складываются в минуты.
+
+    ``trace`` — записывать, какие трансформы сработали. Только для превью:
+    albumentations кладёт в запись и карту шума размером с кадр.
     """
     load_version = load_version or (lambda *_: None)
     nodes, edges = planlib.expand(doc, load_version)
@@ -102,7 +118,7 @@ def compile_graph(doc, load_version=None, *, min_visibility=0.15,
             continue
         compiled.pipelines[node["id"]] = albu.compose(
             ops, with_boxes=True, with_masks=with_masks,
-            min_visibility=min_visibility,
+            min_visibility=min_visibility, trace=trace,
         )
     return compiled
 
@@ -175,15 +191,20 @@ def apply(compiled, node, sample, seed):
             if parts:
                 polys.append((cls, parts))
 
+    # Без записи (сборка) — ``None``: «не знаю», а не «ничего не сработало».
+    applied = done.get("applied_transforms")
+    fired = None if applied is None else [name for name, _ in applied]
     return sample.copy_with(
-        done["image"], boxes, polys, op=(node.get("params") or {}).get("op")
+        done["image"], boxes, polys, op=(node.get("params") or {}).get("op"),
+        step={"node": node["id"], "fired": fired},
     )
 
 
 # --------------------------------------------------------------------------- #
 # Обход плана одним кадром
 # --------------------------------------------------------------------------- #
-def run_frame(compiled, sample, set_seed, image_id, *, source=None, on_drop=None):
+def run_frame(compiled, sample, set_seed, image_id, *, source=None, on_drop=None,
+              peek=None, feed=None):
     """Все образцы, которые даст этот кадр. Возвращает [(узел-выход, образец)].
 
     ``on_drop(node_id, reason)`` зовётся, когда образец потерял всю разметку и
@@ -195,9 +216,18 @@ def run_frame(compiled, sample, set_seed, image_id, *, source=None, on_drop=None
     Без этого довода кадр входил бы во все сразу и выходил бы столько раз,
     сколько у графа источников. Пусто — влить во все: так живёт граф с
     единственным источником, а таких большинство.
+
+    ``peek`` — словарь, в который лягут образцы на всех гнёздах: превью
+    смотрит, что вышло из любого узла, а не только из «Выхода».
+
+    ``feed`` — такт: ``{источник: образец}``, по своему кадру в каждый
+    источник сразу. Нужен «Слиянию сеткой»: его входы бывают от разных
+    источников, и в прогоне «один кадр — один источник» они ни разу не
+    оказались бы заполнены вместе. С ``feed`` доводы ``sample`` и ``source``
+    не читаются; ``image_id`` тогда — номер такта.
     """
     frame = rng.frame_seed(set_seed, image_id)
-    at_port = {}   # (node_id, port) -> [Sample]
+    at_port = {} if peek is None else peek   # (node_id, port) -> [Sample]
     results = []
 
     for node_id in compiled.order:
@@ -206,9 +236,33 @@ def run_frame(compiled, sample, set_seed, image_id, *, source=None, on_drop=None
         ins, outs = schema.ports(node)
 
         if kind in schema.SOURCES:
-            at_port[(node_id, "out")] = (
-                [sample] if source is None or node_id == source else []
-            )
+            if feed is not None:
+                got = feed.get(node_id)
+                at_port[(node_id, "out")] = [got] if got is not None else []
+            else:
+                at_port[(node_id, "out")] = (
+                    [sample] if source is None or node_id == source else []
+                )
+            continue
+
+        if kind == "mosaic":
+            from dataprep_svc import mosaic
+
+            # По короткому входу: k-я сетка берёт k-й образец с каждого входа,
+            # лишнее с богатых входов в этом такте отбрасывается. Копить его до
+            # следующего такта нельзя — при ×3 на одном входе очередь росла
+            # бы без конца.
+            lanes = [
+                [item
+                 for e in compiled.in_edges.get((node_id, name), ())
+                 for item in at_port.get((e["from"], e["out"]), ())]
+                for name in ins
+            ]
+            n = min((len(lane) for lane in lanes), default=0)
+            at_port[(node_id, "out")] = [
+                mosaic.compose(node, [lane[k] for lane in lanes], k)
+                for k in range(n)
+            ]
             continue
 
         arriving = []
@@ -230,6 +284,7 @@ def run_frame(compiled, sample, set_seed, image_id, *, source=None, on_drop=None
                         item.image, item.boxes, item.polys,
                         sid=f"{item.sid}.{k}",
                         ordinal=item.ordinal * times + k,
+                        step={"node": node_id, "copy": k},
                     ))
             at_port[(node_id, "out")] = made
             continue

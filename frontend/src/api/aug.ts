@@ -1,6 +1,6 @@
 // Графы аугментаций: личная библиотека, версии и каталог узлов.
 
-import { del, get, patch, post } from "./http";
+import { del, get, patch, post, put } from "./http";
 
 export type NodeKind =
   | "source"
@@ -13,7 +13,8 @@ export type NodeKind =
   | "merge"
   | "order"
   | "output"
-  | "group";
+  | "group"
+  | "mosaic";
 
 export interface GraphNode {
   id: string;
@@ -66,6 +67,10 @@ export interface GraphSummary {
 export interface GraphDetail extends GraphSummary {
   doc: GraphDoc;
   mine: boolean;
+  /** Когда сохранилась настоящая копия; пусто — она совпадает с версией. */
+  draft_at?: string | null;
+  /** В настоящей копии есть правки, которых нет ни в одной версии. */
+  changed?: boolean;
 }
 
 export interface VersionRow {
@@ -132,6 +137,12 @@ export const saveVersion = (id: string, doc: GraphDoc, note?: string) =>
     note,
   });
 
+// Настоящая копия — на каждой правке, мимо версий. `leaving` — последняя
+// правка при уходе со страницы: keepalive дотянет её, но только до 64 КБ,
+// поэтому обычное сохранение идёт без него.
+export const saveDraft = (id: string, doc: GraphDoc, leaving = false) =>
+  put<{ draft_at: string; changed: boolean }>(`aug/graphs/${id}/draft`, { doc }, leaving);
+
 export const patchGraph = (
   id: string,
   data: { name?: string; description?: string; archived?: boolean; head_version_id?: string }
@@ -154,3 +165,71 @@ export const linkGraph = (code: string, graphId: string) =>
 
 export const unlinkGraph = (code: string, graphId: string) =>
   del<{ ok: true }>(`projects/${code}/aug/${graphId}`);
+
+// Превью узла: один кадр через граф — что выходит из выбранного узла.
+// Считает сервер тем же исполнителем, что и сборку, см.
+// dataprep_svc/preview.py.
+
+export interface PreviewShape {
+  c: number;
+  box?: [number, number, number, number];
+  rings?: [number, number][][];
+}
+
+export interface PreviewPic {
+  pic: number;
+  shapes: PreviewShape[];
+  objects: number;
+}
+
+/** Шаг пути образца: преобразование (`fired` — что сработало, `null` —
+ *  неизвестно) или копия «Умножения». */
+export interface PreviewStep {
+  node: string;
+  ops: string[];
+  fired?: string[] | null;
+  copy?: number;
+  /** «Слияние сеткой»: сколько ячеек сложено в кадр. */
+  cells?: number;
+}
+
+export interface PreviewFrame {
+  kind: "project" | "test";
+  project?: string;
+  project_name?: string;
+  image?: string;
+  name?: string;
+  width: number;
+  height: number;
+}
+
+export interface PreviewResult {
+  frame: PreviewFrame;
+  classes: { name: string; color: string }[];
+  reached: boolean;
+  pics?: { url: string; w: number; h: number }[];
+  original?: PreviewPic;
+  total?: number;
+  dropped?: Record<string, number>;
+  samples?: {
+    sid: string;
+    after: PreviewPic;
+    before: PreviewPic;
+    trail: PreviewStep[];
+  }[];
+}
+
+export const previewProjects = (graphId: string) =>
+  get<{ projects: { code: string; name: string; linked: boolean }[] }>(
+    `aug/preview/projects?graph=${graphId}`
+  );
+
+export const preview = (
+  body: {
+    doc: GraphDoc;
+    node: string;
+    seed: number;
+    frame: { project: string; image?: string | null } | null;
+  },
+  signal?: AbortSignal
+) => post<PreviewResult>("aug/preview", body, signal);

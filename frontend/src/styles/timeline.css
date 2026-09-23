@@ -1,5 +1,13 @@
 /* Focused editing: no second application sidebar and no minimap. */
-.workspace.workspace-graph { --workspace-width: 0px; }
+/* Редактор графа — инструмент: шапки ужаты до одной строки, место холсту. */
+.workspace.workspace-graph { --workspace-width: 0px; --workspace-header: 44px; }
+.workspace-graph .mag-topbar.workspace-topbar { padding-inline: 16px; }
+.workspace-graph .g-canvas-top { min-height: 44px; padding: 5px 12px; gap: 10px; }
+.workspace-graph .g-canvas-top .ttl { font-size: 14px; }
+.workspace-graph .g-canvas-top .mag-btn,
+.workspace-graph .g-canvas-top select { padding-top: 5px; padding-bottom: 5px; font-size: 12.5px; }
+.workspace-graph .g-pal-search { padding: 6px 10px; }
+.workspace-graph .g-pal-search input { min-height: 31px; }
 .workspace-graph .workspace-sidebar { display: none; }
 .workspace-graph .g-ged { left: 0; }
 .t-tabs > .mag-btn { width: auto; flex: 0 0 auto; white-space: nowrap; }

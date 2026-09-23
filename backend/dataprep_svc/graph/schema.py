@@ -27,6 +27,7 @@ KINDS = (
     "order",       # то же, но с объявленной очерёдностью веток
     "output",      # в обучающий набор
     "group",       # другой граф целиком, одним узлом
+    "mosaic",      # слияние сеткой: по образцу с каждого входа — в один кадр
 )
 
 # Сколько веток бывает у разделителя и сколько входов у слияния. Потолок не
@@ -40,6 +41,10 @@ MAX_TIMES = 64
 MAX_NODES = 400
 # Глубина вложенности графов-блоков.
 MAX_GROUP_DEPTH = 8
+# Сетка «Слияния сеткой»: строк и столбцов не больше четырёх — шестнадцать
+# ячеек на кадре 1280 уже по 320 пикселей, мельче объекты не разглядеть.
+MAX_GRID = 4
+FITS = ("letterbox", "stretch")
 
 
 class GraphError(ValueError):
@@ -65,6 +70,46 @@ def inputs_count(node) -> int:
 
 def times(node) -> int:
     return _int(node.get("params") or {}, "times", 2, 1, MAX_TIMES)
+
+
+def _shares(raw, n):
+    """Доли столбцов или строк сетки: n положительных чисел, в сумме единица.
+    Ячейка уже 5 % не бывает — её перегородку потом не поймать мышью."""
+    out = []
+    for i in range(n):
+        try:
+            out.append(max(0.05, float(raw[i])))
+        except (IndexError, TypeError, ValueError):
+            out.append(1.0)
+    total = sum(out)
+    return [v / total for v in out]
+
+
+def grid(node) -> dict:
+    """Сетка «Слияния сеткой», приведённая к пределам.
+
+    Входов ровно ``rows × cols``, по порядку строк: вход i0 — левая верхняя
+    ячейка. У каждой ячейки своё вписывание: ``letterbox`` сохраняет
+    пропорции кадра и добивает поля чёрным, ``stretch`` растягивает кадр на
+    всю ячейку.
+    """
+    params = node.get("params") or {}
+    rows = _int(params, "rows", 2, 1, MAX_GRID)
+    cols = _int(params, "cols", 2, 1, MAX_GRID)
+    raw_fit = params.get("fit") or []
+    fit = []
+    for i in range(rows * cols):
+        value = raw_fit[i] if isinstance(raw_fit, list) and i < len(raw_fit) else None
+        fit.append(value if value in FITS else FITS[0])
+    return {
+        "rows": rows,
+        "cols": cols,
+        "col_w": _shares(params.get("col_w") or [], cols),
+        "row_h": _shares(params.get("row_h") or [], rows),
+        "fit": fit,
+        "width": _int(params, "width", 1280, 64, 4096),
+        "height": _int(params, "height", 1280, 64, 4096),
+    }
 
 
 def weights(node) -> list:
@@ -103,6 +148,9 @@ def ports(node, group_ports=None):
         return ["in"], [f"o{i}" for i in range(branches(node))]
     if kind in ("merge", "order"):
         return [f"i{i}" for i in range(inputs_count(node))], ["out"]
+    if kind == "mosaic":
+        g = grid(node)
+        return [f"i{i}" for i in range(g["rows"] * g["cols"])], ["out"]
     if kind == "group":
         got = group_ports or {}
         ins = list(got.get("in") or ["in"])

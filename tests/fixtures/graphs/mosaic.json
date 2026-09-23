@@ -1,0 +1,33 @@
+{
+  "name": "Слияние сеткой из двух источников",
+  "note": "День множится втрое и идёт в левую ячейку, ночь — как есть в правую. Сеток столько, сколько образцов на самом бедном входе: min(3120, 1040) = 1040. Влито 2×1040, вышло 1040 — множитель 0.5.",
+  "base": 1040,
+  "doc": {
+    "v": 1,
+    "nodes": [
+      {"id": "day", "type": "source", "params": {"name": "День"}},
+      {"id": "night", "type": "source", "params": {"name": "Ночь"}},
+      {"id": "mul", "type": "multiply", "params": {"label": "Умножение", "times": 3}},
+      {"id": "grid", "type": "mosaic", "params": {"rows": 1, "cols": 2, "width": 1280, "height": 640}},
+      {"id": "out", "type": "output", "params": {"label": "Выход"}}
+    ],
+    "edges": [
+      {"from": "day", "out": "out", "to": "mul", "in": "in"},
+      {"from": "mul", "out": "out", "to": "grid", "in": "i0"},
+      {"from": "night", "out": "out", "to": "grid", "in": "i1"},
+      {"from": "grid", "out": "out", "to": "out", "in": "in"}
+    ]
+  },
+  "expect": {
+    "outputs": 1040,
+    "dropped": 0,
+    "multiplier": 0.5,
+    "nodes": 5,
+    "edges": {
+      "day:out->mul:in": 1040,
+      "mul:out->grid:i0": 3120,
+      "night:out->grid:i1": 1040,
+      "grid:out->out:in": 1040
+    }
+  }
+}

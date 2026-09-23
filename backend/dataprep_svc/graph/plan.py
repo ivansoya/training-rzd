@@ -238,6 +238,9 @@ def counts(doc, base=1.0, load_version=None):
                 got += per_edge.get(edge_key(e), 0.0)
         return got
 
+    def shortest_input(node):
+        return _shortest(node, in_edges, per_edge)
+
     for node_id in order:
         node = by_id[node_id]
         kind = node["type"]
@@ -254,6 +257,11 @@ def counts(doc, base=1.0, load_version=None):
             continue
         elif kind == "multiply":
             produced = {"out": incoming_sum(node) * schema.times(node)}
+        elif kind == "mosaic":
+            # Сеток столько, сколько образцов на самом бедном входе: в каждом
+            # такте лишнее с богатых входов отбрасывается. Сумма по тактам —
+            # приближение: считаем минимум итогов, а не сумму минимумов.
+            produced = {"out": shortest_input(node)}
         elif kind in ("split_share", "split_prob"):
             # Оба делят поток: каждый образец уходит ровно в одну ветку, и
             # сумма по веткам равна входу. Разница между ними не в числах, а в
@@ -309,6 +317,8 @@ def _produced_at(node, port, in_edges, per_edge):
     kind = node["type"]
     if kind in schema.SOURCES:
         return 0.0   # источник без провода — это ошибка формы, не потеря
+    if kind == "mosaic":
+        return _shortest(node, in_edges, per_edge)
     if kind == "multiply":
         return got * schema.times(node)
     if kind in ("split_share", "split_prob"):
@@ -316,3 +326,16 @@ def _produced_at(node, port, in_edges, per_edge):
         idx = int(port[1:]) if port.startswith("o") else 0
         return got * w[idx] / sum(w)
     return got
+
+
+def _shortest(node, in_edges, per_edge):
+    """Образцов на самом бедном входе узла. Пустое гнездо — ноль."""
+    ins, _ = schema.ports(node)
+    return min(
+        (
+            sum(per_edge.get(edge_key(e), 0.0)
+                for e in in_edges.get((node["id"], name), ()))
+            for name in ins
+        ),
+        default=0.0,
+    )

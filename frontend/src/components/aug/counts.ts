@@ -14,6 +14,9 @@ import type { GraphDoc, GraphEdge, GraphNode, NodeKind } from "../../api/aug";
 export const MAX_BRANCHES = 12;
 export const MAX_INPUTS = 12;
 export const MAX_TIMES = 64;
+export const MAX_GRID = 4;
+export const FITS = ["letterbox", "stretch"] as const;
+export type Fit = (typeof FITS)[number];
 
 export class GraphError extends Error {}
 
@@ -29,6 +32,37 @@ function whole(node: GraphNode, key: string, dflt: number, low: number, high: nu
 export const branches = (n: GraphNode) => whole(n, "branches", 2, 2, MAX_BRANCHES);
 export const inputsCount = (n: GraphNode) => whole(n, "inputs", 2, 2, MAX_INPUTS);
 export const times = (n: GraphNode) => whole(n, "times", 2, 1, MAX_TIMES);
+
+/** Доли столбцов или строк сетки: n чисел, в сумме единица. Уже 5 % ячейка
+ *  не бывает — её перегородку потом не поймать мышью. */
+function shares(raw: unknown, n: number): number[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const out = Array.from({ length: n }, (_, i) => {
+    const v = Number(list[i]);
+    return Number.isFinite(v) ? Math.max(0.05, v) : 1;
+  });
+  const total = out.reduce((a, b) => a + b, 0);
+  return out.map((v) => v / total);
+}
+
+/** Сетка «Слияния сеткой», приведённая к пределам — как schema.grid. */
+export function grid(node: GraphNode) {
+  const rows = whole(node, "rows", 2, 1, MAX_GRID);
+  const cols = whole(node, "cols", 2, 1, MAX_GRID);
+  const params = node.params ?? {};
+  const rawFit = Array.isArray(params.fit) ? (params.fit as unknown[]) : [];
+  return {
+    rows,
+    cols,
+    colW: shares(params.col_w, cols),
+    rowH: shares(params.row_h, rows),
+    fit: Array.from({ length: rows * cols }, (_, i) =>
+      FITS.includes(rawFit[i] as Fit) ? (rawFit[i] as Fit) : FITS[0]
+    ),
+    width: whole(node, "width", 1280, 64, 4096),
+    height: whole(node, "height", 1280, 64, 4096),
+  };
+}
 
 /** Доли или веса разделителя, приведённые к числу веток. */
 export function weights(node: GraphNode): number[] {
@@ -70,6 +104,10 @@ export function ports(
     }
     case "group":
       return [groupPorts?.in ?? ["in"], groupPorts?.out ?? ["out"]];
+    case "mosaic": {
+      const g = grid(node);
+      return [Array.from({ length: g.rows * g.cols }, (_, i) => `i${i}`), ["out"]];
+    }
     default:
       throw new GraphError(`Неизвестный узел: ${node.type}`);
   }
@@ -205,6 +243,21 @@ export function counts(
   let totalIn = 0;
   const fed = typeof base === "number" ? null : base;
 
+  // Сколько образцов на самом бедном входе: столько сеток и выйдет.
+  const shortest = (node: GraphNode) => {
+    const [ins] = ports(node);
+    return ins.length
+      ? Math.min(
+          ...ins.map((name) =>
+            (inEdges.get(`${node.id}:${name}`) ?? []).reduce(
+              (a, e) => a + (perEdge[edgeKey(e)] ?? 0),
+              0
+            )
+          )
+        )
+      : 0;
+  };
+
   const arriving = (node: GraphNode) => {
     const [ins] = ports(node, groupInfo?.[node.id]?.ports);
     let got = 0;
@@ -229,6 +282,8 @@ export function counts(
       continue;
     } else if (node.type === "multiply") {
       produced = { out: arriving(node) * times(node) };
+    } else if (node.type === "mosaic") {
+      produced = { out: shortest(node) };
     } else if (node.type === "split_share" || node.type === "split_prob") {
       const got = arriving(node);
       const w = weights(node);
@@ -265,6 +320,7 @@ export function counts(
       if (outEdges.get(`${node.id}:${port}`)?.length) return;
       if (SOURCES.includes(node.type)) return;
       if (node.type === "multiply") dropped += got * times(node);
+      else if (node.type === "mosaic") dropped += shortest(node);
       else if (node.type === "split_share" || node.type === "split_prob") {
         const w = weights(node);
         const idx = Number(port.slice(1)) || 0;

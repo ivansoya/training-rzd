@@ -8,7 +8,7 @@
 import type { Node } from "@xyflow/react";
 import type { Catalogue, ParamSpec } from "../../api/aug";
 import type { Counts } from "./counts";
-import { branches, inputsCount, times, weights } from "./counts";
+import { branches, grid, inputsCount, times, weights } from "./counts";
 import type { NodeData } from "./GraphNodes";
 
 const fmt = (v: number, spec?: ParamSpec) =>
@@ -102,6 +102,8 @@ export default function NodeInspector({
   totals,
   onChange,
   onRemove,
+  previewing,
+  onPreview,
 }: {
   node: Node | null;
   catalogue: Catalogue | null;
@@ -109,6 +111,8 @@ export default function NodeInspector({
   totals: Counts | null;
   onChange: (next: Record<string, unknown>) => void;
   onRemove: () => void;
+  previewing: boolean;
+  onPreview: () => void;
 }) {
   if (!node) {
     return (
@@ -294,6 +298,52 @@ export default function NodeInspector({
         </>
       )}
 
+      {data.kind === "mosaic" && (() => {
+        const g = grid(asNode);
+        const whole = (key: string, label: string, low: number, high: number, step = 1) => (
+          <Number_
+            key={key}
+            spec={{ key, label, kind: "number", low, high, step, int: true, default: low }}
+            value={g[key as "rows" | "cols" | "width" | "height"]}
+            disabled={readOnly}
+            onChange={(v) => onChange({ [key]: v })}
+          />
+        );
+        return (
+          <>
+            {whole("rows", "Строк", 1, 4)}
+            {whole("cols", "Столбцов", 1, 4)}
+            {whole("width", "Ширина кадра, px", 64, 4096, 32)}
+            {whole("height", "Высота кадра, px", 64, 4096, 32)}
+            {!readOnly && (
+              <div className="g-insp-row">
+                <button
+                  type="button"
+                  className="mag-ghost"
+                  onClick={() => onChange({ fit: g.fit.map(() => "letterbox") })}
+                >
+                  Все с полями
+                </button>
+                <button
+                  type="button"
+                  className="mag-ghost"
+                  onClick={() => onChange({ fit: g.fit.map(() => "stretch") })}
+                >
+                  Все растянуть
+                </button>
+                <button
+                  type="button"
+                  className="mag-ghost"
+                  onClick={() => onChange({ col_w: null, row_h: null })}
+                >
+                  Ячейки поровну
+                </button>
+              </div>
+            )}
+          </>
+        );
+      })()}
+
       {(data.kind === "merge" || data.kind === "order") && (
         <Number_
           spec={{
@@ -327,11 +377,21 @@ export default function NodeInspector({
         </b>
       </div>
 
-      {!readOnly && (
+      {!previewing && (
         <button
           type="button"
           className="mag-ghost"
           style={{ marginTop: 16, width: "100%" }}
+          onClick={onPreview}
+        >
+          Показать в превью
+        </button>
+      )}
+      {!readOnly && (
+        <button
+          type="button"
+          className="mag-ghost"
+          style={{ marginTop: previewing ? 16 : 8, width: "100%" }}
           onClick={onRemove}
         >
           Убрать узел

@@ -40,6 +40,15 @@ const ENDS: Item[] = [
   },
 ];
 
+// «Слияние сеткой» — не трансформ albumentations, но по смыслу геометрия:
+// кладётся в её группу палитры.
+const MOSAIC: Item = {
+  kind: "mosaic",
+  label: "Слияние сеткой",
+  klass: "k-geometry",
+  params: { label: "Слияние сеткой", rows: 2, cols: 2, width: 1280, height: 1280 },
+};
+
 const FLOW: Item[] = [
   {
     kind: "multiply",
@@ -109,6 +118,7 @@ export default function NodePalette({
             args: Object.fromEntries(n.params.map((p) => [p.key, p.default])),
           },
         }));
+      if (group.key === "geometry") items.push(MOSAIC);
       if (items.length) out.push({ ...group, items });
     }
     out.push({ key: "flow", title: "Поток", items: FLOW });

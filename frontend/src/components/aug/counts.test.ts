@@ -30,7 +30,7 @@ function load(name: string) {
 describe("счёт по образцам", () => {
   // Блоки клиент сам не разворачивает — их содержимое лежит на сервере,
   // поэтому образец «block» проверяется отдельно, с подставленным множителем.
-  for (const name of ["vagony", "shares", "two-sources"]) {
+  for (const name of ["vagony", "shares", "two-sources", "mosaic"]) {
     it(`${name}: числа сходятся с серверными`, () => {
       const fixture = load(name);
       const got = counts(fixture.doc, fixture.base);

@@ -75,6 +75,45 @@ class RandomAreaCrop(A.DualTransform):
         return ("scale", "min_visibility")
 
 
+class FractionCrop(RandomAreaCrop):
+    """Кроп заданного окна: четыре границы долями стороны, от 0 до 1.
+
+    Не ``A.Crop`` библиотеки: тот берёт пиксели, а кадры в наборе разного
+    размера — «x от 0,1 до 0,9» должно значить одно и то же на любом. Порог
+    видимости и пересчёт разметки — от ``RandomAreaCrop``: отличается только
+    то, какое окно режем.
+    """
+
+    def __init__(self, x_range=(0.0, 1.0), y_range=(0.0, 1.0),
+                 min_visibility=0.5, p=0.5):
+        A.DualTransform.__init__(self, p=p)
+        self.x_range = _span(x_range)
+        self.y_range = _span(y_range)
+        self.min_visibility = float(min_visibility)
+
+    def get_params_dependent_on_data(self, params, data):
+        height, width = params["shape"][:2]
+        return {"crop_coords": window(self.x_range, self.y_range, width, height)}
+
+    def get_transform_init_args_names(self):
+        return ("x_range", "y_range", "min_visibility")
+
+
+def _span(pair):
+    low, high = sorted(min(max(float(v), 0.0), 1.0) for v in pair)
+    return (low, high)
+
+
+def window(x_range, y_range, width, height):
+    """Окно кропа в пикселях. Не уже пикселя: окно нулевой ширины дало бы
+    пустую картинку, и сборка упала бы на записи файла, а не здесь."""
+    left = min(int(round(x_range[0] * width)), width - 1)
+    top = min(int(round(y_range[0] * height)), height - 1)
+    right = max(int(round(x_range[1] * width)), left + 1)
+    bottom = max(int(round(y_range[1] * height)), top + 1)
+    return (left, top, right, bottom)
+
+
 def visible(boxes):
     """Какая доля каждого бокса осталась в кадре, от 0 до 1.
 

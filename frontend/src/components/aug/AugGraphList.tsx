@@ -10,6 +10,7 @@ export default function AugGraphList() {
   const [graphs, setGraphs] = useState<api.GraphSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
+  const [removing, setRemoving] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
@@ -48,6 +49,22 @@ export default function AugGraphList() {
     }
   };
 
+  /** Удалить граф. Граф, по которому собран набор, сервер не отдаст (409) —
+   *  паспорт набора ссылается на его версии; причину он пишет сам. */
+  const remove = async (g: api.GraphSummary) => {
+    if (!window.confirm(`Удалить граф «${g.name}» со всеми версиями?`)) return;
+    setRemoving(g.id);
+    setError(null);
+    try {
+      await api.deleteGraph(g.id);
+      setGraphs((old) => old.filter((x) => x.id !== g.id));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setRemoving(null);
+    }
+  };
+
   return (
     <div className="mag-content">
       <div className="mag-pass-strip">
@@ -78,8 +95,10 @@ export default function AugGraphList() {
       ) : (
         <div className="g-graphs">
           {graphs.map((g) => (
-            <Link key={g.id} to={`/augment/${g.id}`} className="g-graph-card">
-              <span className="name">{g.name}</span>
+            // Карточка — не ссылка целиком: кнопку внутри ссылки класть
+            // нельзя. Ссылка растянута на всю карточку, кнопка лежит поверх.
+            <div key={g.id} className="g-graph-card">
+              <Link to={`/augment/${g.id}`} className="name">{g.name}</Link>
               {g.description && <span className="desc">{g.description}</span>}
               <span className="foot">
                 <span>версия {g.version}</span>
@@ -88,8 +107,16 @@ export default function AugGraphList() {
                 {g.used_by_sets > 0 && (
                   <span>в наборах: {g.used_by_sets}</span>
                 )}
+                <button
+                  type="button"
+                  className="g-graph-del"
+                  disabled={removing === g.id}
+                  onClick={() => remove(g)}
+                >
+                  Удалить
+                </button>
               </span>
-            </Link>
+            </div>
           ))}
         </div>
       )}

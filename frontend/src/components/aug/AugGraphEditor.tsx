@@ -1,8 +1,9 @@
 // Редактор графа аугментаций.
 //
-// Черновик сохраняется сам, версия — нет. Версию создаёт явное «Сохранить
-// версию»: иначе автосохранение нарожает сотню версий за вечер и обесценит
-// саму запись «набор собран версией 7».
+// Настоящая копия сохраняется сама, на каждой правке, версия — нет. Версию
+// создаёт явное «Сохранить версию»: иначе автосохранение нарожает сотню версий
+// за вечер и обесценит саму запись «набор собран версией 7». Версии
+// смотрятся из списка, настоящая стоит в нём отдельно.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -23,15 +24,19 @@ import {
 import * as api from "../../api/aug";
 import type { CatalogueNode, GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
 import { GraphError, counts, edgeKey, findCycle } from "./counts";
-import { edgeTypes, nodeTypes, ru, type NodeData, type WireData } from "./GraphNodes";
+import { edgeTypes, nodeTypes, type NodeData, type WireData } from "./GraphNodes";
 import NodeInspector from "./NodeInspector";
 import NodePalette from "./NodePalette";
+import NodePreview from "./NodePreview";
 import Banner from "../Banner";
 
 // Сколько кадров показывать на проводах, пока набор не выбран. Число условное
 // и подписано как условное: важны не сами кадры, а во сколько раз их станет
 // больше.
 const SAMPLE_BASE = 1000;
+// Пауза после последней правки, прежде чем сохранить настоящую копию: тянут
+// ползунок — сохраняем один раз, когда отпустили.
+const DRAFT_WAIT_MS = 700;
 
 let seq = 0;
 const freshId = (kind: string) => `${kind}${++seq}${Date.now() % 1000}`;
@@ -125,9 +130,18 @@ function Editor() {
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [eyeOn, setEyeOn] = useState<string | null>(null);
+  const [previewFull, setPreviewFull] = useState(false);
+  // Меню узла: где открыто и для какого. Координаты — внутри холста.
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Настоящая копия: что последним ушло на сервер, как прошло и есть ли в
+  // ней правки, которых нет ни в одной версии.
+  const lastSaved = useRef<string | null>(null);
+  const pending = useRef<GraphDoc | null>(null);
+  const [saveState, setSaveState] = useState<"saved" | "saving" | string>("saved");
+  const [changed, setChanged] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
 
@@ -165,6 +179,7 @@ function Editor() {
   useEffect(() => {
     if (!graphId) return;
     let alive = true;
+    lastSaved.current = null;
     (async () => {
       try {
         const got = await api.getGraph(graphId, wanted);
@@ -174,6 +189,9 @@ function Editor() {
         const [ns, es] = toFlow(got.doc, byOp, {}, {}, setEyeOn, null);
         setNodes(ns);
         setEdges(es);
+        lastSaved.current = JSON.stringify(toDoc(ns, es));
+        setChanged(Boolean(got.changed));
+        setSaveState("saved");
         setVersions((await api.listVersions(graphId)).versions);
       } catch (e) {
         if (alive) setProblem((e as Error).message);
@@ -229,6 +247,7 @@ function Editor() {
       })),
     [edges, totals, killWire, readOnly]
   );
+
 
   const canConnect = useCallback(
     (conn: Connection | Edge) => {
@@ -386,6 +405,98 @@ function Editor() {
     [setNodes, setEdges]
   );
 
+  const unlink = useCallback(
+    (id: string) =>
+      setEdges((old) => old.filter((e) => e.source !== id && e.target !== id)),
+    [setEdges]
+  );
+
+  const openMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      if (readOnly) return;
+      event.preventDefault();
+      const box = wrap.current?.getBoundingClientRect();
+      if (!box) return;
+      // Меню не должно уезжать за край холста у карточки в углу.
+      setMenu({
+        id: node.id,
+        x: Math.min(event.clientX - box.left + 4, box.width - 200),
+        y: Math.min(event.clientY - box.top + 4, box.height - 90),
+      });
+    },
+    [readOnly]
+  );
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: KeyboardEvent) => e.key === "Escape" && setMenu(null);
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [menu]);
+
+  // Какой узел в превью, карточка узнаёт отсюда, а не из своего состояния:
+  // иначе глаз загорался бы только у узлов, созданных после щелчка. Здесь же
+  // доклеивается каталог: он приходит позже графа, и без этого карточка
+  // «Дождя» так и звалась бы RandomRain.
+  // Правка с карточки (редактор сетки) — только там, где граф можно править.
+  const onParams = readOnly ? undefined : patchParams;
+  const shown = useMemo(
+    () =>
+      nodes.map((n) => {
+        const d = n.data as NodeData;
+        const cat = d.catalogue ?? byOp.get((d.params.op as string) ?? "");
+        return Boolean(d.eye) === (n.id === eyeOn) &&
+          cat === d.catalogue &&
+          d.onParams === onParams
+          ? n
+          : { ...n, data: { ...d, eye: n.id === eyeOn, catalogue: cat, onParams } };
+      }),
+    [nodes, eyeOn, byOp, onParams]
+  );
+  const draft = useMemo(() => toDoc(nodes, edges), [nodes, edges]);
+
+  // Автосохранение настоящей копии. Сравнивается весь документ, с
+  // координатами: передвинутый узел — тоже работа, которую жалко терять.
+  // Выделение в документ не входит, поэтому щелчок по узлу сохранения не
+  // вызывает.
+  useEffect(() => {
+    if (!graphId || readOnly || lastSaved.current === null) return;
+    const text = JSON.stringify(draft);
+    if (text === lastSaved.current) return;
+    pending.current = draft;
+    const timer = window.setTimeout(async () => {
+      setSaveState("saving");
+      try {
+        const got = await api.saveDraft(graphId, draft);
+        lastSaved.current = text;
+        pending.current = null;
+        setChanged(got.changed);
+        setSaveState("saved");
+      } catch (e) {
+        setSaveState((e as Error).message);
+      }
+    }, DRAFT_WAIT_MS);
+    return () => window.clearTimeout(timer);
+  }, [draft, graphId, readOnly]);
+
+  // Ушли, не дождавшись паузы, — последняя правка уходит сразу. И при уходе
+  // внутри приложения (размонтирование), и при закрытии или перезагрузке
+  // вкладки: тогда React не размонтируется, ловим pagehide.
+  useEffect(() => {
+    const flush = () => {
+      const doc = pending.current;
+      if (graphId && doc && JSON.stringify(doc) !== lastSaved.current) {
+        pending.current = null;
+        api.saveDraft(graphId, doc, true).catch(() => undefined);
+      }
+    };
+    window.addEventListener("pagehide", flush);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      flush();
+    };
+  }, [graphId]);
+
   const save = useCallback(async () => {
     if (!graphId) return;
     setBusy(true);
@@ -394,6 +505,7 @@ function Editor() {
     try {
       const got = await api.saveVersion(graphId, toDoc(nodes, edges));
       setGraph(got);
+      setChanged(false);
       setVersions((await api.listVersions(graphId)).versions);
       setNote(
         got.fresh === false || got.version === graph?.version
@@ -462,6 +574,19 @@ function Editor() {
           <span className="ver">
             версия {graph?.version ?? "—"} из {versions.length || "—"}
           </span>
+          {!readOnly && changed && <span className="ver edits">правки вне версий</span>}
+          {!readOnly && (
+            <span
+              className={`g-saved${saveState === "saved" || saveState === "saving" ? "" : " bad"}`}
+              role="status"
+            >
+              {saveState === "saved"
+                ? "сохранено"
+                : saveState === "saving"
+                  ? "сохраняю…"
+                  : `не сохранилось: ${saveState}`}
+            </span>
+          )}
           {totals && (
             <span className="ver" title="Во столько раз вырастет обучающая часть">
               ×{totals.multiplier.toLocaleString("ru-RU")}
@@ -474,20 +599,23 @@ function Editor() {
           )}
           <div className="sp">
             <select
-              
               value={wanted ?? ""}
               onChange={(e) =>
                 e.target.value ? setSearch({ version: e.target.value }) : setSearch({})
               }
               aria-label="Версия"
             >
-              <option value="">текущая</option>
-              {versions.map((v) => (
-                <option key={v.id} value={v.id}>
-                  версия {v.version}
-                  {v.note ? ` — ${v.note}` : ""}
-                </option>
-              ))}
+              <option value="">настоящая</option>
+              {versions.length > 0 && (
+                <optgroup label="Версии">
+                  {versions.map((v) => (
+                    <option key={v.id} value={v.id}>
+                      версия {v.version}
+                      {v.note ? ` — ${v.note}` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             <button
               type="button"
@@ -510,10 +638,10 @@ function Editor() {
         {trouble && <div className="mag-error">{trouble}</div>}
         {note && <Banner onClose={() => setNote(null)}>{note}</Banner>}
 
-        <div className="g-canvas-body" ref={wrap}>
+        <div className="g-canvas-body" ref={wrap} hidden={previewFull}>
           <ReactFlow
             className="g-graph"
-            nodes={nodes}
+            nodes={shown}
             edges={wires}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
@@ -537,6 +665,11 @@ function Editor() {
             onSelectionChange={({ nodes: picked }) =>
               setSelected(picked[0]?.id ?? null)
             }
+            onNodeClick={openMenu}
+            onNodeContextMenu={openMenu}
+            onPaneClick={() => setMenu(null)}
+            onMoveStart={() => setMenu(null)}
+            onNodeDragStart={() => setMenu(null)}
             onDrop={(event) => {
               event.preventDefault();
               const raw = event.dataTransfer.getData("application/mag-node");
@@ -569,34 +702,49 @@ function Editor() {
             />
             <Controls showInteractive={false} />
           </ReactFlow>
+          {menu && nodes.some((n) => n.id === menu.id) && (
+            <div className="g-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!edges.some((e) => e.source === menu.id || e.target === menu.id)}
+                onClick={() => {
+                  unlink(menu.id);
+                  setMenu(null);
+                }}
+              >
+                Убрать все связи
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                className="danger"
+                onClick={() => {
+                  removeNode(menu.id);
+                  setMenu(null);
+                }}
+              >
+                Удалить узел
+                <kbd>Delete</kbd>
+              </button>
+            </div>
+          )}
         </div>
 
-        <div className="g-peek">
-          <figure>
-            <div className="blank">кадр-образец не выбран</div>
-            <figcaption>Было</figcaption>
-          </figure>
-          <figure>
-            <div className="blank">
-              {eyeOn ? "нажмите «Показать»" : "выберите узел глазом"}
-            </div>
-            <figcaption>Стало</figcaption>
-          </figure>
-          <div className="side">
-            <div className="row">
-              <span>
-                На проводах показано, что станет с{" "}
-                <b>{ru(SAMPLE_BASE)}</b> кадрами. Настоящее число подставит
-                мастер сборки.
-              </span>
-            </div>
-            {totals && totals.dropped > 0 && (
-              <div className="row" style={{ color: "var(--skip)" }}>
-                Брошенных веток: {ru(totals.dropped)} образцов никуда не идут.
-              </div>
-            )}
-          </div>
-        </div>
+        {graphId && (
+          <NodePreview
+            graphId={graphId}
+            doc={draft}
+            nodes={shown}
+            byOp={byOp}
+            watch={eyeOn && nodes.some((n) => n.id === eyeOn) ? eyeOn : null}
+            selected={selected}
+            onWatch={setEyeOn}
+            dropped={totals?.dropped ?? 0}
+            full={previewFull}
+            onFull={setPreviewFull}
+          />
+        )}
       </div>
 
       <NodeInspector
@@ -606,6 +754,8 @@ function Editor() {
         totals={totals}
         onChange={(next) => current && patchParams(current.id, next)}
         onRemove={() => current && removeNode(current.id)}
+        previewing={Boolean(current) && current?.id === eyeOn}
+        onPreview={() => current && setEyeOn(current.id)}
       />
     </div>
   );

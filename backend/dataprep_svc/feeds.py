@@ -261,6 +261,10 @@ def plan_units(rows, doc_of, picked, split_of, load_version=None):
     ``expected`` считается подачей ровно в один источник. Так можно: и
     «Умножение», и оба «Разделителя», и «Слияние» линейны по числу образцов,
     поэтому сумма по источникам равна тому, что даст граф со всеми сразу.
+
+    Кроме «Слияния сеткой»: оно берёт минимум по входам, и поданный в один
+    источник граф дал бы ноль. Такую строку считаем всеми источниками разом и
+    делим итог по источникам пропорционально кадрам.
     """
     from dataprep_svc.graph import plan as planlib   # ради него же и здесь
 
@@ -268,6 +272,7 @@ def plan_units(rows, doc_of, picked, split_of, load_version=None):
     for row in rows:
         doc = doc_of(row["graph_version_id"])
         bound = bind_sources(row, doc)
+        first = len(units)
         for index, binding in enumerate(bound):
             images = images_for(picked, split_of, row["part"], binding)
             if doc is None or binding["source_node"] is None:
@@ -295,7 +300,25 @@ def plan_units(rows, doc_of, picked, split_of, load_version=None):
                 "images": images,
                 "expected": expected,
             })
+        row_units = units[first:]
+        if doc is not None and _has_mosaic(doc, load_version) and all(
+            u["source_node"] is not None for u in row_units
+        ):
+            total = planlib.counts(
+                doc, {u["source_node"]: len(u["images"]) for u in row_units},
+                load_version=load_version,
+            )["outputs"]
+            frames = sum(len(u["images"]) for u in row_units) or 1
+            for u in row_units:
+                u["expected"] = total * len(u["images"]) / frames
     return units
+
+
+def _has_mosaic(doc, load_version):
+    from dataprep_svc.graph import plan as planlib
+
+    nodes, _ = planlib.expand(doc, load_version or (lambda *_: None))
+    return any(n.get("type") == "mosaic" for n in nodes)
 
 
 def cross_half_warnings(rows):
@@ -312,3 +335,25 @@ def cross_half_warnings(rows):
                     "запоминание, а не обобщение."
                 )
     return out
+
+
+def work(units, compiled_of):
+    """Порядок работы: списки частей плана, которые идут вместе.
+
+    Тактами — по кадру от каждого источника строки сразу — идёт только граф
+    со «Слиянием сеткой». Остальные идут как раньше, источник за источником:
+    зерно кадра у них то же, что до тактов, и пересборка старого набора даёт
+    те же файлы.
+    """
+    rows, order = {}, []
+    for unit in units:
+        compiled = compiled_of.get(unit["graph_version_id"])
+        ticked = compiled is not None and unit["source_node"] is not None and any(
+            n["type"] == "mosaic" for n in compiled.nodes
+        )
+        key = (unit["part"], unit["position"]) if ticked else id(unit)
+        if key not in rows:
+            rows[key] = []
+            order.append(key)
+        rows[key].append(unit)
+    return [rows[k] for k in order]

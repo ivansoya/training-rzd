@@ -1004,6 +1004,11 @@ class AugGraph(Base, AuditMixin):
                       name="fk_aug_graph_head"),
     )
     archived_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # Настоящая копия: сохраняется на каждой правке, мимо версий. Версия —
+    # запись «набор собран вот этим», и рожать её на каждое движение ползунка
+    # значило бы её обесценить. Пусто — настоящая совпадает с текущей версией.
+    draft: Mapped[dict | None] = mapped_column(JsonCol)
+    draft_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
 
 
 class AugGraphVersion(Base, AuditMixin):

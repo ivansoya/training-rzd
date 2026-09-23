@@ -96,3 +96,43 @@ def test_то_же_зерно_даёт_тот_же_кусок():
     """Обещание «пересобрать набор тем же зерном» держится и на своём узле."""
     first, second = run(11), run(11)
     assert first["image"].shape == second["image"].shape
+
+
+# --------------------------------------------------------------------------- #
+# Кроп заданного окна
+# --------------------------------------------------------------------------- #
+def crop(x, y, thr, boxes):
+    from dataprep_svc.ops import FractionCrop
+
+    pipe = A.Compose(
+        [FractionCrop(x_range=x, y_range=y, min_visibility=thr, p=1)],
+        bbox_params=A.BboxParams(
+            format="yolo", label_fields=["class_labels"],
+            min_visibility=0.0, clip=True,
+        ),
+    )
+    return pipe(image=np.zeros((1000, 2000, 3), np.uint8), bboxes=boxes,
+                class_labels=list(range(len(boxes))))
+
+
+def test_кроп_режет_окно_долями():
+    out = crop((0.25, 0.75), (0.1, 0.6), 0.5, [])
+    assert out["image"].shape[:2] == (500, 1000)
+
+
+def test_кроп_выбрасывает_объект_ниже_порога():
+    # Окно x 0..0,5. Первый объект целиком внутри, у второго внутри половина,
+    # у третьего четверть.
+    boxes = [[0.2, 0.5, 0.1, 0.1], [0.5, 0.5, 0.2, 0.2], [0.55, 0.5, 0.2, 0.2]]
+    kept = crop((0.0, 0.5), (0.0, 1.0), 0.4, boxes)["class_labels"]
+    assert list(kept) == [0, 1]
+    kept = crop((0.0, 0.5), (0.0, 1.0), 0.6, boxes)["class_labels"]
+    assert list(kept) == [0]
+
+
+def test_перепутанные_и_вылезшие_границы_не_ломают_кроп():
+    from dataprep_svc.ops import window
+
+    assert window((0.9, 0.1), (0.0, 0.0), 100, 50)[2] > window((0.9, 0.1), (0.0, 0.0), 100, 50)[0]
+    out = crop((0.8, 0.2), (1.2, -0.3), 0.5, [])
+    assert out["image"].shape[:2] == (1000, 1200)

@@ -51,6 +51,19 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-link { color: var(--accent-text); }
 .mag-danger, .mag-ghost.mag-danger { color: var(--danger); background: transparent; border-color: var(--rule); }
 .mag-field :is(input,textarea), .mag select { border-color: var(--control-edge); background-color: var(--sunk); border-radius: 8px; }
+/* Стрелка у списков своя. С заданными рамкой и заливкой Chromium родную не
+   рисует вовсе, и список выглядел полем ввода. Фон — только цветом и
+   картинкой по отдельности: сокращение `background` из gabarit.css иначе
+   стёрло бы стрелку. */
+.mag select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23C6C5CE' stroke-width='1.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  cursor: pointer;
+}
+.mag select option, .mag select optgroup { background: var(--card); color: var(--ink); }
 .mag-field label { font-size: 13px; font-weight: 550; margin-bottom: 8px; }
 .mag-field :is(input,textarea):focus, .mag select:focus { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--red); }
 .mag-error, .mag-ok, .mag-warn, .g-warn, .t-warn { border-radius: 8px; padding: 14px 16px; box-shadow: none; line-height: 1.6; }
@@ -255,9 +268,8 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .g-canvas-top .ver { color: var(--dim); font-size: 12px; }
 .g-canvas-top .mag-btn { font-size: 13px; padding: 9px 14px; }
 .g-graph { --xy-edge-stroke: #9998A9; --xy-background-color: var(--paper); --xy-selection-background-color: var(--accent-soft); }
-.g-node { border-radius: 10px; border-color: var(--rule); background: var(--card); box-shadow: 0 3px 12px #0003; }
+.g-node { border-radius: 6px; border-color: var(--rule); background: var(--card); box-shadow: 0 3px 12px #0003; }
 .g-node.selected, .react-flow__node.selected .g-node { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
-.g-peek { background: var(--card); border-color: var(--rule); }
 .mag-account { gap: 24px; }
 .mag-account h2 { font-size: 21px; font-weight: 600; }
 .mag-friend-row, .mag-invite-row { padding-block: 14px; border-color: var(--rule); }

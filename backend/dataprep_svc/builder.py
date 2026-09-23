@@ -22,6 +22,7 @@ import os
 import shutil
 import time
 from collections import Counter, defaultdict
+from itertools import zip_longest
 
 from sqlalchemy import delete, select
 
@@ -240,35 +241,100 @@ def build(db, job, *, on_beat=None):
     manifest_path = config.trainset_manifest(tset.project_id, tset.id)
     last_beat = 0.0
 
+    def beat():
+        nonlocal last_beat
+        if time.monotonic() - last_beat <= BEAT_EVERY:
+            return
+        alive = queue.beat(
+            db, job, processed=counts["samples"], total=total_expected,
+            stage="render", stage_text="Складываю кадры",
+        )
+        if on_beat is not None:
+            on_beat(counts["samples"], total_expected)
+        if not alive:
+            raise Cancelled()
+        last_beat = time.monotonic()
+
+    def prefix_of(unit):
+        # Приставка в имени файла: номер строки и номер источника внутри
+        # неё. Ставится только там, где без неё имена столкнулись бы —
+        # набор из одной строки с одним источником получает те же имена,
+        # что и до появления строк, и жёсткие ссылки на них не меняются.
+        #
+        # Источник в приставке не для красоты: один кадр входит и в
+        # «обучающую половину», и в «таг ночь», путь по графу у него при
+        # этом один и тот же, и второй образец затёр бы первый.
+        return (f"r{unit['position']}" if many_rows[unit["part"]] > 1 else "") + (
+            f"s{unit['source_index']}" if unit["source_count"] > 1 else ""
+        )
+
+    def drop(node_id, _why):
+        dropped_at.update([node_id])
+
+    def emit(manifest, item, image, base, unit):
+        """Записать образец, вышедший из графа."""
+        nonlocal size_bytes
+        split = unit["part"]
+        h, w = item.image.shape[:2]
+        lines = lines_of(item, want, w, h)
+        if not lines:
+            # Потерял разметку по дороге — потеря, и она считается.
+            # Не имел её с самого начала — фон, и он нужен.
+            if not base.empty:
+                dropped_at.update(["выход"])
+                return
+            counts["background"] += 1
+        ext = os.path.splitext(image.file_path)[1] or ".jpg"
+        name = sample_name(image.id, prefix_of(unit) + item.sid, ext)
+        dst = os.path.join(root, "images", split, name)
+        size_bytes += albu.imwrite_rgb(dst, item.image)
+        _write_label(root, split, name, lines)
+        _note(manifest, image, split, name, lines, False, item.sid, item.ops)
+        counts["samples"] += 1
+        counts[split] += 1
+        counts["annotations"] += len(lines)
+        _tally(per_class, lines, split)
+
     with open(manifest_path, "w", encoding="utf-8") as manifest:
-        for unit in units:
+        for group in feeds.work(units, compiled_of):
+            if len(group) > 1:
+                # Такты: по кадру в каждый источник строки сразу — иначе
+                # входы «Слияния сеткой» от разных источников ни разу не
+                # оказались бы заполнены вместе. Строка одна, значит и
+                # половина одна: train и val в одну сетку не попадают.
+                compiled = compiled_of[group[0]["graph_version_id"]]
+                for tick in zip_longest(*(u["images"] for u in group)):
+                    beat()
+                    feed, owner = {}, {}
+                    for unit, image in zip(group, tick):
+                        if image is None:
+                            continue
+                        base = sample_of(image, picked.anns.get(image.id, []),
+                                         picked.export_id, want)
+                        base.ordinal = rank_of[image.id]
+                        feed[unit["source_node"]] = base
+                        owner[id(base)] = (image, base, unit)
+                    made = engine.run_frame(
+                        compiled, None, tset.seed,
+                        "+".join(str(i.id) for i in tick if i is not None),
+                        feed=feed, on_drop=drop,
+                    )
+                    for _out_node, item in made:
+                        # Сетка названа по кадру первого входа — по нему же
+                        # ведётся её родословная (mosaic.compose).
+                        origin = item
+                        while origin.prev is not None:
+                            origin = origin.prev
+                        emit(manifest, item, *owner[id(origin)])
+                continue
+
+            unit = group[0]
             split = unit["part"]
             compiled = compiled_of.get(unit["graph_version_id"])
-            # Приставка в имени файла: номер строки и номер источника внутри
-            # неё. Ставится только там, где без неё имена столкнулись бы —
-            # набор из одной строки с одним источником получает те же имена,
-            # что и до появления строк, и жёсткие ссылки на них не меняются.
-            #
-            # Источник в приставке не для красоты: один кадр входит и в
-            # «обучающую половину», и в «таг ночь», путь по графу у него при
-            # этом один и тот же, и второй образец затёр бы первый.
-            prefix = (f"r{unit['position']}" if many_rows[split] > 1 else "") + (
-                f"s{unit['source_index']}" if unit["source_count"] > 1 else ""
-            )
+            prefix = prefix_of(unit)
 
             for image in unit["images"]:
-                if time.monotonic() - last_beat > BEAT_EVERY:
-                    alive = queue.beat(
-                        db, job, processed=counts["samples"],
-                        total=total_expected,
-                        stage="render", stage_text="Складываю кадры",
-                    )
-                    if on_beat is not None:
-                        on_beat(counts["samples"], total_expected)
-                    if not alive:
-                        raise Cancelled()
-                    last_beat = time.monotonic()
-
+                beat()
                 anns = picked.anns.get(image.id, [])
                 src = os.path.join(config.DATA_DIR, image.file_path)
                 ext = os.path.splitext(image.file_path)[1] or ".jpg"
@@ -299,29 +365,10 @@ def build(db, job, *, on_beat=None):
                 base.ordinal = rank_of[image.id]
                 made = engine.run_frame(
                     compiled, base, tset.seed, str(image.id),
-                    source=unit["source_node"],
-                    on_drop=lambda node_id, _why: dropped_at.update([node_id]),
+                    source=unit["source_node"], on_drop=drop,
                 )
                 for _out_node, item in made:
-                    h, w = item.image.shape[:2]
-                    lines = lines_of(item, want, w, h)
-                    if not lines:
-                        # Потерял разметку по дороге — потеря, и она считается.
-                        # Не имел её с самого начала — фон, и он нужен.
-                        if not base.empty:
-                            dropped_at.update(["выход"])
-                            continue
-                        counts["background"] += 1
-                    name = sample_name(image.id, prefix + item.sid, ext)
-                    dst = os.path.join(root, "images", split, name)
-                    size_bytes += albu.imwrite_rgb(dst, item.image)
-                    _write_label(root, split, name, lines)
-                    _note(manifest, image, split, name, lines, False,
-                          item.sid, item.ops)
-                    counts["samples"] += 1
-                    counts[split] += 1
-                    counts["annotations"] += len(lines)
-                    _tally(per_class, lines, split)
+                    emit(manifest, item, image, base, unit)
 
     names = [c.name for c in picked.classes]
     with open(os.path.join(root, "data.yaml"), "w", encoding="utf-8") as fh:

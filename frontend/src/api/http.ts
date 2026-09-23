@@ -45,11 +45,19 @@ export async function asJson<T>(res: Response): Promise<T> {
   return data as T;
 }
 
-function send(method: string, path: string, body?: unknown): Promise<Response> {
+function send(
+  method: string,
+  path: string,
+  body?: unknown,
+  signal?: AbortSignal,
+  keepalive?: boolean
+): Promise<Response> {
   return fetch(`/api/${path}`, {
     method,
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+    keepalive,
   });
 }
 
@@ -57,16 +65,28 @@ export async function get<T>(path: string): Promise<T> {
   return asJson<T>(await fetch(`/api/${path}`));
 }
 
-export async function post<T>(path: string, body: unknown = {}): Promise<T> {
-  return asJson<T>(await send("POST", path, body));
+// `signal` — отменить запрос, который уже никому не нужен: живое превью
+// шлёт новый на каждое движение ползунка.
+export async function post<T>(
+  path: string,
+  body: unknown = {},
+  signal?: AbortSignal
+): Promise<T> {
+  return asJson<T>(await send("POST", path, body, signal));
 }
 
 export async function patch<T>(path: string, body: unknown = {}): Promise<T> {
   return asJson<T>(await send("PATCH", path, body));
 }
 
-export async function put<T>(path: string, body: unknown = {}): Promise<T> {
-  return asJson<T>(await send("PUT", path, body));
+// `keepalive` — запрос дойдёт, даже если вкладку уже закрывают: так уходит
+// последняя правка графа.
+export async function put<T>(
+  path: string,
+  body: unknown = {},
+  keepalive = false
+): Promise<T> {
+  return asJson<T>(await send("PUT", path, body, undefined, keepalive));
 }
 
 export async function del<T>(path: string): Promise<T> {

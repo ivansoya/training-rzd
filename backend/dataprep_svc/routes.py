@@ -13,7 +13,7 @@ import time
 import uuid
 
 from flask import Blueprint, jsonify, request, send_file
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 
 from common import selection as sel_lib
 from common.auth import current_user, has_role, project_by_code, role_in
@@ -25,8 +25,10 @@ from common.models import (
 from common import config, live
 from common import prep_queue as queue
 from common import similarity
-from common.models import LabelClass
-from dataprep_svc import albu, feeds, samples as samples_lib
+from common import polygon as polylib
+from common.models import Annotation, Image, LabelClass, ProjectMember
+from dataprep_svc import albu, engine, feeds, preview as previewlib
+from dataprep_svc import samples as samples_lib, testframe
 from dataprep_svc.graph import plan as planlib
 from dataprep_svc.graph import schema
 from dataprep_svc.graph.schema import GraphError
@@ -293,14 +295,54 @@ def get_graph(graph_id):
         graph = db.get(AugGraph, _uuid(graph_id))
         if graph is None:
             return jsonify({"error": "Граф не найден."}), 404
-        want = _uuid(request.args.get("version") or "") or graph.head_version_id
+        asked = _uuid(request.args.get("version") or "")
+        want = asked or graph.head_version_id
         version = db.get(AugGraphVersion, want) if want else None
         if version is not None and version.graph_id != graph.id:
             return jsonify({"error": "Версия не от этого графа."}), 404
+        # Без номера версии открывается настоящая копия — та, что сохранялась
+        # на каждой правке. Черновик виден только владельцу: чужой граф
+        # смотрят по версиям, недоделанное — его личное дело.
+        mine = bool(user.id == graph.owner_id)
+        head_doc = version.doc if version else _starter()
+        draft = graph.draft if (mine and asked is None) else None
         return jsonify({
             **_graph_view(db, graph, version),
-            "doc": version.doc if version else _starter(),
-            "mine": bool(user.id == graph.owner_id),
+            "doc": draft if draft is not None else head_doc,
+            "draft_at": graph.draft_at.isoformat()
+            if draft is not None and graph.draft_at else None,
+            "changed": draft is not None and digest_of(draft) != digest_of(head_doc),
+            "mine": mine,
+        })
+    finally:
+        db.close()
+
+
+@bp.put("/api/aug/graphs/<graph_id>/draft")
+def save_draft(graph_id):
+    """Сохранить настоящую копию. Форма не проверяется: недоделанный граф —
+    нормальное состояние посреди работы, и терять его из-за этого нельзя."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        graph = db.get(AugGraph, _uuid(graph_id))
+        if graph is None or graph.owner_id != user.id:
+            return jsonify({"error": "Граф не найден."}), 404
+        doc = (request.get_json(silent=True) or {}).get("doc")
+        if not isinstance(doc, dict) or not isinstance(doc.get("nodes"), list) \
+                or not isinstance(doc.get("edges"), list):
+            return jsonify({"error": "Граф должен быть объектом с узлами и связями."}), 400
+        if len(doc["nodes"]) > schema.MAX_NODES:
+            return jsonify({"error": "Слишком большой граф."}), 400
+        head = db.get(AugGraphVersion, graph.head_version_id) \
+            if graph.head_version_id else None
+        graph.draft = doc
+        graph.draft_at = utcnow()
+        db.commit()
+        return jsonify({
+            "draft_at": graph.draft_at.isoformat(),
+            "changed": digest_of(doc) != digest_of(head.doc if head else _starter()),
         })
     finally:
         db.close()
@@ -355,6 +397,10 @@ def save_version(graph_id):
         )
         if error:
             return error
+        # Настоящая копия теперь и есть версия — держать её отдельно незачем.
+        graph.draft = None
+        graph.draft_at = None
+        db.commit()
         return jsonify({
             **_graph_view(db, graph, version),
             "doc": version.doc,
@@ -448,6 +494,185 @@ def counts():
             ))
         except GraphError as exc:
             return jsonify({"error": str(exc)}), 400
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Превью узла
+# --------------------------------------------------------------------------- #
+def _annotated(project_id):
+    """Кадры проекта, на которых есть разметка. Кадр-фон превью не годится:
+    на нём нечего терять, и счёт «объекты было → стало» ничего не скажет."""
+    return select(Image).where(
+        Image.project_id == project_id,
+        select(Annotation.id).where(Annotation.image_id == Image.id).exists(),
+    )
+
+
+@bp.get("/api/aug/preview/projects")
+def preview_projects():
+    """Проекты, из которых превью может взять кадр. Первыми — те, к которым
+    подключён граф: его и собирают на их кадрах."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        graph_id = _uuid(request.args.get("graph"))
+        linked = set()
+        if graph_id is not None:
+            linked = set(db.execute(
+                select(ProjectAugGraph.project_id)
+                .where(ProjectAugGraph.graph_id == graph_id)
+            ).scalars())
+        rows = db.execute(
+            select(Project)
+            .join(ProjectMember, ProjectMember.project_id == Project.id)
+            .where(
+                ProjectMember.user_id == user.id,
+                _annotated(Project.id).exists(),
+            )
+            .order_by(Project.name)
+        ).scalars().all()
+        rows.sort(key=lambda p: p.id not in linked)
+        return jsonify({"projects": [
+            {"code": p.code, "name": p.name, "linked": p.id in linked}
+            for p in rows
+        ]})
+    finally:
+        db.close()
+
+
+def _project_frame(db, project, image_id, salt=None):
+    """(кадр, образец, классы) — заказанный кадр или случайный размеченный.
+    Заказанный могли удалить с прошлого раза — тогда тоже случайный.
+
+    ``salt`` — выбрать «случайный» по соли, а не жребием: соседние источники
+    такта в превью получают свои кадры, и на каждом движении ползунка они
+    меняться не должны."""
+    query = _annotated(project.id)
+    image = None
+    if image_id is not None:
+        image = db.execute(query.where(Image.id == image_id)).scalars().first()
+    if image is None:
+        order = (func.md5(func.concat(cast(Image.id, String), salt))
+                 if salt else func.random())
+        image = db.execute(query.order_by(order).limit(1)).scalars().first()
+    if image is None:
+        return None, None, None
+
+    classes = db.execute(
+        select(LabelClass).where(LabelClass.project_id == project.id)
+        .order_by(LabelClass.class_index)
+    ).scalars().all()
+    index = {c.id: i for i, c in enumerate(classes)}
+    picture = albu.imread_rgb(os.path.join(config.DATA_DIR, image.file_path))
+    h, w = picture.shape[:2]
+    boxes, polys = [], []
+    # Контур едет контуром, рамка рамкой — как их разметили. Сборка боксового
+    # набора свела бы контур к рамке, но смотреть надо на то, что есть.
+    for ann in db.execute(
+        select(Annotation).where(Annotation.image_id == image.id)
+    ).scalars():
+        cls = index.get(ann.class_id)
+        if cls is None:
+            continue
+        if ann.ann_type == "polygon":
+            parts = polylib.parts_of(ann.geometry or {})
+            if parts:
+                polys.append((cls, parts))
+            continue
+        line = sel_lib.box_line(cls, ann.geometry or {}, w, h)
+        if line is not None:
+            _, cx, cy, bw, bh = line.split()
+            boxes.append((cls, float(cx), float(cy), float(bw), float(bh)))
+    return (
+        image,
+        engine.Sample(picture, boxes, polys),
+        [{"name": c.name, "color": c.color} for c in classes],
+    )
+
+
+@bp.post("/api/aug/preview")
+def node_preview():
+    """Что выходит из узла, если пустить через граф один кадр.
+
+    Граф приходит черновиком, а не версией: иначе правку не увидеть до
+    «Сохранить версию». Кадр — из проекта, где у человека есть роль, или
+    нарисованный тестовый. См. ``dataprep_svc/preview.py``.
+    """
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        data = request.get_json(silent=True) or {}
+        doc = data.get("doc") or {}
+        if len(doc.get("nodes") or []) > schema.MAX_NODES:
+            return jsonify({"error": "Слишком большой граф."}), 400
+        frame = data.get("frame") or {}
+        node_id = str(data.get("node") or "")
+        sources = previewlib.upstream(doc, node_id)
+        feed = {}
+
+        if frame.get("project"):
+            project = project_by_code(db, str(frame["project"]))
+            if project is None or not has_role(role_in(db, user, project), "viewer"):
+                return jsonify({"error": "Нет доступа к кадрам проекта."}), 403
+            try:
+                image, sample, classes = _project_frame(
+                    db, project, _uuid(frame.get("image"))
+                )
+            except (OSError, ValueError) as exc:
+                return jsonify({"error": f"Кадр не прочитался: {exc}"}), 404
+            if image is None:
+                return jsonify({"error": "В проекте нет размеченных кадров."}), 404
+            h, w = sample.image.shape[:2]
+            where = {"kind": "project", "project": project.code,
+                     "project_name": project.name, "image": str(image.id),
+                     "name": image.file_name, "width": w, "height": h}
+            ids = [str(image.id)]
+            # Такт: первый источник получает выбранный кадр, остальные — свои,
+            # подобранные от него солью.
+            for k, source in enumerate(sources):
+                if k == 0:
+                    feed[source] = sample
+                    continue
+                try:
+                    other, extra, _ = _project_frame(
+                        db, project, None, salt=f"{image.id}:{k}"
+                    )
+                except (OSError, ValueError):
+                    other = None
+                if other is not None:
+                    feed[source] = extra
+                    ids.append(str(other.id))
+            image_id = "+".join(ids)
+        else:
+            classes = list(testframe.CLASSES)
+            where = {"kind": "test", "width": testframe.W,
+                     "height": testframe.H}
+            feed = {source: testframe.sample() for source in sources}
+            image_id = "test"
+
+        loader = _loader(db)
+        try:
+            ins, out = previewlib.ends(doc, loader, node_id)
+            compiled = engine.compile_graph(
+                doc, loader, with_masks=True, trace=True
+            )
+            got = previewlib.run(
+                compiled, feed, image_id, ins=ins, out=out,
+                seed=f"preview:{int(data.get('seed') or 0)}",
+            )
+        except (GraphError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+        body = {"frame": where, "classes": classes}
+        if got is None:
+            return jsonify({**body, "reached": False})
+        return jsonify({**body, "reached": True,
+                        **previewlib.describe(compiled, got,
+                                              next(iter(feed.values())))})
     finally:
         db.close()
 
