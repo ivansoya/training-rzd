@@ -15,8 +15,8 @@ import urllib.request
 import numpy as np
 
 from autolabel_svc import space as spacelib
-from common import config
-
+from common import config, contours
+from common.contours import DETAIL_AUTO
 WEIGHTS_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/092824/"
 # Имя веса -> (файл, конфиг внутри пакета sam2).
 CHECKPOINTS = {
@@ -31,13 +31,8 @@ CHECKPOINTS = {
 DEFAULT_MODEL = os.environ.get("SAM2_MODEL", "sam2.1_hiera_small")
 # Сколько кадров держать закодированными: текущий, соседний и немного истории.
 CACHE_SIZE = int(os.environ.get("SAM2_CACHE", "4"))
-# Три маски SAM2 — это разбор неоднозначности «что именно вы ткнули».
-# Сортируем их по площади, чтобы уровень был предсказуемым, а не как повезёт.
-DETAIL_ORDER = {"subpart": 0, "part": 1, "object": 2}
-# По умолчанию берём ту, в которой уверена сама модель: самая крупная из трёх
-# сплошь и рядом оказывается мусором с уверенностью 0,07, тогда как средняя
-# даёт 0,6. Явные уровни остаются для случая, когда человек знает лучше.
-DETAIL_AUTO = "auto"
+# Выбор из трёх масок, чистка и бокс — в common.contours: агент разметки
+# уточняет свои рамки тем же путём.
 # Сколько кусков маски отдавать контуром и с какой доли от крупнейшего они
 # перестают быть шумом обводки — общее с аугментациями, см. common.contours.
 from common.contours import MAX_PARTS, PART_MIN_SHARE  # noqa: F401,E402
@@ -157,24 +152,17 @@ class Sam2Runner:
             box=box_arr,
             multimask_output=True,
         )
-        detail = refine.get("detail") or DETAIL_AUTO
-        if detail == DETAIL_AUTO or detail not in DETAIL_ORDER:
-            pick = int(np.argmax(scores))
-        else:
-            order = np.argsort([float(m.sum()) for m in masks])
-            pick = int(order[min(DETAIL_ORDER[detail], len(order) - 1)])
-        mask = masks[pick].astype(np.uint8)
-        score = float(scores[pick])
+        mask, score = contours.pick_mask(masks, scores, refine.get("detail") or DETAIL_AUTO)
 
         if score < float(refine.get("score_min", 0.0)):
             return {"shapes": [], "score": score, "reason": "low_score"}
 
-        mask = self._clean(mask, refine)
-        rect = self._bounds(mask)
+        mask = contours.clean_mask(mask, int(refine.get("min_area", 0)), bool(refine.get("fill_holes")))
+        rect = contours.mask_bounds(mask)
         if rect is None:
             return {"shapes": [], "score": score, "reason": "empty_mask"}
 
-        shape = {"type": "box", "box": rect, "score": score}
+        shape = {"type": "box", "box": dict(zip("xywh", rect)), "score": score}
         if "polygon" in (want or []):
             shape["polygons"] = self._polygons(mask, int(refine.get("polygon_points", 0)))
         shape = spacelib.to_space(shape, kx, ky, space)
@@ -182,42 +170,12 @@ class Sam2Runner:
         # модель, и расхождение с `space` перестаёт быть догадкой.
         return {"shapes": [shape], "width": int(w), "height": int(h), "space": space}
 
-    # -- чистка маски ------------------------------------------------------ #
-    def _clean(self, mask: np.ndarray, refine: dict) -> np.ndarray:
-        import cv2
-
-        min_area = int(refine.get("min_area", 0))
-        if min_area > 0:
-            count, labels_img, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
-            keep = np.zeros_like(mask)
-            for i in range(1, count):
-                if stats[i, cv2.CC_STAT_AREA] >= min_area:
-                    keep[labels_img == i] = 1
-            mask = keep
-        if refine.get("fill_holes"):
-            # Замыкание закрывает дыры внутри объекта, не трогая его границу.
-            kernel = np.ones((5, 5), np.uint8)
-            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-        return mask
-
-    @staticmethod
-    def _bounds(mask: np.ndarray):
-        """Бокс — крайние точки маски. Пиксели, как везде в проекте."""
-        ys, xs = np.nonzero(mask)
-        if not len(xs):
-            return None
-        x0, x1 = int(xs.min()), int(xs.max())
-        y0, y1 = int(ys.min()), int(ys.max())
-        return {"x": x0, "y": y0, "w": x1 - x0 + 1, "h": y1 - y0 + 1}
-
     @staticmethod
     def _polygons(mask: np.ndarray, max_points: int):
         """Все куски маски, а не только крупнейший.
 
         Сам разбор — в ``common.contours``: обводку снимает ещё и сборка
-        обучающего набора, и один и тот же вагон обязан выглядеть одинаково
-        до и после аугментации.
+        обучающего набора и агент разметки, и один и тот же вагон обязан
+        выглядеть одинаково везде.
         """
-        from common.contours import polygons_from_mask
-
-        return polygons_from_mask(mask, max_points)
+        return contours.polygons_from_mask(mask, max_points)

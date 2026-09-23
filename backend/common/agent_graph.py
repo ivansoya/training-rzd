@@ -10,15 +10,35 @@
 несёт только имя. Одно имя у двух сетей — один класс, и «Объединение» гасит
 дубли между ними; разные имена не смешиваются никогда.
 
+«Фильтр» режет по порогу своего класса и по размеру рамки. «Уточнение SAM»
+дописывает обнаружению обводку (`parts`) и подтягивает рамку к маске; не
+справился SAM — обнаружение идёт дальше рамкой, как пришло: сеть объект
+нашла, и терять находку из-за неудачной маски незачем, человек всё равно
+смотрит каждый кадр.
+
 Чистый модуль, без базы и torch: его читают и `dataprep` (проверка при
 сохранении версии), и `training-worker` (прогон), а закрывается он числами.
-Сеть сюда приходит функцией `predict(node) -> [(номер, уверенность, x, y, w, h)]`.
+Сеть сюда приходит функцией `predict(node) -> [(номер, уверенность, x, y, w, h)]`,
+SAM — функцией `segment(node, box) -> (маски, оценки)`.
 """
 
-KINDS = ("frame", "net", "merge", "output")
+KINDS = ("frame", "net", "merge", "filter", "sam", "output")
 MAX_NODES = 100
 MAX_INPUTS = 8
 MERGE_IOU = 0.55
+
+# Тот же список, что у полуавтомата (autolabel_svc/runners/sam2_runner.py).
+SAM_MODELS = ("sam2.1_hiera_tiny", "sam2.1_hiera_small",
+              "sam2.1_hiera_base_plus", "sam2.1_hiera_large")
+# Настройки по умолчанию — как у полуавтомата в редакторе таски: ткнул
+# человек той же рамкой с теми же настройками — получил тот же контур.
+SAM_DEFAULTS = {"model": "sam2.1_hiera_small", "detail": "auto", "score_min": 0.3,
+                "min_area": 64, "fill_holes": True, "polygon_points": 64}
+# Маска меньше этой доли рамки — SAM очертил не объект, а пятнышко на нём.
+MASK_MIN_SHARE = 0.05
+# Маска, вылезшая за рамку, обрезается по рамке с таким запасом: сеть нередко
+# режет край объекта, и запас даёт маске его вернуть, но не утечь на соседа.
+MASK_SLACK = 0.10
 
 
 class AgentGraphError(ValueError):
@@ -26,7 +46,8 @@ class AgentGraphError(ValueError):
 
 
 def title(node):
-    names = {"frame": "Кадр", "net": "Сеть", "merge": "Объединение", "output": "Выход"}
+    names = {"frame": "Кадр", "net": "Сеть", "merge": "Объединение",
+             "filter": "Фильтр", "sam": "Уточнение SAM", "output": "Выход"}
     label = (node.get("params") or {}).get("label")
     base = names.get(node.get("type"), str(node.get("type")))
     return f"«{base} — {label}»" if label else f"«{base}»"
@@ -44,7 +65,7 @@ def ports(node):
     kind = node.get("type")
     if kind == "frame":
         return [], ["out"]
-    if kind == "net":
+    if kind in ("net", "filter", "sam"):
         return ["in"], ["out"]
     if kind == "merge":
         return [f"i{i}" for i in range(inputs_count(node))], ["out"]
@@ -144,6 +165,10 @@ def check(doc, weights=None):
                         "выберите веса заново.")
             if not net_classes(node):
                 raise AgentGraphError(f"{title(node)}: не включён ни один класс.")
+        if node["type"] == "sam":
+            model = (node.get("params") or {}).get("model") or SAM_DEFAULTS["model"]
+            if model not in SAM_MODELS:
+                raise AgentGraphError(f"{title(node)}: неизвестная модель {model!r}.")
 
     order = _topo(nodes, taken_in)
     if order is None:
@@ -191,9 +216,65 @@ def nms(dets, threshold=MERGE_IOU):
     return kept
 
 
-def run(doc, predict, order=None):
+def _num(value, default=None):
+    try:
+        return default if value is None or value == "" else float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def filter_dets(dets, params):
+    """Порог и галочка — по имени класса агента; класса нет в таблице —
+    проходит: фильтр режет только то, что ему велели, и добавленный выше
+    класс не пропадёт молча. Размер — меньшая сторона не меньше `min_side`,
+    большая не больше `max_side`, в пикселях кадра."""
+    rows = {r.get("cls"): r for r in params.get("classes") or [] if isinstance(r, dict)}
+    lo, hi = _num(params.get("min_side")), _num(params.get("max_side"))
+    out = []
+    for det in dets:
+        row = rows.get(det["cls"])
+        if row is not None and (not row.get("on", True) or det["conf"] < _num(row.get("conf"), 0.0)):
+            continue
+        _, _, w, h = det["box"]
+        if (lo is not None and min(w, h) < lo) or (hi is not None and max(w, h) > hi):
+            continue
+        out.append(det)
+    return out
+
+
+def outline(det, masks, scores, params):
+    """Обнаружение после SAM: с обводкой и рамкой по маске — или как было.
+
+    Выбор маски, чистка и обводка — те же, что у полуавтомата
+    (`common.contours`). Своё здесь только обрезка по рамке с запасом и
+    решение «SAM не справился»."""
+    import numpy as np
+
+    from common import contours
+
+    p = {**SAM_DEFAULTS, **{k: v for k, v in (params or {}).items() if v is not None}}
+    mask, score = contours.pick_mask(masks, scores, p["detail"])
+    if score < float(p["score_min"]):
+        return det
+    x, y, w, h = det["box"]
+    dx, dy = w * MASK_SLACK, h * MASK_SLACK
+    x0, y0 = max(0, int(x - dx)), max(0, int(y - dy))
+    x1, y1 = int(np.ceil(x + w + dx)), int(np.ceil(y + h + dy))
+    clipped = np.zeros_like(mask)
+    clipped[y0:y1, x0:x1] = mask[y0:y1, x0:x1]
+    clipped = contours.clean_mask(clipped, int(p["min_area"]), bool(p["fill_holes"]))
+    if clipped.sum() < MASK_MIN_SHARE * w * h:
+        return det
+    parts = contours.polygons_from_mask(clipped, int(p["polygon_points"]))
+    if not parts:
+        return det
+    return {**det, "box": contours.mask_bounds(clipped), "parts": parts, "sam": round(score, 3)}
+
+
+def run(doc, predict, order=None, segment=None):
     """Прогнать один кадр. Возвращает обнаружения «Выхода»:
-    [{"cls": имя класса агента, "conf": float, "box": (x, y, w, h)}]."""
+    [{"cls": имя класса агента, "conf": float, "box": (x, y, w, h)}] и, после
+    SAM, ещё `parts` — обводка кольцами точек и `sam` — оценка маски."""
     by_id = {n["id"]: n for n in doc["nodes"]}
     order = order or check(doc)
     feeds = {(e["to"], e["in"]): e["from"] for e in doc["edges"]}
@@ -216,6 +297,11 @@ def run(doc, predict, order=None):
         elif kind == "merge":
             threshold = float((node.get("params") or {}).get("iou", MERGE_IOU))
             value[nid] = nms([d for branch in ins for d in branch], threshold)
+        elif kind == "filter":
+            value[nid] = filter_dets(ins[0], node.get("params") or {})
+        elif kind == "sam":
+            params = node.get("params") or {}
+            value[nid] = [outline(d, *segment(node, d["box"]), params) for d in ins[0]]
         else:
             result = ins[0]
     return result

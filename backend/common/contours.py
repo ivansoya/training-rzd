@@ -16,6 +16,57 @@ MAX_PARTS = 24
 # Кроха меньше доли процента от главного куска — тоже шум.
 PART_MIN_SHARE = 0.002
 
+# Три маски SAM2 — это разбор неоднозначности «что именно вы ткнули».
+# Сортируем их по площади, чтобы уровень был предсказуемым, а не как повезёт.
+DETAIL_ORDER = {"subpart": 0, "part": 1, "object": 2}
+# По умолчанию берём ту, в которой уверена сама модель: самая крупная из трёх
+# сплошь и рядом оказывается мусором с уверенностью 0,07, тогда как средняя
+# даёт 0,6. Явные уровни остаются для случая, когда человек знает лучше.
+DETAIL_AUTO = "auto"
+
+
+def pick_mask(masks, scores, detail=DETAIL_AUTO):
+    """(маска uint8, оценка) из ответов SAM2. Полуавтомат и агент выбирают
+    одинаково: одна рамка у обоих обязана дать один и тот же контур."""
+    import numpy as np
+
+    if detail == DETAIL_AUTO or detail not in DETAIL_ORDER:
+        pick = int(np.argmax(scores))
+    else:
+        order = np.argsort([float(m.sum()) for m in masks])
+        pick = int(order[min(DETAIL_ORDER[detail], len(order) - 1)])
+    return masks[pick].astype(np.uint8), float(scores[pick])
+
+
+def clean_mask(mask, min_area=0, fill_holes=False):
+    import cv2
+    import numpy as np
+
+    if min_area > 0:
+        count, labels_img, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+        keep = np.zeros_like(mask)
+        for i in range(1, count):
+            if stats[i, cv2.CC_STAT_AREA] >= min_area:
+                keep[labels_img == i] = 1
+        mask = keep
+    if fill_holes:
+        # Замыкание закрывает дыры внутри объекта, не трогая его границу.
+        kernel = np.ones((5, 5), np.uint8)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    return mask
+
+
+def mask_bounds(mask):
+    """(x, y, w, h) по крайним точкам маски, в пикселях. ``None`` — маска пуста."""
+    import numpy as np
+
+    ys, xs = np.nonzero(mask)
+    if not len(xs):
+        return None
+    x0, x1 = int(xs.min()), int(xs.max())
+    y0, y1 = int(ys.min()), int(ys.max())
+    return x0, y0, x1 - x0 + 1, y1 - y0 + 1
+
 
 def polygons_from_mask(mask, max_points=0):
     """Все куски маски кольцами точек.

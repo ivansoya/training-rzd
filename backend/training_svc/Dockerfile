@@ -19,6 +19,17 @@ RUN pip install --no-cache-dir torch==2.3.1 torchvision==0.18.1 \
 COPY training_svc/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
+# SAM2 для узла «Уточнение SAM» агента разметки — тот же пакет, что у
+# полуавтомата, чтобы одна рамка давала один контур. Пакет просит torch 2.5+,
+# но с 2.3.1 этого образа предсказание по рамке совпадает до знака (сверено
+# 23.09.2026 на одном кадре в обоих контейнерах), поэтому без зависимостей и
+# без изолированной сборки — иначе pip качает второй torch на гигабайты.
+# CUDA-расширение sam2 нужно только для заливки дыр внутри самой модели, а
+# SAM2ImagePredictor по умолчанию её не делает (max_hole_area=0).
+RUN pip install --no-cache-dir setuptools wheel tqdm "hydra-core>=1.3.2" "iopath>=0.1.10" \
+    && SAM2_BUILD_CUDA=0 pip install --no-cache-dir --no-deps --no-build-isolation \
+       https://github.com/facebookresearch/sam2/archive/refs/heads/main.zip
+
 # ffmpeg encodes browser-friendly H.264 video for inference output.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg \

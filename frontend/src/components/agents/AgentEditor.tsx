@@ -31,11 +31,18 @@ import type { GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
 import { edgeKey, findCycle } from "../aug/counts";
 import Banner from "../Banner";
 import Sep from "../Sep";
-import { agentClasses, rowsOf, type NetRow } from "./agentDoc";
-import { agentNodeTypes, mergeInputs, type AgentNodeData } from "./AgentNodes";
+import { SAM_DEFAULTS, SAM_MODELS, agentClasses, rowsOf, upstream, type FilterRow, type NetRow } from "./agentDoc";
+import { TITLES, agentNodeTypes, mergeInputs, type AgentNodeData } from "./AgentNodes";
 import WeightsPicker from "./WeightsPicker";
 
 const DRAFT_WAIT_MS = 700;
+type Addable = "net" | "merge" | "filter" | "sam";
+const PALETTE = [
+  ["net", "Сеть", "k-flow"],
+  ["merge", "Объединение", "k-noise"],
+  ["filter", "Фильтр", "k-light"],
+  ["sam", "Уточнение SAM", "k-geometry"],
+] as const;
 let seq = 0;
 const freshId = (kind: string) => `${kind}${++seq}${Date.now() % 1000}`;
 const occupies = (e: Edge, c: { target?: string | null; targetHandle?: string | null }) =>
@@ -177,15 +184,21 @@ function Editor() {
     };
   }, [graphId]);
 
-  const classes = useMemo(
-    () =>
-      agentClasses(draft.nodes, (id) => {
-        const node = draft.nodes.find((n) => n.id === id);
-        return node ? weightsOf(node.params ?? {})?.names ?? [] : [];
-      }),
+  const namesOf = useCallback(
+    (id: string) => {
+      const node = draft.nodes.find((n) => n.id === id);
+      return node ? weightsOf(node.params ?? {})?.names ?? [] : [];
+    },
     [draft, weightsOf]
   );
+  const classes = useMemo(() => agentClasses(draft.nodes, namesOf), [draft, namesOf]);
   const colorOf = useMemo(() => new Map(classes.map((c) => [c.name, c])), [classes]);
+  // Классы, что приходят к выбранному узлу: «Фильтр» показывает только их.
+  const incoming = useMemo(() => {
+    if (!selected) return [];
+    const up = upstream(selected, draft.edges);
+    return agentClasses(draft.nodes.filter((n) => up.has(n.id)), namesOf).map((c) => c.name);
+  }, [selected, draft, namesOf]);
 
   // Подписи карточек считаются здесь, а не хранятся в документе: имя весов
   // живёт на полке, и переименование файла не должно рождать правку графа.
@@ -256,15 +269,17 @@ function Editor() {
   );
 
   const addNode = useCallback(
-    (kind: "net" | "merge", at?: { x: number; y: number }) => {
+    (kind: Addable, at?: { x: number; y: number }) => {
       const id = freshId(kind);
       const box = wrap.current?.getBoundingClientRect();
       const point =
         at ?? screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 600) / 2, y: (box?.top ?? 0) + 160 });
-      const params =
-        kind === "net"
-          ? { weights: null, classes: [], conf: 0.25, iou: 0.6 }
-          : { inputs: 2, iou: 0.55 };
+      const params = {
+        net: { weights: null, classes: [], conf: 0.25, iou: 0.6 },
+        merge: { inputs: 2, iou: 0.55 },
+        filter: { classes: [], min_side: null, max_side: null },
+        sam: { ...SAM_DEFAULTS },
+      }[kind];
       setNodes((old) => [
         ...old.map((n) => ({ ...n, selected: false })),
         { id, type: kind, position: point, selected: true, data: { kind, params } as AgentNodeData },
@@ -324,12 +339,7 @@ function Editor() {
     <div className="g-ged ag-ged">
       <aside className="g-pal">
         <h4>Узлы</h4>
-        {(
-          [
-            ["net", "Сеть", "k-flow"],
-            ["merge", "Объединение", "k-noise"],
-          ] as const
-        ).map(([kind, label, klass]) => (
+        {PALETTE.map(([kind, label, klass]) => (
           <button
             key={kind}
             type="button"
@@ -417,8 +427,8 @@ function Editor() {
             onDrop={(event) => {
               event.preventDefault();
               const kind = event.dataTransfer.getData("application/mag-agent-node");
-              if ((kind === "net" || kind === "merge") && !readOnly)
-                addNode(kind, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+              if (PALETTE.some(([k]) => k === kind) && !readOnly)
+                addNode(kind as Addable, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
             }}
             onDragOver={(event) => {
               event.preventDefault();
@@ -454,6 +464,7 @@ function Editor() {
               readOnly={readOnly}
               weights={current ? weightsOf((current.data as AgentNodeData).params) : undefined}
               colorOf={colorOf}
+              incoming={incoming}
               onChange={(next) => current && patchParams(current.id, next)}
               onPickWeights={() => current && setPicking(current.id)}
               onRemove={() => current && removeNode(current.id)}
@@ -510,6 +521,7 @@ function NodePanel({
   readOnly,
   weights,
   colorOf,
+  incoming,
   onChange,
   onPickWeights,
   onRemove,
@@ -518,6 +530,7 @@ function NodePanel({
   readOnly: boolean;
   weights?: api.Weights;
   colorOf: Map<string, { color: string; sources: unknown[] }>;
+  incoming: string[];
   onChange: (next: Record<string, unknown>) => void;
   onPickWeights: () => void;
   onRemove: () => void;
@@ -538,12 +551,26 @@ function NodePanel({
       />
     </div>
   );
+  // Пустое поле — «без предела», поэтому null, а не значение по умолчанию.
+  const optional = (key: string, label: string, value: unknown) => (
+    <div className="mag-field ag-num">
+      <label htmlFor={`ag-${key}`}>{label}</label>
+      <input
+        id={`ag-${key}`}
+        type="number"
+        min={0}
+        step={1}
+        placeholder="—"
+        value={typeof value === "number" ? value : ""}
+        disabled={readOnly}
+        onChange={(e) => onChange({ [key]: e.target.value === "" ? null : Number(e.target.value) })}
+      />
+    </div>
+  );
 
   return (
     <div className="ag-node">
-      <div className="g-insp-name">
-        {d.kind === "net" ? "Сеть" : d.kind === "merge" ? "Объединение" : d.kind === "frame" ? "Кадр" : "Выход"}
-      </div>
+      <div className="g-insp-name">{TITLES[d.kind]}</div>
 
       {d.kind === "net" && (
         <>
@@ -588,6 +615,56 @@ function NodePanel({
           <div className="ag-two">
             {field("inputs", "Входов", mergeInputs(p), 1)}
             {field("iou", "IoU одного объекта", num(p.iou, 0.55), 0.05)}
+          </div>
+        </>
+      )}
+
+      {d.kind === "filter" && (
+        <>
+          <FilterClasses
+            names={incoming}
+            rows={(p.classes as FilterRow[] | undefined) ?? []}
+            readOnly={readOnly}
+            colorOf={colorOf}
+            onRows={(rows) => onChange({ classes: rows })}
+          />
+          <div className="ag-two">
+            {optional("min_side", "Сторона от, px", p.min_side)}
+            {optional("max_side", "Сторона до, px", p.max_side)}
+          </div>
+        </>
+      )}
+
+      {d.kind === "sam" && (
+        <>
+          <div className="mag-field">
+            <label htmlFor="ag-model">Модель</label>
+            <select id="ag-model" value={String(p.model ?? SAM_DEFAULTS.model)} disabled={readOnly}
+              onChange={(e) => onChange({ model: e.target.value })}>
+              {SAM_MODELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </div>
+          <div className="mag-field">
+            <label htmlFor="ag-detail">Детализация</label>
+            <select id="ag-detail" value={String(p.detail ?? SAM_DEFAULTS.detail)} disabled={readOnly}
+              onChange={(e) => onChange({ detail: e.target.value })}>
+              <option value="auto">Как решит модель</option>
+              <option value="object">Объект целиком</option>
+              <option value="part">Часть</option>
+              <option value="subpart">Подчасть</option>
+            </select>
+          </div>
+          <div className="ag-two">
+            {field("score_min", "Порог маски", num(p.score_min, SAM_DEFAULTS.score_min), 0.05)}
+            {field("min_area", "Кусок от, px²", num(p.min_area, SAM_DEFAULTS.min_area), 16)}
+          </div>
+          <div className="ag-two">
+            {field("polygon_points", "Точек до", num(p.polygon_points, SAM_DEFAULTS.polygon_points), 8)}
+            <label className="ag-check">
+              <input type="checkbox" checked={p.fill_holes !== false} disabled={readOnly}
+                onChange={(e) => onChange({ fill_holes: e.target.checked })} />
+              Заливать дыры
+            </label>
           </div>
         </>
       )}
@@ -706,6 +783,62 @@ function NetClasses({
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+/** Таблица «Фильтра»: классы, что приходят на вход, с галочкой и порогом.
+ *  Строки держатся за имя класса агента. Класса нет в сохранённой таблице —
+ *  он пропускается с порогом 0: так же считает и сервер. */
+function FilterClasses({
+  names,
+  rows,
+  readOnly,
+  colorOf,
+  onRows,
+}: {
+  names: string[];
+  rows: FilterRow[];
+  readOnly: boolean;
+  colorOf: Map<string, { color: string }>;
+  onRows: (rows: FilterRow[]) => void;
+}) {
+  const byName = new Map(rows.map((r) => [r.cls, r]));
+  const table = names.map((cls) => byName.get(cls) ?? { cls, on: true, conf: 0 });
+  // Строки классов, которых выше больше нет, не выбрасываем: вернётся класс —
+  // вернётся и его правило.
+  const set = (cls: string, patch: Partial<FilterRow>) =>
+    onRows([...rows.filter((r) => !names.includes(r.cls)), ...table.map((r) => (r.cls === cls ? { ...r, ...patch } : r))]);
+
+  return (
+    <div className="ag-cls ag-flt">
+      <div className="ag-cls-h">
+        <div className="ag-cls-title">
+          <b>Классы на входе</b>
+          <span className="mono">{names.length}</span>
+        </div>
+      </div>
+      <div className="ag-cr ag-cr-head">
+        <span />
+        <span>класс агента</span>
+        <span>уверенность от</span>
+      </div>
+      <div className="ag-cls-body">
+        {names.length === 0 && <p className="ag-muted">Выше нет сетей с классами.</p>}
+        {table.map((r) => (
+          <div key={r.cls} className={`ag-cr${r.on ? "" : " off"}`}>
+            <input type="checkbox" checked={r.on} disabled={readOnly} aria-label={r.cls}
+              onChange={(e) => set(r.cls, { on: e.target.checked })} />
+            <span className="ag-an">
+              <i className="ag-dot" style={{ background: colorOf.get(r.cls)?.color ?? "var(--hair)" }} />
+              <span className="ag-wn" title={r.cls}>{r.cls}</span>
+            </span>
+            <input className="ag-conf mono" type="number" min={0} max={1} step={0.05} value={r.conf}
+              disabled={readOnly || !r.on} aria-label={`Порог для ${r.cls}`}
+              onChange={(e) => set(r.cls, { conf: Number(e.target.value) || 0 })} />
+          </div>
+        ))}
       </div>
     </div>
   );

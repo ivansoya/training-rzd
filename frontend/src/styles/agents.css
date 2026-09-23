@@ -206,3 +206,19 @@
 .mag-ed-obj .ag-who { order: 5; flex: 1 0 100%; padding-left: 19px; line-height: 1.35; }
 .ag-who .agent { color: #b9a4ff; }
 .ag-who .fix { color: var(--skip); }
+
+/* --- «Фильтр» и «Уточнение SAM» --- */
+.ag-flt .ag-cr { grid-template-columns: 16px minmax(0, 1fr) 76px; }
+.ag-conf {
+  width: 100%;
+  padding: 2px 5px;
+  border: 1px solid var(--rule);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.ag-conf:disabled { opacity: 0.45; }
+.ag-check { display: flex; align-items: center; gap: 6px; align-self: end; padding-bottom: 7px; font-size: 12.5px; }
+.ag-check input { margin: 0; accent-color: var(--red); }

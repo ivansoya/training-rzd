@@ -5,7 +5,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { ReactNode } from "react";
 
 export interface AgentNodeData extends Record<string, unknown> {
-  kind: "frame" | "net" | "merge" | "output";
+  kind: "frame" | "net" | "merge" | "filter" | "sam" | "output";
   params: Record<string, unknown>;
   /** Подпись сети: имя весов и паспорт. Считает редактор — у него полка. */
   caption?: string;
@@ -53,8 +53,32 @@ export const TITLES: Record<AgentNodeData["kind"], string> = {
   frame: "Кадр",
   net: "Сеть",
   merge: "Объединение",
+  filter: "Фильтр",
+  sam: "Уточнение SAM",
   output: "Выход",
 };
+
+const side = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? String(v) : null);
+
+function FilterNode({ data }: NodeProps) {
+  const d = data as AgentNodeData;
+  const rules = ((d.params.classes as { on: boolean; conf: number }[] | undefined) ?? []).filter(
+    (r) => !r.on || r.conf > 0
+  ).length;
+  const lo = side(d.params.min_side);
+  const hi = side(d.params.max_side);
+  const size = lo || hi ? `сторона ${lo ?? "0"}–${hi ?? "∞"} px` : null;
+  const why = [rules ? `правил ${rules}` : null, size].filter(Boolean).join(", ") || "пропускает всё";
+  return <Card data={{ ...d, why }} klass="k-light" title="Фильтр" ins={["in"]} outs={["out"]} />;
+}
+
+function SamNode({ data }: NodeProps) {
+  const d = data as AgentNodeData;
+  const model = String(d.params.model ?? "sam2.1_hiera_small").replace("sam2.1_hiera_", "").replace("_plus", "+");
+  return (
+    <Card data={{ ...d, why: `SAM2.1 ${model} → полигон` }} klass="k-geometry" title="Уточнение SAM" ins={["in"]} outs={["out"]} />
+  );
+}
 
 function FrameNode({ data }: NodeProps) {
   const d = data as AgentNodeData;
@@ -97,5 +121,7 @@ export const agentNodeTypes = {
   frame: FrameNode,
   net: NetNode,
   merge: MergeNode,
+  filter: FilterNode,
+  sam: SamNode,
   output: OutputNode,
 };

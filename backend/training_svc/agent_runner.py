@@ -17,12 +17,15 @@
 человек мог открыть и сохранить кадр, пока агент шёл к нему.
 """
 import logging
-import time
 import os
+import threading
+import time
+from contextlib import contextmanager
 
 from sqlalchemy import select
 
 from common import agent_graph, config, gpu, live, shapes, task_frames
+from common.db import SessionLocal
 from common.models import (
     AgentRun, AgentWeights, Annotation, AugGraphVersion, Image, utcnow,
 )
@@ -32,7 +35,20 @@ log = logging.getLogger("training")
 # Прикидка памяти на одну сеть, пока нет замера. Средний yolo11 на входе 1280
 # с запасом; по факту диспетчер запомнит свой.
 NET_VRAM_MB = 1500
+# SAM2 small на кадре 1920×1400 — около гигабайта; large вдвое больше.
+SAM_VRAM_MB = 1500
 NOTIFY_EVERY = 1.0
+
+# Файл и конфиг — как у полуавтомата (autolabel_svc/runners/sam2_runner.py);
+# веса лежат там же на томе, так что скачанное одним годится другому.
+# Качаем с HuggingFace, а не с CDN Meta: тот на этой сети отдаёт 15 КБ и
+# молчит (см. training_svc/embed.py).
+SAM_FILES = {
+    "sam2.1_hiera_tiny": ("sam2.1_hiera_tiny.pt", "configs/sam2.1/sam2.1_hiera_t.yaml", "tiny"),
+    "sam2.1_hiera_small": ("sam2.1_hiera_small.pt", "configs/sam2.1/sam2.1_hiera_s.yaml", "small"),
+    "sam2.1_hiera_base_plus": ("sam2.1_hiera_base_plus.pt", "configs/sam2.1/sam2.1_hiera_b+.yaml", "base-plus"),
+    "sam2.1_hiera_large": ("sam2.1_hiera_large.pt", "configs/sam2.1/sam2.1_hiera_l.yaml", "large"),
+}
 
 
 class Stopped(Exception):
@@ -102,8 +118,10 @@ def execute(db, run):
             return True
         weights[node["id"]] = row
 
-    sig = f"agent:{len(nets)}"
-    want, _ = gpu.estimate(db, "agent", sig, NET_VRAM_MB * len(nets))
+    sams = sorted({(n.get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
+                   for n in doc["nodes"] if n["type"] == "sam"})
+    sig = f"agent:{len(nets)}:{','.join(sams)}"
+    want, _ = gpu.estimate(db, "agent", sig, NET_VRAM_MB * len(nets) + SAM_VRAM_MB * len(sams))
     # Прошлая бронь больше не нужна — та же причина, что у обучения: без
     # отмены каждая попытка оставляла в очереди ещё одну запись. А пока ждём,
     # бронь стоит в очереди: по её возрасту диспетчер придерживает место.
@@ -134,7 +152,9 @@ def execute(db, run):
         ids = frames(db, run)
         run.total = len(ids)
         db.commit()
-        models = _load(weights)
+        with _beating(lease.id):
+            models = _load(weights)
+            models.update({name: _load_sam(name, device) for name in sams})
         mapping = run.params.get("mapping") or {}
         boxes = marked = 0
         last = 0.0
@@ -198,7 +218,26 @@ def _one(db, run, image_id, doc, order, models, weights, mapping, device):
             out.append((int(cls), conf, x1, y1, x2 - x1, y2 - y1))
         return out
 
-    found = agent_graph.run(doc, predict, order)
+    encoded = set()
+
+    def segment(node, box):
+        import numpy as np
+
+        name = (node.get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
+        predictor = models[name]
+        # Кодировщик кадра — дорогая часть; считаем его один раз на кадр и
+        # модель, а рамки декодируются за миллисекунды.
+        if name not in encoded:
+            from PIL import Image as PilImage
+            with PilImage.open(path) as img:
+                predictor.set_image(np.array(img.convert("RGB")))
+            encoded.add(name)
+        x, y, w, h = box
+        masks, scores, _ = predictor.predict(
+            box=np.array([x, y, x + w, y + h], dtype=np.float32), multimask_output=True)
+        return masks, scores
+
+    found = agent_graph.run(doc, predict, order, segment)
 
     db.execute(
         Annotation.__table__.delete().where(
@@ -213,15 +252,19 @@ def _one(db, run, image_id, doc, order, models, weights, mapping, device):
         if not class_id:
             continue  # класс агента сопоставлен с «не размечать»
         x, y, w, h = det["box"]
-        parsed = shapes.from_wire({"kind": "bbox", "x": x, "y": y, "w": w, "h": h},
-                                  image.width or 0, image.height or 0)
+        wire = ({"kind": "polygon", "parts": det["parts"]} if det.get("parts")
+                else {"kind": "bbox", "x": x, "y": y, "w": w, "h": h})
+        parsed = shapes.from_wire(wire, image.width or 0, image.height or 0)
         if parsed is None:
             continue
         ann_type, geometry, area = parsed
+        attributes = {"conf": round(float(det["conf"]), 3)}
+        if "sam" in det:
+            attributes["sam"] = det["sam"]
         db.add(Annotation(
             image_id=image.id, class_id=_uuid(class_id), ann_type=ann_type,
             geometry=geometry, area=area, source="model",
-            attributes={"conf": round(float(det["conf"]), 3)},
+            attributes=attributes,
             agent_version_id=run.version_id, created_by=run.created_by,
         ))
         put += 1
@@ -234,6 +277,61 @@ def _load(weights):
 
     return {nid: YOLO(os.path.join(config.DATA_DIR, row.file_path))
             for nid, row in weights.items()}
+
+
+@contextmanager
+def _beating(lease_id):
+    """Бронь живёт 120 с без пульса, а первая закачка SAM2 large — 900 МБ.
+    Пока грузятся модели, аренду продлевает своя нить со своей сессией."""
+    stop = threading.Event()
+
+    def pulse():
+        while not stop.wait(20):
+            db = SessionLocal()
+            try:
+                gpu.beat(db, lease_id)
+            except Exception:
+                log.exception("пульс загрузки моделей агента")
+            finally:
+                db.close()
+
+    threading.Thread(target=pulse, name="agent-pulse", daemon=True).start()
+    try:
+        yield
+    finally:
+        stop.set()
+
+
+def _load_sam(name, device):
+    from sam2.build_sam import build_sam2
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+
+    _, cfg, _ = SAM_FILES[name]
+    model = build_sam2(cfg, sam_weights(name), device="cpu" if device == "cpu" else "cuda")
+    return SAM2ImagePredictor(model)
+
+
+def sam_weights(name):
+    """Путь к целым весам SAM2 на томе; нет — качаем с HuggingFace с проверкой длины."""
+    from training_svc import embed
+
+    file_name, _, repo = SAM_FILES[name]
+    folder = config.auto_weights_dir("sam2")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, file_name)
+    url = f"https://huggingface.co/facebook/sam2.1-hiera-{repo}/resolve/main/{file_name}"
+    expected = embed._expected_size(url)
+    if embed._looks_whole(path, expected, "hub"):
+        return path
+    if expected is None:
+        raise RuntimeError(f"Весов {file_name} нет на томе, а HuggingFace не отвечает. "
+                           f"Положите файл руками в {folder}.")
+    got = embed._download(url, path + ".part", expected, "hub", None)
+    if got is None:
+        raise RuntimeError(f"Не удалось скачать {file_name} с HuggingFace. "
+                           f"Положите файл руками в {folder}.")
+    os.replace(got, path)
+    return path
 
 
 def _peak_mb(device):
