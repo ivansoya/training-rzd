@@ -279,6 +279,67 @@
 .ag-scout-name { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--dim); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .ag-scout-lane { position: relative; height: 10px; border-radius: 3px; background: var(--sunk); overflow: hidden; }
 .ag-scout-lane i { position: absolute; top: 0; bottom: 0; border-radius: 2px; opacity: 0.85; cursor: pointer; }
-.ag-scout-sum { display: block; color: var(--dim); font-size: 11.5px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* «Разведка» у ролика — явная кнопка окна статистики, в фиолетовом агентов
+   (как подпись «агент X v1» у рамок). */
+.ag-scout-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 4px 11px; border: 1px solid #8b73ff66; border-radius: 7px; background: #1d1733; color: #b9a4ff; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.ag-scout-btn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #8b73ff; }
+.ag-scout-btn:hover { border-color: #8b73ff; background: #2a2150; color: #d9ceff; }
+.g-block-h .ag-scout-btn { margin-top: 0; }
+
+/* --- окно статистики разведки --- */
+.mag-modal.ag-stats { width: 1060px; display: grid; gap: 16px; }
+/* Вкладки переносятся в своей колонке, крестик всегда справа в первой строке. */
+.ag-stats-h { display: flex; align-items: flex-start; gap: 12px; }
+.ag-stats-h > h1 { flex: none; margin: 0; }
+.ag-stats-tabs { flex: 1; display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; padding-top: 2px; }
+.ag-stats-tabs button { max-width: 300px; padding: 5px 11px; border: 1px solid var(--hair); border-radius: 7px; background: transparent; color: var(--dim); font: inherit; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.ag-stats-tabs button:hover { border-color: var(--rule); color: var(--ink); }
+.ag-stats-tabs button[aria-selected="true"] { background: var(--accent-soft); border-color: var(--red); color: var(--ink); }
+.ag-stats-x { flex: none; margin-left: auto; width: 32px; height: 32px; border: 1px solid var(--rule); border-radius: 7px; background: transparent; color: var(--dim); cursor: pointer; }
+.ag-stats-x:hover { color: var(--ink); border-color: var(--control-edge); }
+.ag-stats-meta { margin: -8px 0 0; color: var(--dim); font-size: 12.5px; }
+.ag-stats-figs { display: flex; flex-wrap: wrap; gap: 14px 44px; }
+.ag-stats-figs b { display: block; font-size: 26px; font-weight: 600; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.ag-stats-figs b small { font-size: 15px; font-weight: 500; color: var(--dim); }
+.ag-stats-figs span { display: block; margin-top: 4px; color: var(--faint); font-size: 12px; }
+.ag-stats-table { overflow-x: auto; }
+.ag-stats-table table { width: 100%; min-width: 820px; border-collapse: collapse; font-size: 12.5px; }
+.ag-stats-table th { padding: 8px 10px; border-bottom: 1px solid var(--rule); color: var(--faint); font-size: 11.5px; font-weight: 600; text-align: left; white-space: nowrap; }
+.ag-stats-table td { padding: 9px 10px; border-bottom: 1px solid var(--hair); white-space: nowrap; vertical-align: middle; }
+.ag-stats-table .n { text-align: right; font-variant-numeric: tabular-nums; }
+.ag-stats-cls { display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 250px; }
+.ag-stats-cls i { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.ag-stats-cls span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-stats-conf { display: inline-flex; align-items: center; gap: 9px; }
+.ag-stats-conf b { min-width: 30px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ag-stats-conf small { color: var(--faint); font: 11px var(--mono); }
+.ag-stats-hist { display: block; }
+.ag-stats-time { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.ag-stats-time h4 { margin: 0; font-size: 13px; font-weight: 600; }
+.ag-stats-time span { color: var(--faint); font-size: 12px; }
+.ag-stats-strips { display: grid; gap: 6px; }
+.ag-stats-row, .ag-stats-axis { display: grid; grid-template-columns: minmax(110px, 200px) minmax(0, 1fr) 44px; gap: 12px; align-items: center; }
+.ag-stats-row .ag-stats-cls { font-size: 12px; color: var(--dim); }
+.ag-stats-strip { position: relative; height: 28px; overflow: hidden; border: 1px solid var(--hair); border-radius: 5px; background: var(--sunk); }
+.ag-stats-strip svg { position: absolute; left: 0; top: 3px; width: 100%; height: calc(100% - 3px); }
+.ag-stats-max { color: var(--faint); font: 11px var(--mono); }
+.ag-stats-axis { color: var(--faint); font: 11px var(--mono); }
+.ag-stats-axis > div { position: relative; height: 16px; }
+.ag-stats-axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+.ag-stats-axis .first { transform: none; }
+.ag-stats-axis .last { transform: translateX(-100%); }
 .vt-scout .vt-name { cursor: default; font-style: italic; }
 .vt-scout .vt-life { cursor: pointer; opacity: 0.55; }
+
+/* Наведение на полосы «по времени»: подсказка в стиле панелей сайта. */
+.ag-stats-strip { cursor: crosshair; }
+.ag-stats-tip { position: fixed; z-index: 300; width: 240px; padding: 9px 11px; border: 1px solid var(--rule); border-radius: var(--radius); background: var(--card); box-shadow: 0 12px 30px rgba(0, 0, 0, .45); font-size: 12px; pointer-events: none; display: grid; gap: 4px; }
+.ag-stats-tip-h { display: flex; justify-content: space-between; gap: 8px; padding-bottom: 5px; margin-bottom: 2px; border-bottom: 1px solid var(--hair); }
+.ag-stats-tip-h span { color: var(--faint); font-family: var(--mono); }
+.ag-stats-tip > div:not(.ag-stats-tip-h) { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 8px; color: var(--dim); }
+.ag-stats-tip i { width: 10px; height: 10px; border-radius: 3px; }
+.ag-stats-tip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-stats-tip b { font-variant-numeric: tabular-nums; }
+.ag-stats-tip .on { color: var(--ink); font-weight: 600; }
+.ag-stats-tip > div.ag-stats-tip-sum { grid-template-columns: minmax(0, 1fr) auto; padding-top: 4px; border-top: 1px solid var(--hair); }
+.ag-stats-tip p { margin: 0; color: var(--faint); }

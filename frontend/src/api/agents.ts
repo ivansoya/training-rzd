@@ -109,6 +109,7 @@ export const startRun = (
 
 /** Разведка ролика: участки по классам агента, кадры включительно. */
 export interface Scout {
+  file_name: string;
   agent: string | null;
   step: number;
   gap_s: number;
@@ -120,6 +121,39 @@ export interface Scout {
 
 export const taskScouts = (taskId: string) =>
   get<{ scouts: Record<string, Scout> }>(`agents/tasks/${taskId}/scouts`);
+
+/** Класс в статистике разведки. `counts` — рамок на каждом проверенном кадре. */
+export interface ScoutClassStats {
+  name: string;
+  boxes: number;
+  frames: number;
+  max: number;
+  conf: { median: number; min: number; max: number; hist: number[] };
+  size: [number, number];
+  counts: number[];
+}
+
+/** Разведка одного ролика числами — считает сервер (agent_graph.scout_stats). */
+export interface ScoutStats {
+  file_name: string;
+  fps: number | null;
+  agent: string | null;
+  version: number | null;
+  step: number;
+  last_frame: number;
+  created_at: string;
+  segments: Record<string, [number, number, number][]>;
+  checked: number[];
+  with_hits: number;
+  boxes: number;
+  max: number;
+  max_at: number | null;
+  per_frame: number[];
+  classes: ScoutClassStats[];
+}
+
+export const scoutStats = (taskId: string, videoId: string) =>
+  get<ScoutStats>(`agents/tasks/${taskId}/scouts/${videoId}`);
 
 export const stopRun = (runId: string) => post<RunView>(`agents/runs/${runId}/stop`);
 

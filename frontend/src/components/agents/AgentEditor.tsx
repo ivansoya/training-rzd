@@ -37,10 +37,11 @@ import AgentPreview from "./AgentPreview";
 import WeightsPicker from "./WeightsPicker";
 
 const DRAFT_WAIT_MS = 700;
-type Addable = "net" | "merge" | "filter" | "sam";
+type Addable = "net" | "merge" | "nms" | "filter" | "sam";
 const PALETTE = [
   ["net", "Сеть", "k-flow"],
   ["merge", "Объединение", "k-noise"],
+  ["nms", "NMS", "k-light"],
   ["filter", "Фильтр", "k-light"],
   ["sam", "Уточнение SAM", "k-geometry"],
 ] as const;
@@ -282,8 +283,9 @@ function Editor() {
       const point =
         at ?? screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 600) / 2, y: (box?.top ?? 0) + 160 });
       const params = {
-        net: { weights: null, classes: [], conf: 0.25, iou: 0.6 },
-        merge: { inputs: 2, iou: 0.55 },
+        net: { weights: null, classes: [], conf: 0.25 },
+        merge: { inputs: 2 },
+        nms: { iou: 0.6, agnostic: false },
         filter: { classes: [], min_side: null, max_side: null },
         sam: { ...SAM_DEFAULTS },
       }[kind];
@@ -618,11 +620,12 @@ function NodePanel({
               onRows={(rows) => onChange({ classes: rows })}
             />
           )}
+          {/* IoU здесь нет: у yolo26 NMS нет вовсе, у yolo11 и v8 он встроен
+              с мягким 0,7. Гасить дубли — узлом «NMS», его видно на холсте. */}
           <div className="ag-two">
             {field("conf", "Уверенность от", num(p.conf, 0.25), 0.05)}
-            {field("iou", "IoU для NMS", num(p.iou, 0.6), 0.05)}
+            {field("imgsz", "Размер входа", num(p.imgsz, weights?.imgsz ?? 640), 32)}
           </div>
-          {field("imgsz", "Размер входа", num(p.imgsz, weights?.imgsz ?? 640), 32)}
           {(
             [
               ["tiles", "Плитки размером со вход и целый кадр"],
@@ -645,12 +648,16 @@ function NodePanel({
         </>
       )}
 
-      {d.kind === "merge" && (
+      {d.kind === "merge" && field("inputs", "Входов", mergeInputs(p), 1)}
+
+      {d.kind === "nms" && (
         <>
-          <div className="ag-two">
-            {field("inputs", "Входов", mergeInputs(p), 1)}
-            {field("iou", "IoU одного объекта", num(p.iou, 0.55), 0.05)}
-          </div>
+          {field("iou", "IoU от", num(p.iou, 0.6), 0.05)}
+          <label className="ag-check ag-flag">
+            <input type="checkbox" checked={Boolean(p.agnostic)} disabled={readOnly}
+              onChange={(e) => onChange({ agnostic: e.target.checked })} />
+            Между классами
+          </label>
         </>
       )}
 

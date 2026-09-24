@@ -32,7 +32,8 @@ export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected
   /** Кадры, помеченные фоновыми. `on` — пометка действует: кадр свободен. */
   marks: { frame: number; on: boolean }[];
   /** Разведка агента: полосы по классам, только для чтения — это информация,
-   *  а не разметка. Клик по полосе — на её начало. */
+   *  а не разметка. Клик по полосе — на её начало. Непустая — показывается
+   *  вместо треков: две картины на одной сетке сбивали с толку. */
   scout?: ScoutLane[];
 }) {
   const grid = useRef<HTMLDivElement>(null);
@@ -40,7 +41,7 @@ export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected
   const drag = useRef<Drag | null>(null);
   const [preview, setPreview] = useState<{ drag: Drag; frame: number } | null>(null);
   const [width, setWidth] = useState(600);
-  const [view, setView] = useState({ top: 0, height: 0 });
+  const [view, setView] = useState({ top: 0, height: 0, total: 0 });
   useEffect(() => {
     const el = grid.current;
     if (!el) return;
@@ -49,17 +50,32 @@ export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected
   }, []);
   // Указатель прижат к видимой части, а не к содержимому: он лежит в сетке,
   // которая прокручивается, и без этого при прокрутке уезжал вверх — линия
-  // отрывалась от шкалы и лезла над ней.
+  // отрывалась от шкалы и лезла над ней. Сетку слушаем тоже: строки
+  // прибавились — меняется длина прокрутки, а размер окна тот же.
+  //
+  // Длина прокрутки — по высоте сетки, а не scrollHeight: в scrollHeight
+  // входят указатель и бегунок, и их прежняя высота держала его, когда строк
+  // становилось меньше, — бегунок оставался при пустых дорожках.
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
-    const read = () => setView({ top: el.scrollTop, height: el.clientHeight });
+    const read = () => {
+      const style = getComputedStyle(el);
+      const pad = parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+      setView({ top: el.scrollTop, height: el.clientHeight, total: (grid.current?.offsetHeight ?? 0) + pad });
+    };
     read();
     el.addEventListener("scroll", read, { passive: true });
     const observer = new ResizeObserver(read);
     observer.observe(el);
+    if (grid.current) observer.observe(grid.current);
     return () => { el.removeEventListener("scroll", read); observer.disconnect(); };
   }, []);
+  // Системной полосы прокрутки у дорожек нет — она отнимала ширину у сетки
+  // (решение владельца 24.09.2026). Где ты в списке, показывает бегунок
+  // поверх правого поля; крутят колесом и тачпадом.
+  const over = view.total - view.height;
+  const thumb = Math.max(24, (view.height * view.height) / Math.max(1, view.total));
   const pct = (n: number) => `${Math.max(0, Math.min(100, n / Math.max(1, lastFrame) * 100))}%`;
   const ticks = timelineTicks(lastFrame, width);
   const at = (x: number) => { const r = grid.current!.getBoundingClientRect(); return timelineFrame(x, r.left, r.width, lastFrame); };
@@ -117,7 +133,7 @@ export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected
             style={{left:pct(a),width:pct(b-a+1),background:lane.color}} onPointerDown={e => { e.stopPropagation(); onSeek(a); }} />)}
         </div>
       </div>)}
-      {tracks.map(track => {
+      {!scout.length && tracks.map(track => {
         const label = labelOf(track.class_index ?? -1), end = trackEnd(track), on = track.id === selected;
         const ghost = preview?.drag.trackId === track.id ? preview : null;
         const zones = hiddenRanges(track), starts = new Set(zones.map(([a]) => a));
@@ -150,9 +166,11 @@ export default function TrackLanes({ tracks, frame, lastFrame, labelOf, selected
             onClick={() => onAction({ kind: "drop", trackId: track.id, frame })}>🗑</button>}
         </div>;
       })}
-      {!tracks.length && <p className="vt-empty">T <Sep /> обведите объект на видео, чтобы создать трек</p>}
+      {!scout.length && !tracks.length && <p className="vt-empty">T <Sep /> обведите объект на видео, чтобы создать трек</p>}
       <div className="vt-playhead" aria-hidden="true"
         style={{left:pct(frame),top:view.top+RULER,height:Math.max(0,view.height-RULER)}}><i /></div>
+      {over > 1 && <i className="vt-thumb" aria-hidden="true"
+        style={{top:view.top+(view.top/over)*(view.height-thumb),height:thumb}} />}
     </div>
   </div>;
 }

@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import * as api from "../../api/agents";
+import { useLive } from "../../live/LiveProvider";
 import { PALETTE } from "./agentDoc";
 import Sep from "../Sep";
 
@@ -26,21 +27,18 @@ export function scoutLanes(scout: api.Scout | undefined): ScoutLane[] {
     .map((name, i) => ({ name, color: PALETTE[i % PALETTE.length], spans: scout.segments[name] }));
 }
 
-/** Сводка числами: «Человек · 5 участков · 42 с». */
-export function scoutSummary(scout: api.Scout): string[] {
-  const fps = scout.fps || 25;
-  return scoutLanes(scout).map((l) => {
-    const seconds = l.spans.reduce((s, [a, b]) => s + (b - a + 1), 0) / fps;
-    return `${l.name} · ${l.spans.length} уч. · ${Math.round(seconds)} с`;
-  });
-}
-
-/** Разведка роликов таски: {ролик: разведка}. Пусто, пока агент не смотрел. */
-export function useScouts(taskId: string, bump = 0) {
+/** Разведка роликов таски: {ролик: разведка}. Пусто, пока агент не смотрел.
+ *  Прогон кончился — перечитываем: сводка под роликом не должна ждать
+ *  перезагрузки страницы. */
+export function useScouts(taskId: string) {
   const [scouts, setScouts] = useState<Record<string, api.Scout>>({});
+  const [tick, setTick] = useState(0);
+  useLive("agent", (event) => {
+    if (event.s === "done") setTick((t) => t + 1);
+  });
   useEffect(() => {
     api.taskScouts(taskId).then((r) => setScouts(r.scouts)).catch(() => setScouts({}));
-  }, [taskId, bump]);
+  }, [taskId, tick]);
   return scouts;
 }
 
@@ -121,13 +119,15 @@ export function ScoutBars({
   );
 }
 
-/** Сводка разведки числами под именем ролика. Нет разведки — ничего. */
-export function ScoutLine({ scout }: { scout?: api.Scout }) {
+/** Кнопка «Разведка» у ролика — открывает окно статистики. Что нашлось, здесь
+ *  не перечисляется (решение владельца 24.09.2026): строка сводки читалась
+ *  как подпись, а не как вход. Нет разведки — нет и кнопки. */
+export function ScoutButton({ scout, onOpen }: { scout?: api.Scout; onOpen: () => void }) {
   if (!scout) return null;
-  const parts = scoutSummary(scout);
   return (
-    <span className="ag-scout-sum" title={`Разведка «${scout.agent ?? "агент"}», каждый ${scout.step}-й кадр`}>
-      разведка: {parts.length ? parts.join("; ") : "ничего не найдено"}
-    </span>
+    <button className="ag-scout-btn" type="button" onClick={onOpen}
+      title={`Разведка «${scout.agent ?? "агент"}», каждый ${scout.step}-й кадр — статистика`}>
+      Разведка
+    </button>
   );
 }

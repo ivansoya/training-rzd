@@ -1,14 +1,20 @@
 """Граф агента разметки: форма, классы и прогон одного кадра.
 
 По проводу идёт образец «кадр плюс обнаружения». «Кадр» начинает поток с
-пустым списком, «Сеть» дописывает к пришедшему свои обнаружения, «Объединение»
-сводит ветки и гасит дубли, «Выход» — то, что ляжет в разметку.
+пустым списком, «Сеть» дописывает к пришедшему свои обнаружения,
+«Объединение» сводит ветки, «NMS» гасит дубли, «Выход» — то, что ляжет в
+разметку.
 
 **Номер класса сети дальше «Сети» не идёт.** У каждой сети своя нумерация:
 `0` у детектора вагонов и `0` у детектора пути — разные вещи. Узел переводит
 номер в имя класса агента по своей таблице, и дальше по проводу обнаружение
-несёт только имя. Одно имя у двух сетей — один класс, и «Объединение» гасит
-дубли между ними; разные имена не смешиваются никогда.
+несёт только имя. Одно имя у двух сетей — один класс, и «NMS» гасит дубли
+между ними; разные имена смешивает только галочка «Между классами».
+
+**Гашение дублей — отдельный узел, и ставит его оператор.** Сети без NMS
+(yolo26) отдают по две рамки на объект, а ultralytics для них NMS не
+запускает вовсе. Прятать гашение внутрь «Сети» решили не делать (24.09.2026):
+кто заливает веса, знает, какие они, а всё гашение видно на холсте.
 
 «Фильтр» режет по порогу своего класса и по размеру рамки. «Уточнение SAM»
 дописывает обнаружению обводку (`parts`) и подтягивает рамку к маске; не
@@ -22,11 +28,17 @@
 SAM — функцией `segment(node, box) -> (маски, оценки)`.
 """
 import math
+import statistics
 
-KINDS = ("frame", "net", "merge", "filter", "sam", "output")
+KINDS = ("frame", "net", "merge", "nms", "filter", "sam", "output")
 MAX_NODES = 100
 MAX_INPUTS = 8
-MERGE_IOU = 0.55
+# Порог «NMS» по умолчанию. У РСМ yolo26n дубли перекрыты на 0,76–0,99, и
+# 0,5–0,7 дали на 151 кадре одинаковый итог; 0,6 оставляет запас настоящим
+# объектам, стоящим вплотную.
+NMS_IOU = 0.6
+# Одна ли это рамка у разных проходов TTA.
+FUSE_IOU = 0.55
 
 # Тот же список, что у полуавтомата (autolabel_svc/runners/sam2_runner.py).
 SAM_MODELS = ("sam2.1_hiera_tiny", "sam2.1_hiera_small",
@@ -47,7 +59,7 @@ class AgentGraphError(ValueError):
 
 
 def title(node):
-    names = {"frame": "Кадр", "net": "Сеть", "merge": "Объединение",
+    names = {"frame": "Кадр", "net": "Сеть", "merge": "Объединение", "nms": "NMS",
              "filter": "Фильтр", "sam": "Уточнение SAM", "output": "Выход"}
     label = (node.get("params") or {}).get("label")
     base = names.get(node.get("type"), str(node.get("type")))
@@ -66,7 +78,7 @@ def ports(node):
     kind = node.get("type")
     if kind == "frame":
         return [], ["out"]
-    if kind in ("net", "filter", "sam"):
+    if kind in ("net", "nms", "filter", "sam"):
         return ["in"], ["out"]
     if kind == "merge":
         return [f"i{i}" for i in range(inputs_count(node))], ["out"]
@@ -170,6 +182,10 @@ def check(doc, weights=None):
             model = (node.get("params") or {}).get("model") or SAM_DEFAULTS["model"]
             if model not in SAM_MODELS:
                 raise AgentGraphError(f"{title(node)}: неизвестная модель {model!r}.")
+        if node["type"] == "nms":
+            threshold = _num((node.get("params") or {}).get("iou"), NMS_IOU)
+            if threshold is None or not 0 < threshold <= 1:
+                raise AgentGraphError(f"{title(node)}: IoU — число больше 0 и не больше 1.")
 
     order = _topo(nodes, taken_in)
     if order is None:
@@ -207,12 +223,15 @@ def iou(a, b):
     return inter / union if union > 0 else 0.0
 
 
-def nms(dets, threshold=MERGE_IOU):
-    """Дубли гасятся только внутри одного класса агента: «вагон» и «цистерна»
-    на одном объекте — два мнения, а не дубль, и решает их не этот узел."""
+def nms(dets, threshold=NMS_IOU, agnostic=False):
+    """Из перекрытых рамок остаётся самая уверенная, координаты не
+    усредняются. По умолчанию — внутри одного класса агента: «вагон» и
+    «цистерна» на одном объекте — два мнения, а не дубль. `agnostic` —
+    галочка «Между классами»: мнения спорят, и побеждает уверенное."""
     kept = []
     for det in sorted(dets, key=lambda d: -d["conf"]):
-        if all(k["cls"] != det["cls"] or iou(k["box"], det["box"]) < threshold for k in kept):
+        if all((not agnostic and k["cls"] != det["cls"]) or iou(k["box"], det["box"]) < threshold
+               for k in kept):
             kept.append(det)
     return kept
 
@@ -334,7 +353,7 @@ def ios(a, b):
     return ix * iy / small if small > 0 else 0.0
 
 
-def wbf(dets, passes, threshold=MERGE_IOU):
+def wbf(dets, passes, threshold=FUSE_IOU):
     """Взвешенное слияние проходов одного вида. `dets` — [(cls, conf, box)] всех
     проходов вместе; уверенность итога — средняя по членам, умноженная на долю
     проходов, что объект увидели."""
@@ -423,8 +442,10 @@ def run(doc, predict, order=None, segment=None, trace=None):
             ]
             value[nid] = ins[0] + own
         elif kind == "merge":
-            threshold = float((node.get("params") or {}).get("iou", MERGE_IOU))
-            value[nid] = nms([d for branch in ins for d in branch], threshold)
+            value[nid] = [d for branch in ins for d in branch]
+        elif kind == "nms":
+            params = node.get("params") or {}
+            value[nid] = nms(ins[0], _num(params.get("iou"), NMS_IOU), bool(params.get("agnostic")))
         elif kind == "filter":
             value[nid] = filter_dets(ins[0], node.get("params") or {})
         elif kind == "sam":
@@ -479,3 +500,56 @@ def segments(hits, step, gap_frames, last_frame):
                 spans.append([f, f, 1])
         out[cls] = [[max(0, a - half), min(int(last_frame), b + half), n] for a, b, n in spans]
     return out
+
+
+def scout_stats(frames):
+    """Разведка ролика числами — для окна статистики.
+
+    `frames` — как лежит в `video_scouts.frames`: {кадр: [[класс, уверенность,
+    x, y, w, h], ...]} по каждому проверенному кадру, пустые тоже. Считается
+    на сервере: у часового ролика тысячи кадров, и гнать их в браузер ради
+    десятка чисел незачем.
+
+    По классу — рамки, кадры с ним, сколько одновременно, уверенность
+    (медиана, разброс, гистограмма по десятым — по ней ставят порог
+    «Фильтра»), медианный размер (по нему решают про плитки) и счёт по
+    каждому проверенному кадру для полосы «по времени». Классы — по числу
+    рамок, при равенстве по имени.
+    """
+    checked = sorted(int(f) for f in frames)
+    per_frame = [len(frames[str(f)]) for f in checked]
+    by_cls = {}
+    for i, f in enumerate(checked):
+        for cls, conf, _x, _y, w, h in frames[str(f)]:
+            row = by_cls.setdefault(cls, {"counts": [0] * len(checked), "conf": [], "w": [], "h": []})
+            row["counts"][i] += 1
+            row["conf"].append(float(conf))
+            row["w"].append(w)
+            row["h"].append(h)
+    out = []
+    for name, row in by_cls.items():
+        confs = sorted(row["conf"])
+        hist = [0] * 10
+        for p in confs:
+            hist[min(9, int(p * 10))] += 1
+        out.append({
+            "name": name,
+            "boxes": len(confs),
+            "frames": sum(1 for n in row["counts"] if n),
+            "max": max(row["counts"]),
+            "conf": {"median": round(statistics.median(confs), 3), "min": confs[0], "max": confs[-1],
+                     "hist": hist},
+            "size": [round(statistics.median(row["w"])), round(statistics.median(row["h"]))],
+            "counts": row["counts"],
+        })
+    out.sort(key=lambda c: (-c["boxes"], c["name"]))
+    top = max(per_frame, default=0)
+    return {
+        "checked": checked,
+        "with_hits": sum(1 for n in per_frame if n),
+        "boxes": sum(per_frame),
+        "max": top,
+        "max_at": checked[per_frame.index(top)] if top else None,
+        "per_frame": per_frame,
+        "classes": out,
+    }

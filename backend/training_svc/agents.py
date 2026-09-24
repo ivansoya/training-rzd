@@ -685,6 +685,7 @@ def task_scouts(task_id):
             .where(TaskVideo.task_id == task.id)
         ).all():
             out[str(video.id)] = {
+                "file_name": video.file_name,
                 "agent": scout.agent_name,
                 "step": scout.step,
                 "gap_s": scout.gap_s,
@@ -694,5 +695,37 @@ def task_scouts(task_id):
                 "created_at": scout.created_at.isoformat(),
             }
         return jsonify({"scouts": out})
+    finally:
+        db.close()
+
+
+@bp.get("/api/agents/tasks/<task_id>/scouts/<video_id>")
+def task_scout(task_id, video_id):
+    """Разведка одного ролика числами — окно статистики."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        task, _project, err = _task(db, user, task_id)
+        if err:
+            return err
+        video = db.get(TaskVideo, _uuid(video_id))
+        if video is None or video.task_id != task.id:
+            return jsonify({"error": "Ролик не найден в таске."}), 404
+        scout = db.execute(select(VideoScout).where(VideoScout.video_id == video.id)).scalar_one_or_none()
+        if scout is None:
+            return jsonify({"error": "Этот ролик агент ещё не разведывал."}), 404
+        version = db.get(AugGraphVersion, scout.version_id) if scout.version_id else None
+        return jsonify({
+            "file_name": video.file_name,
+            "fps": video.fps,
+            "agent": scout.agent_name,
+            "version": version.version if version else None,
+            "step": scout.step,
+            "last_frame": scout.last_frame,
+            "created_at": scout.created_at.isoformat(),
+            "segments": scout.segments,
+            **agent_graph.scout_stats(scout.frames),
+        })
     finally:
         db.close()

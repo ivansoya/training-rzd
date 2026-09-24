@@ -15,6 +15,7 @@ import * as poly from "./polygon";
 import type { Ring } from "./polygon";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
+import { frameActions } from "./frameActions";
 import TagPicker from "./TagPicker";
 import type { Tag } from "../../api/tags";
 import { useAutoLabel } from "./useAutoLabel";
@@ -256,6 +257,10 @@ export default function AnnotationEditor({
   const agentFrame =
     image?.task_status === "new" &&
     (image?.boxes || []).some((b) => b.source === "model" && b.agent);
+  const actions = image
+    ? frameActions({ status: image.task_status, objects: boxes.length, agentFrame, readOnly })
+    : [];
+  const canEmpty = actions.includes("empty");
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -680,7 +685,8 @@ export default function AnnotationEditor({
           if (!frozen) { setTool("polygon"); setAddTo(null); }
           break;
         case "KeyA": if (!frozen && auto.state === "ready") pickAuto(); break;
-        case "KeyE": if (!frozen) toggle("empty"); break;
+        // Фоновым кадр с объектом не бывает — клавиша молчит, как и плашка.
+        case "KeyE": if (canEmpty) toggle("empty"); break;
         case "KeyS": if (!frozen) toggle("skipped"); break;
         case "KeyX": trash(); break;
         case "Digit0": canvas.current?.fit(); break;
@@ -722,7 +728,7 @@ export default function AnnotationEditor({
     };
   }, [go, flush, onClose, selected, selPart, splitParts, visible, tool, autoOn,
       addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
-      pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto]);
+      pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty]);
 
   /** Что можно сделать с объектом под правой кнопкой, кроме смены класса.
    *
@@ -831,55 +837,6 @@ export default function AnnotationEditor({
         {error && <span className="mag-ed-err">{error}</span>}
         <span className={saved ? "mag-ed-saved" : "mag-ed-saving"}>
           {saved ? "сохранено" : "сохраняю…"}
-        </span>
-        {/* Приговоры кадру — одной группой: это решения, а не настройки вида. */}
-        <span className="mag-ed-verdict">
-          {agentFrame && (
-            <button
-              className="mag-ed-btn"
-              type="button"
-              disabled={frozen}
-              title="Разметка агента верна — кадр размечен"
-              onClick={() => verdict("annotated", true)}
-            >
-              Принять
-            </button>
-          )}
-          <button
-            className={isEmpty ? "mag-ed-btn nul on" : "mag-ed-btn nul"}
-            type="button"
-            disabled={frozen}
-            onClick={() => toggle("empty")}
-            {...hk("empty")}
-          >
-            Пусто
-          </button>
-          <button
-            className={isSkipped ? "mag-ed-btn warn on" : "mag-ed-btn warn"}
-            type="button"
-            disabled={frozen}
-            onClick={() => toggle("skipped")}
-            {...hk("skip")}
-          >
-            Отложить
-          </button>
-          <button
-            className={isDeleted ? "mag-ed-btn del on" : "mag-ed-btn del"}
-            type="button"
-            disabled={readOnly}
-            onClick={trash}
-            {...hk("trash")}
-          >
-            {isDeleted ? "Вернуть" : "Удалить"}
-          </button>
-          <button
-            className="mag-ed-btn primary"
-            type="button"
-            onClick={() => go(1)}
-            {...hk("next")}
-          >
-            Далее →
-          </button>
         </span>
         <button
           className={help ? "mag-ed-btn on" : "mag-ed-btn"}
@@ -1151,52 +1108,96 @@ export default function AnnotationEditor({
           </div>
         )}
 
-        <BoxCanvas
-          ref={canvas}
-          imageId={image.id}
-          fileName={image.file_name}
-          width={iw}
-          height={ih}
-          boxes={boxes}
-          labelOf={labelOf}
-          editable={!frozen}
-          tool={tool}
-          auto={autoLive}
-          autoMode={autoMode}
-          autoPoints={autoPts}
-          autoPreview={autoPrev}
-          activeClass={active}
-          selected={selected}
-          selectedPart={selPart}
-          splitParts={splitParts}
-          canMovePoly={canMovePoly}
-          grid={grid}
-          reserve={filmH + 92}
-          onSelect={pick}
-          onBoxes={edit}
-          onDrawn={() => { if (!lock) setTool("select"); }}
-          onPolygon={onPolygon}
-          onScale={setScale}
-          onContext={(i, x, y, at) =>
-            setMenu({ i, x, y, ...at, prev: selected })
-          }
-          onAutoPoint={onAutoPoint}
-          onAutoBox={onAutoBox}
-          onAutoCommit={commitAuto}
-        />
+        {/* Окно кадра: холст и плашки поверх него. Плашки — соседи холста, а
+            не его дети: иначе нажатие на кнопку начинало бы рамку. */}
+        <div className="mag-ed-view">
+          <BoxCanvas
+            ref={canvas}
+            imageId={image.id}
+            fileName={image.file_name}
+            width={iw}
+            height={ih}
+            boxes={boxes}
+            labelOf={labelOf}
+            editable={!frozen}
+            tool={tool}
+            auto={autoLive}
+            autoMode={autoMode}
+            autoPoints={autoPts}
+            autoPreview={autoPrev}
+            activeClass={active}
+            selected={selected}
+            selectedPart={selPart}
+            splitParts={splitParts}
+            canMovePoly={canMovePoly}
+            grid={grid}
+            reserve={filmH + 92}
+            onSelect={pick}
+            onBoxes={edit}
+            onDrawn={() => { if (!lock) setTool("select"); }}
+            onPolygon={onPolygon}
+            onScale={setScale}
+            onContext={(i, x, y, at) =>
+              setMenu({ i, x, y, ...at, prev: selected })
+            }
+            onAutoPoint={onAutoPoint}
+            onAutoBox={onAutoBox}
+            onAutoCommit={commitAuto}
+          />
 
-        {/* Показанное надо чем-то принять, и это должно быть видно, а не
-            держаться в голове. Панель живёт ровно пока есть что закреплять. */}
-        {autoPrev && (
-          <div className="mag-auto-bar">
-            <button className="mag-auto-ok" type="button" onClick={commitAuto}>
-              Закрепить <kbd>Пробел</kbd>
-            </button>
-            <button className="mag-auto-no" type="button" onClick={clearAuto}>
-              Отменить <kbd>Esc</kbd>
-            </button>
-          </div>
-        )}
+          {/* Показанное надо чем-то принять, и это должно быть видно, а не
+              держаться в голове. Панель живёт ровно пока есть что закреплять —
+              и на это время занимает место плашки кадра: Пробел сейчас
+              закрепляет, а не листает. */}
+          {autoPrev ? (
+            <div className="mag-auto-bar">
+              <button className="mag-auto-ok" type="button" onClick={commitAuto}>
+                Закрепить <kbd>Пробел</kbd>
+              </button>
+              <button className="mag-auto-no" type="button" onClick={clearAuto}>
+                Отменить <kbd>Esc</kbd>
+              </button>
+            </div>
+          ) : (
+            /* Решения по кадру — поверх кадра и полупрозрачно, фон появляется
+               при наведении (решение владельца 24.09.2026). Только то, что
+               можно нажать сейчас: см. frameActions. */
+            <div className="mag-ed-vbar" role="toolbar" aria-label="Решение по кадру">
+              {actions.includes("accept") && (
+                <button className="mag-ed-vb ok" type="button"
+                  title="Разметка агента верна — кадр размечен"
+                  onClick={() => verdict("annotated", true)}>
+                  Принять
+                </button>
+              )}
+              {actions.includes("empty") && (
+                <button className="mag-ed-vb nul" type="button" aria-pressed={isEmpty}
+                  onClick={() => toggle("empty")} {...hk("empty")}>
+                  Пусто
+                </button>
+              )}
+              {actions.includes("skip") && (
+                <button className="mag-ed-vb warn" type="button" aria-pressed={isSkipped}
+                  onClick={() => toggle("skipped")} {...hk("skip")}>
+                  Отложить
+                </button>
+              )}
+              {actions.includes("trash") && (
+                <button className="mag-ed-vb del" type="button" onClick={trash} {...hk("trash")}>
+                  Удалить
+                </button>
+              )}
+              {actions.includes("restore") && (
+                <button className="mag-ed-vb" type="button" onClick={trash} {...hk("trash")}>
+                  Вернуть
+                </button>
+              )}
+              <button className="mag-ed-vb go" type="button" onClick={() => go(1)} {...hk("next")}>
+                Далее →
+              </button>
+            </div>
+          )}
+        </div>
 
         <aside className="mag-ed-side">
           <h5>Класс</h5>

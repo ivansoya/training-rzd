@@ -788,14 +788,6 @@
 .mag-ed-flag.nul { color: #9dc2f5; border-color: rgba(47, 111, 208, 0.55); }
 .mag-ed-flag.skip { color: #e6c07a; border-color: rgba(208, 154, 60, 0.5); }
 
-/* Приговоры кадру отделены чертой: это решения, а не настройки вида */
-.mag-ed-verdict {
-  display: flex;
-  gap: 7px;
-  padding-left: 12px;
-  border-left: 1px solid var(--ed-edge);
-}
-
 .mag-ed-btn {
   background: var(--ed-btn);
   border: 1px solid #333c46;
@@ -810,10 +802,7 @@
 
 .mag-ed-btn:hover:not(:disabled) { border-color: #55606c; }
 .mag-ed-btn:disabled { opacity: 0.4; cursor: default; }
-.mag-ed-btn.primary { background: var(--s-done); border-color: var(--s-done); }
-.mag-ed-btn.warn.on { background: #7a5310; border-color: var(--s-skip); }
 .mag-ed-btn.nul.on { background: #1e457e; border-color: var(--s-null); }
-.mag-ed-btn.del.on { background: #7a1414; border-color: var(--s-del); }
 
 /* ===== Редактор: тело ===== */
 .mag-ed-body {

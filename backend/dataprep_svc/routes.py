@@ -224,8 +224,8 @@ def _starter(kind="aug"):
             "nodes": [
                 {"id": "frame", "type": "frame", "params": {}, "pos": [60, 180]},
                 {"id": "net", "type": "net",
-                 "params": {"weights": None, "classes": [], "conf": 0.25,
-                            "iou": 0.6}, "pos": [320, 180]},
+                 "params": {"weights": None, "classes": [], "conf": 0.25},
+                 "pos": [320, 180]},
                 {"id": "out", "type": "output", "params": {}, "pos": [600, 180]},
             ],
             "edges": [

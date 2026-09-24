@@ -234,10 +234,11 @@ def frame_fns(path, file_name, models, weights, device, picture=None):
                 crop = pixels[y0:y1, x0:x1]
                 # Отрицательный шаг отражения cv2 внутри ultralytics не примет.
                 crops.append(np.ascontiguousarray(crop[:, ::-1] if flip else crop))
+            # IoU не передаём: встроенный NMS у yolo11 и v8 работает со своим
+            # мягким 0,7, у yolo26 его нет вовсе. Строже — узел «NMS» в графе.
             results = models[node["id"]].predict(
                 crops, verbose=False, device=device,
                 conf=float(params.get("conf") or 0.25),
-                iou=float(params.get("iou") or 0.6),
                 # ultralytics требует кратность шагу сети — 32.
                 imgsz=max(32, round(side * scale / 32) * 32),
             )

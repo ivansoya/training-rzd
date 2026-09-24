@@ -15,7 +15,8 @@ import VideoStrip from "./VideoStrip";
 import TagPicker from "./TagPicker";
 import type { Tag } from "../../api/tags";
 import Sep from "../Sep";
-import { ScoutLine, useScouts } from "../agents/scout";
+import { ScoutButton, useScouts } from "../agents/scout";
+import ScoutStats from "../agents/ScoutStats";
 
 /** Блоки вкладки «Кадры» и карточки вкладки «Видео».
  *
@@ -211,6 +212,7 @@ export function SourceCard({
   onAcceptAgent?: () => void;
 }) {
   const scouts = useScouts(taskId);
+  const [statsFor, setStatsFor] = useState<string | null>(null);
   const { counts, total } = block;
   const videos = block.videos || [];
   // Подробности плана — по требованию: на пяти роликах пять таблиц сразу
@@ -319,7 +321,7 @@ export function SourceCard({
                         }} />
                       ))}
                     </span>
-                    <ScoutLine scout={scouts[video.id]} />
+                    <ScoutButton scout={scouts[video.id]} onOpen={() => setStatsFor(video.id)} />
                     {/* Подготовка живёт под именем, а не отдельной ячейкой:
                         ячейка появлялась и исчезала вместе с работой сервера,
                         и сетка на шесть колонок то и дело переносила кнопки. */}
@@ -425,6 +427,7 @@ export function SourceCard({
           </div>
         </div>
       )}
+      {statsFor && <ScoutStats taskId={taskId} videoId={statsFor} onClose={() => setStatsFor(null)} />}
     </div>
   );
 }
@@ -483,6 +486,7 @@ export function VideoCard({
 }) {
   const closed = video.annotation_closed_at !== null;
   const scouts = useScouts(taskId);
+  const [statsOpen, setStatsOpen] = useState(false);
   const lastFrame = Math.max(1, (video.frame_count || 1) - 1);
   const marks = [0, 0.25, 0.5, 0.75, 1];
 
@@ -493,7 +497,7 @@ export function VideoCard({
         <span className={closed ? "g-chip done" : "g-chip mark"}>
           {closed ? "разметка закрыта" : "размечается"}
         </span>
-        <ScoutLine scout={scouts[video.id]} />
+        <ScoutButton scout={scouts[video.id]} onOpen={() => setStatsOpen(true)} />
         <PrepareLine prepare={video.prepare} />
         <span className="g-sp" />
         {editable && !closed && (
@@ -653,6 +657,7 @@ export function VideoCard({
           )}
         </div>
       </div>
+      {statsOpen && <ScoutStats taskId={taskId} videoId={video.id} onClose={() => setStatsOpen(false)} />}
     </div>
   );
 }

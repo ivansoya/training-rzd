@@ -75,6 +75,7 @@ const HELP = {
   scrub: ["", "Перемотка по ролику"],
   key: ["K", "Поставить ключ трека на этом кадре"],
   empty: ["E", "Кадр фоновый: объектов на нём нет"],
+  scout: ["R", "Разведка агента на дорожках вместо треков"],
   occlude: ["Alt + протяжка", "Заслонить участок на дорожке объекта"],
   lane: ["", "Ромб: перенести ключ. Ручки: продлить трек с новым ключом. Двойной клик: ключ. Alt + протяжка: заслонить"],
   cls: ["", "Класс для новых объектов"],
@@ -89,6 +90,18 @@ function hk(id: HelpId) {
 }
 
 const GREY = { name: "", color: "#9aa4ae" };
+
+// Показывать ли разведку — привычка человека, а не свойство ролика: один
+// выбор на все ролики, в этом браузере.
+const SCOUT_KEY = "mag.video.scout";
+
+function scoutStored(): boolean {
+  try {
+    return window.localStorage.getItem(SCOUT_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
 
 /** Что говорят человеку, пока ролик готовится.
  *
@@ -163,6 +176,20 @@ export default function VideoAnnotator({
   // «примерно столько» тут не годится.
   const clip = useClip(taskId, video.id);
   const scout = scoutLanes(useScouts(taskId)[video.id]);
+  // Разведка — по кнопке и вместо треков, а не рядом с ними (решение
+  // владельца 24.09.2026): полосы агента среди дорожек сбивали с толку, что
+  // здесь правится, а что только подсказка.
+  const [scoutOn, setScoutOn] = useState(scoutStored);
+  const toggleScout = useCallback(() => {
+    setScoutOn((on) => {
+      try {
+        window.localStorage.setItem(SCOUT_KEY, on ? "0" : "1");
+      } catch {
+        /* выбор не запомнится — показать это не мешает */
+      }
+      return !on;
+    });
+  }, []);
   const lastFrame = Math.max(
     0,
     (clip.manifest?.frame_count ?? video.frame_count ?? msToFrame(video.duration_ms || 0, fps)) - 1
@@ -716,6 +743,7 @@ export default function VideoAnnotator({
         case "KeyT": if (!frozen) setTool("track"); break;
         case "KeyA": if (!frozen && auto.state === "ready") setTool("auto"); break;
         case "KeyE": toggleEmpty(); break;
+        case "KeyR": if (scout.length) toggleScout(); break;
         case "KeyK":
           if (!frozen && currentTrack) {
             guard(async () => { await putTrackKey(currentTrack.id, frame, {}); await load(); });
@@ -750,7 +778,7 @@ export default function VideoAnnotator({
     };
   }, [tool, frozen, autoPrev, autoPts, clearAuto, onClose, togglePlay, go, auto.state,
       currentTrack, selected, items, removeTrackBox, saveSingles, singlesHere,
-      visibleClasses, commitAuto, frame, guard, load, laneMenu]);
+      visibleClasses, commitAuto, frame, guard, load, laneMenu, scout.length, toggleScout]);
 
   useEffect(() => {
     if (selected === null) return;
@@ -1254,6 +1282,17 @@ export default function VideoAnnotator({
                 слово «Пусто» в ней читалось как чужое, ничего не объясняя. */}
             <span aria-hidden="true">∅</span>
           </button>
+          {scout.length > 0 && (
+            <button
+              className={scoutOn ? "mag-ed-btn wide on" : "mag-ed-btn wide"}
+              type="button"
+              aria-pressed={scoutOn}
+              onClick={toggleScout}
+              {...hk("scout")}
+            >
+              Разведка
+            </button>
+          )}
         </div>
 
         <TrackLanes
@@ -1267,7 +1306,7 @@ export default function VideoAnnotator({
           onAction={onLane}
           onSeek={(next) => { stop(); setFrame(next); }}
           marks={marks}
-          scout={scout}
+          scout={scoutOn ? scout : []}
         />
       </div>
 

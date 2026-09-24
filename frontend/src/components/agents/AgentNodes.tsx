@@ -5,7 +5,7 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { ReactNode } from "react";
 
 export interface AgentNodeData extends Record<string, unknown> {
-  kind: "frame" | "net" | "merge" | "filter" | "sam" | "output";
+  kind: "frame" | "net" | "merge" | "nms" | "filter" | "sam" | "output";
   params: Record<string, unknown>;
   /** Подпись сети: имя весов и паспорт. Считает редактор — у него полка. */
   caption?: string;
@@ -53,6 +53,7 @@ export const TITLES: Record<AgentNodeData["kind"], string> = {
   frame: "Кадр",
   net: "Сеть",
   merge: "Объединение",
+  nms: "NMS",
   filter: "Фильтр",
   sam: "Уточнение SAM",
   output: "Выход",
@@ -70,6 +71,15 @@ function FilterNode({ data }: NodeProps) {
   const size = lo || hi ? `сторона ${lo ?? "0"}–${hi ?? "∞"} px` : null;
   const why = [rules ? `правил ${rules}` : null, size].filter(Boolean).join(", ") || "пропускает всё";
   return <Card data={{ ...d, why }} klass="k-light" title="Фильтр" ins={["in"]} outs={["out"]} />;
+}
+
+const decimal = (v: unknown, d: number) =>
+  String(typeof v === "number" && Number.isFinite(v) ? v : d).replace(".", ",");
+
+function NmsNode({ data }: NodeProps) {
+  const d = data as AgentNodeData;
+  const why = `IoU ${decimal(d.params.iou, 0.6)}, ${d.params.agnostic ? "между классами" : "внутри класса"}`;
+  return <Card data={{ ...d, why }} klass="k-light" title="NMS" ins={["in"]} outs={["out"]} />;
 }
 
 function SamNode({ data }: NodeProps) {
@@ -103,7 +113,7 @@ function MergeNode({ data }: NodeProps) {
   const n = mergeInputs(d.params);
   return (
     <Card
-      data={{ ...d, why: `NMS, IoU ${String(d.params.iou ?? 0.55).replace(".", ",")}` }}
+      data={{ ...d, why: `${n} ${n < 5 ? "входа" : "входов"}` }}
       klass="k-noise"
       title="Объединение"
       ins={Array.from({ length: n }, (_, i) => `i${i}`)}
@@ -121,6 +131,7 @@ export const agentNodeTypes = {
   frame: FrameNode,
   net: NetNode,
   merge: MergeNode,
+  nms: NmsNode,
   filter: FilterNode,
   sam: SamNode,
   output: OutputNode,

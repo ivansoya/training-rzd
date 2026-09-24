@@ -2,7 +2,8 @@
 
 Сеть подменена таблицей ответов, так что проверяется ровно то, о чём решали:
 `0` у двух сетей — разные классы, одинаковое имя класса агента у двух сетей —
-один класс, и «Объединение» гасит дубли только внутри класса.
+один класс. «Объединение» только складывает ветки, дубли гасит «NMS» — по
+умолчанию внутри класса.
 """
 import pytest
 
@@ -21,6 +22,7 @@ def _doc():
             _net("a", "w-vagon", [("вагон", True), ("цистерна", True)]),
             _net("b", "w-put", [("рельс", True), ("шпала", True), ("вагон", True), ("знак", False)]),
             {"id": "m", "type": "merge", "params": {"inputs": 2}},
+            {"id": "n", "type": "nms", "params": {"iou": 0.6}},
             {"id": "o", "type": "output"},
         ],
         "edges": [
@@ -28,7 +30,8 @@ def _doc():
             {"from": "f", "out": "out", "to": "b", "in": "in"},
             {"from": "a", "out": "out", "to": "m", "in": "i0"},
             {"from": "b", "out": "out", "to": "m", "in": "i1"},
-            {"from": "m", "out": "out", "to": "o", "in": "in"},
+            {"from": "m", "out": "out", "to": "n", "in": "in"},
+            {"from": "n", "out": "out", "to": "o", "in": "in"},
         ],
     }
 
@@ -55,6 +58,36 @@ def test_ноль_у_двух_сетей_разные_классы_дубли_т
     # вагон сети b погашен вагоном сети a; рельс на том же месте остался —
     # другой класс; знак выключен и не появился вовсе
     assert got == [("вагон", 0.9), ("рельс", 0.95), ("цистерна", 0.8)]
+
+
+def test_объединение_только_складывает():
+    doc = _doc()
+    doc["nodes"] = [n for n in doc["nodes"] if n["id"] != "n"]
+    doc["edges"] = [e for e in doc["edges"] if "n" not in (e["from"], e["to"])]
+    doc["edges"].append({"from": "m", "out": "out", "to": "o", "in": "in"})
+    out = ag.run(doc, lambda node: ANSWERS[node["id"]])
+    # без «NMS» вагон сети b остаётся рядом с вагоном сети a
+    assert sorted(d["cls"] for d in out) == ["вагон", "вагон", "рельс", "цистерна"]
+
+
+def test_nms_внутри_класса_и_между_классами():
+    dets = [_det("Человек", 0.34, (2313, 1389, 363, 131)),   # пара с кадра 00-42.942
+            _det("Человек", 0.27, (2310, 1384, 363, 136)),
+            _det("Инструмент", 0.30, (2312, 1386, 362, 133))]
+    inside = ag.nms(dets)
+    assert [(d["cls"], d["conf"]) for d in inside] == [("Человек", 0.34), ("Инструмент", 0.30)]
+    across = ag.nms(dets, agnostic=True)
+    assert [(d["cls"], d["conf"]) for d in across] == [("Человек", 0.34)]
+    # порог выше перекрытия пары — гасить нечего
+    assert len(ag.nms(dets, threshold=0.99)) == 3
+
+
+@pytest.mark.parametrize("value", [0, -0.1, 1.5])
+def test_nms_порог_от_нуля_до_единицы(value):
+    doc = _doc()
+    doc["nodes"][4]["params"]["iou"] = value
+    with pytest.raises(ag.AgentGraphError, match="IoU"):
+        ag.check(doc)
 
 
 def test_сеть_дописывает_а_не_заменяет():
@@ -268,3 +301,23 @@ def test_кадры_где_работал_человек():
                {"frame_no": 35, "source": "human", "agent_version_id": "v1"}]    # правленая агентова — занят
     busy = human_frames([track], singles, marks=[25], frames=[0, 10, 15, 20, 25, 30, 35, 40])
     assert busy == {10, 15, 20, 25, 30, 35}
+
+
+def test_статистика_разведки():
+    frames = {
+        "0": [["Человек", 0.9, 0, 0, 100, 200], ["металл", 0.5, 0, 0, 20, 10]],
+        "25": [],
+        "50": [["Человек", 0.7, 0, 0, 120, 220], ["Человек", 0.95, 300, 0, 80, 180]],
+    }
+    got = ag.scout_stats(frames)
+    assert got["checked"] == [0, 25, 50]
+    assert (got["with_hits"], got["boxes"], got["max"], got["max_at"]) == (2, 4, 2, 0)
+    assert got["per_frame"] == [2, 0, 2]
+    person, metal = got["classes"]
+    assert person["name"] == "Человек" and metal["name"] == "металл"
+    assert (person["boxes"], person["frames"], person["max"]) == (3, 2, 2)
+    assert person["counts"] == [1, 0, 2]
+    assert person["conf"]["median"] == 0.9 and person["conf"]["min"] == 0.7
+    assert person["conf"]["hist"][7] == 1 and person["conf"]["hist"][9] == 2
+    assert person["size"] == [100, 200]
+    assert ag.scout_stats({})["max_at"] is None

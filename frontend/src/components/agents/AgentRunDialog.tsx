@@ -15,6 +15,7 @@ import * as api from "../../api/agents";
 import { plural } from "../mag/ProjectsPage";
 import Sep from "../Sep";
 import { useBackdrop } from "../useBackdrop";
+import ScoutStats from "./ScoutStats";
 
 const SOURCE_TITLE: Record<"files" | "videos", string> = {
   files: "Загружено файлами",
@@ -344,6 +345,7 @@ export function AgentRunBar({
   onFinished: () => void;
 }) {
   const active = run ? api.ACTIVE.includes(run.status) : false;
+  const [statsOpen, setStatsOpen] = useState(false);
   const poll = useCallback(async () => {
     try {
       const got = await api.runContext(taskId);
@@ -381,6 +383,11 @@ export function AgentRunBar({
               ? `разведано роликов: ${run.stats.videos ?? 0}, находки на ${run.stats.frames ?? 0} кадрах`
               : `${run.stats.boxes ?? 0} рамок на ${run.stats.frames ?? 0} кадрах`}
           </span>
+          {run.mode === "scout" && run.videos.length > 0 && (
+            <button type="button" className="mag-ghost mag-ghost-inline" onClick={() => setStatsOpen(true)}>
+              Статистика
+            </button>
+          )}
         </>
       )}
       {run.error && <span className="ag-warn-text">{run.error}</span>}
@@ -399,6 +406,9 @@ export function AgentRunBar({
         <button type="button" className="mag-ghost mag-ghost-inline" onClick={() => onRun(null)}>
           Скрыть
         </button>
+      )}
+      {statsOpen && run.videos.length > 0 && (
+        <ScoutStats taskId={taskId} videoId={run.videos[0]} onClose={() => setStatsOpen(false)} />
       )}
     </div>
   );

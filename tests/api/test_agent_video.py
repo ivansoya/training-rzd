@@ -20,6 +20,7 @@
 import io
 import os
 import time
+import uuid
 
 import pytest
 import requests
@@ -122,20 +123,22 @@ def setup(owner, weights, clip, db):
         assert res.status_code in (200, 201), res.text
         videos[mode] = res.json()
 
-    net = lambda keep: {"weights": weights["id"], "conf": 0.25, "iou": 0.6, "imgsz": 1280,
+    net = lambda keep: {"weights": weights["id"], "conf": 0.25, "imgsz": 1280,
                         "classes": [{"agent": n, "on": keep(n)} for n in weights["names"]]}
     doc = {"v": 1, "nodes": [
         {"id": "frame", "type": "frame", "params": {}},
         {"id": "person", "type": "net", "params": net(lambda n: n == PERSON)},
         {"id": "rest", "type": "net", "params": net(lambda n: n != PERSON)},
         {"id": "merge", "type": "merge", "params": {"inputs": 2}},
+        {"id": "nms", "type": "nms", "params": {"iou": 0.6}},
         {"id": "sam", "type": "sam", "params": {}},
         {"id": "out", "type": "output", "params": {}}],
         "edges": [{"from": "frame", "out": "out", "to": "person", "in": "in"},
                   {"from": "frame", "out": "out", "to": "rest", "in": "in"},
                   {"from": "person", "out": "out", "to": "merge", "in": "i0"},
                   {"from": "rest", "out": "out", "to": "merge", "in": "i1"},
-                  {"from": "merge", "out": "out", "to": "sam", "in": "in"},
+                  {"from": "merge", "out": "out", "to": "nms", "in": "in"},
+                  {"from": "nms", "out": "out", "to": "sam", "in": "in"},
                   {"from": "sam", "out": "out", "to": "out", "in": "in"}]}
     graph = owner.post(f"{BASE_URL}/api/aug/graphs", json={"name": tag(), "kind": "agent"}).json()
     res = owner.post(f"{BASE_URL}/api/aug/graphs/{graph['id']}/versions", json={"doc": doc})
@@ -208,6 +211,38 @@ def test_разведка_находит_человека_там_где_он_е�
         assert not any(a <= middle <= b for a, b, _ in people), (block, people)
     # Вторая сеть тоже работала: в роликах РСМ-2000 кроме людей есть предметы.
     assert set(annotate["segments"]) - {PERSON}, annotate["segments"]
+
+
+def test_статистика_разведки_и_nms_без_дублей(owner, setup, db):
+    """Идёт после разведки выше: окно статистики сходится с тем, что лежит в
+    базе, а узел NMS в воркере не пропустил ни одной пары одного класса."""
+    video = setup["videos"]["annotate"]
+    res = owner.get(f"{BASE_URL}/api/agents/tasks/{setup['task']['id']}/scouts/{video['id']}")
+    assert res.status_code == 200, res.text
+    stats = res.json()
+    assert stats["file_name"] == "rsm-agent.mp4" and stats["version"] == 1
+    assert stats["checked"] == list(range(0, stats["last_frame"] + 1, STEP))
+    assert stats["boxes"] == sum(stats["per_frame"]) == sum(c["boxes"] for c in stats["classes"])
+    assert {c["name"] for c in stats["classes"]} == set(stats["segments"])
+    for c in stats["classes"]:
+        assert sum(c["counts"]) == c["boxes"] and sum(c["conf"]["hist"]) == c["boxes"]
+
+    with db.cursor() as cur:
+        cur.execute("select frames from video_scouts where video_id = %s", (video["id"],))
+        frames = cur.fetchone()[0]
+
+    def iou(a, b):
+        ix = max(0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+        iy = max(0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+        union = a[2] * a[3] + b[2] * b[3] - ix * iy
+        return ix * iy / union if union else 0
+
+    pairs = [(f, a[0]) for f, dets in frames.items() for i, a in enumerate(dets) for b in dets[i + 1:]
+             if a[0] == b[0] and iou(a[2:], b[2:]) >= 0.6]
+    assert not pairs, pairs[:5]
+
+    missing = owner.get(f"{BASE_URL}/api/agents/tasks/{setup['task']['id']}/scouts/{uuid.uuid4()}")
+    assert missing.status_code == 404
 
 
 def test_разметка_ролика_каждый_n_й_кадр_кроме_работы_человека(owner, setup, db):

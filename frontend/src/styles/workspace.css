@@ -298,6 +298,26 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-ed-head > b { font-size: 14px; font-weight: 600; }
 .mag-ed-btn { padding: 7px 11px; border-color: var(--ed-edge); border-radius: 7px; font-size: 12px; }
 .mag-ed-btn.on, .mag-ed-active.on { background: var(--accent-soft); border-color: var(--red); color: var(--ink); box-shadow: none; }
+/* Окно кадра: холст и плашки поверх него. */
+.mag-ed-view { position: relative; flex: 1; min-width: 0; display: flex; }
+/* Решения по кадру поверх кадра: в покое полупрозрачно и без фона, фон — на
+   наведении и на фокусе с клавиатуры (решение владельца 24.09.2026). */
+.mag-ed-vbar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9; display: flex; gap: 6px; padding: 6px; border: 1px solid transparent; border-radius: 11px; transition: background-color .16s, border-color .16s, box-shadow .16s; }
+.mag-ed-vbar:is(:hover, :focus-within) { background: rgba(31, 30, 41, .9); border-color: var(--ed-edge); box-shadow: 0 12px 30px rgba(0, 0, 0, .45); backdrop-filter: blur(8px); }
+.mag-ed-vb { opacity: .55; padding: 7px 13px; border: 1px solid rgba(247, 247, 248, .24); border-radius: 7px; background: rgba(15, 15, 21, .3); color: var(--ed-ink); font: inherit; font-size: 12.5px; line-height: 1.2; white-space: nowrap; cursor: pointer; transition: opacity .16s, background-color .16s, border-color .16s; }
+.mag-ed-vbar:is(:hover, :focus-within) .mag-ed-vb { opacity: 1; background: var(--ed-btn); border-color: var(--ed-edge); }
+.mag-ed-vbar .mag-ed-vb:hover { border-color: var(--control-edge); }
+.mag-ed-vb.ok { border-color: rgba(46, 224, 122, .5); color: #c8f7dc; }
+.mag-ed-vbar:is(:hover, :focus-within) .mag-ed-vb.ok { background: var(--done-in); border-color: var(--done); }
+.mag-ed-vb.go { border-color: rgba(46, 224, 122, .35); }
+.mag-ed-vbar:is(:hover, :focus-within) .mag-ed-vb.go { background: var(--s-done); border-color: var(--s-done); color: var(--on-acc); font-weight: 600; }
+.mag-ed-vb.del { color: #ffc6ad; }
+.mag-ed-vbar .mag-ed-vb.del:hover { background: #38272E; border-color: var(--del); }
+/* Нажатые пометки видны и в покое: это состояние кадра, а не кнопка. */
+.mag-ed-vbar .mag-ed-vb.nul[aria-pressed="true"] { background: var(--null-in); border-color: var(--null); color: #d4e5ff; }
+.mag-ed-vbar .mag-ed-vb.warn[aria-pressed="true"] { background: var(--skip-in); border-color: var(--skip); color: #ffe4b8; }
+.mag-ed.help .mag-ed-vbar { z-index: 41; }
+.mag-ed.help .mag-ed-vb { opacity: 1; }
 .mag-ed-saved { color: var(--dim); }
 .mag-ed-rail { width: 66px; padding: 12px 6px; gap: 8px; overflow-y: auto; }
 .mag-tool { width: 48px; min-height: 40px; flex-shrink: 0; border-radius: 7px; border: 1px solid transparent; background: transparent; color: var(--dim); }
@@ -499,7 +519,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   .mag-brand, .mag-panel { padding: 36px; }
   .mag-brand h2 { font-size: 32px; }
   .mag-ed-head { flex-wrap: wrap; }
-  .mag-ed-verdict { padding-left: 0; border: 0; }
   .mag-ed-side { display: flex; width: 240px; }
 }
 @media(max-width:600px) {
