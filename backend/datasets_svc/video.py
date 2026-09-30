@@ -49,7 +49,10 @@ def probe(path):
     except VideoError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise VideoError(f"Не удалось прочитать видео: {exc}") from exc
+        # Текст библиотеки наружу не отдаём: в нём «[Errno 1094995529] Invalid
+        # data…» и путь на томе сервера — человеку с этим делать нечего, а
+        # путь показывать незачем. Подробности остаются в цепочке исключения.
+        raise VideoError("Файл не читается как видео.") from exc
 
 
 def plan(segments, duration_ms):

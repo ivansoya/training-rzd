@@ -31,6 +31,27 @@ describe("shared timeline coordinates", () => {
     }
     expect(timelineTicks(299,200).length).toBeLessThan(timelineTicks(299,1400).length);
   });
+  it("не даёт подписям шкалы слипнуться и на длинном ролике", () => {
+    // Раскладка как в timeline.css: первая подпись от засечки вправо,
+    // последняя от засечки влево, остальные по центру; цифра ~6,6 px.
+    const extent = (t: number, last: number, width: number) => {
+      const x = t / last * width, len = String(t).length * 6.6;
+      return t === 0 ? [x, x + len] : t === last ? [x - len, x] : [x - len / 2, x + len / 2];
+    };
+    for (const last of [599, 9999, 29149, 99999, 123456]) {
+      for (let width = 300; width <= 2400; width += 7) {
+        const ticks = timelineTicks(last, width);
+        expect(ticks.at(-1)).toBe(last);
+        for (let i = 1; i < ticks.length; i++) {
+          const [, right] = extent(ticks[i - 1], last, width);
+          const [left] = extent(ticks[i], last, width);
+          expect(left - right, `${last} @ ${width}: ${ticks[i - 1]} | ${ticks[i]}`).toBeGreaterThan(2);
+        }
+      }
+    }
+    // Случай из аудита: 28000 рядом с 29149 при ширине ~1000 px.
+    expect(timelineTicks(29149, 1000)).not.toContain(28000);
+  });
   it("breaks the life bar exactly where a zone hides the object", () => {
     expect(visibleSpans(0,29,[])).toEqual([[0,29]]);
     // Отрезок полуоткрыт: кадр 20 снова виден, с него полоса и продолжается.

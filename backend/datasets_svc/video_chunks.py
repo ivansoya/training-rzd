@@ -166,7 +166,9 @@ def build_index(path):
     except VideoError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise VideoError(f"Не удалось прочитать видео: {exc}") from exc
+        # Как в videolib.probe: текст библиотеки несёт путь на томе и коды
+        # ошибок — на карточку ролика он не годится.
+        raise VideoError("Файл не читается как видео.") from exc
 
     if not marks:
         raise VideoError("В видео не нашлось ни одного кадра.")

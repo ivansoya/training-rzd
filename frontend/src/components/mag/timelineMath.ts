@@ -8,6 +8,9 @@ export function extensionFrame(edge: number, delta: number, width: number, last:
   return side === "start" ? Math.min(edge, next) : Math.max(edge, next);
 }
 
+/** Ширина цифры подписи шкалы (моноширинный 11px) с запасом. */
+export const TICK_DIGIT_PX = 7;
+
 export function timelineTicks(last: number, width: number) {
   if (last <= 0) return [0];
   const wanted = last / Math.max(1, Math.floor(width / 60));
@@ -15,7 +18,13 @@ export function timelineTicks(last: number, width: number) {
   const step = [1, 2, 5, 10].map(n => n * power).find(n => n >= wanted) ?? power * 10;
   const ticks = Array.from({ length: Math.floor(last / step) + 1 }, (_, i) => i * step);
   if (ticks.at(-1) !== last) {
-    if (ticks.length > 1 && (last - ticks[ticks.length - 1]) / last * width < 38) ticks.pop();
+    // Последняя подпись прижата к правому краю и тянется влево на всю свою
+    // длину, предыдущая стоит по центру засечки. Места между ними нужно по
+    // длине самих подписей: прежний порог в 38 px был меньше пятизначного
+    // числа, и на длинном ролике они слипались в «2800029149».
+    const prev = ticks[ticks.length - 1];
+    const need = (String(prev).length / 2 + String(last).length) * TICK_DIGIT_PX + 6;
+    if (ticks.length > 1 && (last - prev) / last * width < need) ticks.pop();
     ticks.push(last);
   }
   return ticks;

@@ -81,6 +81,16 @@ function splitPlan(list: CutSegment[] | undefined) {
   return { zones, ones, nextId: (list?.length || 0) + 1 };
 }
 
+/** Отпечаток плана: те же участки в любом порядке — тот же план. У одиночного
+ *  кадра шаг ничего не значит, его не сравниваем. */
+function planKey(list: { start_ms: number; end_ms: number; step_ms: number }[]): string {
+  return JSON.stringify(
+    list
+      .map((s) => [s.start_ms, s.end_ms, s.end_ms - s.start_ms <= 1 ? 0 : s.step_ms])
+      .sort((a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2])
+  );
+}
+
 interface MenuState {
   x: number;
   y: number;
@@ -303,6 +313,20 @@ export default function VideoCutModal({
     estimateCut(taskId, video.id, cutSegments).then(setEst).catch(() => {});
   }, [taskId, video.id, cutSegments, applied]);
 
+  // Что сейчас нарезано — от него меряем «план не применён». Двигается после
+  // удачной нарезки: prop `video` к тому времени ещё прежний.
+  const savedPlan = useRef(planKey(video.segments || []));
+  const [leaving, setLeaving] = useState(false);
+
+  /** Уйти из окна. Неприменённый план молча терялся от Esc, ✕ и «Отмены» —
+   *  теперь спрашиваем внутри окна. Пока режется, уйти нельзя вовсе: заслонка
+   *  так и говорит — «не закрывайте окно». */
+  function requestClose() {
+    if (busy) return;
+    if (editable && planKey(cutSegments) !== savedPlan.current) setLeaving(true);
+    else onClose();
+  }
+
   useEffect(() => {
     if (startAtMs && videoRef.current) videoRef.current.currentTime = startAtMs / 1000;
   }, [startAtMs]);
@@ -453,10 +477,13 @@ export default function VideoCutModal({
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         if (menu) setMenu(null);
+        else if (leaving) setLeaving(false);
+        else if (confirm) setConfirm(false);
         else if (pending !== null) setPending(null);
-        else if (!document.fullscreenElement) onClose();
+        else if (!document.fullscreenElement) requestClose();
         return;
       }
+      if (leaving || confirm || busy) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
       if (e.key === " ") {
@@ -482,7 +509,7 @@ export default function VideoCutModal({
       document.body.style.overflow = "";
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onClose, editable, duration, frameMs, menu, pending]);
+  }, [onClose, editable, duration, frameMs, menu, pending, leaving, confirm, busy, cutSegments]);
 
   // ==== лента: панорама, перемотка, растяжка участков ====
 
@@ -652,6 +679,7 @@ export default function VideoCutModal({
       // И пересчитываем план: участки остались те же, но кадры по ним уже
       // есть — без этого «Применить» звало бы нарезать их второй раз.
       setApplied((n) => n + 1);
+      savedPlan.current = planKey(cutSegments);
       setDone(plan);
     } catch (e) {
       setError((e as Error).message);
@@ -672,7 +700,8 @@ export default function VideoCutModal({
             {fmtBytes(video.size_bytes)}
           </span>
           <span className="mag-cut-sp" />
-          <button className="mag-cut-btn" type="button" onClick={onClose} aria-label="Закрыть">
+          <button className="mag-cut-btn" type="button" onClick={requestClose} aria-label="Закрыть"
+            disabled={busy}>
             ✕
           </button>
         </div>
@@ -1150,7 +1179,7 @@ export default function VideoCutModal({
 
         <div className="mag-cut-foot">
           <span className="mag-cut-sp" />
-          <button className="mag-ghost" type="button" onClick={onClose}>
+          <button className="mag-ghost" type="button" onClick={requestClose}>
             Отмена
           </button>
           {editable && (
@@ -1205,6 +1234,25 @@ export default function VideoCutModal({
                   </>
                 )
               )}
+            </div>
+          </div>
+        )}
+
+        {leaving && (
+          <div className="mag-confirm-veil" onClick={() => setLeaving(false)}>
+            <div className="mag-confirm" role="alertdialog" aria-modal="true"
+              aria-label="План не применён" onClick={(e) => e.stopPropagation()}>
+              <h3>План не применён</h3>
+              <p>Участки и отдельные кадры, отмеченные здесь, пропадут.</p>
+              <div className="mag-confirm-foot">
+                <button className="mag-ghost" type="button" autoFocus
+                  onClick={() => setLeaving(false)}>
+                  Остаться
+                </button>
+                <button className="mag-btn" type="button" onClick={onClose}>
+                  Закрыть без нарезки
+                </button>
+              </div>
             </div>
           </div>
         )}

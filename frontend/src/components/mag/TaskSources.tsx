@@ -513,8 +513,9 @@ export function VideoCard({
             заведомому отказу сервера. */}
         {editable && !closed && (
           <button className="mag-btn mag-btn-inline" type="button"
-            disabled={busy || !!pending?.error} onClick={onClose}
-            title={pending?.error || "Превратить разметку в кадры таски"}>
+            disabled={busy || !pending || !!pending.error} onClick={onClose}
+            title={!pending ? "Размечать нечего — на ролике нет ни боксов, ни фоновых кадров"
+              : pending.error || "Превратить разметку в кадры таски"}>
             Закрыть разметку
           </button>
         )}
@@ -571,9 +572,11 @@ export function VideoCard({
             {marks.map((m) => (
               <i key={m} className="major" style={{ left: `${m * 100}%` }} />
             ))}
-            {marks.map((m) => (
+            {/* Пока ролик разбирается, числа кадров нет — подписи были бы
+                выдумкой («0 0 1 1 1»). */}
+            {video.frame_count ? marks.map((m) => (
               <b key={`l${m}`} style={{ left: `${m * 100}%` }}>{Math.round(m * lastFrame)}</b>
-            ))}
+            )) : null}
           </div>
 
           {/* Таги ролика достанутся кадрам при закрытии разметки. Правка

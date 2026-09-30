@@ -21,7 +21,7 @@
 .mag-ved-stage .mag-cv-frame canvas { max-height: max(1px,calc(100cqh - 32px)) !important; }
 .vt-properties { display: flex; flex-wrap: wrap; gap: 10px 18px; border-top: 1px solid var(--rule); padding-top: 12px; font-size: 12px; }
 .vt-properties label { display: flex; align-items: center; gap: 7px; color: var(--dim); }
-.vt-properties input[type=number] { width: 56px; padding: 5px 7px; background: var(--sunk); border: 1px solid var(--control-edge); border-radius: 6px; color: var(--ink); }
+.vt-properties input[type=number], .vt-properties .vt-step { width: 56px; padding: 5px 7px; background: var(--sunk); border: 1px solid var(--control-edge); border-radius: 6px; color: var(--ink); }
 .mag-ved-bottom { max-height: none; }
 /* Системной полосы прокрутки нет: она отнимала у сетки ширину. Место в
    списке показывает .vt-thumb поверх правого поля. */
