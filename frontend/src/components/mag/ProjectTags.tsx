@@ -103,6 +103,7 @@ export default function ProjectTags() {
                 <input
                   className="mag-input"
                   value={draft}
+                  maxLength={64}
                   autoFocus
                   aria-label={`Новое имя тага «${tag.name}»`}
                   onChange={(e) => setDraft(e.target.value)}

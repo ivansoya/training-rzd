@@ -8,7 +8,7 @@
 // Сетка кадров, фильтры и режим вывода — общие с «Все кадры» и просмотром
 // собранного набора: `Gallery` плюс `useGallery`.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { getDataset, imageThumbUrl } from "../../auth/api";
 import { classesIn } from "../../api/datasets";
@@ -19,6 +19,7 @@ import type { GalleryItem } from "./Gallery";
 import ImageViewer from "./ImageViewer";
 import { plural } from "../ru";
 import { PAGE, useGallery } from "./useGallery";
+import { useProject } from "./ProjectShell";
 import type { Mode } from "./useGallery";
 
 const SPLITS = [
@@ -46,13 +47,20 @@ export default function DatasetPage() {
   const [mode, setMode] = useState<Mode>("pages");
   const [showBoxes, setShowBoxes] = useState(true);
   const [viewer, setViewer] = useState<number | null>(null);
+  const { refresh: refreshProject } = useProject();
+  // Правка разметки в просмотре меняет паспорта датасета и проекта и счёт
+  // классов. Пересчитываем их, когда просмотр закрыли, а не на каждое
+  // сохранение: сохранений на кадр — десяток, а под просмотром паспортов
+  // всё равно не видно.
+  const edited = useRef(false);
+  const [classesRev, setClassesRev] = useState(0);
 
   // Счёт разметки — по кадрам этого датасета: отбор классов обещает то, что
   // найдёт сетка ниже, а не весь проект.
   useEffect(() => {
     if (code && datasetId)
       classesIn(code, datasetId).then((c) => setClasses(c.classes)).catch(() => {});
-  }, [code, datasetId]);
+  }, [code, datasetId, classesRev]);
 
   const load = useCallback(
     async (offset: number, limit: number) => {
@@ -222,7 +230,16 @@ export default function DatasetPage() {
           classes={classes}
           canEdit={role === "admin" || role === "editor"}
           onIndex={setViewer}
-          onClose={() => setViewer(null)}
+          onClose={() => {
+            setViewer(null);
+            if (!edited.current || !code || !datasetId) return;
+            edited.current = false;
+            void refreshProject();
+            setClassesRev((n) => n + 1);
+            getDataset(code, datasetId, { limit: 1 })
+              .then((d) => setStats(d.stats))
+              .catch(() => {});
+          }}
           onNeedMore={mode === "feed" ? g.more : undefined}
           base={g.base}
           onEdge={
@@ -230,11 +247,12 @@ export default function DatasetPage() {
               ? (dir) => g.goto(g.page + dir, () => setViewer(dir > 0 ? 0 : PAGE - 1))
               : undefined
           }
-          onSaved={(updated) =>
+          onSaved={(updated) => {
+            edited.current = true;
             g.setItems((prev) =>
               prev.map((x) => (x.id === updated.id ? updated : x))
-            )
-          }
+            );
+          }}
         />
       )}
     </>

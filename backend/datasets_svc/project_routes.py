@@ -550,6 +550,8 @@ def _build_plan(data, state):
         name = (sc.get("name") or "").strip()
         if not name or name in seen_sc:
             continue
+        if len(name) > NAME_MAX:
+            return None, f"Название суперкласса длиннее {NAME_MAX} символов."
         seen_sc.add(name)
         superclasses.append({
             "name": name,
@@ -571,6 +573,8 @@ def _build_plan(data, state):
         name = (cls.get("name") or "").strip()
         if not name:
             return None, f"Класс {class_index} без названия."
+        if len(name) > NAME_MAX:
+            return None, f"Название класса {class_index} длиннее {NAME_MAX} символов."
         superclass = (cls.get("superclass") or "").strip() or None
         if superclass and superclass not in seen_sc:
             return None, f"Суперкласс «{superclass}» не объявлен."
@@ -1162,6 +1166,18 @@ def _class_json(row, annotations, superclass):
     }
 
 
+# classes.name и superclasses.name — varchar(128). Длинное имя без проверки
+# роняло вставку в базе, и человек видел 500 вместо слов.
+NAME_MAX = 128
+
+
+def _long_name(name):
+    """Ответ 400 на слишком длинное имя, или None."""
+    if len(name) > NAME_MAX:
+        return jsonify({"error": f"Название длиннее {NAME_MAX} символов."}), 400
+    return None
+
+
 @bp.get("/api/projects/<code>/classes")
 def list_classes(code):
     db, project, err = _resolve(code)
@@ -1235,6 +1251,8 @@ def create_class(code):
         name = (data.get("name") or "").strip()
         if not name:
             return jsonify({"error": "Укажите название класса."}), 400
+        if _long_name(name):
+            return _long_name(name)
         # Номер выдаём сами и НИКОГДА не переиспользуем освободившийся:
         # `class_index` уходит в мету выгрузки, и «3 = Шпала» из прошлого
         # экспорта не должно однажды означать «3 = Опора». Дырки в нумерации
@@ -1297,6 +1315,8 @@ def update_class(code, class_id):
             name = (data.get("name") or "").strip()
             if not name:
                 return jsonify({"error": "Название не может быть пустым."}), 400
+            if _long_name(name):
+                return _long_name(name)
             row.name = name
         if "color" in data and data["color"]:
             row.color = data["color"]
@@ -1662,6 +1682,8 @@ def rename_tag(code, tag_id):
         name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
         if not name:
             return jsonify({"error": "Укажите название тага."}), 400
+        if len(name) > 64:
+            return jsonify({"error": "Название тага длиннее 64 символов."}), 400
         if db.execute(
             select(Tag.id).where(Tag.project_id == project.id, Tag.name == name,
                                  Tag.id != row.id)
@@ -1728,6 +1750,8 @@ def create_superclass(code):
         name = (data.get("name") or "").strip()
         if not name:
             return jsonify({"error": "Укажите название суперкласса."}), 400
+        if _long_name(name):
+            return _long_name(name)
         if db.execute(
             select(Superclass.id).where(
                 Superclass.project_id == project.id, Superclass.name == name
@@ -1766,6 +1790,8 @@ def update_superclass(code, sc_id):
             name = (data.get("name") or "").strip()
             if not name:
                 return jsonify({"error": "Название не может быть пустым."}), 400
+            if _long_name(name):
+                return _long_name(name)
             row.name = name
         if "color" in data and data["color"]:
             row.color = data["color"]

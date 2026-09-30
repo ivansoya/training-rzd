@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createClass,
   createSuperclass,
@@ -19,7 +19,7 @@ import type {
 import ColorPicker, { PALETTE } from "./ColorPicker";
 import { useLive } from "../../live/LiveProvider";
 import { useProject } from "./ProjectShell";
-import { plural } from "../ru";
+import { count, plural, ru } from "../ru";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
 import Banner from "../Banner";
@@ -65,21 +65,19 @@ export default function ProjectClasses() {
   // редакторе адресуются номером класса.
   useLive("classes", load);
 
+  // Бросает ошибку дальше: окно показывает её у себя. Баннер страницы
+  // стоял под затемнением, и отказ сервера выглядел как зависшая кнопка.
   const act = useCallback(
     async (fn: () => Promise<unknown>) => {
-      setError(null);
-      try {
-        await fn();
-        await load();
-        await refreshProject();
-        return true;
-      } catch (e) {
-        setError((e as Error).message);
-        return false;
-      }
+      await fn();
+      await load();
+      await refreshProject();
     },
     [load, refreshProject]
   );
+  // Перетаскивание класса между группами идёт без окна — его ошибка в баннер.
+  const move = (fn: () => Promise<unknown>) =>
+    void act(fn).catch((e) => setError((e as Error).message));
 
   if (error && !info) return <div className="mag-error">{error}</div>;
   if (!info) return <div className="mag-empty">Загружаем классы…</div>;
@@ -123,7 +121,7 @@ export default function ProjectClasses() {
             onEditGroup={() => setEditing({ kind: "superclass", sc })}
             onAddClass={() => setEditing({ kind: "new-class", superclassId: sc.id })}
             onEditClass={(cls) => setEditing({ kind: "class", cls })}
-            onMoveClass={(id) => void act(() => updateClass(code, id, { superclass_id: sc.id }))}
+            onMoveClass={(id) => move(() => updateClass(code, id, { superclass_id: sc.id }))}
           />
         ))}
 
@@ -133,7 +131,7 @@ export default function ProjectClasses() {
           canEdit={canEdit}
           onAddClass={() => setEditing({ kind: "new-class", superclassId: null })}
           onEditClass={(cls) => setEditing({ kind: "class", cls })}
-          onMoveClass={(id) => void act(() => updateClass(code, id, { superclass_id: null }))}
+          onMoveClass={(id) => move(() => updateClass(code, id, { superclass_id: null }))}
         />
       </div>
 
@@ -146,11 +144,12 @@ export default function ProjectClasses() {
           }
           onClose={() => setEditing(null)}
           onSave={async (patch) => {
-            const ok =
+            await act(() =>
               editing.kind === "class"
-                ? await act(() => updateClass(code, editing.cls.id, patch))
-                : await act(() => createClass(code, patch));
-            if (ok) setEditing(null);
+                ? updateClass(code, editing.cls.id, patch)
+                : createClass(code, patch)
+            );
+            setEditing(null);
           }}
           onFate={
             editing.kind === "class" && info.can_manage
@@ -168,7 +167,8 @@ export default function ProjectClasses() {
           initialMove={editing.move}
           onClose={() => setEditing(null)}
           onDone={async (fn) => {
-            if (await act(fn)) setEditing(null);
+            await act(fn);
+            setEditing(null);
           }}
         />
       )}
@@ -178,11 +178,12 @@ export default function ProjectClasses() {
           sc={editing.kind === "superclass" ? editing.sc : null}
           onClose={() => setEditing(null)}
           onSave={async (patch) => {
-            const ok =
+            await act(() =>
               editing.kind === "superclass"
-                ? await act(() => updateSuperclass(code, editing.sc.id, patch))
-                : await act(() => createSuperclass(code, patch));
-            if (ok) setEditing(null);
+                ? updateSuperclass(code, editing.sc.id, patch)
+                : createSuperclass(code, patch)
+            );
+            setEditing(null);
           }}
           onDelete={
             editing.kind === "superclass"
@@ -192,9 +193,8 @@ export default function ProjectClasses() {
                     ? `Удалить суперкласс «${editing.sc.name}»? ${n} ${plural(n, "класс останется", "класса останутся", "классов останутся")} без группы — разметка не пострадает.`
                     : `Удалить суперкласс «${editing.sc.name}»?`;
                   if (!window.confirm(warn)) return;
-                  if (await act(() => deleteSuperclass(code, editing.sc.id))) {
-                    setEditing(null);
-                  }
+                  await act(() => deleteSuperclass(code, editing.sc.id));
+                  setEditing(null);
                 }
               : undefined
           }
@@ -258,8 +258,8 @@ function Group({
         />
         {sc ? sc.name : "Без группы"}
         <span className="mag-group-n">
-          {items.length} {plural(items.length, "класс", "класса", "классов")} <Sep />{" "}
-          {total.toLocaleString("ru-RU")} разметок
+          {count(items.length, "класс", "класса", "классов")} <Sep />{" "}
+          {count(total, "разметка", "разметки", "разметок")}
         </span>
         {canEdit && sc && (
           <button className="mag-ghost mag-ghost-inline" type="button" onClick={onEditGroup}>
@@ -268,7 +268,11 @@ function Group({
         )}
       </div>
 
+      {/* Своя прокрутка у таблицы: группа режет всё, что за её краем
+          (`overflow: hidden` ради скруглённых углов), и на 430 px число
+          разметок и «Изменить» уходили за край без возможности до них дойти. */}
       {items.length > 0 && (
+        <div className="mag-table-scroll">
         <table className="mag-table mag-classes-table">
           <tbody>
             {items.map((c) => (
@@ -307,6 +311,7 @@ function Group({
             ))}
           </tbody>
         </table>
+        </div>
       )}
 
       {canEdit ? (
@@ -322,6 +327,32 @@ function Group({
   );
 }
 
+
+/** Действие окна: одно за раз и с ошибкой внутри окна.
+ *
+ *  Двойной щелчок по «Создать класс» заводил два класса: кнопка оставалась
+ *  живой, пока шёл запрос. Замок — ref, а не только состояние: второй щелчок
+ *  может прийти раньше, чем React перерисует кнопку неактивной. */
+function useAction() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const lock = useRef(false);
+  const run = useCallback(async (fn: () => Promise<unknown>) => {
+    if (lock.current) return;
+    lock.current = true;
+    setBusy(true);
+    setError(null);
+    try {
+      await fn();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      lock.current = false;
+      setBusy(false);
+    }
+  }, []);
+  return { busy, error, run };
+}
 
 /** Судьба разметки класса.
  *
@@ -343,7 +374,7 @@ function ClassFateModal({
   others: LabelClass[];
   initialMove: boolean;
   onClose: () => void;
-  onDone: (fn: () => Promise<unknown>) => void;
+  onDone: (fn: () => Promise<unknown>) => Promise<void>;
 }) {
   const [fate, setFate] = useState<Fate>(
     initialMove ? "move-delete" : "delete"
@@ -351,10 +382,17 @@ function ClassFateModal({
   const [target, setTarget] = useState(others[0]?.id ?? "");
   const [usage, setUsage] = useState<ClassUsage | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const { busy, error, run: act } = useAction();
   useEscape(onClose);
 
   const moving = fate !== "delete";
+
+  // Цель могли удалить в другой вкладке: живой список классов обновился, а в
+  // выборе остался id исчезнувшего — select показывал чужое имя, а кнопка
+  // гасла без причины. Сбрасываем выбор и просим выбрать заново.
+  useEffect(() => {
+    if (target && !others.some((c) => c.id === target)) setTarget("");
+  }, [others, target]);
 
   useEffect(() => {
     let alive = true;
@@ -376,11 +414,12 @@ function ClassFateModal({
 
   const run = () => {
     if (!ready) return;
-    setBusy(true);
-    onDone(() =>
-      fate === "delete"
-        ? deleteClass(code, cls.id, true)
-        : moveClass(code, cls.id, target, fate === "move-delete")
+    void act(() =>
+      onDone(() =>
+        fate === "delete"
+          ? deleteClass(code, cls.id, true)
+          : moveClass(code, cls.id, target, fate === "move-delete")
+      )
     );
   };
 
@@ -401,29 +440,29 @@ function ClassFateModal({
             <tbody>
               <tr>
                 <td>Разметок на кадрах</td>
-                <td className="num">{usage.annotations.toLocaleString("ru-RU")}</td>
+                <td className="num">{ru(usage.annotations)}</td>
               </tr>
               <tr>
                 <td>Треков в несданных роликах</td>
-                <td className="num">{usage.video_tracks.toLocaleString("ru-RU")}</td>
+                <td className="num">{ru(usage.video_tracks)}</td>
               </tr>
               <tr>
                 <td>Ключевых кадров этих треков</td>
-                <td className="num">{usage.video_keys.toLocaleString("ru-RU")}</td>
+                <td className="num">{ru(usage.video_keys)}</td>
               </tr>
               <tr>
                 <td>Одиночных боксов в роликах</td>
-                <td className="num">{usage.video_singles.toLocaleString("ru-RU")}</td>
+                <td className="num">{ru(usage.video_singles)}</td>
               </tr>
             </tbody>
           </table>
         )}
 
+        {/* В ленте затронутых тасок появится запись о смене класса — это
+            делает сервер, а на экране достаточно их имён. */}
         {usage !== null && usage.tasks.length > 0 && (
           <p className="mag-hint">
-            Затронуты таски:{" "}
-            {usage.tasks.map((t) => t.name).join(", ")}. В их ленте появится
-            запись о смене класса.
+            Затронуты таски: {usage.tasks.map((t) => t.name).join(", ")}.
           </p>
         )}
 
@@ -433,9 +472,9 @@ function ClassFateModal({
             {plural(usage.train_sets, "набора", "наборов", "наборов")}, из них
             ещё не {plural(usage.unbuilt_sets.length, "собран", "собраны", "собраны")}:{" "}
             {usage.unbuilt_sets.join(", ")}.
-            {fate === "delete" &&
-              " После удаления такой набор не соберётся: номера классов в нём" +
-                " разошлись бы с тем, что показывал мастер."}
+            {/* Не соберётся потому, что номера классов в наборе разошлись бы
+                с тем, что показывал мастер (builder.py сверяет их числом). */}
+            {fate === "delete" && " После удаления они не соберутся."}
           </p>
         )}
 
@@ -471,9 +510,14 @@ function ClassFateModal({
               value={target}
               onChange={(e) => setTarget(e.target.value)}
             >
+              {!to && (
+                <option value="" disabled>
+                  Выберите класс
+                </option>
+              )}
               {others.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.class_index} · {c.name}
+                  {c.class_index} — {c.name}
                 </option>
               ))}
             </select>
@@ -482,13 +526,18 @@ function ClassFateModal({
 
         {moving && usage?.overlap_images ? (
           <p className="mag-hint mag-warn">
-            На {usage.overlap_images.toLocaleString("ru-RU")}{" "}
+            На {ru(usage.overlap_images)}{" "}
             {plural(usage.overlap_images, "кадре", "кадрах", "кадрах")} разметка
-            обоих классов уже есть — там появятся дубли. Схлопывать их мы не
-            будем: это удаление чужой разметки внутри операции, затеянной ради
-            её сохранения.
+            обоих классов уже есть — там появятся дубли.
+            {/* Дубли не схлопываем: это было бы удалением чужой разметки
+                внутри операции, затеянной ради её сохранения. */}
           </p>
         ) : null}
+
+        {moving && !to && others.length > 0 && (
+          <p className="mag-hint mag-warn">Выберите класс, куда перенести разметку.</p>
+        )}
+        {error && <div className="mag-error">{error}</div>}
 
         <div className="mag-modal-foot">
           <button className="mag-ghost" type="button" onClick={onClose}>
@@ -530,9 +579,10 @@ function ClassModal({
     name: string;
     color: string;
     superclass_id: string | null;
-  }) => void;
+  }) => Promise<void>;
   onFate?: (move: boolean) => void;
 }) {
+  const { busy, error, run } = useAction();
   const [name, setName] = useState(cls?.name ?? "");
   const [color, setColor] = useState(cls?.color ?? PALETTE[0]);
   const [superclassId, setSuperclassId] = useState(
@@ -544,13 +594,15 @@ function ClassModal({
     <div className="mag-backdrop">
       <div className="mag-modal" onClick={(e) => e.stopPropagation()}>
         <h1>{cls ? `Класс ${cls.class_index}` : "Новый класс"}</h1>
-        <p className="mag-sub">
-          {!cls
-            ? "Идентификатор присвоится сам — следующий за наибольшим в проекте. Освободившиеся номера не переиспользуются: номер уходит в выгрузку, и «3» из прошлого экспорта не должно однажды означать другой класс."
-            : cls.annotations === 0
-            ? "В проекте нет разметки этим классом."
-            : `${cls.annotations.toLocaleString("ru-RU")} ${plural(cls.annotations, "разметка", "разметки", "разметок")} в проекте.`}
-        </p>
+        {/* Номер новому классу выдаёт сервер — следующий после всех когда-либо
+            выданных, освободившиеся не переиспользуются (create_class). */}
+        {cls && (
+          <p className="mag-sub">
+            {cls.annotations === 0
+              ? "В проекте нет разметки этим классом."
+              : `${count(cls.annotations, "разметка", "разметки", "разметок")} в проекте.`}
+          </p>
+        )}
 
         <div className="mag-field">
           <label htmlFor="cm-name">Название</label>
@@ -558,6 +610,7 @@ function ClassModal({
             id="cm-name"
             type="text"
             value={name}
+            maxLength={128}
             onChange={(e) => setName(e.target.value)}
             autoFocus
           />
@@ -581,6 +634,8 @@ function ClassModal({
           <label>Цвет</label>
           <ColorPicker value={color} onChange={setColor} />
         </div>
+
+        {error && <div className="mag-error">{error}</div>}
 
         <div className="mag-modal-foot">
           {onFate && cls && (
@@ -610,13 +665,15 @@ function ClassModal({
           <button
             className="mag-btn"
             type="button"
-            disabled={!name.trim()}
+            disabled={!name.trim() || busy}
             onClick={() =>
-              onSave({
-                name: name.trim(),
-                color,
-                superclass_id: superclassId || null,
-              })
+              run(() =>
+                onSave({
+                  name: name.trim(),
+                  color,
+                  superclass_id: superclassId || null,
+                })
+              )
             }
           >
             {cls ? "Сохранить" : "Создать класс"}
@@ -635,9 +692,10 @@ function SuperclassModal({
 }: {
   sc: SuperclassItem | null;
   onClose: () => void;
-  onSave: (patch: { name: string; color: string }) => void;
-  onDelete?: () => void;
+  onSave: (patch: { name: string; color: string }) => Promise<void>;
+  onDelete?: () => Promise<void>;
 }) {
+  const { busy, error, run } = useAction();
   const [name, setName] = useState(sc?.name ?? "");
   const [color, setColor] = useState(sc?.color ?? PALETTE[3]);
   useEscape(onClose);
@@ -646,11 +704,7 @@ function SuperclassModal({
     <div className="mag-backdrop">
       <div className="mag-modal" onClick={(e) => e.stopPropagation()}>
         <h1>{sc ? "Суперкласс" : "Новый суперкласс"}</h1>
-        <p className="mag-sub">
-          {sc
-            ? `${sc.classes} ${plural(sc.classes, "класс", "класса", "классов")} в группе.`
-            : "Группа классов для статистики и экспорта — классы можно добавить сразу после."}
-        </p>
+        {sc && <p className="mag-sub">{count(sc.classes, "класс", "класса", "классов")} в группе.</p>}
 
         <div className="mag-field">
           <label htmlFor="sm-name">Название</label>
@@ -658,6 +712,7 @@ function SuperclassModal({
             id="sm-name"
             type="text"
             value={name}
+            maxLength={128}
             onChange={(e) => setName(e.target.value)}
             autoFocus
           />
@@ -668,9 +723,12 @@ function SuperclassModal({
           <ColorPicker value={color} onChange={setColor} />
         </div>
 
+        {error && <div className="mag-error">{error}</div>}
+
         <div className="mag-modal-foot">
           {onDelete && (
-            <button className="mag-ghost mag-danger" type="button" onClick={onDelete}>
+            <button className="mag-ghost mag-danger" type="button" disabled={busy}
+              onClick={() => run(onDelete)}>
               Удалить
             </button>
           )}
@@ -680,8 +738,8 @@ function SuperclassModal({
           <button
             className="mag-btn"
             type="button"
-            disabled={!name.trim()}
-            onClick={() => onSave({ name: name.trim(), color })}
+            disabled={!name.trim() || busy}
+            onClick={() => run(() => onSave({ name: name.trim(), color }))}
           >
             {sc ? "Сохранить" : "Создать суперкласс"}
           </button>

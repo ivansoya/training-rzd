@@ -5,7 +5,7 @@
 // первый датасет, отфильтровать, запомнить, открыть второй. Здесь кадры всех
 // датасетов лежат в одной сетке, а на плитке написано, из какого она.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { imageThumbUrl } from "../../auth/api";
 import { classesIn } from "../../api/datasets";
@@ -17,6 +17,7 @@ import Gallery from "./Gallery";
 import type { GalleryItem } from "./Gallery";
 import ImageViewer from "./ImageViewer";
 import { PAGE, useGallery } from "./useGallery";
+import { useProject } from "./ProjectShell";
 import type { Mode } from "./useGallery";
 
 const SPLITS = [
@@ -40,9 +41,14 @@ export default function ProjectGallery({
   // класс с номером в базе — он умеет править разметку прямо из кадра. Счёт —
   // по кадрам датасетов, как и сетка: черновики тасок в неё не входят.
   const [classes, setClasses] = useState<LabelClass[]>([]);
+  const [classesRev, setClassesRev] = useState(0);
   useEffect(() => {
     if (code) classesIn(code, "any").then((c) => setClasses(c.classes)).catch(() => {});
-  }, [code]);
+  }, [code, classesRev]);
+  // Правка в просмотре меняет паспорт проекта и счёт классов — пересчёт при
+  // закрытии просмотра (см. DatasetPage).
+  const { refresh: refreshProject } = useProject();
+  const edited = useRef(false);
 
   const [chosen, setChosen] = useState<string[]>([]);
   const [split, setSplit] = useState("");
@@ -195,7 +201,13 @@ export default function ProjectGallery({
           classes={classes}
           canEdit={role === "admin" || role === "editor"}
           onIndex={setViewer}
-          onClose={() => setViewer(null)}
+          onClose={() => {
+            setViewer(null);
+            if (!edited.current) return;
+            edited.current = false;
+            void refreshProject();
+            setClassesRev((n) => n + 1);
+          }}
           onNeedMore={mode === "feed" ? g.more : undefined}
           base={g.base}
           onEdge={
@@ -203,11 +215,12 @@ export default function ProjectGallery({
               ? (dir) => g.goto(g.page + dir, () => setViewer(dir > 0 ? 0 : PAGE - 1))
               : undefined
           }
-          onSaved={(updated) =>
+          onSaved={(updated) => {
+            edited.current = true;
             g.setItems((prev) =>
               prev.map((x) => (x.id === updated.id ? { ...x, ...updated } : x))
-            )
-          }
+            );
+          }}
         />
       )}
     </div>
