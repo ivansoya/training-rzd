@@ -296,6 +296,9 @@ services:
       - ./tests:/work/tests
       - ./backend:/work/backend:ro
       - ./frontend:/work/frontend
+      # Том данных — чтобы уборка тестов стирала и папки своих проектов:
+      # строки уходили SQL-запросом, а каталоги копились сотнями.
+      - yolo-data:/app/data
       # Свои node_modules поверх хозяйских: на маке там бинарники под darwin,
       # в linux-контейнере они не запускаются. Ставятся при первом прогоне.
       - test-node-modules:/work/frontend/node_modules

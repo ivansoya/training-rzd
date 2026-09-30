@@ -25,7 +25,7 @@ import uuid
 import pytest
 import requests
 
-from conftest import BASE_URL, tag, wait_job
+from conftest import BASE_URL, drop_project, tag, wait_job
 
 LOGIN = os.environ.get("TEST_AGENT_LOGIN", "tester")
 PASSWORD = os.environ.get("TEST_AGENT_PASSWORD", "123456")
@@ -148,8 +148,7 @@ def setup(owner, weights, clip, db):
     finally:
         # Сперва проект: агента с рамками в проектах удалить нельзя — подписи
         # «агент X v1» обезличились бы. Проект уходит каскадом с рамками.
-        with db.cursor() as cur:
-            cur.execute("DELETE FROM projects WHERE code = %s", (code,))
+        drop_project(db, code)
         res = owner.delete(f"{BASE_URL}/api/aug/graphs/{graph['id']}")
         assert res.status_code == 200, res.text
 

@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from conftest import BASE_URL, tag
+from conftest import BASE_URL, drop_project, tag
 from test_agent_video import (  # noqa: F401 — фикстуры
     PERSON, STEP, _agent_singles, _empty_blocks, _person_blocks, clip, owner,
 )
@@ -55,8 +55,7 @@ def setup(owner, clip, db):
     try:
         yield {"task": task, "video": res.json(), "code": code, "graphs": graphs}
     finally:
-        with db.cursor() as cur:
-            cur.execute("DELETE FROM projects WHERE code = %s", (code,))
+        drop_project(db, code)
         for graph in graphs.values():
             owner.delete(f"{BASE_URL}/api/aug/graphs/{graph['id']}")
 

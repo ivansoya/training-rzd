@@ -9,6 +9,7 @@
 одного поля.
 """
 import os
+import shutil
 import time
 import uuid
 
@@ -24,6 +25,7 @@ DB_DSN = os.environ.get(
 )
 # По этой метке уборка находит своё и не трогает чужое.
 PREFIX = "test-"
+DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 
 
 @pytest.fixture(scope="session")
@@ -42,10 +44,26 @@ def cleanup(db):
     _wipe(db)
 
 
+def drop_project(conn, code):
+    """Удалить проект мимо ручки — со строками и папкой на томе.
+
+    Ручка отказывает, пока в проекте идёт работа, а тестам надо прибраться и
+    посреди прогона агента или разбора ролика. Раньше такие тесты стирали одну
+    строку, и папки с роликами копились на томе."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM projects WHERE code = %s RETURNING id", (code,))
+        for (pid,) in cur.fetchall():
+            shutil.rmtree(os.path.join(DATA_DIR, "projects", str(pid)), ignore_errors=True)
+
+
 def _wipe(conn):
     with conn.cursor() as cur:
         # Проекты уходят каскадом вместе с датасетами, тасками и разметкой.
-        cur.execute("DELETE FROM projects WHERE name LIKE %s", (PREFIX + "%",))
+        # Файлы каскадом не уходят: их папки стираем следом, иначе они копились
+        # на томе сотнями. Том смонтирован в контейнер тестов (compose).
+        cur.execute("DELETE FROM projects WHERE name LIKE %s RETURNING id", (PREFIX + "%",))
+        for (pid,) in cur.fetchall():
+            shutil.rmtree(os.path.join(DATA_DIR, "projects", str(pid)), ignore_errors=True)
         cur.execute("DELETE FROM users WHERE login LIKE %s", (PREFIX + "%",))
 
 
