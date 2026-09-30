@@ -332,6 +332,14 @@ def test_повторное_закрытие_требует_убрать_кад�
     assert res.json()["code"] == "frames_exist"
     assert res.json()["frames"] == 1
 
+    # Сводка знает об отказе заранее и не считает план «ждущим закрытия»:
+    # иначе шапка показывала одни кадры дважды — «размечено» и «ждут».
+    body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
+    row = body["pending_videos"][0]
+    assert row["frames_in_task"] == 1
+    assert row["frames"] == 0 and row["error"]
+    assert body["counts"]["annotated"] == 1
+
 
 def test_закрытый_ролик_только_для_просмотра(api, task, video, label_class):
     """Правка после закрытия ложилась в базу и никуда не шла: план больше

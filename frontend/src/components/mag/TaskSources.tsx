@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { plural } from "../ru";
+import { count, plural } from "../ru";
 import { fmtBytes, fmtStep, fmtTime, framesIn } from "./VideoCutModal";
 import type {
   PendingObject,
@@ -485,6 +485,14 @@ export function VideoCard({
   onTagCreated: (tag: Tag) => void;
 }) {
   const closed = video.annotation_closed_at !== null;
+  // Прежние кадры считает сводка тем же счётом, что и отказ в закрытии: в
+  // него входят и забракованные, которых нет в `video.frames`, — иначе при
+  // одних забракованных ссылка «уберите их» пропадала, а закрыть было нельзя.
+  // Поле пока не описано в PendingVideo (auth/api.ts).
+  const inTask = Math.max(
+    video.frames,
+    (pending as (PendingVideo & { frames_in_task?: number }) | undefined)?.frames_in_task ?? 0
+  );
   const scouts = useScouts(taskId);
   const [statsOpen, setStatsOpen] = useState(false);
   const lastFrame = Math.max(1, (video.frame_count || 1) - 1);
@@ -500,10 +508,13 @@ export function VideoCard({
         <ScoutButton scout={scouts[video.id]} onOpen={() => setStatsOpen(true)} />
         <PrepareLine prepare={video.prepare} />
         <span className="g-sp" />
+        {/* Сводка уже знает, что закрыть не выйдет (прежние кадры в таске,
+            трек не считается), — кнопка гаснет с причиной, а не зовёт к
+            заведомому отказу сервера. */}
         {editable && !closed && (
           <button className="mag-btn mag-btn-inline" type="button"
-            disabled={busy} onClick={onClose}
-            title="Превратить разметку в кадры таски">
+            disabled={busy || !!pending?.error} onClick={onClose}
+            title={pending?.error || "Превратить разметку в кадры таски"}>
             Закрыть разметку
           </button>
         )}
@@ -586,9 +597,9 @@ export function VideoCard({
             <span className="g-chip">{fmtBytes(video.size_bytes)}</span>
           </div>
 
-          {editable && video.frames > 0 && (
+          {editable && inTask > 0 && (
             <p className="g-vcard-note">
-              У ролика {video.frames} {plural(video.frames, "кадр", "кадра", "кадров")} в
+              У ролика {count(inTask, "кадр", "кадра", "кадров")} в
               таске. Чтобы разметить его заново,{" "}
               <button className="mag-link" type="button" disabled={busy} onClick={onDropFrames}>
                 уберите их
@@ -600,7 +611,9 @@ export function VideoCard({
             <>
               {/* Ошибка плана раньше молча превращалась в нули, и карточка
                   ролика с тремя треками выглядела как ролик без разметки. */}
-              {pending.error && (
+              {/* Отказ из-за прежних кадров уже сказан строкой выше, со
+                  ссылкой «уберите их», — второй раз его не повторяем. */}
+              {pending.error && !(editable && inTask > 0) && (
                 <p className="g-vcard-fail">
                   <b>Разметку не закрыть.</b> {pending.error}
                 </p>
@@ -649,9 +662,10 @@ export function VideoCard({
                   {plural(pending.empty, "кадр отмечен фоновым", "кадра отмечено фоновыми", "кадров отмечено фоновыми")}
                 </>}
                 {(pending.singles || 0) > 0 && `, одиночных фигур ${pending.singles}`}
-                . Все {pending.frames} {plural(pending.frames, "кадр", "кадра", "кадров")}{" "}
-                {plural(pending.frames, "появится", "появятся", "появятся")} в таске и уйдут в
-                датасет, когда закроете разметку.
+                . {count(pending.frames, "кадр", "кадра", "кадров")}{" "}
+                {plural(pending.frames, "появится", "появятся", "появятся")} в таске и{" "}
+                {plural(pending.frames, "уйдёт", "уйдут", "уйдут")} в датасет, когда закроете
+                разметку.
               </p>}
             </>
           )}
