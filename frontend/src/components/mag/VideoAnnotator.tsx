@@ -227,6 +227,7 @@ export default function VideoAnnotator({
 
   const canvas = useRef<CanvasHandle>(null);
   const draftTimer = useRef<number>();
+  const pendingCommit = useRef<(() => void) | null>(null);
 
   const frozen = readOnly || !data?.editable;
 
@@ -472,21 +473,44 @@ export default function VideoAnnotator({
     [frozen, active, saveSingles, singlesAsList]
   );
 
+  /** Отправить осевшую рамку сейчас, не дожидаясь таймера.
+   *
+   *  Ожидающая отправка при уходе с кадра именно отправляется, а не
+   *  отменяется: отмена молча теряла бокс, если в первые 350 мс нажать
+   *  стрелку, пробел или щёлкнуть по шкале. Отправка несёт замыкание своего
+   *  кадра (`commit` того рендера), поэтому уход ей не мешает. */
+  const flushDraft = useCallback(() => {
+    window.clearTimeout(draftTimer.current);
+    const run = pendingCommit.current;
+    pendingCommit.current = null;
+    run?.();
+  }, []);
+
   /** Пока тянут рамку, холст сообщает о каждом её положении — начиная с
    *  нулевой на нажатии. Отправляем осевшее. */
   const onBoxes = useCallback(
     (next: CanvasShape[]) => {
       setDraft(next);
       window.clearTimeout(draftTimer.current);
-      draftTimer.current = window.setTimeout(() => commit(next), 350);
+      pendingCommit.current = () => commit(next);
+      draftTimer.current = window.setTimeout(flushDraft, 350);
     },
-    [commit]
+    [commit, flushDraft]
   );
 
   useEffect(() => {
+    flushDraft();
     setDraft(null);
-    window.clearTimeout(draftTimer.current);
-  }, [frame, video.id]);
+  }, [frame, video.id, flushDraft]);
+
+  // Закрыли редактор или вкладку в те же 350 мс — рамка тоже уходит.
+  useEffect(() => {
+    window.addEventListener("pagehide", flushDraft);
+    return () => {
+      window.removeEventListener("pagehide", flushDraft);
+      flushDraft();
+    };
+  }, [flushDraft]);
 
   useEffect(() => { setDraft(null); }, [data]);
 
