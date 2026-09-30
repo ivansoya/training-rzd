@@ -15,7 +15,7 @@
 """
 import os
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from common import config, tags, task_frames
 from common.models import (
@@ -62,6 +62,20 @@ def frame_is_free(db, video, frame_no):
     """
     payload, singles = task_frames.video_payload(db, video)
     return bool(tracklib.empty_frames(payload, singles, [frame_no]))
+
+
+def frames_in_task(db, video):
+    """Сколько кадров ролик уже дал прежним закрытием.
+
+    Пока они есть, закрыть разметку заново нельзя. Один счёт на отказ в
+    закрытии и на сводку: разойдись они, карточка звала бы закрыть ролик,
+    который сервер тут же отвергнет.
+    """
+    return db.execute(
+        select(func.count(Image.id)).where(
+            Image.source_video_id == video.id, Image.source_frame_no.isnot(None)
+        )
+    ).scalar_one()
 
 
 def open_videos(db, task):
@@ -129,7 +143,19 @@ def pending_summary(db, task):
             "tracks": len(payload),
             "objects": objects,
             "singles": len(singles),
+            "frames_in_task": frames_in_task(db, video),
         }
+        if row["frames_in_task"]:
+            # Открыли заново, а прежние кадры на месте: план не станет кадрами,
+            # пока их не уберут. Считать его в «ждут закрытия» значило бы
+            # показать одни и те же кадры дважды — рядом с «размечено».
+            row.update({
+                "frames": 0, "boxes": 0, "empty": 0,
+                "error": f"Прежние кадры ролика ещё в таске ({row['frames_in_task']}) — "
+                         "уберите их, чтобы закрыть разметку заново.",
+            })
+            out.append(row)
+            continue
         try:
             plan, empty = collect(db, video)
         except tracklib.TrackError as exc:

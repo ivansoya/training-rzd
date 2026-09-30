@@ -333,6 +333,38 @@ def test_повторное_закрытие_требует_убрать_кад�
     assert res.json()["frames"] == 1
 
 
+def test_закрытый_ролик_только_для_просмотра(api, task, video, label_class):
+    """Правка после закрытия ложилась в базу и никуда не шла: план больше
+    никто не выполнит. Закрытый ролик не правится, пока его не откроют."""
+    track = make_track(api, task, video, label_class)
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    base = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}"
+    ann = api.get(f"{base}/annotations").json()
+    assert ann["editable"] is False
+
+    box = {"x": 10, "y": 10, "w": 40, "h": 40}
+    ci = label_class["class_index"]
+    writes = [
+        api.post(f"{base}/tracks", json={"class_index": ci, "frame_no": 3, "geometry": box}),
+        api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/5", json={"geometry": box}),
+        api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 2}),
+        api.delete(f"{BASE_URL}/api/video-tracks/{track['id']}"),
+        api.put(f"{base}/frames/4/boxes", json={"boxes": [{"class_index": ci, **box}]}),
+        api.put(f"{base}/empty-frames/20"),
+    ]
+    assert [r.status_code for r in writes] == [409] * len(writes), [r.text for r in writes]
+    after = api.get(f"{base}/annotations").json()
+    assert after["tracks"] == ann["tracks"] and after["singles"] == ann["singles"]
+    assert after["empty_frames"] == ann["empty_frames"]
+
+    # Открыли заново — снова правится.
+    api.post(f"{base}/reopen-annotation")
+    assert api.get(f"{base}/annotations").json()["editable"] is True
+    res = api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 2})
+    assert res.status_code == 200, res.text
+
+
 def test_кадры_ролика_убираются_и_разметка_идёт_заново(api, task, video, label_class):
     track = make_track(api, task, video, label_class)
     api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})

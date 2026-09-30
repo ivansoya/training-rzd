@@ -18,7 +18,7 @@ import threading
 
 from flask import Blueprint, jsonify, request, send_file
 from PIL import Image as PilImage
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from common import attribution, config, jobs
 from common.db import SessionLocal
@@ -105,17 +105,32 @@ def _resolve_track(track_id, needed="editor"):
     if task.status == "closed":
         db.close()
         return None, None, None, (jsonify({"error": "Таска закрыта, разметка заморожена."}), 409)
+    if video.annotation_closed_at is not None:
+        db.close()
+        return None, None, None, (jsonify({"error": CLOSED_VIDEO}), 409)
     return db, task, db.get(VideoTrack, tid), None
 
 
-def _writable(task, user, role, video):
-    """Общая проверка перед любой правкой разметки видео."""
+# Закрытая разметка ролика — событие, после которого правят уже кадры таски.
+# Правка треков после закрытия молча ложилась в базу и никуда не шла: план
+# никто не выполнит, пока ролик не откроют заново.
+CLOSED_VIDEO = "Разметка ролика закрыта — откройте её заново, чтобы править."
+
+
+def _writable(task, user, role, video, edit=True):
+    """Общая проверка перед любой правкой разметки видео.
+
+    ``edit=False`` — для действий над самим закрытием (закрыть, открыть
+    заново, убрать кадры): закрытый ролик им не помеха, а предмет работы.
+    """
     if not _may_work(task, user, role):
         return jsonify({"error": "Это не ваша таска."}), 403
     if task.status == "closed":
         return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
     if video.mode != "annotate":
         return jsonify({"error": "Это видео загружено для нарезки на кадры."}), 409
+    if edit and video.annotation_closed_at is not None:
+        return jsonify({"error": CLOSED_VIDEO}), 409
     return None
 
 
@@ -618,7 +633,8 @@ def video_annotations(task_id, video_id):
             "materialized": {str(k): str(v) for k, v in materialized.items()},
             "empty_frames": sorted(int(f) for f in (video.empty_frames or [])),
             "editable": _may_work(task, user, role) and task.status != "closed"
-                        and video.mode == "annotate",
+                        and video.mode == "annotate"
+                        and video.annotation_closed_at is None,
         })
     finally:
         db.close()
@@ -1332,18 +1348,16 @@ def close_annotation(task_id, video_id):
     if db is None:
         return video
     try:
-        denied = _writable(task, user, role, video)
+        denied = _writable(task, user, role, video, edit=False)
         if denied:
             return denied
-        existing = db.execute(
-            select(func.count(Image.id)).where(
-                Image.source_video_id == video.id, Image.source_frame_no.isnot(None)
-            )
-        ).scalar_one()
+        existing = materialize.frames_in_task(db, video)
         if existing:
+            # Число в скобках, а не перед словом: «382 кадров» резало глаз,
+            # а склонять по-русски на сервере больше негде.
             return jsonify({
-                "error": f"У ролика уже есть {existing} кадров в таске. "
-                         "Удалите их, чтобы разметить заново.",
+                "error": f"Прежние кадры ролика ещё в таске ({existing}) — "
+                         "уберите их, чтобы закрыть разметку заново.",
                 "code": "frames_exist",
                 "frames": existing,
             }), 409
@@ -1378,7 +1392,7 @@ def reopen_annotation(task_id, video_id):
     if db is None:
         return video
     try:
-        denied = _writable(task, user, role, video)
+        denied = _writable(task, user, role, video, edit=False)
         if denied:
             return denied
         video.annotation_closed_at = None
@@ -1400,7 +1414,7 @@ def drop_video_frames(task_id, video_id):
     if db is None:
         return video
     try:
-        denied = _writable(task, user, role, video)
+        denied = _writable(task, user, role, video, edit=False)
         if denied:
             return denied
         rows = db.execute(
