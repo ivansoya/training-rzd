@@ -250,12 +250,14 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
             rows = agent_graph.text_rows(node)
             if agent_graph.text_model(params) == "sam3":
                 return _sam3(models[node["id"]], pixels, rows, node, contour)
-            side = int(params.get("imgsz") or agent_graph.TEXT_IMGSZ)
+            side = int(agent_graph.num(params.get("imgsz"), agent_graph.TEXT_IMGSZ))
             # Модель идёт с самым низким порогом строк, каждую дорезает `run`.
             conf = agent_graph.min_conf(node)
         else:
-            side = int(params.get("imgsz") or weights[node["id"]].imgsz or 640)
-            conf = float(params.get("conf") or 0.25)
+            side = int(agent_graph.num(params.get("imgsz"), weights[node["id"]].imgsz or 640))
+            # Не `or`: уверенность 0 — это «всё подряд», а `0 or 0,25` молча
+            # превращал её в умолчание (замер: 0 давал те же 15 рамок, что 0,25).
+            conf = agent_graph.num(params.get("conf"), 0.25)
 
         def infer(jobs, scale):
             crops = []

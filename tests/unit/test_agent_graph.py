@@ -433,3 +433,53 @@ def test_текст_образцы_и_порог_строки():
     rows[1]["conf"] = 1.5
     with pytest.raises(ag.AgentGraphError, match="от 0 до 1"):
         ag.check(doc)
+
+
+@pytest.mark.parametrize("nid,key,value,text", [
+    ("a", "conf", 7, "«Сеть»: «Уверенность от» — число от 0 до 1, сейчас 7"),
+    ("a", "conf", -0.1, "Уверенность от"),
+    ("a", "conf", "много", "Уверенность от"),
+    ("a", "imgsz", 0, "«Размер входа» — целое от 320 до 4096, сейчас 0"),
+    ("a", "imgsz", 1, "Размер входа"),        # вход 1 с плитками — миллионы видов на кадр
+    ("a", "imgsz", 640.5, "целое"),
+    ("a", "overlap", 0.95, "Перекрытие"),
+    ("m", "inputs", 9, "Входов"),
+])
+def test_числа_узлов_в_пределах_и_ошибка_называет_узел_и_поле(nid, key, value, text):
+    doc = _doc()
+    next(n for n in doc["nodes"] if n["id"] == nid)["params"][key] = value
+    with pytest.raises(ag.AgentGraphError, match=text):
+        ag.check(doc)
+
+
+def test_края_пределов_и_пустое_проходят():
+    doc = _doc()
+    doc["nodes"][1]["params"].update(conf=0, imgsz=320, overlap=None, glue="")
+    doc["nodes"][2]["params"].update(conf=1, imgsz=4096.0)
+    ag.check(doc)
+
+
+def test_фильтр_стороны_и_пороги_классов():
+    doc = _doc()
+    doc["nodes"].insert(5, {"id": "flt", "type": "filter", "params": {"min_side": 500, "max_side": 10}})
+    doc["edges"][-1] = {"from": "n", "out": "out", "to": "flt", "in": "in"}
+    doc["edges"].append({"from": "flt", "out": "out", "to": "o", "in": "in"})
+    with pytest.raises(ag.AgentGraphError, match="«Сторона от» больше"):
+        ag.check(doc)
+    doc["nodes"][5]["params"] = {"min_side": 10, "classes": [{"cls": "вагон", "on": True, "conf": 5}]}
+    with pytest.raises(ag.AgentGraphError, match="порог класса"):
+        ag.check(doc)
+    doc["nodes"][5]["params"]["classes"][0]["conf"] = 0.5
+    ag.check(doc)
+
+
+def test_подпись_узла_в_ошибке_различает_две_сети():
+    doc = _doc()
+    doc["nodes"][2]["params"].update(label=" путь ", conf=7)
+    with pytest.raises(ag.AgentGraphError, match="«Сеть — путь»"):
+        ag.check(doc)
+
+
+def test_ноль_не_подменяется_умолчанием():
+    # уверенность 0 — «всё подряд»; прогон берёт её через num, а не через `or`
+    assert ag.num(0, 0.25) == 0 and ag.num(None, 0.25) == 0.25 and ag.num("", 0.25) == 0.25

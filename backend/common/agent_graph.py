@@ -75,6 +75,28 @@ TEXT_CONF = {"yoloe": 0.25, "sam3": 0.4}
 # Вход YOLOE: кадры РСМ 2688×1520, на 640 мелочь пропадает.
 TEXT_IMGSZ = 1280
 
+# Пределы числовых параметров узлов: поле → (подпись в форме, от, до, целое).
+# Одно место на сервер: `check` сверяет по нему версию и превью, форма
+# (agentDoc.ts, LIMITS) повторяет те же числа. Без пределов сохранялись «Сеть»
+# с уверенностью 7 и входом 0, а вход 1 с плитками давал 6,4 млн видов на кадр.
+# Вход от 320: на кадре РСМ 2688×1520 это 66 плиток — ещё прогон, а не зависание.
+_CONF = ("Уверенность от", 0, 1, False)
+_IMGSZ = ("Размер входа", 320, 4096, True)
+_PASSES = {"overlap": ("Перекрытие плиток", 0, 0.9, False),
+           "glue": ("Склейка от, IoS", 0.05, 1, False)}
+# Как у полуавтомата в редакторе таски: точек контура 8–200.
+_CONTOUR = {"polygon_points": ("Точек до", 8, 200, True),
+            "min_area": ("Кусок от, px²", 0, 1_000_000, True)}
+LIMITS = {
+    "net": {"conf": _CONF, "imgsz": _IMGSZ, **_PASSES},
+    "text": {"conf": ("Порог узла", 0, 1, False), "imgsz": _IMGSZ, **_PASSES, **_CONTOUR},
+    "merge": {"inputs": ("Входов", 2, MAX_INPUTS, True)},
+    "nms": {"iou": ("IoU от", 0.05, 1, False)},
+    "filter": {"min_side": ("Сторона от, px", 0, 100_000, True),
+               "max_side": ("Сторона до, px", 1, 100_000, True)},
+    "sam": {"score_min": ("Порог маски", 0, 1, False), **_CONTOUR},
+}
+
 
 class AgentGraphError(ValueError):
     """Ошибка формы. Текст показывается человеку целиком."""
@@ -83,7 +105,7 @@ class AgentGraphError(ValueError):
 def title(node):
     names = {"frame": "Кадр", "net": "Сеть", "text": "Сеть по тексту", "merge": "Объединение",
              "nms": "NMS", "filter": "Фильтр", "sam": "Уточнение SAM", "output": "Выход"}
-    label = (node.get("params") or {}).get("label")
+    label = str((node.get("params") or {}).get("label") or "").strip()
     base = names.get(node.get("type"), str(node.get("type")))
     return f"«{base} — {label}»" if label else f"«{base}»"
 
@@ -155,7 +177,7 @@ def text_sets(node):
 
 def row_conf(node, row):
     """Порог строки; пусто — порог узла."""
-    own = _num(row.get("conf"))
+    own = num(row.get("conf"))
     return own if own is not None else text_conf(node.get("params"))
 
 
@@ -171,7 +193,7 @@ def text_model(params):
 
 def text_conf(params):
     family = "sam3" if text_model(params) == "sam3" else "yoloe"
-    return _num((params or {}).get("conf"), TEXT_CONF[family])
+    return num((params or {}).get("conf"), TEXT_CONF[family])
 
 
 def classes(doc):
@@ -213,6 +235,9 @@ def check(doc, weights=None, sam3=None, examples=None):
             raise AgentGraphError(f"Номер узла повторяется: {node['id']}.")
         if node.get("type") not in KINDS:
             raise AgentGraphError(f"{title(node)}: неизвестный тип {node.get('type')!r}.")
+        # Числа — раньше проводов: «Входов 9» иначе всплыло бы как «вход i2
+        # ни к чему не подключён» — правдой, но не про то.
+        _check_numbers(node)
         by_id[node["id"]] = node
 
     for kind, word in (("frame", "«Кадра»"), ("output", "«Выхода»")):
@@ -261,10 +286,6 @@ def check(doc, weights=None, sam3=None, examples=None):
             model = (node.get("params") or {}).get("model") or SAM_DEFAULTS["model"]
             if model not in SAM_MODELS:
                 raise AgentGraphError(f"{title(node)}: неизвестная модель {model!r}.")
-        if node["type"] == "nms":
-            threshold = _num((node.get("params") or {}).get("iou"), NMS_IOU)
-            if threshold is None or not 0 < threshold <= 1:
-                raise AgentGraphError(f"{title(node)}: IoU — число больше 0 и не больше 1.")
 
     order = _topo(nodes, taken_in)
     if order is None:
@@ -272,6 +293,33 @@ def check(doc, weights=None, sam3=None, examples=None):
     if not classes(doc):
         raise AgentGraphError("У агента нет ни одного класса.")
     return order
+
+
+def _decimal(v):
+    return f"{v:g}".replace(".", ",")
+
+
+def _check_numbers(node):
+    """Числа узла — в пределах `LIMITS`. Пусто — умолчание, это не ошибка."""
+    params = node.get("params") or {}
+    for key, (label, lo, hi, whole) in LIMITS.get(node["type"], {}).items():
+        raw = params.get(key)
+        if raw is None or raw == "":
+            continue
+        value = None if isinstance(raw, bool) else num(raw)
+        if value is None or not lo <= value <= hi or (whole and value != int(value)):
+            kind = "целое" if whole else "число"
+            now = _decimal(value) if value is not None else repr(raw)
+            raise AgentGraphError(f"{title(node)}: «{label}» — {kind} от {_decimal(lo)} до {_decimal(hi)}, "
+                                  f"сейчас {now}.")
+    if node["type"] == "filter":
+        lo, hi = num(params.get("min_side")), num(params.get("max_side"))
+        if lo is not None and hi is not None and lo > hi:
+            raise AgentGraphError(f"{title(node)}: «Сторона от» больше, чем «Сторона до».")
+        for row in params.get("classes") or []:
+            conf = num(row.get("conf"), 0) if isinstance(row, dict) else None
+            if conf is None or not 0 <= conf <= 1:
+                raise AgentGraphError(f"{title(node)}: порог класса — число от 0 до 1.")
 
 
 def _check_text(node, sam3, examples):
@@ -297,8 +345,9 @@ def _check_text(node, sam3, examples):
                 raise AgentGraphError(f"{title(node)}: набора образцов нет на вашей полке.")
             if not examples[s]:
                 raise AgentGraphError(f"{title(node)}: набор образцов ещё не собран.")
-    for conf in [params.get("conf")] + [r.get("conf") for _, r in text_rows(node)]:
-        value = _num(conf, 0.5)
+    # Порог узла сверяет `_check_numbers`; здесь — пороги строк.
+    for conf in [r.get("conf") for _, r in text_rows(node)]:
+        value = num(conf, 0.5)
         if value is None or not 0 <= value <= 1:
             raise AgentGraphError(f"{title(node)}: уверенность — число от 0 до 1.")
 
@@ -344,7 +393,7 @@ def nms(dets, threshold=NMS_IOU, agnostic=False):
     return kept
 
 
-def _num(value, default=None):
+def num(value, default=None):
     try:
         return default if value is None or value == "" else float(value)
     except (TypeError, ValueError):
@@ -357,11 +406,11 @@ def filter_dets(dets, params):
     класс не пропадёт молча. Размер — меньшая сторона не меньше `min_side`,
     большая не больше `max_side`, в пикселях кадра."""
     rows = {r.get("cls"): r for r in params.get("classes") or [] if isinstance(r, dict)}
-    lo, hi = _num(params.get("min_side")), _num(params.get("max_side"))
+    lo, hi = num(params.get("min_side")), num(params.get("max_side"))
     out = []
     for det in dets:
         row = rows.get(det["cls"])
-        if row is not None and (not row.get("on", True) or det["conf"] < _num(row.get("conf"), 0.0)):
+        if row is not None and (not row.get("on", True) or det["conf"] < num(row.get("conf"), 0.0)):
             continue
         _, _, w, h = det["box"]
         if (lo is not None and min(w, h) < lo) or (hi is not None and max(w, h) > hi):
@@ -464,7 +513,7 @@ def views(params, width, height, side):
     whole = [(0, 0, width, height)]
     if not params.get("tiles"):
         return whole
-    overlap = _num(params.get("overlap"), TILE_OVERLAP)
+    overlap = num(params.get("overlap"), TILE_OVERLAP)
     return whole + tiles(width, height, side, max(0.0, min(0.9, overlap)))
 
 
@@ -536,7 +585,7 @@ def detect(params, width, height, side, infer):
         per_view = [wbf(dets, len(var)) for dets in per_view]
     fused = [d for dets in per_view for d in dets]
     if len(vs) > 1:
-        fused = glue(fused, _num(params.get("glue"), GLUE_IOS))
+        fused = glue(fused, num(params.get("glue"), GLUE_IOS))
     return [(cls, conf, *box) for cls, conf, box in fused]
 
 
@@ -578,7 +627,7 @@ def run(doc, predict, order=None, segment=None, trace=None):
             value[nid] = [d for branch in ins for d in branch]
         elif kind == "nms":
             params = node.get("params") or {}
-            value[nid] = nms(ins[0], _num(params.get("iou"), NMS_IOU), bool(params.get("agnostic")))
+            value[nid] = nms(ins[0], num(params.get("iou"), NMS_IOU), bool(params.get("agnostic")))
         elif kind == "filter":
             value[nid] = filter_dets(ins[0], node.get("params") or {})
         elif kind == "sam":

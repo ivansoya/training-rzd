@@ -278,10 +278,12 @@ def delete_weights(weights_id):
         if row is None or row.owner_id != user.id:
             return jsonify({"error": "Весов нет."}), 404
         # Версия агента неизменна и ссылается на веса по номеру: убрать файл
-        # значит сломать версию, по которой уже размечали.
-        used = _used_by_versions(db, user, row.id)
+        # значит сломать версию, по которой уже размечали. Черновик — тоже:
+        # без весов он не сохранится версией и не покажет превью, а человек
+        # узнал бы об этом только там.
+        used = _agents_using(db, user, row.id)
         if used:
-            return jsonify({"error": f"Веса нужны версиям агентов: {used}."}), 409
+            return jsonify({"error": "Веса нужны агентам: " + ", ".join(f"«{n}»" for n in used) + "."}), 409
         path = os.path.join(config.DATA_DIR, row.file_path)
         db.delete(row)
         db.commit()
@@ -292,20 +294,24 @@ def delete_weights(weights_id):
         db.close()
 
 
-def _used_by_versions(db, user, weights_id):
+def _agents_using(db, user, weights_id):
+    """Имена агентов человека, у которых веса стоят в версии или черновике."""
     # ponytail: перебор документов в питоне; у человека десятки версий, а не
     # тысячи. Станет много — JSONB-запрос по nodes[*].params.weights.
     wanted = str(weights_id)
-    count = 0
-    for doc, in db.execute(
-        select(AugGraphVersion.doc)
+
+    def uses(doc):
+        return any(n.get("type") == "net" and (n.get("params") or {}).get("weights") == wanted
+                   for n in (doc or {}).get("nodes") or [])
+
+    names = {g.name for g in db.execute(
+        select(AugGraph).where(AugGraph.owner_id == user.id, AugGraph.kind == "agent")).scalars()
+        if uses(g.draft)}
+    names |= {name for name, doc in db.execute(
+        select(AugGraph.name, AugGraphVersion.doc)
         .join(AugGraph, AugGraph.id == AugGraphVersion.graph_id)
-        .where(AugGraph.owner_id == user.id, AugGraph.kind == "agent")
-    ):
-        if any(n.get("type") == "net" and (n.get("params") or {}).get("weights") == wanted
-               for n in (doc or {}).get("nodes") or []):
-            count += 1
-    return count
+        .where(AugGraph.owner_id == user.id, AugGraph.kind == "agent")) if uses(doc)}
+    return sorted(names)
 
 
 # --------------------------------------------------------------------------- #
@@ -472,7 +478,7 @@ def start_agent_run(task_id):
                 return jsonify({"error": "Выберите ролики." if mode == "scout" else
                                 "Выберите размечаемые ролики с незакрытой разметкой."}), 400
         try:
-            step = max(1, min(10000, int(data.get("step") or agent_graph.VIDEO_STEP)))
+            step = max(1, min(10000, int(data.get("step", agent_graph.VIDEO_STEP))))
             gap = max(0.0, min(60.0, float(data.get("gap") if data.get("gap") is not None
                                            else agent_graph.SCOUT_GAP_S)))
         except (TypeError, ValueError):
@@ -825,9 +831,10 @@ def create_examples():
         if cls is None or cls.project_id != project.id:
             return jsonify({"error": "Класса нет в проекте."}), 404
         try:
-            n = int(data.get("n") or 32)
-            collage = int(data.get("collage") or 6)
-            ctx = float(data.get("ctx") or 2.5)
+            # Не `or`: ноль — это ошибка человека, а не просьба об умолчании.
+            n = int(data.get("n", 32))
+            collage = int(data.get("collage", 6))
+            ctx = float(data.get("ctx", 2.5))
         except (TypeError, ValueError):
             return jsonify({"error": "Числа набора — не числа."}), 400
         if not 1 <= n <= MAX_EXAMPLES or not 1 <= collage <= ax.COLLAGE_MAX or not 1 <= ctx <= 16:
