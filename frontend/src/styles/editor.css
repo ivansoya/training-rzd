@@ -730,7 +730,36 @@
 
 .mag-ed-saved { color: var(--ed-faint); font-size: 11.5px; }
 .mag-ed-saving { color: var(--s-skip); font-size: 11.5px; }
-.mag-ed-err { color: #ff8a80; font-size: 11.5px; }
+.mag-ed-err {
+  color: #ff8a80;
+  font-size: 11.5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mag-ed-err button {
+  background: none;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0.8;
+}
+
+.mag-ed-err button:hover { opacity: 1; }
+
+/* Запись не прошла: правка жива только в редакторе. Цвет ошибки, а не
+   ожидания — «сохраняю…» тут было бы неправдой. */
+.mag-ed-unsaved {
+  color: #ff8a80;
+  font-size: 11.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
 
 /* Состояние кадра словами: цвет один, а причин у обводки в ленте пять */
 .mag-ed-flag {

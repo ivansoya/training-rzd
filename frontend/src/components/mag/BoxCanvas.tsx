@@ -468,7 +468,12 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     function onKey(e: KeyboardEvent) {
       if (e.code === "Escape") { setDraft([]); setGhost(null); }
       else if (e.code === "Enter" || e.code === "NumpadEnter") closeDraft();
-      else if (e.code === "Backspace" || e.code === "Delete") {
+      // Ctrl+Z посреди контура убирает последнюю точку: отмена у редактора
+      // работает по готовым объектам, а недорисованный контур — ещё не объект.
+      else if (
+        e.code === "Backspace" || e.code === "Delete" ||
+        (e.code === "KeyZ" && (e.ctrlKey || e.metaKey) && !e.shiftKey)
+      ) {
         setDraft((d) => d.slice(0, -1));
       } else return;
       e.preventDefault();

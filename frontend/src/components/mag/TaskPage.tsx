@@ -23,7 +23,7 @@ import type {
   TaskVideoItem,
 } from "../../auth/api";
 import { pollJob } from "../../api/jobs";
-import AnnotationEditor from "./AnnotationEditor";
+import AnnotationEditor, { saveSettled } from "./AnnotationEditor";
 import ShapeMini from "./ShapeMini";
 import { TaskState } from "./ProjectTasks";
 import { plural } from "../ru";
@@ -116,6 +116,9 @@ export default function TaskPage() {
   const load = useCallback(async () => {
     if (!taskId) return;
     try {
+      // Редактор мог только что закрыться, отправив последнюю правку: читаем
+      // после неё, иначе перечитанный кадр покажет разметку до правки.
+      await saveSettled();
       const [t, imgs] = await Promise.all([
         getTask(taskId),
         getTaskImages(taskId, { limit: 200 }),
@@ -808,10 +811,10 @@ export default function TaskPage() {
           onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
           onIndex={(i) => setEditing((prev) => (prev ? { ...prev, index: i } : prev))}
           onClose={() => { setEditing(null); load(); }}
-          onChanged={(updated) =>
+          onChanged={(id, patch) =>
             setEditing((prev) =>
               prev
-                ? { ...prev, list: prev.list.map((x) => (x.id === updated.id ? updated : x)) }
+                ? { ...prev, list: prev.list.map((x) => (x.id === id ? { ...x, ...patch } : x)) }
                 : prev
             )
           }

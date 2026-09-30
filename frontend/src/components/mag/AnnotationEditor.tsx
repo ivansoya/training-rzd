@@ -16,6 +16,8 @@ import type { Ring } from "./polygon";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
 import { frameActions } from "./frameActions";
+import * as history from "./editHistory";
+import { empty, type History } from "./editHistory";
 import TagPicker from "./TagPicker";
 import type { Tag } from "../../api/tags";
 import { useAutoLabel } from "./useAutoLabel";
@@ -60,6 +62,7 @@ const HELP = {
   addPart: ["⇧P", "Следующий контур ляжет в выбранный объект"],
   vertex: ["Alt", "Новая точка контура под курсором"],
   del: ["Del", "Удалить объект, а при раздельных частях — часть"],
+  undo: ["Ctrl+Z", "Отменить правку. Ctrl+Shift+Z или Ctrl+Y — повторить"],
   cls: ["1–9", "Класс для новых объектов"],
   empty: ["E", "Кадр фоновый: объектов на нём нет"],
   skip: ["S", "Отложить кадр"],
@@ -83,6 +86,19 @@ function hk(id: HelpId) {
 }
 
 const GREY = { name: "", color: "#9aa4ae" };
+
+// Последняя запись разметки, в том числе ушедшая при закрытии редактора.
+// Страница таски ждёт её перед тем, как перечитать кадры: иначе чтение,
+// отправленное сразу за закрытием, обгоняет запись и показывает старое.
+let lastSave: Promise<unknown> = Promise.resolve();
+export function saveSettled(): Promise<void> {
+  return lastSave.then(() => undefined, () => undefined);
+}
+
+/** Пауза перед повтором записи после сбоя: 1, 2, 4, 8, дальше 15 с. */
+function retryDelay(attempt: number): number {
+  return Math.min(15_000, 1000 * 2 ** Math.min(Math.max(attempt - 1, 0), 4));
+}
 
 /** Бокс как кольцо из четырёх точек.
  *
@@ -122,7 +138,10 @@ export default function AnnotationEditor({
   tags: Tag[];
   onIndex: (i: number) => void;
   onClose: () => void;
-  onChanged: (image: TaskImage) => void;
+  /** Что поменялось у кадра. Заплатка, а не кадр целиком: целый кадр из
+   *  замыкания затирал бы свежую разметку, записанную мгновением раньше
+   *  («нарисовал — Отложить» возвращал в ленту разметку до рисования). */
+  onChanged: (imageId: string, patch: Partial<TaskImage>) => void;
   /** Таги этого кадра. Единственное место, где их правят после того, как
    *  кадр ушёл в датасет, — и правят по одному кадру. */
   onTags: (imageId: string, tagIds: string[]) => void;
@@ -145,7 +164,7 @@ export default function AnnotationEditor({
   // Двигать контуры по умолчанию **нельзя**. Контур правят по вершинам, а
   // перенос целиком нужен редко и случается легко: промахнулся мимо вершины,
   // повёл мышь — и вся обводка уехала с объекта, к которому её подгоняли.
-  // Отменить это нечем, кроме как обвести заново.
+  // Ctrl+Z это вернёт, но только если сдвиг заметили сразу.
   const [canMovePoly, setCanMovePoly] = useState(false);
   const [splitParts, setSplitParts] = useState(false);
   const [polyPanel, setPolyPanel] = useState(false);
@@ -194,13 +213,28 @@ export default function AnnotationEditor({
 
   const [scale, setScale] = useState(1);
   const [filmH, setFilmH] = useState(164);
-  const [saved, setSaved] = useState(true);
+  // «failed» — запись не прошла: правка жива только здесь, её повторяют сами
+  // и с кадра без неё не уходят.
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "failed">("saved");
+  const [saveErr, setSaveErr] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   const [grid, setGrid] = useState(true);
   const [help, setHelp] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const canvas = useRef<CanvasHandle>(null);
   const dirty = useRef(false);
+  // Разметка «как сейчас» — синхронно, мимо отрисовки: запись, отмена и уход
+  // со страницы должны видеть последнюю правку, даже если React её ещё не
+  // отрисовал (протяжка шлёт правки чаще, чем кадры экрана).
+  const boxesRef = useRef<CanvasShape[]>(boxes);
+  // Очередь записей: вторая ждёт первую, иначе сервер мог бы принять их
+  // в обратном порядке, и старая разметка легла бы поверх новой.
+  const chain = useRef<Promise<boolean>>(Promise.resolve(true));
+  const hist = useRef<History<CanvasShape[]>>(empty());
+  // Жест мыши: «down» — нажали, «recorded» — снимок до жеста уже в истории.
+  // Протяжка шлёт правку на каждое движение, а шаг отмены у неё один.
+  const gesture = useRef<"none" | "down" | "recorded">("none");
 
   const iw = image?.width || 1;
   const ih = image?.height || 1;
@@ -221,21 +255,26 @@ export default function AnnotationEditor({
   // старыми до перечитывания кадра — их поймает отказ при сохранении.
   useLive("classes", loadClasses);
 
-  // Кадр сменился — берём его разметку как есть.
+  // Кадр сменился — берём его разметку как есть. История у каждого кадра
+  // своя: отмена на новом кадре не должна возвращать разметку прежнего.
   useEffect(() => {
-    setBoxes(
-      (image?.boxes || []).map((b) => ({
-        id: b.id, class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
-        ...(b.kind === "polygon" && b.parts?.length
-          ? { kind: "polygon" as const, parts: b.parts }
-          : {}),
-      }))
-    );
+    const next = (image?.boxes || []).map((b) => ({
+      id: b.id, class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
+      ...(b.kind === "polygon" && b.parts?.length
+        ? { kind: "polygon" as const, parts: b.parts }
+        : {}),
+    }));
+    boxesRef.current = next;
+    setBoxes(next);
+    hist.current = empty();
     setAddTo(null);
     setSelected(null);
     setSelPart(null);
     dirty.current = false;
-    setSaved(true);
+    setSaveState("saved");
+    setSaveErr(null);
+    // Ошибка прошлого кадра к этому не относится.
+    setError(null);
   }, [image?.id]);
 
   const byIndex = useMemo(() => {
@@ -270,43 +309,149 @@ export default function AnnotationEditor({
     );
   }, [classes, query]);
 
-  // Автосохранение: разметчик не должен помнить про кнопку «сохранить».
-  const flush = useCallback(async () => {
-    if (!dirty.current || !image) return;
-    dirty.current = false;
-    try {
-      const res = await saveAnnotations(image.id, boxes);
-      setSaved(true);
-      onChanged({
-        ...image,
-        annotations: res.saved,
-        task_status: res.task_status as ImageTaskStatus,
-        // Номер рамки — настоящий, если он был: по нему сервер узнаёт
-        // нетронутую рамку агента при следующем сохранении этого кадра.
-        boxes: boxes.map((b, i) => ({
-          ...(meta.get(b.id ?? "") ?? { source: "human" }),
-          ...b,
-          id: b.id ?? `new-${i}`,
-          name: labelOf(b.class_index).name,
-          color: labelOf(b.class_index).color,
-        })),
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [boxes, image, labelOf, onChanged, meta]);
+  // Всё, что нужно записи, — через ref: запись стоит в очереди и может
+  // выполниться после следующей отрисовки, а брать ей надо свежее.
+  const live = useRef({ image, labelOf, meta, onChanged });
+  live.current = { image, labelOf, meta, onChanged };
+
+  /** Автосохранение: разметчик не должен помнить про кнопку «сохранить».
+   *
+   *  Отвечает, записано ли. Сбой не выбрасывает правку: она снова «грязная»,
+   *  на экране «не сохранено», запись повторяется сама с растущей паузой, а
+   *  переход на другой кадр и закрытие ждут успеха. Прежде флаг снимался до
+   *  запроса и после отказа не возвращался — правка тихо пропадала, а при
+   *  переходе на соседний кадр надпись показывала «сохранено». */
+  const flush = useCallback((): Promise<boolean> => {
+    const run = async (): Promise<boolean> => {
+      const { image: img } = live.current;
+      if (!dirty.current || !img) return true;
+      const snap = boxesRef.current;
+      dirty.current = false;
+      setSaveState("saving");
+      try {
+        const res = await saveAnnotations(img.id, snap);
+        const { labelOf: lo, meta: mt, onChanged: changed } = live.current;
+        if (!dirty.current) setSaveState("saved");
+        setSaveErr(null);
+        setAttempt(0);
+        changed(img.id, {
+          annotations: res.saved,
+          task_status: res.task_status as ImageTaskStatus,
+          // Номер рамки — настоящий, если он был: по нему сервер узнаёт
+          // нетронутую рамку агента при следующем сохранении этого кадра.
+          boxes: snap.map((b, i) => ({
+            ...(mt.get(b.id ?? "") ?? { source: "human" }),
+            ...b,
+            id: b.id ?? `new-${i}`,
+            name: lo(b.class_index).name,
+            color: lo(b.class_index).color,
+          })),
+        });
+        return true;
+      } catch (e) {
+        dirty.current = true;
+        setSaveErr((e as Error).message);
+        setSaveState("failed");
+        setAttempt((n) => n + 1);
+        return false;
+      }
+    };
+    const p = chain.current.then(run, run);
+    chain.current = p;
+    lastSave = p;
+    return p;
+  }, []);
 
   useEffect(() => {
     if (!dirty.current) return;
-    setSaved(false);
-    const h = setTimeout(flush, 600);
+    setSaveState((s) => (s === "failed" ? s : "saving"));
+    const h = setTimeout(() => void flush(), 600);
     return () => clearTimeout(h);
   }, [boxes, flush]);
 
+  // Повтор после сбоя — сам, без новой правки: сеть вернулась, и незаписанное
+  // должно дойти, даже если человек больше ничего не трогает.
+  useEffect(() => {
+    if (saveState !== "failed") return;
+    const h = setTimeout(() => void flush(), retryDelay(attempt));
+    return () => clearTimeout(h);
+  }, [saveState, attempt, flush]);
+
+  // Ушли, не дождавшись паузы: «Назад», перезагрузка, закрытие вкладки. При
+  // уходе внутри приложения редактор размонтируется, при перезагрузке —
+  // нет, там ловим pagehide. Запрос с keepalive переживает выгрузку страницы
+  // (так же уходит последняя правка графа аугментаций); его тело ограничено
+  // 64 КБ, и больший контур уходит обычным запросом — внутри приложения он
+  // дойдёт, а при закрытии вкладки это потолок, выше которого не прыгнуть.
+  useEffect(() => {
+    const leave = (unloading: boolean) => {
+      const img = live.current.image;
+      if (!dirty.current || !img) return;
+      dirty.current = false;
+      const send = (keepalive: boolean) =>
+        fetch(`/api/images/${img.id}/annotations`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ boxes: boxesRef.current }),
+          keepalive,
+        });
+      const go = () => send(true).catch(() => send(false)).catch(() => undefined);
+      // Выгрузка ждать очереди не может: к тому времени страницы уже не будет.
+      lastSave = unloading ? go() : chain.current.then(go, go);
+    };
+    const onHide = () => leave(true);
+    window.addEventListener("pagehide", onHide);
+    return () => {
+      window.removeEventListener("pagehide", onHide);
+      leave(false);
+    };
+  }, []);
+
+  /** Правка разметки. Снимок «до» уходит в историю — один на жест мыши и по
+   *  одному на каждую правку с клавиатуры или из меню. */
   const edit = useCallback((next: CanvasShape[]) => {
+    if (gesture.current !== "recorded") {
+      hist.current = history.record(hist.current, boxesRef.current);
+      if (gesture.current === "down") gesture.current = "recorded";
+    }
+    boxesRef.current = next;
     setBoxes(next);
     dirty.current = true;
   }, []);
+
+  // Жест мыши кончился. Пустой жест (клик рамкой без протяжки: рамку
+  // добавили и сразу убрали как промах) шага отмены не оставляет.
+  useEffect(() => {
+    const up = () => {
+      if (gesture.current === "recorded") {
+        hist.current = history.dropNoop(
+          hist.current, boxesRef.current,
+          (a, b) => JSON.stringify(a) === JSON.stringify(b)
+        );
+      }
+      gesture.current = "none";
+    };
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    return () => {
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+    };
+  }, []);
+
+  /** Отмена и повтор. Результат — обычная правка: уходит автосохранением. */
+  const step = useCallback((dir: "undo" | "redo") => {
+    if (frozen) return;
+    const got = (dir === "undo" ? history.undo : history.redo)(hist.current, boxesRef.current);
+    if (!got) return;
+    hist.current = got.h;
+    boxesRef.current = got.value;
+    setBoxes(got.value);
+    dirty.current = true;
+    // Номер выбранного мог указывать на объект, которого в снимке нет.
+    setSelected(null);
+    setSelPart(null);
+  }, [frozen]);
 
   // Выбор класса при выделенном боксе перекрашивает его: чаще всего класс
   // выбирают именно затем, чтобы исправить уже нарисованное.
@@ -314,21 +459,24 @@ export default function AnnotationEditor({
     (ci: number, target: number | null = selected) => {
       setActive(ci);
       if (target === null || frozen) return;
-      setBoxes((prev) =>
-        prev.map((b, i) => (i === target ? { ...b, class_index: ci } : b))
-      );
-      dirty.current = true;
+      edit(boxesRef.current.map((b, i) => (i === target ? { ...b, class_index: ci } : b)));
     },
-    [selected, frozen]
+    [selected, frozen, edit]
   );
 
+  /** Уйти с кадра можно только записав его: при сбое остаёмся, и на экране
+   *  «не сохранено» — переход не случается молча. */
   const jump = useCallback(
     async (target: number) => {
-      await flush();
+      if (!(await flush())) return;
       if (target >= 0 && target < images.length) onIndex(target);
     },
     [flush, images.length, onIndex]
   );
+
+  const close = useCallback(async () => {
+    if (await flush()) onClose();
+  }, [flush, onClose]);
 
   // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет.
   const go = useCallback(
@@ -345,10 +493,11 @@ export default function AnnotationEditor({
   const verdict = useCallback(
     async (status: ImageTaskStatus, advance: boolean) => {
       if (!image || readOnly) return;
-      await flush();
+      if (!(await flush())) return;
       try {
         const res = await setImageTaskStatus(image.id, status);
-        onChanged({ ...image, task_status: res.task_status });
+        onChanged(image.id, { task_status: res.task_status });
+        setError(null);
         if (advance) go(1);
       } catch (e) {
         setError((e as Error).message);
@@ -374,10 +523,11 @@ export default function AnnotationEditor({
     if (image.task_status === "deleted") {
       return verdict(image.annotations > 0 ? "annotated" : "new", false);
     }
-    await flush();
+    if (!(await flush())) return;
     try {
       await deleteImage(image.id);
-      onChanged({ ...image, task_status: "deleted" });
+      onChanged(image.id, { task_status: "deleted" });
+      setError(null);
       go(1);
     } catch (e) {
       setError((e as Error).message);
@@ -415,7 +565,8 @@ export default function AnnotationEditor({
   }, []);
 
   // Кадр сменился — начатое выделение к нему не относится.
-  useEffect(() => { clearAuto(); }, [image?.id, clearAuto]);
+  const setAutoError = auto.setError;
+  useEffect(() => { clearAuto(); setAutoError(null); }, [image?.id, clearAuto, setAutoError]);
 
   const ask = useCallback(
     async (points: CanvasPoint[], prompt: CanvasShape | null) => {
@@ -647,6 +798,20 @@ export default function AnnotationEditor({
             (el as HTMLInputElement).type
           ));
       if (typing || el?.isContentEditable) return;
+      // Стрелки на ползунке и списке двигают их значение, а не кадр: «Порог»
+      // листал кадры вместо того, чтобы меняться.
+      if (
+        tag === "SELECT" ||
+        (tag === "INPUT" && (el as HTMLInputElement).type === "range" &&
+          /^(Arrow|Page|Home|End)/.test(e.key))
+      ) return;
+      // Отмена и повтор. По коду клавиши, а не по букве: в русской раскладке
+      // e.key у Z — «я».
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.code === "KeyZ" || e.code === "KeyY")) {
+        step(e.code === "KeyY" || e.shiftKey ? "redo" : "undo");
+        e.preventDefault();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // Shift+P — «присоединить контур к выбранному». Единственное сочетание с
       // Shift, поэтому проверяем его до общего разбора, а не заводим ветку.
@@ -665,7 +830,7 @@ export default function AnnotationEditor({
           // Забыв его тут, мы заставили бы включать заново после каждого
           // выхода из инструмента — то есть постоянно.
           else if (tool !== "select") { setTool("select"); setLock(false); }
-          else flush().then(onClose);
+          else void close();
           break;
         case "Space":
           // Пробел закрепляет показанное, и только без него листает дальше.
@@ -726,7 +891,7 @@ export default function AnnotationEditor({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [go, flush, onClose, selected, selPart, splitParts, visible, tool, autoOn,
+  }, [go, close, step, selected, selPart, splitParts, visible, tool, autoOn,
       addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
       pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty]);
 
@@ -834,10 +999,26 @@ export default function AnnotationEditor({
         {isEmpty && <span className="mag-ed-flag nul">фоновый кадр</span>}
         {isSkipped && <span className="mag-ed-flag skip">отложен</span>}
         <span className="mag-ed-sp" />
-        {error && <span className="mag-ed-err">{error}</span>}
-        <span className={saved ? "mag-ed-saved" : "mag-ed-saving"}>
-          {saved ? "сохранено" : "сохраняю…"}
-        </span>
+        {error && (
+          <span className="mag-ed-err">
+            {error}
+            <button type="button" aria-label="Скрыть ошибку" onClick={() => setError(null)}>✕</button>
+          </span>
+        )}
+        {/* Отказ модели при закрытой панели полуавтомата: иначе клик просто
+            «ничего не сделал», и причина видна только в ⚙. */}
+        {auto.error && !autoPanel && autoOn && (
+          <span className="mag-ed-err">{auto.error}</span>
+        )}
+        {saveState === "failed" ? (
+          <span className="mag-ed-unsaved" title={saveErr || undefined}>
+            не сохранено — повторяю
+          </span>
+        ) : (
+          <span className={saveState === "saved" ? "mag-ed-saved" : "mag-ed-saving"}>
+            {saveState === "saved" ? "сохранено" : "сохраняю…"}
+          </span>
+        )}
         <button
           className={help ? "mag-ed-btn on" : "mag-ed-btn"}
           type="button"
@@ -849,7 +1030,7 @@ export default function AnnotationEditor({
         <button
           className="mag-ed-btn"
           type="button"
-          onClick={() => flush().then(onClose)}
+          onClick={() => void close()}
           aria-label="Закрыть"
           {...hk("close")}
         >
@@ -1110,7 +1291,10 @@ export default function AnnotationEditor({
 
         {/* Окно кадра: холст и плашки поверх него. Плашки — соседи холста, а
             не его дети: иначе нажатие на кнопку начинало бы рамку. */}
-        <div className="mag-ed-view">
+        <div
+          className="mag-ed-view"
+          onPointerDownCapture={() => { gesture.current = "down"; }}
+        >
           <BoxCanvas
             ref={canvas}
             imageId={image.id}
