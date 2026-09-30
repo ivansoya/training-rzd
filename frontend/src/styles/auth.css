@@ -78,13 +78,16 @@
   height: 46px;
 }
 
+/* Подписи — равными колонками, а кружки линии стоят в центрах тех же колонок
+   (AuthPages.tsx): при space-between подписи и растянутая по центру линия
+   расходились на ~80 px. */
 .mag-route-cap {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  text-align: center;
   font: 600 10px ui-monospace, Menlo, Consolas, monospace;
-  letter-spacing: 0.1em;
   color: var(--faint);
-  text-transform: uppercase;
   margin-top: 4px;
 }
 
@@ -292,14 +295,19 @@
   font-weight: 700;
 }
 
+/* Без своих полей и центровки: отступы даёт .mag-content, как на остальных
+   страницах, — иначе кабинет стоял на 28 px правее заголовка. */
 .mag-cab {
-  padding: 28px;
   display: grid;
   grid-template-columns: 320px 1fr;
   gap: 18px;
   align-items: start;
-  max-width: 1200px;
-  margin: 0 auto;
+}
+
+/* Имя и почта без пробелов залезали на соседнюю карточку. */
+.mag-cab h3,
+.mag-cab .mag-email {
+  overflow-wrap: anywhere;
 }
 
 .mag-card {
@@ -378,9 +386,8 @@
 }
 
 .mag-cab th {
-  font: 600 10.5px ui-monospace, Menlo, Consolas, monospace;
-  text-transform: uppercase;
-  letter-spacing: 0.1em;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--mag-muted);
   text-align: left;
   padding: 8px 10px;

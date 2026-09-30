@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { Link, NavLink, matchPath, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthGate";
@@ -12,9 +13,17 @@ export default function MagShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation();
   const graphEditor = Boolean(matchPath("/augment/:graphId", pathname));
   const agentEditor = Boolean(matchPath("/agents/:graphId", pathname));
-  const code = matchPath("/projects/:code/*", pathname)?.params.code;
-  const projectPath = code ? "/projects/" + encodeURIComponent(code) : "";
-  const projectName = me.projects.find((p) => p.code === code)?.name ?? code;
+  // Текущий проект — только тот, где мы участник, и без учёта регистра: сервер
+  // принимает код строчными. Раньше /projects/NOPE и /projects/%20 рисовали блок
+  // «Текущий проект» и сырой код в шапке, а код строчными — код вместо имени.
+  const rawCode = matchPath("/projects/:code/*", pathname)?.params.code;
+  const current = rawCode
+    ? me.projects.find((p) => p.code === rawCode.trim().toUpperCase())
+    : undefined;
+  const code = current?.code;
+  const projectPath = code ? "/projects/" + code : "";
+  const projectName = current?.name;
+  const lowerPath = pathname.toLowerCase();
   const nav = ({ isActive }: { isActive: boolean }) =>
     isActive ? "workspace-link on" : "workspace-link";
   const projectLinks = [
@@ -25,17 +34,33 @@ export default function MagShell({ children }: { children: ReactNode }) {
     ["/members", "Участники", "УЧ"],
   ];
   const section = code
-    ? projectLinks.find(([suffix]) => suffix && pathname.startsWith(projectPath + suffix))?.[1]
+    ? projectLinks.find(([suffix]) => suffix && lowerPath.startsWith((projectPath + suffix).toLowerCase()))?.[1]
       ?? (pathname.includes("/trainsets/") ? "Обучающий набор" : pathname.endsWith("/import") ? "Импорт" : "Обзор проекта")
     : pathname.startsWith("/augment") ? "Библиотека аугментаций"
       : pathname.startsWith("/agents") ? "Агенты разметки"
       : pathname.startsWith("/hardware") ? "Оборудование"
         : pathname.startsWith("/account") ? "Личный кабинет" : "Проекты";
 
+  useEffect(() => {
+    document.title = [projectName, section, "Магистраль"].filter(Boolean).join(" — ");
+  }, [projectName, section]);
+
+  // На узком экране меню — горизонтальная лента, и активный пункт уезжал за
+  // край. Двигаем только ленту: scrollIntoView прокрутил бы ещё и страницу.
+  const sidebar = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const bar = sidebar.current;
+    const on = bar?.querySelector<HTMLElement>(".workspace-link.on");
+    if (!bar || !on || bar.scrollWidth <= bar.clientWidth) return;
+    const b = bar.getBoundingClientRect();
+    const r = on.getBoundingClientRect();
+    if (r.left < b.left || r.right > b.right) bar.scrollLeft += r.left - b.left - (b.width - r.width) / 2;
+  }, [pathname, code]);
+
   return (
     <div className={`mag mag-page workspace${graphEditor || agentEditor ? " workspace-graph" : ""}`}>
       <a className="workspace-skip" href="#workspace-content">К содержимому</a>
-      <aside className="workspace-sidebar" aria-label="Навигация рабочей среды">
+      <aside ref={sidebar} className="workspace-sidebar" aria-label="Навигация рабочей среды">
         <Link to="/" className="mag-mark mag-mark-link workspace-brand">
           <i aria-hidden="true">М</i><span>Магистраль <small>ML</small></span>
         </Link>
@@ -63,7 +88,7 @@ export default function MagShell({ children }: { children: ReactNode }) {
         <div className="workspace-sidebar-foot">Данные <Sep /> разметка <Sep /> обучение</div>
       </aside>
       <header className="mag-topbar workspace-topbar">
-        {graphEditor ? <Link to="/augment" className="workspace-project">← Мои графы</Link> : agentEditor ? <Link to="/agents" className="workspace-project">← Мои агенты</Link> : code ? <Link to={projectPath} className="workspace-project" title={code}>{projectName}</Link> : <span className="workspace-project">Рабочая среда</span>}
+        {graphEditor ? <Link to="/augment" className="workspace-project">← Мои графы</Link> : agentEditor ? <Link to="/agents" className="workspace-project">← Мои агенты</Link> : code ? <Link to={projectPath} className="workspace-project" title={projectName}>{projectName}</Link> : <span className="workspace-project">Рабочая среда</span>}
         <span className="workspace-breadcrumb">{section}</span>
         <Link to="/account" className="mag-me mag-me-link">
           <span className="mag-ava">{initials(me.user.display_name)}</span>

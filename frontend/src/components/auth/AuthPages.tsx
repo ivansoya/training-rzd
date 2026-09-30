@@ -10,13 +10,16 @@ interface Props {
 type Mode = "login" | "register";
 
 // Красная «линия маршрута» на бренд-панели: путь от датасета к модели.
+// Кружки — в центрах равных колонок подписей (.mag-route-cap), в процентах
+// ширины. С viewBox линия масштабировалась по высоте и стояла по центру, а
+// подписи тянулись на всю ширину — расходились на ~80 px.
 function RouteLine({ stops }: { stops: string[] }) {
   const n = stops.length;
-  const pos = (i: number) => 8 + (384 * i) / (n - 1);
+  const pos = (i: number) => `${((i + 0.5) * 100) / n}%`;
   return (
     <div className="mag-route">
-      <svg viewBox="0 0 400 46" aria-hidden="true">
-        <line x1="8" y1="23" x2="392" y2="23" stroke="#e21a1a" strokeWidth="2.5" />
+      <svg aria-hidden="true">
+        <line x1={pos(0)} y1="23" x2={pos(n - 1)} y2="23" stroke="#e21a1a" strokeWidth="2.5" />
         {stops.map((_, i) => (
           <circle
             key={i}
