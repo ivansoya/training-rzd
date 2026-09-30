@@ -324,8 +324,17 @@ const BoxCanvas = forwardRef<CanvasHandle, {
 
   useEffect(() => { onScale?.(view.s); }, [view.s, onScale]);
 
-  // Меряем после каждой отрисовки: зум и панорама двигают кадр, а разметка
-  // должна идти следом. Сравнение с прежним значением обрывает цикл.
+  // Кадр двигают ровно три вещи: зум с панорамой (трансформ), размеры сцены и
+  // самой картинки (их ловит ResizeObserver) и потолок высоты `reserve`. Меряем
+  // по ним, а не после каждой отрисовки. Прежний замер без зависимостей
+  // зацикливался, хотя числа не менялись: пока на холсте висит отложенное
+  // обновление низшего приоритета (setDraft из эффекта смены инструмента после
+  // Enter), React пересчитывает состояние рамки от базового, а не от
+  // показанного, — `prev` из функции-обновителя оказывается другим объектом,
+  // холст не пропускает отрисовку, эффект снова ставит состояние, и так до
+  // «Maximum update depth exceeded». Сравнение с допуском тут не помогло бы:
+  // цикл держится не на дрожании чисел, а на самом «меряем после каждой».
+  const [tick, bump] = useState(0);
   useLayoutEffect(() => {
     const stage = stageRef.current;
     const frame = frameRef.current;
@@ -338,9 +347,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
         ? prev
         : next
     );
-  });
+  }, [view, tick, reserve, imageId, width, height]);
 
-  const [, bump] = useState(0);
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
