@@ -14,6 +14,7 @@ import uuid
 
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import String, cast, func, select
+from sqlalchemy.exc import IntegrityError
 
 from common import agent_graph
 from common import selection as sel_lib
@@ -21,7 +22,8 @@ from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
     GRAPH_KINDS, AgentExamples, AgentWeights, AugGraph, AugGraphUse, AugGraphVersion,
-    DataprepJob, Project, ProjectAugGraph, TrainSet, TrainSetFeed, User, utcnow,
+    DataprepJob, Project, ProjectAugGraph, TrainRun, TrainSet, TrainSetFeed, User,
+    utcnow,
 )
 from common import config, live
 from common import prep_queue as queue
@@ -35,6 +37,10 @@ from dataprep_svc.graph import schema
 from dataprep_svc.graph.schema import GraphError
 
 bp = Blueprint("dataprep", __name__)
+
+# Состояния обучения, при которых его процесс читает файлы набора или вот-вот
+# начнёт читать.
+ACTIVE_RUNS = ("queued", "waiting_gpu", "preparing", "running", "stopping")
 
 
 # --------------------------------------------------------------------------- #
@@ -152,10 +158,14 @@ def list_graphs():
         return err
     try:
         kind = request.args.get("kind") or "aug"
+        # Архив — отдельным списком: убранный граф не должен предлагаться, но
+        # вернуть его должно быть откуда.
+        shelved = request.args.get("archived") == "1"
         rows = db.execute(
             select(AugGraph)
             .where(AugGraph.owner_id == user.id, AugGraph.kind == kind,
-                   AugGraph.archived_at.is_(None))
+                   AugGraph.archived_at.isnot(None) if shelved
+                   else AugGraph.archived_at.is_(None))
             .order_by(AugGraph.created_at.desc())
         ).scalars().all()
         return jsonify({"graphs": [_graph_view(db, g) for g in rows]})
@@ -485,10 +495,15 @@ def save_version(graph_id):
         graph.draft = None
         graph.draft_at = None
         db.commit()
+        # Ответ — полный вид графа, как у GET: без `mine` редактор после
+        # «Сохранить версию» считал граф чужим и запирал холст до перезагрузки.
         return jsonify({
             **_graph_view(db, graph, version),
             "doc": version.doc,
             "fresh": True,
+            "mine": True,
+            "changed": False,
+            "draft_at": None,
         }), 201
     finally:
         db.close()
@@ -562,8 +577,8 @@ def delete_graph(graph_id):
             return jsonify({
                 "error": (
                     f"Граф нельзя удалить: по нему собрано наборов — {used}. "
-                    "Их паспорт ссылается на его версии. Уберите граф из "
-                    "списка (архив), он перестанет предлагаться."
+                    "Их паспорт ссылается на его версии. Уберите граф в "
+                    "архив — он перестанет предлагаться."
                 )
             }), 409
         db.delete(graph)
@@ -826,7 +841,13 @@ def link_graph(code):
             db.add(ProjectAugGraph(
                 project_id=project.id, graph_id=graph.id, created_by=user.id
             ))
-            db.commit()
+            # Два запроса подряд (двойной щелчок) оба видят «ещё нет», и
+            # второй падал на первичном ключе пятисотой. Подключение
+            # идемпотентно: опоздавший получает то же, что и первый.
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
         return jsonify(_graph_view(db, graph)), 201
     finally:
         db.close()
@@ -1327,6 +1348,19 @@ def delete_set(code, set_id):
         tset = db.get(TrainSet, _uuid(set_id))
         if tset is None or tset.project_id != project.id:
             return jsonify({"error": "Набор не найден."}), 404
+        # Законченные обучения набор переживают (set_id станет NULL), а идущее
+        # читает его файлы прямо сейчас: снести их — уронить обучение на
+        # середине эпохи. Сперва его останавливают.
+        active = db.execute(
+            select(func.count(TrainRun.id)).where(
+                TrainRun.set_id == tset.id,
+                TrainRun.status.in_(ACTIVE_RUNS),
+            )
+        ).scalar() or 0
+        if active:
+            return jsonify({
+                "error": f"На наборе идёт обучение ({active}). Сперва остановите его."
+            }), 409
         # Порядок важен: сперва состояние в базе, потом работа. Список видит
         # «удаляется» сразу, а не по итогу; сорвётся уборка — воркер
         # переведёт набор в «error» с причиной, и просьбу можно повторить.

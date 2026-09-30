@@ -4,25 +4,33 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import * as api from "../../api/aug";
+import { mult } from "./counts";
+import { count } from "../ru";
 import Banner from "../Banner";
 
 export default function AugGraphList() {
-  const [graphs, setGraphs] = useState<api.GraphSummary[]>([]);
+  // null — список ещё не пришёл. Пустой массив до ответа показывал «Графов
+  // пока нет» на полсекунды даже тому, у кого их десяток.
+  const [graphs, setGraphs] = useState<api.GraphSummary[] | null>(null);
+  // Архив — отдельный список: граф, по которому собран набор, удалить
+  // нельзя (паспорт набора ссылается на его версии), но убрать с глаз можно.
+  const [archived, setArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
-  const [removing, setRemoving] = useState<string | null>(null);
+  const [working, setWorking] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
     try {
-      setGraphs((await api.listGraphs()).graphs);
+      setGraphs((await api.listGraphs("aug", archived)).graphs);
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
-  }, []);
+  }, [archived]);
 
   useEffect(() => {
+    setGraphs(null);
     refresh();
   }, [refresh]);
 
@@ -37,7 +45,7 @@ export default function AugGraphList() {
     if (making) return;
     setMaking(true);
     setError(null);
-    const taken = new Set(graphs.map((g) => g.name));
+    const taken = new Set((graphs ?? []).map((g) => g.name));
     let name = "Новый граф";
     for (let n = 2; taken.has(name); n++) name = `Новый граф ${n}`;
     try {
@@ -53,15 +61,31 @@ export default function AugGraphList() {
    *  паспорт набора ссылается на его версии; причину он пишет сам. */
   const remove = async (g: api.GraphSummary) => {
     if (!window.confirm(`Удалить граф «${g.name}» со всеми версиями?`)) return;
-    setRemoving(g.id);
+    setWorking(g.id);
     setError(null);
     try {
       await api.deleteGraph(g.id);
-      setGraphs((old) => old.filter((x) => x.id !== g.id));
+      setGraphs((old) => (old ?? []).filter((x) => x.id !== g.id));
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setRemoving(null);
+      setWorking(null);
+    }
+  };
+
+  /** В архив и обратно. Архивный граф не предлагается ни в проекте, ни в
+   *  мастере набора; наборы, собранные по нему, остаются как были. */
+  const shelve = async (g: api.GraphSummary, away: boolean) => {
+    if (away && !window.confirm(`Убрать граф «${g.name}» в архив?`)) return;
+    setWorking(g.id);
+    setError(null);
+    try {
+      await api.patchGraph(g.id, { archived: away });
+      setGraphs((old) => (old ?? []).filter((x) => x.id !== g.id));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setWorking(null);
     }
   };
 
@@ -69,29 +93,45 @@ export default function AugGraphList() {
     <div className="mag-content">
       <div className="mag-pass-strip">
         <div className="mag-pass-id">
-          <h1 className="mag-h1">Аугментации</h1>
+          <h1 className="mag-h1">{archived ? "Аугментации — архив" : "Аугментации"}</h1>
         </div>
         <button
-          className="mag-btn mag-pass-export"
+          className="mag-ghost mag-ghost-inline"
           type="button"
-          disabled={making}
-          onClick={create}
+          aria-pressed={archived}
+          onClick={() => setArchived((v) => !v)}
         >
-          Новый граф
+          {archived ? "← Мои графы" : "Архив"}
         </button>
+        {!archived && (
+          <button
+            className="mag-btn mag-pass-export"
+            type="button"
+            disabled={making}
+            onClick={create}
+          >
+            Новый граф
+          </button>
+        )}
       </div>
 
       {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
-      {graphs.length === 0 ? (
-        <div className="mag-empty-big">
-          <b>Графов пока нет.</b>
-          <p>Источник, пара аугментаций и выход.</p>
-          <button className="mag-btn" type="button" disabled={making}
-            onClick={create}>
-            Собрать первый граф
-          </button>
-        </div>
+      {graphs === null ? null : graphs.length === 0 ? (
+        archived ? (
+          <div className="mag-empty-big">
+            <b>В архиве пусто.</b>
+          </div>
+        ) : (
+          <div className="mag-empty-big">
+            <b>Графов пока нет.</b>
+            <p>Источник, пара аугментаций и выход.</p>
+            <button className="mag-btn" type="button" disabled={making}
+              onClick={create}>
+              Собрать первый граф
+            </button>
+          </div>
+        )
       ) : (
         <div className="g-graphs">
           {graphs.map((g) => (
@@ -102,19 +142,29 @@ export default function AugGraphList() {
               {g.description && <span className="desc">{g.description}</span>}
               <span className="foot">
                 <span>версия {g.version}</span>
-                {g.stats && <b>×{g.stats.multiplier}</b>}
-                <span>{g.stats?.nodes ?? 0} узлов</span>
+                {g.stats && <b>{mult(g.stats.multiplier)}</b>}
+                <span>{count(g.stats?.nodes ?? 0, "узел", "узла", "узлов")}</span>
                 {g.used_by_sets > 0 && (
                   <span>в наборах: {g.used_by_sets}</span>
                 )}
                 <button
                   type="button"
-                  className="g-graph-del"
-                  disabled={removing === g.id}
-                  onClick={() => remove(g)}
+                  className="g-graph-del g-graph-shelf"
+                  disabled={working === g.id}
+                  onClick={() => shelve(g, !archived)}
                 >
-                  Удалить
+                  {archived ? "Вернуть" : "В архив"}
                 </button>
+                {!archived && (
+                  <button
+                    type="button"
+                    className="g-graph-del"
+                    disabled={working === g.id}
+                    onClick={() => remove(g)}
+                  >
+                    Удалить
+                  </button>
+                )}
               </span>
             </div>
           ))}

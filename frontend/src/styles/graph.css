@@ -875,7 +875,9 @@
 .g-graph-card:hover { border-color: var(--rule); }
 
 .g-graph-card .name { font-weight: 700; font-size: 14px; color: inherit; text-decoration: none; }
-.g-graph-card .name::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+/* Растянутый щелчок — только у имени-ссылки. В карточке проекта имя простой
+   текст, а кнопки лежат рядом; слой поверх всей карточки накрывал их. */
+.g-graph-card a.name::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
 .g-graph-card:has(.name:focus-visible) { outline: 2px solid var(--accent-text); outline-offset: 3px; }
 .g-graph-card .name:focus-visible { outline: none; }
 .g-graph-del {
@@ -893,6 +895,8 @@
   cursor: pointer;
 }
 .g-graph-del:hover:not(:disabled) { color: var(--red); border-color: var(--rule); }
+.g-graph-del + .g-graph-del { margin-left: 0; }
+.g-graph-shelf:hover:not(:disabled) { color: var(--ink); }
 .g-graph-card .desc {
   color: var(--dim);
   font-size: 12.5px;

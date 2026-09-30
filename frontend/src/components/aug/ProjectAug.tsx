@@ -7,15 +7,21 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import * as api from "../../api/aug";
+import { mult } from "./counts";
+import { count } from "../ru";
 import Sep from "../Sep";
 import Banner from "../Banner";
 
 export default function ProjectAug() {
   const { code } = useParams<{ code: string }>();
-  const [linked, setLinked] = useState<api.GraphSummary[]>([]);
+  const [linked, setLinked] = useState<api.GraphSummary[] | null>(null);
   const [mine, setMine] = useState<api.GraphSummary[]>([]);
   const [role, setRole] = useState("viewer");
   const [error, setError] = useState<string | null>(null);
+  // Граф, над которым идёт запрос. Двойной щелчок по «Подключить» слал два
+  // запроса подряд; кнопка гаснет до ответа, сервер к тому же отвечает на
+  // повтор тем же подключением.
+  const [working, setWorking] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!code) return;
@@ -34,13 +40,25 @@ export default function ProjectAug() {
     refresh();
   }, [refresh]);
 
+  const act = async (id: string, call: () => Promise<unknown>) => {
+    if (working) return;
+    setWorking(id);
+    try {
+      await call();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    await refresh();
+    setWorking(null);
+  };
+
   const canEdit = role === "admin" || role === "editor";
 
   return (
     <>
       {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
-      {linked.length === 0 ? (
+      {linked === null ? null : linked.length === 0 ? (
         <div className="mag-empty-big">
           <b>К проекту не подключён ни один граф.</b>
           <p>Граф живёт в вашей библиотеке и подключается сюда ссылкой.</p>
@@ -56,7 +74,7 @@ export default function ProjectAug() {
               {g.description && <span className="desc">{g.description}</span>}
               <span className="foot">
                 <span>версия {g.version}</span>
-                {g.stats && <b>×{g.stats.multiplier}</b>}
+                {g.stats && <b>{mult(g.stats.multiplier)}</b>}
                 <span>{g.owner ?? "без владельца"}</span>
               </span>
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
@@ -67,13 +85,8 @@ export default function ProjectAug() {
                   <button
                     type="button"
                     className="mag-ghost"
-                    onClick={async () => {
-                      if (!code) return;
-                      await api
-                        .unlinkGraph(code, g.id)
-                        .catch((e) => setError((e as Error).message));
-                      refresh();
-                    }}
+                    disabled={working !== null}
+                    onClick={() => code && act(g.id, () => api.unlinkGraph(code, g.id))}
                   >
                     Отключить
                   </button>
@@ -96,21 +109,16 @@ export default function ProjectAug() {
                   <div className="name">{g.name}</div>
                   <div className="meta">
                     версия {g.version}
-                    {g.stats ? ` — ×${g.stats.multiplier}` : ""} <Sep />{" "}
-                    {g.stats?.nodes ?? 0} узлов
+                    {g.stats ? ` — ${mult(g.stats.multiplier)}` : ""} <Sep />{" "}
+                    {count(g.stats?.nodes ?? 0, "узел", "узла", "узлов")}
                   </div>
                 </div>
                 <div className="right">
                   <button
                     type="button"
                     className="mag-btn"
-                    onClick={async () => {
-                      if (!code) return;
-                      await api
-                        .linkGraph(code, g.id)
-                        .catch((e) => setError((e as Error).message));
-                      refresh();
-                    }}
+                    disabled={working !== null}
+                    onClick={() => code && act(g.id, () => api.linkGraph(code, g.id))}
                   >
                     Подключить
                   </button>

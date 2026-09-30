@@ -116,8 +116,8 @@ export interface Catalogue {
 
 export const catalogue = () => get<Catalogue>("aug/catalogue");
 
-export const listGraphs = (kind: "aug" | "agent" = "aug") =>
-  get<{ graphs: GraphSummary[] }>(`aug/graphs?kind=${kind}`);
+export const listGraphs = (kind: "aug" | "agent" = "aug", archived = false) =>
+  get<{ graphs: GraphSummary[] }>(`aug/graphs?kind=${kind}${archived ? "&archived=1" : ""}`);
 
 export const createGraph = (
   name: string,

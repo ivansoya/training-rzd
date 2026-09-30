@@ -7,7 +7,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { counts, findCycle, ports, topo, weights, GraphError } from "./counts";
+import { counts, findCycle, fitsPorts, mult, ports, topo, weights, GraphError } from "./counts";
 import type { GraphDoc, GraphNode } from "../../api/aug";
 
 const ROOT = join(process.cwd(), "..", "tests", "fixtures", "graphs");
@@ -97,6 +97,26 @@ describe("гнёзда", () => {
 
   it("у слияния столько входов, сколько объявлено", () => {
     expect(ports(node("merge", { inputs: 3 }))[0]).toEqual(["i0", "i1", "i2"]);
+  });
+
+  it("уменьшили число гнёзд — провода с исчезнувших снимаются, прочие живут", () => {
+    const spl = { id: "spl", type: "split_share", params: { branches: 2 } } as GraphNode;
+    const mrg = { id: "mrg", type: "merge", params: { inputs: 2 } } as GraphNode;
+    const grid = { id: "g", type: "mosaic", params: { rows: 1, cols: 2 } } as GraphNode;
+    expect(fitsPorts(spl, { from: "spl", out: "o2", to: "x", in: "in" })).toBe(false);
+    expect(fitsPorts(spl, { from: "spl", out: "o1", to: "x", in: "in" })).toBe(true);
+    expect(fitsPorts(mrg, { from: "spl", out: "o0", to: "mrg", in: "i2" })).toBe(false);
+    expect(fitsPorts(mrg, { from: "spl", out: "o0", to: "mrg", in: "i1" })).toBe(true);
+    expect(fitsPorts(grid, { from: "s", out: "out", to: "g", in: "i3" })).toBe(false);
+    // Чужой провод и блок (его гнёзда знает только сервер) не трогаем.
+    expect(fitsPorts(mrg, { from: "a", out: "o9", to: "b", in: "i9" })).toBe(true);
+    expect(fitsPorts({ id: "b", type: "group", params: {} } as GraphNode,
+      { from: "b", out: "готово", to: "e", in: "in" })).toBe(true);
+  });
+
+  it("множитель пишется с запятой", () => {
+    expect(mult(2.4)).toBe("×2,4");
+    expect(mult(3)).toBe("×3");
   });
 
   it("нулевые веса не роняют счёт", () => {

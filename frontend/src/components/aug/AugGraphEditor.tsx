@@ -23,7 +23,8 @@ import {
 } from "@xyflow/react";
 import * as api from "../../api/aug";
 import type { CatalogueNode, GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
-import { GraphError, counts, edgeKey, findCycle } from "./counts";
+import { GraphError, counts, edgeKey, findCycle, fitsPorts, mult } from "./counts";
+import * as hist from "./history";
 import { edgeTypes, nodeTypes, type NodeData, type WireData } from "./GraphNodes";
 import NodeInspector from "./NodeInspector";
 import NodePalette from "./NodePalette";
@@ -38,8 +39,16 @@ const SAMPLE_BASE = 1000;
 // ползунок — сохраняем один раз, когда отпустили.
 const DRAFT_WAIT_MS = 700;
 
+// Номер нового узла: счётчик и миллисекунды через разделитель. Склеенные
+// подряд, они совпадали у разных пар («aug1»+«123» и «aug11»+«23»); занятые
+// номера документа обходим, а не надеемся на случай.
 let seq = 0;
-const freshId = (kind: string) => `${kind}${++seq}${Date.now() % 1000}`;
+const freshId = (kind: string, taken: Set<string>) => {
+  let id: string;
+  do id = `${kind}${++seq}_${Date.now() % 1000}`;
+  while (taken.has(id));
+  return id;
+};
 
 // Номер провода один и тот же у холста и у счёта чисел. Библиотека умеет
 // придумывать номера сама, но свои — и тогда число с провода, посчитанное по
@@ -144,6 +153,14 @@ function Editor() {
   const [changed, setChanged] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition } = useReactFlow();
+  // История для Ctrl+Z. Холст и провода читаются из ссылки: обработчик
+  // клавиш живёт дольше одной отрисовки.
+  const history = useRef<hist.History>(hist.start(""));
+  const live = useRef({ nodes, edges });
+  live.current = { nodes, edges };
+  // Последняя правка, ушедшая по уходу со страницы или смене версии. Загрузка
+  // ждёт её: иначе «настоящая» открылась бы раньше, чем правка до неё доехала.
+  const flushing = useRef<Promise<unknown>>(Promise.resolve());
 
   const byOp = useMemo(
     () => new Map((cat?.nodes ?? []).map((n) => [n.op, n])),
@@ -182,6 +199,7 @@ function Editor() {
     lastSaved.current = null;
     (async () => {
       try {
+        await flushing.current;
         const got = await api.getGraph(graphId, wanted);
         if (!alive) return;
         setGraph(got);
@@ -190,6 +208,7 @@ function Editor() {
         setNodes(ns);
         setEdges(es);
         lastSaved.current = JSON.stringify(toDoc(ns, es));
+        history.current = hist.start(lastSaved.current);
         setChanged(Boolean(got.changed));
         setSaveState("saved");
         setVersions((await api.listVersions(graphId)).versions);
@@ -327,7 +346,7 @@ function Editor() {
 
   const addNode = useCallback(
     (kind: string, params: Record<string, unknown>, at?: { x: number; y: number }) => {
-      const id = freshId(kind);
+      const id = freshId(kind, new Set(live.current.nodes.map((n) => n.id)));
       const box = wrap.current?.getBoundingClientRect();
       const point =
         at ??
@@ -392,8 +411,25 @@ function Editor() {
             : n
         )
       );
+      // Веток, входов или ячеек стало меньше — провода с исчезнувших гнёзд
+      // уходят той же правкой (см. fitsPorts).
+      const was = live.current.nodes.find((n) => n.id === id);
+      if (!was) return;
+      const d = was.data as NodeData;
+      const after = { id, type: d.kind, params: { ...d.params, ...next } } as GraphNode;
+      setEdges((old) => {
+        const keep = old.filter((e) =>
+          fitsPorts(after, {
+            from: e.source,
+            out: e.sourceHandle ?? "out",
+            to: e.target,
+            in: e.targetHandle ?? "in",
+          })
+        );
+        return keep.length === old.length ? old : keep;
+      });
     },
-    [setNodes]
+    [setNodes, setEdges]
   );
 
   const removeNode = useCallback(
@@ -455,6 +491,65 @@ function Editor() {
   );
   const draft = useMemo(() => toDoc(nodes, edges), [nodes, edges]);
 
+  // Снимок в историю — когда правка улеглась: протяжка узла или ползунка
+  // даёт десятки промежуточных состояний, отменять их по одному незачем.
+  useEffect(() => {
+    if (readOnly || lastSaved.current === null) return;
+    const text = JSON.stringify(draft);
+    const timer = window.setTimeout(() => {
+      history.current = hist.record(history.current, text);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [draft, readOnly]);
+
+  /** Вернуть холст к снимку. Узлы, что были на холсте, сохраняют своё
+   *  (выделение, замеры библиотеки) — меняются место и параметры. */
+  const restore = useCallback(
+    (text: string) => {
+      const doc = JSON.parse(text) as GraphDoc;
+      const [fresh, es] = toFlow(doc, byOp, {}, {}, setEyeOn, null);
+      setNodes((old) => {
+        const had = new Map(old.map((n) => [n.id, n]));
+        return fresh.map((n) => {
+          const was = had.get(n.id);
+          return was
+            ? {
+                ...was,
+                position: n.position,
+                data: { ...(was.data as NodeData), params: (n.data as NodeData).params },
+              }
+            : n;
+        });
+      });
+      setEdges(es);
+    },
+    [byOp, setNodes, setEdges]
+  );
+
+  useEffect(() => {
+    if (readOnly) return;
+    const onKey = (e: KeyboardEvent) => {
+      const act = hist.keyAction(e);
+      if (!act) return;
+      // В текстовом поле Ctrl+Z — отмена набора в поле, её не отнимаем.
+      // Ползунок и флажок полями набора не считаются.
+      const t = e.target as HTMLElement | null;
+      if (
+        t?.closest("textarea, select, [contenteditable='true']") ||
+        (t instanceof HTMLInputElement &&
+          !["range", "checkbox", "radio", "button"].includes(t.type))
+      )
+        return;
+      e.preventDefault();
+      const now = JSON.stringify(toDoc(live.current.nodes, live.current.edges));
+      const [next, doc] = (act === "undo" ? hist.undo : hist.redo)(history.current, now);
+      history.current = next;
+      if (doc !== null) restore(doc);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [readOnly, restore]);
+
   // Автосохранение настоящей копии. Сравнивается весь документ, с
   // координатами: передвинутый узел — тоже работа, которую жалко терять.
   // Выделение в документ не входит, поэтому щелчок по узлу сохранения не
@@ -482,12 +577,14 @@ function Editor() {
   // Ушли, не дождавшись паузы, — последняя правка уходит сразу. И при уходе
   // внутри приложения (размонтирование), и при закрытии или перезагрузке
   // вкладки: тогда React не размонтируется, ловим pagehide.
+  // Смена версии в выпадашке — тоже уход: холст перезагружается, и правка,
+  // не дождавшаяся паузы, пропадала (в режиме только чтения таймер снят).
   useEffect(() => {
     const flush = () => {
       const doc = pending.current;
       if (graphId && doc && JSON.stringify(doc) !== lastSaved.current) {
         pending.current = null;
-        api.saveDraft(graphId, doc, true).catch(() => undefined);
+        flushing.current = api.saveDraft(graphId, doc, true).catch(() => undefined);
       }
     };
     window.addEventListener("pagehide", flush);
@@ -495,7 +592,7 @@ function Editor() {
       window.removeEventListener("pagehide", flush);
       flush();
     };
-  }, [graphId]);
+  }, [graphId, wanted]);
 
   const save = useCallback(async () => {
     if (!graphId) return;
@@ -589,7 +686,7 @@ function Editor() {
           )}
           {totals && (
             <span className="ver" title="Во столько раз вырастет обучающая часть">
-              ×{totals.multiplier.toLocaleString("ru-RU")}
+              {mult(totals.multiplier)}
             </span>
           )}
           {readOnly && (

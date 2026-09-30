@@ -115,6 +115,25 @@ export function ports(
 
 export const edgeKey = (e: GraphEdge) => `${e.from}:${e.out}->${e.to}:${e.in}`;
 
+/** Множитель графа словами экрана: «×2,4». Один на редактор, библиотеку,
+ *  проект и мастер — раньше половина писала «×2.4», половина «×2,4». */
+export const mult = (m: number) =>
+  `×${m.toLocaleString("ru-RU", { maximumFractionDigits: 2 })}`;
+
+/** Цел ли провод после правки узла `node`: гнездо, к которому он приходит или
+ *  из которого выходит, у узла ещё есть.
+ *
+ *  Число веток, входов и ячеек сетки — параметр узла. Уменьшили его — провод
+ *  с исчезнувшего гнезда остался бы в документе: на холсте его не нарисовать
+ *  (гнезда нет), убрать мышью нельзя, версия не сохраняется, счёт брошенного
+ *  врёт. Снимаем такие провода вместе с правкой, а не отказываем в ней.
+ *  Блоки не трогаем: их гнёзда знает только сервер. */
+export function fitsPorts(node: GraphNode, e: GraphEdge): boolean {
+  if (node.type === "group" || (e.from !== node.id && e.to !== node.id)) return true;
+  const [ins, outs] = ports(node);
+  return (e.from !== node.id || outs.includes(e.out)) && (e.to !== node.id || ins.includes(e.in));
+}
+
 export function title(node: GraphNode): string {
   const label = (node.params ?? {}).label ?? (node.params ?? {}).op;
   return label ? `«${label}»` : `узел ${node.id}`;

@@ -8,7 +8,9 @@
 import type { Node } from "@xyflow/react";
 import type { Catalogue, ParamSpec } from "../../api/aug";
 import type { Counts } from "./counts";
-import { branches, grid, inputsCount, times, weights } from "./counts";
+import {
+  MAX_BRANCHES, MAX_INPUTS, MAX_TIMES, branches, grid, inputsCount, mult, times, weights,
+} from "./counts";
 import type { NodeData } from "./GraphNodes";
 
 const fmt = (v: number, spec?: ParamSpec) =>
@@ -132,7 +134,7 @@ export default function NodeInspector({
             </div>
             <div className="g-kv">
               <span>во сколько раз</span>
-              <b>×{totals.multiplier.toLocaleString("ru-RU")}</b>
+              <b>{mult(totals.multiplier)}</b>
             </div>
             <div className="g-kv">
               <span>брошено</span>
@@ -244,7 +246,7 @@ export default function NodeInspector({
             label: "Сколько копий",
             kind: "number",
             low: 1,
-            high: 32,
+            high: MAX_TIMES,
             int: true,
             default: 3,
           }}
@@ -262,13 +264,24 @@ export default function NodeInspector({
               label: "Веток",
               kind: "number",
               low: 2,
-              high: 8,
+              high: MAX_BRANCHES,
               int: true,
               default: 2,
             }}
             value={branches(asNode)}
             disabled={readOnly}
-            onChange={(v) => onChange({ branches: v })}
+            onChange={(v) => {
+              // Новая ветка получает вес, средний по соседям: пустой вес
+              // читается единицей, и третья ветка рядом с «50 / 50» брала
+              // около процента потока вместо трети.
+              const was = weights(asNode);
+              const mean = Math.round(was.reduce((a, b) => a + b, 0) / was.length) || 1;
+              const next = Array.from({ length: v }, (_, i) => was[i] ?? mean);
+              onChange({
+                branches: v,
+                [data.kind === "split_share" ? "shares" : "weights"]: next,
+              });
+            }}
           />
           {weights(asNode).map((w, i) => (
             <Number_
@@ -351,7 +364,7 @@ export default function NodeInspector({
             label: "Входов",
             kind: "number",
             low: 2,
-            high: 8,
+            high: MAX_INPUTS,
             int: true,
             default: 2,
           }}
@@ -364,13 +377,19 @@ export default function NodeInspector({
       <div className="g-label" style={{ margin: "18px 0 8px" }}>
         Через этот узел
       </div>
+      {/* У «Выхода» исходящих проводов нет — считаем пришедшее в него:
+          иначе он писал «выйдет 0», хотя в набор уходят тысячи. */}
       <div className="g-kv">
-        <span>выйдет</span>
+        <span>{data.kind === "output" ? "придёт в набор" : "выйдет"}</span>
         <b>
           {totals
             ? Math.round(
                 Object.entries(totals.edges)
-                  .filter(([k]) => k.startsWith(`${node.id}:`))
+                  .filter(([k]) =>
+                    data.kind === "output"
+                      ? k.endsWith(`->${node.id}:in`)
+                      : k.startsWith(`${node.id}:`)
+                  )
                   .reduce((a, [, v]) => a + v, 0)
               ).toLocaleString("ru-RU")
             : "—"}
