@@ -32,14 +32,29 @@ export default function ProjectOverview() {
     );
   }
 
+  // Данные проекта — кадры датасетов: их считает паспорт, их берут выгрузка и
+  // наборы, их же показывает «Все кадры» (решение и причина — у
+  // `_image_query` в project_routes.py). Кадры тасок до приёмки — черновики,
+  // поэтому проект без датасетов пуст, даже если в тасках что-то лежит; тогда
+  // говорим, куда идти.
   if (datasets.length === 0) {
+    const tasks = detail.stats.tasks ?? 0;
     return (
       <div className="mag-card mag-empty-big">
         <h3>В проекте пока нет данных</h3>
-        <p>Импортируйте YOLO-архив.</p>
+        <p>
+          {tasks
+            ? "Импортируйте YOLO-архив или сдайте кадры таски."
+            : "Импортируйте YOLO-архив."}
+        </p>
         {isAdmin && (
           <Link className="mag-btn mag-btn-inline" to={`/projects/${project.code}/import`}>
             Импортировать датасет
+          </Link>
+        )}
+        {tasks > 0 && (
+          <Link className="mag-ghost mag-ghost-inline" to={`/projects/${project.code}/tasks`}>
+            К таскам
           </Link>
         )}
       </div>

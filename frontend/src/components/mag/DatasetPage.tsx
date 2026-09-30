@@ -10,7 +10,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { getClasses, getDataset, imageThumbUrl } from "../../auth/api";
+import { getDataset, imageThumbUrl } from "../../auth/api";
+import { classesIn } from "../../api/datasets";
 import type { DatasetImage, DatasetStats, LabelClass } from "../../auth/api";
 import ClassPicker from "./ClassPicker";
 import Gallery from "./Gallery";
@@ -46,9 +47,12 @@ export default function DatasetPage() {
   const [showBoxes, setShowBoxes] = useState(true);
   const [viewer, setViewer] = useState<number | null>(null);
 
+  // Счёт разметки — по кадрам этого датасета: отбор классов обещает то, что
+  // найдёт сетка ниже, а не весь проект.
   useEffect(() => {
-    if (code) getClasses(code).then((c) => setClasses(c.classes)).catch(() => {});
-  }, [code]);
+    if (code && datasetId)
+      classesIn(code, datasetId).then((c) => setClasses(c.classes)).catch(() => {});
+  }, [code, datasetId]);
 
   const load = useCallback(
     async (offset: number, limit: number) => {

@@ -7,7 +7,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { getClasses, imageThumbUrl } from "../../auth/api";
+import { imageThumbUrl } from "../../auth/api";
+import { classesIn } from "../../api/datasets";
 import type { LabelClass } from "../../auth/api";
 import * as gallery from "../../api/gallery";
 import type { ProjectImage } from "../../api/gallery";
@@ -36,10 +37,11 @@ export default function ProjectGallery({
   const { code } = useParams<{ code: string }>();
 
   // Классы берём свои, а не из паспорта проекта: просмотрщику нужен полный
-  // класс с номером в базе — он умеет править разметку прямо из кадра.
+  // класс с номером в базе — он умеет править разметку прямо из кадра. Счёт —
+  // по кадрам датасетов, как и сетка: черновики тасок в неё не входят.
   const [classes, setClasses] = useState<LabelClass[]>([]);
   useEffect(() => {
-    if (code) getClasses(code).then((c) => setClasses(c.classes)).catch(() => {});
+    if (code) classesIn(code, "any").then((c) => setClasses(c.classes)).catch(() => {});
   }, [code]);
 
   const [chosen, setChosen] = useState<string[]>([]);

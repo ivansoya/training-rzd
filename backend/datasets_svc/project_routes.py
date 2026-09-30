@@ -639,10 +639,22 @@ def _wanted_classes(project_id, db, raw):
 
 
 def _image_query(db, project, *, dataset_ids, split, class_ids, only_empty):
-    """Запрос кадров проекта под общий набор фильтров."""
+    """Запрос кадров проекта под общий набор фильтров.
+
+    Только кадры датасетов — данные проекта. Кадр таски без `dataset_id` —
+    черновик: ещё не принят, а то и забракован («deleted» снимает датасет, а
+    файл живёт до закрытия таски). 01.10.2026 в РСМ-2000 из 62 таких кадров 61
+    были забракованными. Показывать их в «Все кадры» значило смешать данные с
+    мусором, а паспорт проекта, выгрузка и наборы считают только датасеты —
+    сетка расходилась с паспортом на те же 62 (151 против 213). Отвергнут и
+    чип «вне датасетов»: он вывел бы забракованное туда, где ищут данные, а
+    черновики и так видны в своей таске.
+    """
     q = select(Image).where(Image.project_id == project.id)
     if dataset_ids:
         q = q.where(Image.dataset_id.in_(dataset_ids))
+    else:
+        q = q.where(Image.dataset_id.isnot(None))
     if split:
         q = q.where(Image.split == split)
     if only_empty:
@@ -759,14 +771,15 @@ def project_images(code):
         images = db.execute(_ordered(q, order).limit(limit).offset(offset)).scalars().all()
         by_image = _shapes_by_image(db, [i.id for i in images])
 
+        # Итоги — по тому же множеству, что и сетка (см. `_image_query`).
         splits = dict(db.execute(
             select(Image.split, func.count(Image.id))
-            .where(Image.project_id == project.id)
+            .where(Image.project_id == project.id, Image.dataset_id.isnot(None))
             .group_by(Image.split)
         ).all())
         per_dataset = dict(db.execute(
             select(Image.dataset_id, func.count(Image.id))
-            .where(Image.project_id == project.id)
+            .where(Image.project_id == project.id, Image.dataset_id.isnot(None))
             .group_by(Image.dataset_id)
         ).all())
         return jsonify({
@@ -990,11 +1003,27 @@ def list_classes(code):
             select(LabelClass).where(LabelClass.project_id == project.id)
             .order_by(LabelClass.class_index)
         ).scalars().all()
-        counts = dict(db.execute(
+        # `?dataset=` — счёт разметки в том множестве, которое смотрят: отбор
+        # классов на странице датасета показывал «Человек 87» по всему проекту,
+        # а на кадрах датасета человека не было вовсе — «Найдено 0».
+        # `any` — все датасеты сразу (сетка «Все кадры»). Без параметра —
+        # весь проект вместе с тасками: это цена класса, её видит «Классы».
+        counts_q = (
             select(Annotation.class_id, func.count(Annotation.id))
             .where(Annotation.class_id.in_([r.id for r in rows] or [None]))
             .group_by(Annotation.class_id)
-        ).all()) if rows else {}
+        )
+        scope = request.args.get("dataset")
+        if scope:
+            counts_q = counts_q.join(Image, Image.id == Annotation.image_id)
+            if scope == "any":
+                counts_q = counts_q.where(Image.dataset_id.isnot(None))
+            else:
+                ds = _get_by_uuid(db, Dataset, scope)
+                if ds is None or ds.project_id != project.id:
+                    return jsonify({"error": "Датасет не найден."}), 404
+                counts_q = counts_q.where(Image.dataset_id == ds.id)
+        counts = dict(db.execute(counts_q).all()) if rows else {}
 
         return jsonify({
             "classes": [
