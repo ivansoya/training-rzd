@@ -246,3 +246,35 @@
    размечаемого — над фактами о файле. */
 .g-reel-tags { grid-column: 1 / -1; }
 .g-vcard-tags { margin: 10px 0 2px; }
+
+/* Узкий экран: строка ролика шире блока (сетка на шесть колонок из
+   workspace.css). Здесь она течёт строками: постер с именем, затем числа
+   и кнопки, затем таги. Родитель в селекторе — чтобы перебить общее
+   правило, которое грузится позже. */
+@media (max-width: 600px) {
+  .g-reels .g-reel {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .g-reels .g-reel-name { flex: 1 1 0; }
+
+  .g-reels .g-reel-nums {
+    flex: 1 1 100%;
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    text-align: left;
+  }
+
+  .g-reels .g-reel-nums b { display: inline; }
+
+  .g-reels .g-reel-tags { flex: 1 1 100%; }
+
+  .g-reels .g-reel-plan {
+    flex: 1 1 100%;
+    display: block;
+    overflow-x: auto;
+  }
+}

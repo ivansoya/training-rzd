@@ -199,6 +199,7 @@ function CreateTaskModal({
             type="text"
             value={name}
             placeholder="Съёмка 12 августа"
+            maxLength={255}
             onChange={(e) => setName(e.target.value)}
             autoFocus
           />
@@ -216,7 +217,9 @@ function CreateTaskModal({
             {isAdmin &&
               detail.members.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.display_name} <Sep /> {m.role_label}
+                  {/* Тире, а не <Sep />: <option> держит только текст, разметка
+                      в нём не рисуется, и имя слипалось с ролью. */}
+                  {`${m.display_name} — ${m.role_label}`}
                 </option>
               ))}
           </select>

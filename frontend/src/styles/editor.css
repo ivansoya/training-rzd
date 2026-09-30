@@ -1265,3 +1265,26 @@
 @media (max-width: 860px) {
   .mag-ed-side { display: none; }
 }
+
+/* Узкий экран. Боковая панель рядом со сценой отнимала у кадра половину
+   ширины: на 430 px сцене оставалось 160 px. Здесь панель уходит под кадр,
+   сцена получает всю высоту тела, а к классам и объектам прокручивают вниз.
+   Селекторы с родителем — чтобы перебить общие правила workspace.css,
+   которые грузятся позже и задают панели ширину 185 px. */
+@media (max-width: 600px) {
+  .mag-ed-body {
+    flex-wrap: wrap;
+    align-content: flex-start;
+    overflow-y: auto;
+  }
+
+  .mag-ed-body > .mag-ed-view { height: 100%; }
+
+  .mag-ed-body > .mag-ed-side {
+    flex: 1 1 100%;
+    width: auto;
+    overflow: visible;
+    border-left: 0;
+    border-top: 1px solid var(--ed-edge);
+  }
+}

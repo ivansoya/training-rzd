@@ -1,7 +1,9 @@
 import { useState } from "react";
 import TagPicker from "./TagPicker";
 import type { Tag } from "../../api/tags";
-import { plural } from "../ru";
+import { count } from "../ru";
+import Sep from "../Sep";
+import { useDialog } from "../useDialog";
 import { useEscape } from "./useEscape";
 import { fmtBytes } from "./VideoCutModal";
 import { useBackdrop } from "../useBackdrop";
@@ -37,26 +39,30 @@ export default function UploadImagesModal({
   // пришлось бы решать, что делать с личными при смене общего — а ответа,
   // который не удивит человека, там нет.
   const [common, setCommon] = useState<string[]>([]);
-  const [own, setOwn] = useState<Record<number, string[]>>({});
+  // Своего набора нет (undefined) — файл берёт общий. Пустой свой набор ([])
+  // — это решение «у этого файла тагов нет», и оно не должно молча
+  // превращаться обратно в общий: прежде снять общий таг у одного файла было
+  // нельзя, пустой набор читался как «взять общий».
+  const [own, setOwn] = useState<Record<number, string[] | undefined>>({});
   const [expanded, setExpanded] = useState(false);
+  const dialog = useDialog();
 
   useEscape(onCancel);
 
   const bytes = files.reduce((sum, f) => sum + f.size, 0);
-  const personal = Object.values(own).filter((v) => v.length).length;
+  const personal = Object.values(own).filter((v) => v !== undefined).length;
 
   function send() {
-    onSend(files.map((_, i) => (own[i]?.length ? own[i] : common)));
+    onSend(files.map((_, i) => own[i] ?? common));
   }
 
   return (
     <div className="mag-backdrop" {...useBackdrop(onCancel)}>
-      <div className="mag-modal mag-up">
+      <div className="mag-modal mag-up" ref={dialog} role="dialog" aria-modal="true"
+        aria-label="Загрузка кадров" tabIndex={-1}>
         <h3>Загрузка кадров</h3>
         <p className="mag-sub">
-          {files.length} {plural(files.length, "файл", "файла", "файлов")}
-          {" · "}
-          {fmtBytes(bytes)}
+          {count(files.length, "файл", "файла", "файлов")} <Sep /> {fmtBytes(bytes)}
         </p>
 
         <div className="up-common">
@@ -78,7 +84,7 @@ export default function UploadImagesModal({
           onClick={() => setExpanded((v) => !v)}
         >
           {expanded ? "Свернуть список файлов" : "Задать тагов по отдельности"}
-          {personal > 0 && ` · ${personal} ${plural(personal, "файл", "файла", "файлов")} со своими`}
+          {personal > 0 && ` — ${count(personal, "файл", "файла", "файлов")} со своими`}
         </button>
 
         {expanded && (
@@ -90,7 +96,7 @@ export default function UploadImagesModal({
                 <TagPicker
                   code={code}
                   all={tags}
-                  value={own[i]?.length ? own[i] : common}
+                  value={own[i] ?? common}
                   compact
                   placeholder="свои таги"
                   onChange={(next) => setOwn((prev) => ({ ...prev, [i]: next }))}

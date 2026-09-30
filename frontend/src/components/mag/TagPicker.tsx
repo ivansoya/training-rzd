@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Tag } from "../../api/tags";
 import { createTag } from "../../api/tags";
+import { useEscape } from "./useEscape";
 
 /** Чипы тагов: показать, снять, добавить, завести новый.
  *
@@ -55,6 +56,10 @@ export default function TagPicker({
     document.addEventListener("mousedown", away);
     return () => document.removeEventListener("mousedown", away);
   }, [open]);
+
+  // Открытый список — свой слой Esc: иначе Esc в поиске тага закрывал окно
+  // загрузки под ним вместе с выбранными файлами.
+  useEscape(() => setOpen(false), open && !disabled);
 
   const byId = useMemo(() => new Map(all.map((t) => [t.id, t])), [all]);
   const picked = value.map((id) => byId.get(id)).filter(Boolean) as Tag[];
@@ -129,7 +134,6 @@ export default function TagPicker({
             placeholder="найти или завести"
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Escape") setOpen(false);
               if (e.key === "Enter") {
                 e.preventDefault();
                 // Точное совпадение выбираем, остальное заводим. Иначе

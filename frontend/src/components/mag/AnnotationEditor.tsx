@@ -19,6 +19,7 @@ import { frameActions } from "./frameActions";
 import * as history from "./editHistory";
 import { empty, type History } from "./editHistory";
 import TagPicker from "./TagPicker";
+import { useEscape } from "./useEscape";
 import type { Tag } from "../../api/tags";
 import { useAutoLabel } from "./useAutoLabel";
 import { useLive } from "../../live/LiveProvider";
@@ -128,12 +129,18 @@ export default function AnnotationEditor({
   onChanged,
   onTags,
   onTagCreated,
+  canTag,
 }: {
   code: string;
   taskName: string;
   images: TaskImage[];
   index: number;
   readOnly: boolean;
+  /** Можно ли править таги. Не то же, что `readOnly`: закрытая таска
+   *  останавливает разметку, но не таги — сервер их принимает (см.
+   *  set_image_tags), а таг — паспорт кадра, и ошибку в нём иначе нечем
+   *  исправить. */
+  canTag: boolean;
   /** Справочник тагов проекта. */
   tags: Tag[];
   onIndex: (i: number) => void;
@@ -221,6 +228,9 @@ export default function AnnotationEditor({
   const [grid, setGrid] = useState(true);
   const [help, setHelp] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Справка — свой слой: Esc закрывает её, а не весь редактор под ней.
+  useEscape(() => setHelp(false), help);
 
   const canvas = useRef<CanvasHandle>(null);
   const dirty = useRef(false);
@@ -1431,7 +1441,7 @@ export default function AnnotationEditor({
             code={code}
             all={tags}
             value={image?.tag_ids || []}
-            disabled={readOnly}
+            disabled={!canTag}
             compact
             placeholder="таг кадра"
             onChange={(next) => image && onTags(image.id, next)}

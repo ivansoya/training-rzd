@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   acceptAgentFrames,
   closeVideoAnnotation,
@@ -26,7 +26,7 @@ import { pollJob } from "../../api/jobs";
 import AnnotationEditor, { saveSettled } from "./AnnotationEditor";
 import ShapeMini from "./ShapeMini";
 import { TaskState } from "./ProjectTasks";
-import { plural } from "../ru";
+import { count, plural } from "../ru";
 import { SourceCard, VideoCard, buildSources } from "./TaskSources";
 import UploadImagesModal from "./UploadImagesModal";
 import { setImageTags, setVideoTags } from "../../api/tags";
@@ -116,6 +116,37 @@ export default function TaskPage() {
   // Редактор кадров открывается с подмножеством: «Размечать» у блока ведёт
   // только к кадрам этой загрузки, а не ко всей таске.
   const [editing, setEditing] = useState<{ list: TaskImage[]; index: number } | null>(null);
+  // Открытый кадр живёт в адресе (?frame=<id>): «Назад» браузера закрывает
+  // редактор, а не уводит со страницы таски, и на кадр можно дать ссылку.
+  // Шаг по кадрам адрес заменяет, а не добавляет — иначе «Назад» пришлось бы
+  // жать столько раз, сколько кадров пролистали.
+  const [search, setSearch] = useSearchParams();
+  const frameParam = search.get("frame");
+  // Запись в истории, которую добавили мы сами: закрывая редактор, её
+  // снимаем шагом назад. Пришли по ссылке — снимать нечего, адрес чистим.
+  const pushed = useRef(false);
+  const setFrame = useCallback((id: string | null, replace: boolean) => {
+    setSearch((prev) => {
+      const next = new URLSearchParams(prev);
+      if (id) next.set("frame", id);
+      else next.delete("frame");
+      return next;
+    }, { replace });
+  }, [setSearch]);
+  const openEditor = useCallback((list: TaskImage[], index: number) => {
+    setEditing({ list, index });
+    setFrame(list[index].id, false);
+    pushed.current = true;
+  }, [setFrame]);
+  const closeEditor = useCallback(() => {
+    setEditing(null);
+    if (pushed.current) {
+      pushed.current = false;
+      navigate(-1);
+    } else {
+      setFrame(null, true);
+    }
+  }, [navigate, setFrame]);
   const [cutting, setCutting] = useState<{ video: TaskVideoItem; at?: number } | null>(null);
   const [annotating, setAnnotating] = useState<TaskVideoItem | null>(null);
   // Агент: окно запуска и последний прогон по этой таске.
@@ -163,6 +194,39 @@ export default function TaskPage() {
   }, [taskId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Адрес и редактор сходятся. Кадр из адреса ушёл («Назад») — редактор
+  // закрывается; кадр в адресе есть, а редактор закрыт (ссылка, «Вперёд») —
+  // открываем его на всех кадрах таски. Не нашли кадр — чистим адрес.
+  useEffect(() => {
+    if (!taskId) return;
+    if (!frameParam) {
+      if (editing) { pushed.current = false; setEditing(null); }
+      return;
+    }
+    if (editing) return;
+    let alive = true;
+    allImages(taskId, {})
+      .then((list) => {
+        if (!alive) return;
+        const at = list.findIndex((i) => i.id === frameParam);
+        if (at >= 0) setEditing({ list, index: at });
+        else setFrame(null, true);
+      })
+      .catch((e) => setError((e as Error).message));
+    return () => { alive = false; };
+    // editing нарочно не в зависимостях: реагируем на смену адреса.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [frameParam, taskId]);
+
+  // Редактор закрылся — перечитываем таску. Здесь, а не в обработчике
+  // закрытия: к этому моменту редактор уже размонтирован и отправил
+  // последнюю правку, и load() её дождётся (saveSettled).
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    if (wasEditing.current && !editing) void load();
+    wasEditing.current = !!editing;
+  }, [editing, load]);
 
   // Идущий прогон видно и после перезагрузки страницы: строка хода
   // показывается, пока он не кончится. Законченный старый — нет.
@@ -231,8 +295,15 @@ export default function TaskPage() {
     }
     if (to === "closed") {
       const drafts = task.counts.total - task.counts.accepted + task.counts.deleted;
-      const msg = drafts
-        ? `Закрыть таску? Будет удалено ${drafts} ${plural(drafts, "черновой кадр", "черновых кадра", "черновых кадров")} и исходное видео. Действие необратимо.`
+      // Про ролики — только если они есть: «и исходное видео» у таски из
+      // одних файлов пугало удалением того, чего не было.
+      const videos = task.videos.length;
+      const gone = [
+        drafts ? count(drafts, "черновой кадр", "черновых кадра", "черновых кадров") : "",
+        videos ? (videos === 1 ? "исходное видео" : `исходные видео (${videos})`) : "",
+      ].filter(Boolean).join(" и ");
+      const msg = gone
+        ? `Закрыть таску? Будут удалены ${gone}. Действие необратимо.`
         : "Закрыть таску?";
       if (!window.confirm(msg)) return;
     }
@@ -245,7 +316,8 @@ export default function TaskPage() {
       } else if (to === "done") {
         setNotice("Размеченных кадров пока нет — принимать нечего.");
       } else if (res.removed_images !== undefined) {
-        setNotice(`Удалено ${res.removed_images} черновых кадров.`);
+        const n = res.removed_images;
+        setNotice(`${plural(n, "Удалён", "Удалено", "Удалено")} ${count(n, "черновой кадр", "черновых кадра", "черновых кадров")}.`);
       }
       await load();
     });
@@ -285,8 +357,10 @@ export default function TaskPage() {
     try {
       await setVideoTags(taskId, video.id, tagIds);
     } catch (e) {
-      setError((e as Error).message);
+      // Сперва перечитать, потом показать: load() гасит ошибку на успехе,
+      // и в обратном порядке она мелькала на долю секунды.
       await load();
+      setError((e as Error).message);
     }
   }
 
@@ -305,8 +379,8 @@ export default function TaskPage() {
     try {
       await setImageTags(imageId, tagIds);
     } catch (e) {
-      setError((e as Error).message);
       await load();
+      setError((e as Error).message);
     }
   }
 
@@ -321,8 +395,10 @@ export default function TaskPage() {
     if (!list.length || !taskId) return;
     setUploadPct(0);
     setError(null);
+    let current = list[0];
     try {
       for (const [i, file] of list.entries()) {
+        current = file;
         await uploadTaskVideo(
           taskId, file,
           (pct) => setUploadPct((i + pct) / list.length),
@@ -335,9 +411,17 @@ export default function TaskPage() {
       await load();
     } catch (e) {
       // Уже уехавшие файлы остаются в таске: перезагружаем, чтобы человек
-      // видел, что дошло, а что нет.
-      setError((e as Error).message);
+      // видел, что дошло, а что нет. Ошибку ставим ПОСЛЕ перечитывания:
+      // load() на успехе гасит ошибку, и она мелькала на десятую долю секунды.
       await load().catch(() => {});
+      // Отказ декодера сервер пока отдаёт как есть — с номером errno и путём
+      // внутри контейнера. Человеку из этого нужно одно: файл не видео.
+      const raw = (e as Error).message;
+      setError(
+        /\[Errno|Invalid data found|\/app\//.test(raw)
+          ? `«${current.name}» не читается как видео.`
+          : raw
+      );
     } finally {
       setUploadPct(null);
     }
@@ -382,7 +466,7 @@ export default function TaskPage() {
       const first = list.findIndex(
         (i) => i.task_status === "new" || i.task_status === "skipped"
       );
-      setEditing({ list, index: first >= 0 ? first : 0 });
+      openEditor(list, first >= 0 ? first : 0);
     });
   }
 
@@ -532,7 +616,7 @@ export default function TaskPage() {
         </div>
       </div>
 
-      <nav className="mag-tabs">
+      <nav className="mag-tabs mag-task-tabs">
         {TABS.map((t) => (
           <button key={t.id} type="button"
             className={tab === t.id ? "mag-tab on" : "mag-tab"}
@@ -754,7 +838,7 @@ export default function TaskPage() {
               <h4>Размеченные кадры <Sep /> {annotated.length}</h4>
               {editable && annotated.length > 0 && (
                 <button className="mag-ghost mag-ghost-inline" type="button"
-                  onClick={() => setEditing({ list: annotated, index: 0 })}>
+                  onClick={() => openEditor(annotated, 0)}>
                   Просмотреть
                 </button>
               )}
@@ -769,7 +853,7 @@ export default function TaskPage() {
                 {annotated.map((im, i) => (
                   <div key={im.id} className="mag-tile-wrap">
                     <button className="mag-tile" type="button" title={im.file_name}
-                      onClick={() => setEditing({ list: annotated, index: i })}>
+                      onClick={() => openEditor(annotated, i)}>
                       <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
                       <ShapeMini boxes={im.boxes} width={im.width} height={im.height} />
                       <span className={`mag-tile-mark ${im.task_status}`}>
@@ -834,11 +918,15 @@ export default function TaskPage() {
           images={editing.list}
           index={editing.index}
           readOnly={!editable}
+          canTag={task.can_work}
           tags={tags}
           onTags={(imageId, ids) => void saveImageTags(imageId, ids)}
           onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
-          onIndex={(i) => setEditing((prev) => (prev ? { ...prev, index: i } : prev))}
-          onClose={() => { setEditing(null); load(); }}
+          onIndex={(i) => {
+            setEditing((prev) => (prev ? { ...prev, index: i } : prev));
+            setFrame(editing.list[i]?.id ?? null, true);
+          }}
+          onClose={closeEditor}
           onChanged={(id, patch) =>
             setEditing((prev) =>
               prev
@@ -852,32 +940,79 @@ export default function TaskPage() {
   );
 }
 
+// Состояние таски в событии лежит сырым значением; на экране — теми же
+// словами, что на карточках (STATUS_LABELS на сервере).
+const STATUS_WORD: Record<string, string> = {
+  queued: "на очереди",
+  in_progress: "в работе",
+  done: "готово",
+  updating: "изменение",
+  closed: "закрыто",
+};
+
+/** Глагол прошедшего времени по числу: «принят 1 кадр», «принято 5 кадров». */
+const did = (n: number, one: string, many: string) => plural(n, one, many, many);
+
 /** Нарезаемый ролик: у него вопрос не «что размечено», а «что нарезано». */
 function describe(e: TaskEventItem): JSX.Element {
   const p = e.payload as Record<string, string | number>;
+  const n = (k: string) => Number(p[k]) || 0;
   switch (e.kind) {
     case "created":
       return <>Таска создана{p.assignee ? <>, исполнитель — <b>{p.assignee}</b></> : null}</>;
     case "assigned":
       return <>Исполнитель — <b>{p.assignee ?? "снят"}</b></>;
     case "images_added":
-      return <>Загружено <b>{p.added}</b> изображений{p.skipped ? `, пропущено ${p.skipped}` : ""}</>;
+      return (
+        <>
+          {did(n("added"), "Загружено", "Загружено")}{" "}
+          <b>{count(n("added"), "изображение", "изображения", "изображений")}</b>
+          {p.skipped ? `, пропущено ${p.skipped}` : ""}
+        </>
+      );
     case "video_added":
       return <>Добавлено видео <b>{p.file}</b>{p.mode === "annotate" ? " для разметки" : " для нарезки"}</>;
     case "video_cut":
-      return <>Нарезано <b>{p.frames}</b> кадров из {p.file}, участков: {p.segments}</>;
+      return (
+        <>
+          {did(n("frames"), "Нарезан", "Нарезано")}{" "}
+          <b>{count(n("frames"), "кадр", "кадра", "кадров")}</b> из {p.file}, участков: {p.segments}
+        </>
+      );
     case "video_annotation_closed":
-      return <>Разметка <b>{p.file}</b> закрыта: {p.frames} кадров, {p.boxes} объектов</>;
+      return (
+        <>
+          Разметка <b>{p.file}</b> закрыта: {count(n("frames"), "кадр", "кадра", "кадров")},{" "}
+          {count(n("boxes"), "объект", "объекта", "объектов")}
+        </>
+      );
     case "video_annotation_reopened":
       return <>Разметка <b>{p.file}</b> открыта заново</>;
     case "video_frames_dropped":
-      return <>Убрано <b>{p.removed}</b> кадров ролика {p.file}{p.kept ? `, оставлено принятых: ${p.kept}` : ""}</>;
+      return (
+        <>
+          {did(n("removed"), "Убран", "Убрано")}{" "}
+          <b>{count(n("removed"), "кадр", "кадра", "кадров")}</b> ролика {p.file}
+          {p.kept ? `, оставлено принятых: ${p.kept}` : ""}
+        </>
+      );
     case "accepted":
-      return <>Принято <b>{p.accepted}</b> кадров в датасет «{p.dataset}»</>;
+      return (
+        <>
+          {did(n("accepted"), "Принят", "Принято")}{" "}
+          <b>{count(n("accepted"), "кадр", "кадра", "кадров")}</b> в датасет «{p.dataset}»
+        </>
+      );
     case "done":
       return <>Переведена в готово, принимать было нечего</>;
     case "closed":
-      return <>Закрыта: удалено <b>{p.removed_images}</b> кадров и {p.removed_videos} видео</>;
+      return (
+        <>
+          Закрыта: {did(n("removed_images"), "удалён", "удалено")}{" "}
+          <b>{count(n("removed_images"), "кадр", "кадра", "кадров")}</b>
+          {n("removed_videos") ? ` и ${n("removed_videos")} видео` : ""}
+        </>
+      );
     case "image_deleted":
       return <>Забракован кадр {p.file}</>;
     case "image_restored":
@@ -890,7 +1025,7 @@ function describe(e: TaskEventItem): JSX.Element {
         </>
       );
     case "status":
-      return <>Состояние: <b>{p.status}</b></>;
+      return <>Состояние: <b>{STATUS_WORD[String(p.status)] ?? p.status}</b></>;
     default:
       return <>{e.kind}</>;
   }

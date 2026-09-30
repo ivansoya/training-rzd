@@ -41,9 +41,17 @@
   color: var(--mag-muted);
 }
 
-/* Сдача — необратимое действие, поэтому отделена чертой, а не стоит в ряду */
+/* Имя таски длинное — переносится, а не выталкивает шапку за край. */
+.mag-task-id { min-width: 0; }
+.mag-task-id .mag-pass-title { flex-wrap: wrap; }
+.mag-task-id h1 { overflow-wrap: anywhere; }
+
+/* Сдача — необратимое действие, поэтому отделена чертой, а не стоит в ряду.
+   Кнопок бывает до пяти («Статистика разведки», «Агент», переходы,
+   «Закрыть») — на узком экране они переносятся, а не уезжают за край. */
 .mag-task-submit {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   padding-left: 20px;
   border-left: 1px solid var(--mag-line);
@@ -55,7 +63,7 @@
 
 @media (max-width: 900px) {
   .mag-task-strip {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .mag-task-submit {
@@ -1197,5 +1205,15 @@
   .mag-cut-work,
   .mag-cut-ok {
     animation: none;
+  }
+}
+
+/* Вкладки таски на узком экране переносятся: в прокрутке «История» пряталась
+   за краем, и о ней было не узнать. Общее правило workspace.css прокручивает
+   вкладки всех страниц — здесь их всего четыре, и перенос честнее. */
+@media (max-width: 600px) {
+  .mag-tabs.mag-task-tabs {
+    flex-wrap: wrap;
+    overflow-x: visible;
   }
 }

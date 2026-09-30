@@ -341,6 +341,11 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   // «Maximum update depth exceeded». Сравнение с допуском тут не помогло бы:
   // цикл держится не на дрожании чисел, а на самом «меряем после каждой».
   const [tick, bump] = useState(0);
+  // Место под кадр внутри сцены, без её полей. По нему картинка вписывается
+  // целиком — и уменьшением, и увеличением: одних max-width/max-height мало,
+  // маленький кадр 320×240 так и стоял крохой посреди сцены в 1176 px, а
+  // «Вписать» возвращало его к натуральному размеру.
+  const [room, setRoom] = useState<{ w: number; h: number } | null>(null);
   useLayoutEffect(() => {
     const stage = stageRef.current;
     const frame = frameRef.current;
@@ -353,12 +358,18 @@ const BoxCanvas = forwardRef<CanvasHandle, {
         ? prev
         : next
     );
-  }, [view, tick, reserve, imageId, width, height]);
+  }, [view, tick, reserve, imageId, width, height, room]);
 
   useEffect(() => {
     const stage = stageRef.current;
     if (!stage) return;
-    const ro = new ResizeObserver(() => bump((n) => n + 1));
+    const ro = new ResizeObserver(() => {
+      const cs = getComputedStyle(stage);
+      const w = stage.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const h = stage.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      setRoom((prev) => (prev && prev.w === w && prev.h === h ? prev : { w, h }));
+      bump((n) => n + 1);
+    });
     ro.observe(stage);
     // Изображение загружается позже сцены. Его рамка меняет размер, даже
     // когда размер сцены прежний: разметку нужно пересчитать сразу.
@@ -713,6 +724,16 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     onBoxes?.(next);
   }
 
+  // Размер картинки «вписано». Потолок по высоте окна остаётся: пока сцена
+  // не измерена, и там, где сцена растёт по содержимому, — он не даёт кадру
+  // раздуть её за край. Размеров кадра нет (1×1 — заглушка) — старое правило.
+  const fitK = room && width > 1 && height > 1 && room.w > 0 && room.h > 0
+    ? Math.min(room.w / width, room.h / height, (window.innerHeight - reserve) / height)
+    : null;
+  const fitStyle = fitK && fitK > 0
+    ? { width: width * fitK, height: height * fitK, maxWidth: "none" }
+    : { maxHeight: `calc(100vh - ${reserve}px)` };
+
   const cursor = dragKind === "pan"
     ? "grabbing"
     : waiting ? "wait"
@@ -765,7 +786,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
               src={src || imagePreviewUrl(imageId)}
               alt={fileName || ""}
               draggable={false}
-              style={{ maxHeight: `calc(100vh - ${reserve}px)` }}
+              style={fitStyle}
             />
           )}
           {/* Оригинал приезжает вторым слоем: подмена src дала бы моргание.

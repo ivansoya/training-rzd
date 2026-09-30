@@ -130,6 +130,11 @@ def _resolve_task(task_id, needed="viewer"):
     return db, task, project, user, role, None
 
 
+# Столбцы имён таски и датасета — String(255). Длиннее база не примет, и без
+# проверки здесь человек получал HTTP 500 вместо объяснения.
+NAME_MAX = 255
+
+
 def _may_work(task, user, role):
     """Админ может всё; исполнитель — всё в своей таске, кроме переназначения."""
     return role == "admin" or task.assignee_id == user.id
@@ -231,6 +236,8 @@ def create_task(code):
         name = (data.get("name") or "").strip()
         if not name:
             return jsonify({"error": "Укажите название таски."}), 400
+        if len(name) > NAME_MAX:
+            return jsonify({"error": f"Название длиннее {NAME_MAX} знаков."}), 400
 
         role = role_in(db, user, project)
         assignee_id = user.id
@@ -260,6 +267,8 @@ def create_task(code):
         elif not dataset_name:
             # Не спрашиваем дважды: пустое поле означает «датасет с именем таски».
             dataset_name = name
+        elif len(dataset_name) > NAME_MAX:
+            return jsonify({"error": f"Имя датасета длиннее {NAME_MAX} знаков."}), 400
 
         task = Task(
             project_id=project.id,
@@ -439,6 +448,8 @@ def update_task(task_id):
             name = (data.get("name") or "").strip()
             if not name:
                 return jsonify({"error": "Название не может быть пустым."}), 400
+            if len(name) > NAME_MAX:
+                return jsonify({"error": f"Название длиннее {NAME_MAX} знаков."}), 400
             task.name = name
         db.commit()
         return jsonify(_task_json(db, task))
