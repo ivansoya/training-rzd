@@ -11,7 +11,24 @@
 import { useCallback, useEffect } from "react";
 import type { Box } from "../../auth/api";
 import ShapeMini from "../mag/ShapeMini";
+import { useEscape } from "../mag/useEscape";
+import { count, ru } from "../ru";
 import { useBackdrop } from "../useBackdrop";
+
+const PART: Record<string, string> = { train: "обучение", val: "проверка" };
+
+/** Путь образца по графу словами. `sid` — номера копий через точку
+ *  («.0.2» — первая копия первого «Размножения», третья второго), у сетки —
+ *  «g<k>». Сырой «.0» на экране ничего не говорил. */
+function pathText(sid: string): string {
+  return sid
+    .split(".")
+    .filter(Boolean)
+    .map((k) =>
+      /^\d+$/.test(k) ? `копия ${Number(k) + 1}` : /^g\d+$/.test(k) ? `сетка ${Number(k.slice(1)) + 1}` : k
+    )
+    .join(" → ");
+}
 
 export interface ViewSample {
   name: string;
@@ -29,42 +46,58 @@ export default function SampleViewer({
   samples,
   index,
   total,
+  base = 0,
+  names,
   onIndex,
   onClose,
   onNeedMore,
+  onEdge,
 }: {
   samples: ViewSample[];
   index: number;
   total: number;
+  /** Сквозной номер `samples[0]` во всей выборке — для счётчика. */
+  base?: number;
+  /** Имена трансформов по-русски, из каталога узлов: «Rotate» → «Поворот». */
+  names?: Map<string, string>;
   onIndex: (i: number) => void;
   onClose: () => void;
   onNeedMore?: () => void;
+  /** Шаг за край загруженной страницы — листать страницу галереи (режим
+   *  «Страницы»), как в просмотре кадра датасета. */
+  onEdge?: (dir: 1 | -1) => void;
 }) {
   const item = samples[index];
+  useEscape(onClose);
+
+  const canPrev = index > 0 || (!!onEdge && base > 0);
+  const canNext =
+    index < samples.length - 1 || base + index < total - 1;
 
   const step = useCallback(
-    (delta: number) => {
+    (delta: 1 | -1) => {
       const next = index + delta;
       if (next < 0 || next >= samples.length) {
-        // На конце показанного просим догрузить: в ленте кадры кончаются
-        // раньше, чем набор.
-        if (delta > 0 && samples.length < total) onNeedMore?.();
+        if (!(delta < 0 ? canPrev : canNext)) return;
+        // В страницах листаем страницу, в ленте просим догрузить: кадры
+        // показанного кончаются раньше, чем набор.
+        if (onEdge) onEdge(delta);
+        else if (delta > 0) onNeedMore?.();
         return;
       }
       onIndex(next);
     },
-    [index, samples.length, total, onIndex, onNeedMore]
+    [index, samples.length, canPrev, canNext, onIndex, onNeedMore, onEdge]
   );
 
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
       if (e.key === "ArrowLeft") step(-1);
       if (e.key === "ArrowRight") step(1);
     };
     document.addEventListener("keydown", key);
     return () => document.removeEventListener("keydown", key);
-  }, [onClose, step]);
+  }, [step]);
 
   if (!item) return null;
 
@@ -73,13 +106,13 @@ export default function SampleViewer({
       <div className="s-view">
         <div className="s-view-top">
           <b>{item.name}</b>
-          <span className="s-view-tag">{item.split}</span>
+          <span className="s-view-tag">{PART[item.split] ?? item.split}</span>
           <span className="s-view-tag">
-            {item.objects} {item.objects === 1 ? "объект" : "объектов"}
+            {count(item.objects, "объект", "объекта", "объектов")}
           </span>
           {item.sid ? (
             <span className="s-view-tag alt" title="Путь образца по графу">
-              {item.sid}
+              {pathText(item.sid)}
             </span>
           ) : (
             <span className="s-view-tag" title="Кадр прошёл мимо аугментаций">
@@ -88,7 +121,7 @@ export default function SampleViewer({
           )}
           <span className="sp" />
           <span className="s-view-pos">
-            {index + 1} из {total.toLocaleString("ru-RU")}
+            {ru(base + index + 1)} из {ru(total)}
           </span>
           <button type="button" className="mag-ghost mag-ghost-inline" onClick={onClose}>
             Закрыть
@@ -100,7 +133,7 @@ export default function SampleViewer({
             type="button"
             className="s-view-arr"
             onClick={() => step(-1)}
-            disabled={index === 0}
+            disabled={!canPrev}
             aria-label="Предыдущий"
           >
             ‹
@@ -122,7 +155,7 @@ export default function SampleViewer({
             type="button"
             className="s-view-arr"
             onClick={() => step(1)}
-            disabled={index + 1 >= samples.length && samples.length >= total}
+            disabled={!canNext}
             aria-label="Следующий"
           >
             ›
@@ -132,7 +165,7 @@ export default function SampleViewer({
         {item.ops.length > 0 && (
           <div className="s-view-ops">
             {item.ops.map((op, i) => (
-              <span key={i}>{op}</span>
+              <span key={i}>{names?.get(op) ?? op}</span>
             ))}
           </div>
         )}

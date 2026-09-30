@@ -13,11 +13,12 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import * as sets from "../../api/trainsets";
+import * as aug from "../../api/aug";
 import type { Sample, SetClass, TrainSet } from "../../api/trainsets";
 import ClassPicker from "../mag/ClassPicker";
 import Gallery from "../mag/Gallery";
 import type { GalleryItem } from "../mag/Gallery";
-import { useGallery } from "../mag/useGallery";
+import { PAGE, useGallery } from "../mag/useGallery";
 import type { Mode } from "../mag/useGallery";
 import SampleViewer from "./SampleViewer";
 
@@ -50,6 +51,15 @@ export default function TrainSetView() {
   const [mode, setMode] = useState<Mode>("pages");
   const [showBoxes, setShowBoxes] = useState(true);
   const [viewer, setViewer] = useState<number | null>(null);
+  // Имена трансформов для просмотра образца: в манифесте они лежат кодом
+  // albumentations («Rotate»), а на экране — как в редакторе графа.
+  const [opNames, setOpNames] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    aug
+      .catalogue()
+      .then((c) => setOpNames(new Map([["Mosaic", "Слияние сеткой"], ...c.nodes.map((n) => [n.op, n.name] as [string, string])])))
+      .catch(() => undefined);
+  }, []);
 
   const load = useCallback(
     async (offset: number, limit: number) => {
@@ -115,13 +125,15 @@ export default function TrainSetView() {
     [g.items, code, setId]
   );
 
-  if (blocked) {
+  // Несуществующий набор на «Сводке» давал пустую карточку: ответ 404
+  // молча оседал в g.error, а показывала его только вкладка «Изображения».
+  if (blocked || (g.error && !set)) {
     return (
       <div className="mag-card mag-empty-big">
-        <h3>Набор ещё не собран</h3>
-        <p>{blocked}</p>
+        <h3>{blocked ? "Набор ещё не собран" : g.error}</h3>
+        {blocked && <p>{blocked}</p>}
         <Link className="mag-btn mag-btn-inline" to={`/projects/${code}/training`}>
-          К обучению
+          ← К обучению
         </Link>
       </div>
     );
@@ -346,9 +358,16 @@ export default function TrainSetView() {
           samples={viewSamples}
           index={viewer}
           total={g.matched}
+          base={g.base}
+          names={opNames}
           onIndex={setViewer}
           onClose={() => setViewer(null)}
           onNeedMore={mode === "feed" ? g.more : undefined}
+          onEdge={
+            mode === "pages"
+              ? (dir) => g.goto(g.page + dir, () => setViewer(dir > 0 ? 0 : PAGE - 1))
+              : undefined
+          }
         />
       )}
     </>

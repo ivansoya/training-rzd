@@ -854,3 +854,13 @@ button.t-feed-x:hover { color: var(--danger); }
 @media (prefers-reduced-motion: reduce) {
   .t-busy-line::after { animation: none; width: 100%; opacity: .5; }
 }
+
+/* Узкий экран. Мастер — в одну колонку: итог справа шириной 340 px оставлял
+   шагам мастера полсотни пикселей. Столбец рана не должен расти по самой
+   широкой таблице внутри: у элемента сетки min-width — auto, и страница
+   обучения на 430 px расползалась до 724. Длинное имя рана переносится. */
+@media (max-width: 600px) {
+  .t-wiz { grid-template-columns: 1fr; }
+  .t-run > * { min-width: 0; }
+  .t-run-head h2, .t-run-sub { overflow-wrap: anywhere; }
+}

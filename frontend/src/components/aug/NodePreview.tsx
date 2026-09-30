@@ -34,6 +34,7 @@ import type {
 } from "../../api/aug";
 import { titleOf, ru, type NodeData } from "./GraphNodes";
 import Sep from "../Sep";
+import { count } from "../ru";
 
 const WAIT_MS = 300;
 const MIN_H = 220;
@@ -430,7 +431,7 @@ export default function NodePreview({
         </label>
         <span className="g-pv-grow" />
         {dropped > 0 && (
-          <span className="g-pv-warn">Брошенных веток: {ru(dropped)} образцов никуда не идут</span>
+          <span className="g-pv-warn">Брошенных веток: {count(dropped, "образец", "образца", "образцов")} никуда не идут</span>
         )}
         <button
           type="button"

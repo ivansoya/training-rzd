@@ -17,6 +17,7 @@ import * as runsApi from "../../api/runs";
 import type { ModelRow, ParamSpec, ParamValue } from "../../api/runs";
 import type { TrainSet } from "../../api/trainsets";
 import Sep from "../Sep";
+import { count } from "../ru";
 import Banner from "../Banner";
 import { useBackdrop } from "../useBackdrop";
 
@@ -234,11 +235,14 @@ export default function StartRunModal({
       >
         <h1>Обучение на наборе «{set.name}»</h1>
         <p className="mag-sub">
-          {set.counts
-            ? `${ru(set.counts.samples)} образцов — обучение ${ru(
-                set.counts.train
-              )} <Sep /> проверка ${ru(set.counts.val)}`
-            : "набор готов"}
+          {set.counts ? (
+            <>
+              {count(set.counts.samples, "образец", "образца", "образцов")} — обучение {ru(set.counts.train)} <Sep />{" "}
+              проверка {ru(set.counts.val)}
+            </>
+          ) : (
+            "набор готов"
+          )}
           {set.counts?.background ? ` — фона ${ru(set.counts.background)}` : ""}
         </p>
 

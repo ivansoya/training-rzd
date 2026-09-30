@@ -112,7 +112,10 @@ export default function TrainSetWizard() {
   // потом соберётся набор. Разойтись они не могут по построению.
   useEffect(() => {
     if (!code || !datasets.length || !picked.length) {
+      // Сбрасываем и «считаю»: прежний запрос отменён (`alive`), и его
+      // finally отметку уже не снимет — она висела бы вечно.
       setPreview(null);
+      setComputing(false);
       return;
     }
     let alive = true;
@@ -195,6 +198,11 @@ export default function TrainSetWizard() {
 
   const needsEmbeddings =
     mode === "smart" && (preview?.embeddings?.missing ?? 0) > 0;
+  // Строка «кадры с тагами» без единого тага не берёт ничего («0 → 0»), а
+  // выглядит как настроенная.
+  const tagless = feeds.some((r) =>
+    r.bindings.some((b) => b.feed === "tags" && b.tag_ids.length === 0)
+  );
 
   // Почему нельзя идти дальше — строкой под кнопкой. Подсказку при наведении
   // не найдут, а вопрос возникнет сразу.
@@ -205,6 +213,8 @@ export default function TrainSetWizard() {
       ? "Выберите хотя бы один класс."
       : step === 1 && needsEmbeddings
       ? "Сперва посчитаем признаки кадров — без них группы не построить."
+      : step >= 2 && tagless
+      ? "В строке «кадры с тагами» не выбран ни один таг — выберите или уберите строку."
       : step === 3 && !name.trim()
       ? "У набора должно быть имя."
       : step === 3 && !preview?.train

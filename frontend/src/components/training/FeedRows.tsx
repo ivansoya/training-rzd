@@ -1,6 +1,7 @@
 import type { GraphSummary } from "../../api/aug";
 import type { FeedBinding, FeedPreview, FeedRow } from "../../api/trainsets";
 import type { Tag } from "../../api/tags";
+import { mult } from "../aug/counts";
 
 /**
  * Строки сборки одной половины набора: «что кладём → через что пропускаем».
@@ -132,7 +133,7 @@ export default function FeedRows({
                         .filter((g) => g.version_id)
                         .map((g) => (
                           <option key={g.id} value={g.version_id as string}>
-                            {g.name} · в{g.version} · ×{g.stats?.multiplier ?? 1}
+                            {g.name} — в{g.version} — {mult(g.stats?.multiplier ?? 1)}
                           </option>
                         ))}
                     </select>

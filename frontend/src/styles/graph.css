@@ -851,6 +851,11 @@
 @media (max-width: 1250px) {
   .g-pv-body { grid-template-columns: minmax(0, 1fr) 300px; }
 }
+/* На узком доке сцене в две колонки оставалось 24 px: подпись ломалась по
+   слову и ложилась на кнопки боковины. Сцена над боковиной, док листается. */
+@media (max-width: 900px) {
+  .g-pv-body { grid-template-columns: minmax(0, 1fr); grid-auto-rows: minmax(160px, auto); overflow-y: auto; }
+}
 
 /* =========================== СПИСОК ГРАФОВ =========================== */
 .g-graphs {
