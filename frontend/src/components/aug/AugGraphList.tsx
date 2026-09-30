@@ -95,24 +95,21 @@ export default function AugGraphList() {
         <div className="mag-pass-id">
           <h1 className="mag-h1">{archived ? "Аугментации — архив" : "Аугментации"}</h1>
         </div>
-        <button
-          className="mag-ghost mag-ghost-inline"
-          type="button"
-          aria-pressed={archived}
-          onClick={() => setArchived((v) => !v)}
-        >
-          {archived ? "← Мои графы" : "Архив"}
-        </button>
-        {!archived && (
+        <div className="mag-pass-export g-lib-acts">
           <button
-            className="mag-btn mag-pass-export"
+            className="mag-ghost"
             type="button"
-            disabled={making}
-            onClick={create}
+            aria-pressed={archived}
+            onClick={() => setArchived((v) => !v)}
           >
-            Новый граф
+            {archived ? "← Мои графы" : "Архив"}
           </button>
-        )}
+          {!archived && (
+            <button className="mag-btn" type="button" disabled={making} onClick={create}>
+              Новый граф
+            </button>
+          )}
+        </div>
       </div>
 
       {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
@@ -147,6 +144,8 @@ export default function AugGraphList() {
                 {g.used_by_sets > 0 && (
                   <span>в наборах: {g.used_by_sets}</span>
                 )}
+              </span>
+              <span className="g-graph-acts">
                 <button
                   type="button"
                   className="g-graph-del g-graph-shelf"

@@ -901,6 +901,12 @@
 }
 .g-graph-del:hover:not(:disabled) { color: var(--red); border-color: var(--rule); }
 .g-graph-del + .g-graph-del { margin-left: 0; }
+.g-lib-acts { display: flex; gap: 8px; align-items: center; }
+.g-lib-acts > * { white-space: nowrap; }
+/* Кнопки карточки — своей строкой справа: в подвале рядом с числами они
+   ломали строку по словам. */
+.g-graph-acts { display: flex; justify-content: flex-end; gap: 4px; margin: 4px -8px -6px 0; }
+.g-graph-acts .g-graph-del { margin-left: 0; }
 .g-graph-shelf:hover:not(:disabled) { color: var(--ink); }
 .g-graph-card .desc {
   color: var(--dim);
@@ -911,12 +917,16 @@
   margin-top: auto;
   padding-top: 8px;
   display: flex;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 8px 14px;
   align-items: baseline;
   font: 400 11px/1 var(--mono);
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
+/* Подписи подвала не переносятся по словам: «4 / узла» в две строки
+   читалось как два числа. Не влезли — уходят на следующую строку целиком. */
+.g-graph-card .foot > * { white-space: nowrap; }
 .g-graph-card .foot b {
   color: var(--red);
   font-weight: 700;
