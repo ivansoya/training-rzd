@@ -32,8 +32,12 @@ export function useGallery<T>(
   const [error, setError] = useState<string | null>(null);
   const ticket = useRef(0);
 
+  // `after` — что сделать вместе с приходом страницы, в том же обновлении.
+  // Просмотрщик кадра, перейдя через край страницы, ставит свой номер именно
+  // так: выставленный отдельно после `await`, он на один кадр показал бы
+  // чужой снимок — новую страницу со старым номером.
   const fetchPage = useCallback(
-    async (next: number, append: boolean) => {
+    async (next: number, append: boolean, after?: () => void) => {
       const mine = ++ticket.current;
       setLoading(true);
       try {
@@ -42,6 +46,7 @@ export function useGallery<T>(
         setMatched(got.matched);
         setItems((prev) => (append ? [...prev, ...got.items] : got.items));
         setPage(next);
+        after?.();
         setError(null);
       } catch (e) {
         if (mine === ticket.current) setError((e as Error).message);
@@ -64,8 +69,8 @@ export function useGallery<T>(
   }, [loading, items.length, matched, page, fetchPage]);
 
   const goto = useCallback(
-    (next: number) => {
-      fetchPage(next, false);
+    (next: number, after?: () => void) => {
+      fetchPage(next, false, after);
     },
     [fetchPage]
   );
@@ -75,6 +80,10 @@ export function useGallery<T>(
     setItems,
     matched,
     page,
+    /** Сквозной номер первого загруженного кадра: в ленте всё с нуля, в
+     *  страницах — с начала текущей. Просмотрщик пишет «11 881 из 11 885»,
+     *  а не номер внутри страницы. */
+    base: mode === "pages" ? page * PAGE : 0,
     pages: Math.max(1, Math.ceil(matched / PAGE)),
     loading,
     error,

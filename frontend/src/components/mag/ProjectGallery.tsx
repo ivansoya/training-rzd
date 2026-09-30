@@ -16,7 +16,7 @@ import ClassPicker from "./ClassPicker";
 import Gallery from "./Gallery";
 import type { GalleryItem } from "./Gallery";
 import ImageViewer from "./ImageViewer";
-import { useGallery } from "./useGallery";
+import { PAGE, useGallery } from "./useGallery";
 import type { Mode } from "./useGallery";
 
 const SPLITS = [
@@ -197,6 +197,12 @@ export default function ProjectGallery({
           onIndex={setViewer}
           onClose={() => setViewer(null)}
           onNeedMore={mode === "feed" ? g.more : undefined}
+          base={g.base}
+          onEdge={
+            mode === "pages"
+              ? (dir) => g.goto(g.page + dir, () => setViewer(dir > 0 ? 0 : PAGE - 1))
+              : undefined
+          }
           onSaved={(updated) =>
             g.setItems((prev) =>
               prev.map((x) => (x.id === updated.id ? { ...x, ...updated } : x))

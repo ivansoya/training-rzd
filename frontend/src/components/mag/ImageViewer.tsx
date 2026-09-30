@@ -6,6 +6,7 @@ import type { CanvasHandle, CanvasShape } from "./BoxCanvas";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
 import Sep from "../Sep";
+import { ru } from "../ru";
 
 const GREY = { name: "", color: "#9aa4ae" };
 
@@ -31,11 +32,18 @@ export default function ImageViewer({
   onIndex,
   onClose,
   onNeedMore,
+  onEdge,
+  base = 0,
   onSaved,
 }: {
   images: DatasetImage[];
   index: number;
   total: number;
+  /** Сквозной номер `images[0]` во всей выборке — для счётчика. */
+  base?: number;
+  /** Шаг за край загруженного — листать страницу галереи. Без него, в ленте,
+   *  край догружается через `onNeedMore`. */
+  onEdge?: (dir: 1 | -1) => void;
   classes: LabelClass[];
   canEdit: boolean;
   onIndex: (i: number) => void;
@@ -149,16 +157,28 @@ export default function ImageViewer({
     [selected, editing]
   );
 
+  // В режиме страниц загружена одна страница, но листает человек всю выборку:
+  // шаг за её край перелистывает страницу галереи. До 01.10.2026 на последней
+  // плитке стрелка просто молчала, и казалось, что кадры кончились.
+  const canPrev = index > 0 || (!!onEdge && base > 0);
+  const canNext =
+    index < images.length - 1 || (!!onEdge && base + index < total - 1);
+
   const go = useCallback(
-    async (delta: number) => {
+    async (delta: 1 | -1) => {
       const next = index + delta;
-      if (next < 0 || next >= images.length) return;
+      if (next < 0 || next >= images.length) {
+        if (!(delta < 0 ? canPrev : canNext) || !onEdge) return;
+        await flush();
+        onEdge(delta);
+        return;
+      }
       await flush();
       onIndex(next);
       // У края загруженного окна просим следующую порцию заранее.
       if (onNeedMore && next >= images.length - 3) onNeedMore();
     },
-    [index, images.length, onIndex, onNeedMore, flush]
+    [index, images.length, onIndex, onNeedMore, onEdge, canPrev, canNext, flush]
   );
 
   useEffect(() => {
@@ -232,7 +252,7 @@ export default function ImageViewer({
       <div className="mag-v-head">
         <b>{image.file_name}</b>
         <span className="mag-v-cnt">
-          {index + 1} из {total.toLocaleString("ru-RU")}
+          {ru(base + index + 1)} из {ru(total)}
         </span>
         <span className="mag-v-sp" />
         {error && <span className="mag-ed-err">{error}</span>}
@@ -303,7 +323,7 @@ export default function ImageViewer({
       <div className="mag-v-body">
         <div className="mag-v-stage">
           <button className="mag-v-arrow l" type="button" onClick={() => go(-1)}
-            disabled={index === 0} aria-label="Предыдущий кадр">
+            disabled={!canPrev} aria-label="Предыдущий кадр">
             ‹
           </button>
 
@@ -330,7 +350,7 @@ export default function ImageViewer({
           />
 
           <button className="mag-v-arrow r" type="button" onClick={() => go(1)}
-            disabled={index >= images.length - 1} aria-label="Следующий кадр">
+            disabled={!canNext} aria-label="Следующий кадр">
             ›
           </button>
         </div>
