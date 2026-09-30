@@ -160,3 +160,27 @@ def test_accept_invitation_twice(api, db, project):
     assert codes == [200, 200], codes
     members = api.get(f"{BASE_URL}/api/projects/{code}").json()["members"]
     assert len(members) == 2
+
+
+# ------------------------------------------------------ длины и пароль --- #
+
+def test_long_fields_are_400_not_500(api):
+    res = api.post(f"{BASE_URL}/api/projects", json={"name": tag() + "я" * 250})
+    assert res.status_code == 400, res.text
+    assert "длиннее 255" in res.json()["errors"]["name"]
+
+    login = tag()
+    res = requests.post(f"{BASE_URL}/api/auth/register", json={
+        "email": "a" * 250 + "@example.test", "login": login,
+        "display_name": "Я" * 129, "password": "Test-Passw0rd",
+    })
+    assert res.status_code == 400, res.text
+    errors = res.json()["errors"]
+    assert "длиннее 128" in errors["display_name"] and "длиннее 255" in errors["email"]
+
+
+def test_new_password_must_differ(api):
+    res = api.post(f"{BASE_URL}/api/auth/password",
+                   json={"current": "Test-Passw0rd", "new": "Test-Passw0rd"})
+    assert res.status_code == 400, res.text
+    assert "совпадает" in res.json()["error"]

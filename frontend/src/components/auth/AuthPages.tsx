@@ -47,6 +47,7 @@ function Field({
   error,
   autoComplete,
   placeholder,
+  maxLength,
 }: {
   id: string;
   label: string;
@@ -56,6 +57,7 @@ function Field({
   error?: string;
   autoComplete?: string;
   placeholder?: string;
+  maxLength?: number;
 }) {
   return (
     <div className={error ? "mag-field invalid" : "mag-field"}>
@@ -66,6 +68,7 @@ function Field({
         value={value}
         placeholder={placeholder}
         autoComplete={autoComplete}
+        maxLength={maxLength}
         onChange={(e) => onChange(e.target.value)}
       />
       {error && <div className="mag-field-error">{error}</div>}
@@ -92,6 +95,20 @@ export default function AuthPages({ onSignedIn }: Props) {
   const [regName, setRegName] = useState("");
   const [regPassword, setRegPassword] = useState("");
   const [regPassword2, setRegPassword2] = useState("");
+
+  // Подсветка поля гаснет, как только человек начал его исправлять — как в
+  // «Новом проекте». Раньше ошибка висела до следующей отправки.
+  function edit(setter: (v: string) => void, ...keys: string[]) {
+    return (v: string) => {
+      setter(v);
+      setFieldErrors((prev) => {
+        if (!keys.some((k) => k in prev)) return prev;
+        const next = { ...prev };
+        keys.forEach((k) => delete next[k]);
+        return next;
+      });
+    };
+  }
 
   function switchMode(next: Mode) {
     setMode(next);
@@ -267,7 +284,8 @@ export default function AuthPages({ onSignedIn }: Props) {
                 label="Почта"
                 type="email"
                 value={regEmail}
-                onChange={setRegEmail}
+                onChange={edit(setRegEmail, "email")}
+                maxLength={255}
                 error={fieldErrors.email}
                 autoComplete="email"
               />
@@ -276,7 +294,8 @@ export default function AuthPages({ onSignedIn }: Props) {
                   id="re-login"
                   label="Логин"
                   value={regLogin}
-                  onChange={setRegLogin}
+                  onChange={edit(setRegLogin, "login")}
+                  maxLength={32}
                   error={fieldErrors.login}
                   autoComplete="username"
                   placeholder="isoya"
@@ -285,7 +304,8 @@ export default function AuthPages({ onSignedIn }: Props) {
                   id="re-name"
                   label="Имя для отображения"
                   value={regName}
-                  onChange={setRegName}
+                  onChange={edit(setRegName, "display_name")}
+                  maxLength={128}
                   error={fieldErrors.display_name}
                   placeholder="Иван Соя"
                 />
@@ -296,7 +316,7 @@ export default function AuthPages({ onSignedIn }: Props) {
                   label="Пароль"
                   type="password"
                   value={regPassword}
-                  onChange={setRegPassword}
+                  onChange={edit(setRegPassword, "password", "password2")}
                   error={fieldErrors.password}
                   autoComplete="new-password"
                 />
@@ -305,7 +325,7 @@ export default function AuthPages({ onSignedIn }: Props) {
                   label="Повторите пароль"
                   type="password"
                   value={regPassword2}
-                  onChange={setRegPassword2}
+                  onChange={edit(setRegPassword2, "password2")}
                   error={fieldErrors.password2}
                   autoComplete="new-password"
                 />

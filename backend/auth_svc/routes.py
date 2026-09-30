@@ -28,6 +28,9 @@ bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 LOGIN_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,31}$")
 MIN_PASSWORD_LEN = 8
+# Длины колонок users: без проверки длинное имя доходило до базы и падало 500.
+EMAIL_MAX = 255
+DISPLAY_NAME_MAX = 128
 CONFIRMATION_TTL = timedelta(hours=24)
 
 ROLE_LABELS = {"admin": "Администратор", "editor": "Редактор", "viewer": "Просмотр"}
@@ -75,10 +78,14 @@ def register():
     errors = {}
     if not EMAIL_RE.match(email):
         errors["email"] = "Укажите корректную почту."
+    elif len(email) > EMAIL_MAX:
+        errors["email"] = f"Почта длиннее {EMAIL_MAX} символов."
     if not LOGIN_RE.match(login):
         errors["login"] = "Логин: 3–32 символа, строчные латинские буквы, цифры, «._-», начинается с буквы или цифры."
     if not display_name:
         errors["display_name"] = "Укажите имя для отображения."
+    elif len(display_name) > DISPLAY_NAME_MAX:
+        errors["display_name"] = f"Имя длиннее {DISPLAY_NAME_MAX} символов."
     if len(password) < MIN_PASSWORD_LEN:
         errors["password"] = f"Пароль не короче {MIN_PASSWORD_LEN} символов."
     if errors:
@@ -239,6 +246,10 @@ def change_password():
             return jsonify(
                 {"error": f"Новый пароль не короче {MIN_PASSWORD_LEN} символов."}
             ), 400
+        # Смена на тот же пароль молча «удавалась» и при этом выкидывала все
+        # остальные сессии — действие без смысла с побочным эффектом.
+        if verify_password(user.password_hash, new):
+            return jsonify({"error": "Новый пароль совпадает с текущим."}), 400
         user.password_hash = hash_password(new)
         # Drop every other session: a password change invalidates old devices.
         for other in db.execute(

@@ -6,7 +6,7 @@ export interface AuthUser {
   email: string;
   login: string;
   display_name: string;
-  // Право на железо: по нему открывается раздел «Железо». Роли в проекте про
+  // Право на железо: по нему раздел «Оборудование» показывает все карты. Роли в проекте про
   // данные, а это про машину, и смешивать их нельзя.
   is_staff: boolean;
   created_at: string;
@@ -232,8 +232,10 @@ export async function getFriends(): Promise<FriendsInfo> {
   return asJson(await fetch("/api/friends"));
 }
 
-export async function addFriend(identity: string): Promise<void> {
-  await asJson(await post("friends", { identity }));
+// `accepted` — встречная заявка: человек уже звал нас, и добавление его в ответ
+// сразу делает друзьями, а не отправляет новую заявку.
+export async function addFriend(identity: string): Promise<{ accepted?: boolean }> {
+  return asJson(await post("friends", { identity }));
 }
 
 export async function acceptFriend(friendshipId: string): Promise<void> {

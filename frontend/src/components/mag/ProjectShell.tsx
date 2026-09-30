@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useOutletContext, useParams } from "react-router-dom";
 import { ApiError, errorText, getProject } from "../../auth/api";
 import { useAuth } from "../auth/AuthGate";
+import { plural, ru } from "../ru";
 import type { ProjectDetail } from "../../auth/api";
 import ExportModal from "./ExportModal";
 import { LiveProvider } from "../../live/LiveProvider";
@@ -107,9 +108,9 @@ export default function ProjectShell() {
           </p>
         </div>
         <div className="mag-pass-nums">
-          <div><b>{stats.images.toLocaleString("ru-RU")}</b><span>изображений</span></div>
-          <div><b>{stats.annotations.toLocaleString("ru-RU")}</b><span>разметок</span></div>
-          <div><b>{stats.classes}</b><span>классов</span></div>
+          <div><b>{ru(stats.images)}</b><span>{plural(stats.images, "изображение", "изображения", "изображений")}</span></div>
+          <div><b>{ru(stats.annotations)}</b><span>{plural(stats.annotations, "разметка", "разметки", "разметок")}</span></div>
+          <div><b>{ru(stats.classes)}</b><span>{plural(stats.classes, "класс", "класса", "классов")}</span></div>
           <div><b>{formatBytes(stats.size_bytes)}</b><span>на сервере</span></div>
         </div>
         {/* Выгрузка — чтение, поэтому доступна и наблюдателю: он и так видит

@@ -7,6 +7,7 @@ import { useEscape } from "./useEscape";
 import Sep from "../Sep";
 import Banner from "../Banner";
 import { useBackdrop } from "../useBackdrop";
+import { useDialog } from "../useDialog";
 
 interface Props {
   onClose: () => void;
@@ -29,6 +30,7 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [nudge, setNudge] = useState(false);
   const nameRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useDialog<HTMLFormElement>();
 
   useEffect(() => {
     getFriends()
@@ -91,6 +93,11 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
   return (
     <div className="mag-backdrop" {...useBackdrop(handleBackdrop)}>
       <form
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="np-title"
+        tabIndex={-1}
         className={
           nudge
             ? "mag-modal mag-modal-2col mag-modal-nudge"
@@ -99,7 +106,7 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
         onSubmit={handleSubmit}
       >
         <div className="mag-modal-left">
-          <h1>Новый проект</h1>
+          <h1 id="np-title">Новый проект</h1>
           <p className="mag-sub">
             Код проекта присвоится автоматически. Датасет загрузим на странице
             проекта.
@@ -112,6 +119,7 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
               type="text"
               ref={nameRef}
               value={name}
+              maxLength={255}
               onChange={(e) => {
                 setName(e.target.value);
                 // Подсветка гаснет, как только человек начал отвечать на неё.
@@ -144,6 +152,7 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
           <div className="mag-field">
             <input
               type="text"
+              aria-label="Поиск по друзьям"
               placeholder="Поиск по друзьям…"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
@@ -155,6 +164,9 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
                 Список друзей пуст — добавьте друзей в кабинете, чтобы звать их
                 в проекты одним кликом.
               </div>
+            )}
+            {friends.length > 0 && visibleFriends.length === 0 && (
+              <div className="mag-empty">Никого не нашлось.</div>
             )}
             {visibleFriends.map((f) => {
               const pick = picks[f.user.id];
@@ -171,6 +183,7 @@ export default function CreateProjectModal({ onClose, onCreated }: Props) {
                     <span>{f.user.login} <Sep /> друг</span>
                   </span>
                   <select
+                    aria-label={`Роль: ${f.user.display_name}`}
                     value={pick?.role || "editor"}
                     disabled={!pick?.checked}
                     onChange={(e) => setPick(f.user.id, { role: e.target.value })}

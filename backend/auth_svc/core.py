@@ -43,6 +43,7 @@ bp = Blueprint("core", __name__, url_prefix="/api")
 CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 CODE_LEN = 20
 ROLES = ("admin", "editor", "viewer")
+PROJECT_NAME_MAX = 255
 
 
 def new_project_code(db) -> str:
@@ -255,6 +256,9 @@ def create_project():
 
     if not name:
         return jsonify({"errors": {"name": "Укажите название проекта."}}), 400
+    # Колонка projects.name — String(255): длиннее падало 500 в базе.
+    if len(name) > PROJECT_NAME_MAX:
+        return jsonify({"errors": {"name": f"Название длиннее {PROJECT_NAME_MAX} символов."}}), 400
 
     with SessionLocal() as db:
         _, user = current_session(db)

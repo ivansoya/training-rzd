@@ -223,6 +223,7 @@ function InviteModal({
   const [role, setRole] = useState("editor");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const ref = useDialog<HTMLFormElement>();
   useEscape(onClose);
 
   async function submit(e: FormEvent) {
@@ -241,8 +242,9 @@ function InviteModal({
 
   return (
     <div className="mag-backdrop">
-      <form className="mag-modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <h1>Пригласить в проект</h1>
+      <form className="mag-modal" ref={ref} role="dialog" aria-modal="true"
+        aria-labelledby="inv-title" tabIndex={-1} onSubmit={submit}>
+        <h1 id="inv-title">Пригласить в проект</h1>
         <p className="mag-sub">
           Приглашение появится у человека на странице «Проекты» — он решит сам.
         </p>
@@ -255,19 +257,21 @@ function InviteModal({
             type="text"
             value={identity}
             placeholder="ivan или ivan@mail.ru"
+            maxLength={255}
             onChange={(e) => setIdentity(e.target.value)}
             autoFocus
           />
         </div>
 
         <div className="mag-field">
-          <label>Роль в проекте</label>
-          <div className="mag-roles">
+          <label id="inv-role">Роль в проекте</label>
+          <div className="mag-roles" role="group" aria-labelledby="inv-role">
             {ROLES.map((r) => (
               <button
                 key={r.value}
                 type="button"
                 className={role === r.value ? "mag-role-pick on" : "mag-role-pick"}
+                aria-pressed={role === r.value}
                 onClick={() => setRole(r.value)}
               >
                 {r.label}

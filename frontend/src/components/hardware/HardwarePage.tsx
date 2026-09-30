@@ -1,4 +1,4 @@
-// Железо: карты, что на них лежит и кто ждёт.
+// Оборудование: карты, что на них лежит и кто ждёт.
 //
 // Не этап конвейера, а то, что лежит под всеми тремя. Свою строку очереди
 // видит каждый — иначе ожидание необъяснимо; весь экран видит только
@@ -8,6 +8,8 @@ import { useCallback, useEffect, useState } from "react";
 import * as api from "../../api/gpu";
 import type { Device, GpuState } from "../../api/gpu";
 import Sep from "../Sep";
+import Banner from "../Banner";
+import { count } from "../ru";
 
 const gb = (mb: number) => `${(mb / 1024).toFixed(1).replace(".", ",")} ГБ`;
 
@@ -153,6 +155,12 @@ function Card({
 export default function HardwarePage() {
   const [state, setState] = useState<GpuState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Ошибка действия (потолки, «Снять») живёт отдельно от ошибки загрузки:
+  // опрос раз в 4 с стирал её раньше, чем её успевали прочесть.
+  const [actionError, setActionError] = useState<string | null>(null);
+  // Отвергнутое сервером значение оставалось в поле (defaultValue не
+  // перечитывается) — после отказа карточка пересоздаётся с серверными числами.
+  const [rev, setRev] = useState(0);
 
   const refresh = useCallback(async () => {
     try {
@@ -169,7 +177,7 @@ export default function HardwarePage() {
     return () => window.clearInterval(timer);
   }, [refresh]);
 
-  if (error) return <div className="mag-content"><div className="mag-error">{error}</div></div>;
+  if (error && !state) return <div className="mag-content"><div className="mag-error">{error}</div></div>;
   if (!state) return <div className="mag-content mag-empty">Смотрю на карты…</div>;
 
   const queue = state.staff ? state.queue.queue : state.queue.mine;
@@ -178,9 +186,13 @@ export default function HardwarePage() {
     <div className="mag-content">
       <div className="mag-pass-strip">
         <div className="mag-pass-id">
-          <h1 className="mag-h1">Железо</h1>
+          <h1 className="mag-h1">Оборудование</h1>
         </div>
       </div>
+
+      {actionError && (
+        <Banner className="mag-error" onClose={() => setActionError(null)}>{actionError}</Banner>
+      )}
 
       {!state.staff && (
         <div className="t-warn">
@@ -197,25 +209,37 @@ export default function HardwarePage() {
 
       {state.devices.map((d) => (
         <Card
-          key={d.id}
+          key={`${d.id}-${rev}`}
           device={d}
           onLimit={async (data) => {
-            await api.setLimits(d.id, data).catch((e) =>
-              setError((e as Error).message)
-            );
+            try {
+              await api.setLimits(d.id, data);
+              setActionError(null);
+            } catch (e) {
+              setActionError((e as Error).message);
+              setRev((r) => r + 1);
+            }
             refresh();
           }}
         />
       ))}
 
       <div className="t-side" style={{ marginTop: 14 }}>
+        {/* Число — к своему списку: у не-обслуживания список только свой, а
+            счётчик брался общий, и выходило «3 задачи» над «Никто не ждёт». */}
         <div className="g-label">
-          Очередь <Sep /> {state.queue.total}{" "}
-          {state.queue.total === 1 ? "задача" : "задач"}
+          {state.staff ? "Очередь" : "Ваши задачи в очереди"} <Sep />{" "}
+          {count(queue.length, "задача", "задачи", "задач")}
         </div>
+        {!state.staff && state.queue.total > queue.length && (
+          <p className="mag-sub" style={{ marginTop: 8 }}>
+            Всего в очереди {count(state.queue.total, "задача", "задачи", "задач")}
+            {queue.length > 0 ? `, перед вашей — ${state.queue.ahead}` : ""}.
+          </p>
+        )}
         {queue.length === 0 ? (
           <p className="mag-sub" style={{ marginTop: 8 }}>
-            Никто не ждёт.
+            {state.staff ? "Никто не ждёт." : "Ваших задач в очереди нет."}
           </p>
         ) : (
           <div className="t-rows" style={{ marginTop: 10 }}>
@@ -255,7 +279,7 @@ export default function HardwarePage() {
                       className="mag-ghost"
                       onClick={async () => {
                         await api.killLease(row.id).catch((e) =>
-                          setError((e as Error).message)
+                          setActionError((e as Error).message)
                         );
                         refresh();
                       }}

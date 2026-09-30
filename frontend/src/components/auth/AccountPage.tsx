@@ -70,8 +70,8 @@ export default function AccountPage() {
     setFriendMsg(null);
     setFriendErr(null);
     try {
-      await addFriend(friendIdentity);
-      setFriendMsg("Заявка отправлена.");
+      const { accepted } = await addFriend(friendIdentity);
+      setFriendMsg(accepted ? "Вы теперь друзья." : "Заявка отправлена.");
       setFriendIdentity("");
       await reload();
     } catch (err) {
@@ -109,6 +109,15 @@ export default function AccountPage() {
     }
   }
 
+  // Закрытая форма не хранит набранные пароли: «Отмена» и успех чистят поля.
+  function closePass() {
+    setShowPass(false);
+    setPassError(null);
+    setCurrent("");
+    setNext("");
+    setNext2("");
+  }
+
   async function handlePassword(e: FormEvent) {
     e.preventDefault();
     setPassError(null);
@@ -117,14 +126,15 @@ export default function AccountPage() {
       setPassError("Пароли не совпадают.");
       return;
     }
+    if (next === current) {
+      setPassError("Новый пароль совпадает с текущим.");
+      return;
+    }
     setBusy(true);
     try {
       await changePassword(current, next);
       setPassOk(true);
-      setCurrent("");
-      setNext("");
-      setNext2("");
-      setShowPass(false);
+      closePass();
     } catch (err) {
       setPassError((err as Error).message);
     } finally {
@@ -134,6 +144,9 @@ export default function AccountPage() {
 
   return (
     <div className="mag-content">
+      <div className="mag-content-head">
+        <h1>Кабинет</h1>
+      </div>
       <div className="mag-cab">
         <div className="mag-card">
           <h3>{user.display_name}</h3>
@@ -172,6 +185,7 @@ export default function AccountPage() {
                   id="pw-cur"
                   type="password"
                   value={current}
+                  autoFocus
                   autoComplete="current-password"
                   onChange={(e) => setCurrent(e.target.value)}
                 />
@@ -202,7 +216,7 @@ export default function AccountPage() {
               <button
                 className="mag-ghost"
                 type="button"
-                onClick={() => setShowPass(false)}
+                onClick={closePass}
               >
                 Отмена
               </button>
@@ -256,6 +270,8 @@ export default function AccountPage() {
               <input
                 type="text"
                 placeholder="Логин или почта"
+                aria-label="Логин или почта друга"
+                maxLength={255}
                 value={friendIdentity}
                 onChange={(e) => setFriendIdentity(e.target.value)}
               />

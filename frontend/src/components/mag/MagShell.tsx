@@ -55,7 +55,9 @@ export default function MagShell({ children }: { children: ReactNode }) {
           <span className="workspace-caption">Инструменты</span>
           <NavLink to="/augment" className={nav}><span className="workspace-code">ГР</span>Мои графы</NavLink>
           <NavLink to="/agents" className={nav}><span className="workspace-code">АГ</span>Мои агенты</NavLink>
-          {me.user.is_staff && <NavLink to="/hardware" className={nav}><span className="workspace-code">GPU</span>Оборудование</NavLink>}
+          {/* Всем, а не только обслуживанию: свою очередь к картам видит каждый,
+              и без пункта меню ожидание обучения было нечем объяснить. */}
+          <NavLink to="/hardware" className={nav}><span className="workspace-code">GPU</span>Оборудование</NavLink>
           <NavLink to="/account" className={nav}><span className="workspace-code">ЛК</span>Кабинет</NavLink>
         </nav>
         <div className="workspace-sidebar-foot">Данные <Sep /> разметка <Sep /> обучение</div>

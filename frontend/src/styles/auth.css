@@ -787,10 +787,12 @@
   border-right: 1px solid var(--mag-line);
 }
 
+/* Тот же размер, что у `.mag-modal > h1` в workspace.css: заголовок двухколоночной
+   модалки лежит глубже и под то правило не попадает. */
 .mag-modal-left h1 {
-  font-size: 16px;
-  margin: 0 0 2px;
-  font-weight: 750;
+  font-size: 24px;
+  margin: 0 0 8px;
+  font-weight: 650;
 }
 
 .mag-modal-right {
