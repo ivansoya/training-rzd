@@ -11,13 +11,16 @@
 // узла ничего не пересчитывает. Перемещение карточек по холсту — тоже: в
 // запрос уходит граф без координат.
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import * as api from "../../api/agents";
 import type { AgentPreview as Result, PreviewDet } from "../../api/agents";
 import type { GraphDoc } from "../../api/aug";
-import { TITLES, type AgentNodeData } from "./AgentNodes";
+import Sep from "../Sep";
+import { nodeTitle, unfinished } from "./agentDoc";
+import type { AgentNodeData } from "./AgentNodes";
 
 const WAIT_MS = 300;
+const LABEL_PX = 12;
 const MIN_H = 220;
 const DEFAULT_H = 380;
 
@@ -79,6 +82,15 @@ export default function AgentPreview({
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const grab = useRef<{ y: number; h: number } | null>(null);
+  // Ширина кадра на экране — от неё размер подписей в пикселях кадра.
+  const [shownW, setShownW] = useState(0);
+  const watch = useRef<ResizeObserver | null>(null);
+  const frameRef = useCallback((el: HTMLDivElement | null) => {
+    watch.current?.disconnect();
+    if (!el) return;
+    watch.current = new ResizeObserver(([e]) => setShownW(e.contentRect.width));
+    watch.current.observe(el);
+  }, []);
   const step = useRef<"same" | "next" | "prev" | "random">(pick.image ? "same" : "random");
   const [nudge, setNudge] = useState(0);
 
@@ -95,9 +107,12 @@ export default function AgentPreview({
     [doc]
   );
   const key = JSON.stringify(graph);
+  // Заведомо неполный граф сервер не зовём: у нового агента каждая правка
+  // давала 400 в консоль и красное «не выбраны веса» до первого провода.
+  const missing = unfinished(graph);
 
   useEffect(() => {
-    if (!open || !pick.project) return;
+    if (!open || !pick.project || missing) return;
     const ctrl = new AbortController();
     const timer = window.setTimeout(async () => {
       setBusy(true);
@@ -128,7 +143,7 @@ export default function AgentPreview({
     };
     // `graph` меняется вместе с `key`; ключ — чтобы не дёргать сервер на тот же граф.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, open, pick.project, nudge, graphId]);
+  }, [key, open, pick.project, nudge, graphId, missing]);
 
   const go = (s: "next" | "prev" | "random") => {
     step.current = s;
@@ -143,6 +158,7 @@ export default function AgentPreview({
   const outIds = new Set(trace?.out.map((d) => d.id));
   const dropped = trace?.in.filter((d) => !outIds.has(d.id)) ?? [];
   const color = (cls: string) => colorOf.get(cls)?.color ?? "#9aa0a6";
+  const k = result && shownW ? result.image.width / shownW : 1;
 
   return (
     <section className="g-pv ag-pv" style={open ? { height } : undefined}>
@@ -172,7 +188,7 @@ export default function AgentPreview({
         </button>
         {open && (
           <>
-            <b>{TITLES[kind]}</b>
+            <b>{nodeTitle(kind, target?.data.params)}</b>
             <span className="g-pv-vsep" />
             <label className="g-pv-pick">
               <span>Проект</span>
@@ -195,7 +211,7 @@ export default function AgentPreview({
             {trace && kind === "output" && <span className="mono">в разметку {trace.out.length}</span>}
             {result && (
               <span className="g-pv-lbl mono">
-                {result.device === "cuda" ? "карта" : "процессор"} · {result.ms} мс
+                {result.device === "cuda" ? "карта" : "процессор"} <Sep /> {result.ms} мс
               </span>
             )}
           </>
@@ -204,18 +220,21 @@ export default function AgentPreview({
       {open && (
         <div className="ag-pv-body">
           {result?.note && <div className="g-pv-warn block">На процессоре — {result.note}</div>}
-          {problem && <div className="g-pv-warn block">{problem}</div>}
+          {problem && !missing && <div className="g-pv-warn block">{problem}</div>}
           <div className="g-pv-stage">
-            {!result ? (
+            {missing ? (
+              <p className="g-pv-empty">{missing}</p>
+            ) : !result ? (
               <p className="g-pv-empty">{busy ? "Считаю кадр…" : problem ? "" : "Выберите проект."}</p>
             ) : (
-              <div className={`ag-pv-frame${busy ? " busy" : ""}`}
+              <div ref={frameRef} className={`ag-pv-frame${busy ? " busy" : ""}`}
                 style={{ "--ar": `${result.image.width} / ${result.image.height}` } as CSSProperties}>
                 <img src={`/api/images/${result.image.id}/file`} alt={result.image.file_name} />
                 <svg viewBox={`0 0 ${result.image.width} ${result.image.height}`} preserveAspectRatio="xMidYMid meet"
-                  // Кадр идёт в полном размере, и подпись в его пикселях: ~1 % ширины
-                  // — это около 13 px на экране при кадре, вписанном в док.
-                  style={{ fontSize: Math.max(12, result.image.width / 95) }}>
+                  // Подпись живёт в пикселях кадра, а читать её с экрана: 12 px
+                  // экрана — это 12 × (ширина кадра / ширина на экране) пикселей
+                  // кадра. Прежняя доля ширины кадра давала ~6 px на экране.
+                  style={{ fontSize: LABEL_PX * k, ["--ag-halo" as string]: `${3 * k}px` } as CSSProperties}>
                   {human && result.human.map((s, i) =>
                     s.type === "polygon"
                       ? (s.geometry.parts ?? []).map((p, k) => <polygon key={`${i}.${k}`} points={ring(p)} className="ag-pv-human" />)
@@ -228,7 +247,7 @@ export default function AgentPreview({
                       mark={kind === "sam" ? (d.parts ? `SAM ${pct(d.sam ?? 0)}` : "SAM не справился") : undefined} />
                   ))}
                 </svg>
-                <div className="ag-pv-name mono">{result.image.file_name} · {result.image.width} × {result.image.height}</div>
+                <div className="ag-pv-name mono">{result.image.file_name} <Sep /> {result.image.width} × {result.image.height}</div>
               </div>
             )}
           </div>

@@ -1,6 +1,8 @@
 // Документ агента на стороне браузера: классы агента и их цвета.
-// Проверка формы — на сервере (common/agent_graph.py) при сохранении версии:
-// здесь только то, что нужно показывать, пока тянут провода.
+// Проверка формы — на сервере (common/agent_graph.py) при сохранении версии.
+// Здесь — только то, что нужно показывать, пока тянут провода, и заведомая
+// неполнота (`unfinished`): превью не зовёт сервер ради ответа «не выбраны
+// веса», который известен и так.
 
 import type { GraphNode } from "../../api/aug";
 
@@ -137,4 +139,104 @@ export function agentClasses(
     }
   }
   return [...found.values()].map((c, i) => ({ ...c, color: PALETTE[i % PALETTE.length] }));
+}
+
+export const TITLES: Record<string, string> = {
+  frame: "Кадр",
+  net: "Сеть",
+  text: "Сеть по тексту",
+  merge: "Объединение",
+  nms: "NMS",
+  filter: "Фильтр",
+  sam: "Уточнение SAM",
+  output: "Выход",
+};
+
+/** Имя узла с подписью: две «Сети» на холсте иначе не различить — ни на
+ *  карточке, ни в ошибке сервера (agent_graph.title говорит так же). */
+export function nodeTitle(type: string, params: Record<string, unknown> = {}) {
+  const label = String(params.label ?? "").trim();
+  return label ? `${TITLES[type] ?? type} — ${label}` : TITLES[type] ?? type;
+}
+
+// Как agent_graph.inputs_count.
+export const mergeInputs = (params: Record<string, unknown>) =>
+  Math.max(2, Math.min(8, Number(params.inputs ?? 2) || 2));
+
+/** Входные гнёзда узла — как agent_graph.ports. */
+export const inputsOf = (type: string, params: Record<string, unknown> = {}) =>
+  type === "frame" ? [] : type === "merge" ? Array.from({ length: mergeInputs(params) }, (_, i) => `i${i}`) : ["in"];
+
+/** «Входов» у «Объединения» стало меньше — провода в исчезнувшие гнёзда
+ *  снимаются. Раньше провод оставался в i2 без гнезда на карточке, и узнавали
+ *  о нём только по ошибке «Сохранить версию». */
+export function keepWired<E extends { target: string; targetHandle?: string | null }>(
+  edges: E[],
+  node: string,
+  params: Record<string, unknown>
+): E[] {
+  const ports = new Set(inputsOf("merge", params));
+  return edges.filter((e) => e.target !== node || ports.has(e.targetHandle ?? ""));
+}
+
+/** Пределы числовых параметров — те же, что LIMITS в common/agent_graph.py:
+ *  сервер по ним отвергает версию и превью, форма по ним не даёт выйти за край
+ *  и подсвечивает старое значение, стоящее вне их. */
+export interface Limit {
+  lo: number;
+  hi: number;
+  int?: boolean;
+}
+const CONF: Limit = { lo: 0, hi: 1 };
+const IMGSZ: Limit = { lo: 320, hi: 4096, int: true };
+const PASSES = { overlap: { lo: 0, hi: 0.9 }, glue: { lo: 0.05, hi: 1 } };
+const CONTOUR = { polygon_points: { lo: 8, hi: 200, int: true }, min_area: { lo: 0, hi: 1_000_000, int: true } };
+export const LIMITS: Record<string, Record<string, Limit>> = {
+  net: { conf: CONF, imgsz: IMGSZ, ...PASSES },
+  text: { conf: CONF, imgsz: IMGSZ, ...PASSES, ...CONTOUR },
+  merge: { inputs: { lo: 2, hi: 8, int: true } },
+  nms: { iou: { lo: 0.05, hi: 1 } },
+  filter: { min_side: { lo: 0, hi: 100_000, int: true }, max_side: { lo: 1, hi: 100_000, int: true } },
+  sam: { score_min: CONF, ...CONTOUR },
+};
+
+/** Значение вне пределов (пустое — умолчание, это не ошибка). */
+export function offLimits(limit: Limit | undefined, v: unknown) {
+  if (!limit || v === null || v === undefined || v === "") return false;
+  const n = typeof v === "number" ? v : Number.NaN;
+  return !(n >= limit.lo && n <= limit.hi) || (Boolean(limit.int) && !Number.isInteger(n));
+}
+
+/** Чего заведомо не хватает графу, чтобы сервер его посчитал: первая такая
+ *  вещь словами, или null. Проверяет только то, в чём сервер точно откажет, —
+ *  всё остальное (веса на полке, наборы, SAM 3) по-прежнему решает он. */
+export function unfinished(doc: {
+  nodes: { id: string; type: string; params?: Record<string, unknown> }[];
+  edges: { from: string; to: string; in: string }[];
+}): string | null {
+  if (!doc.nodes.some((n) => n.type === "net" || n.type === "text")) return "Добавьте «Сеть» или «Сеть по тексту».";
+  for (const n of doc.nodes) {
+    const p = n.params ?? {};
+    const name = `«${nodeTitle(n.type, p)}»`;
+    if (n.type === "net" && !p.weights) return `${name}: выберите веса.`;
+    if (inputsOf(n.type, p).some((port) => !doc.edges.some((e) => e.to === n.id && e.in === port)))
+      return `${name}: подключите вход.`;
+    if (n.type !== "output" && !doc.edges.some((e) => e.from === n.id)) return `${name}: подключите выход.`;
+    const bad = Object.entries(LIMITS[n.type] ?? {}).find(([k, lim]) => offLimits(lim, p[k]));
+    if (bad) return `${name}: исправьте число в поле.`;
+  }
+  if (!agentClasses(doc.nodes, () => []).length) return "Включите хотя бы один класс у сети.";
+  return null;
+}
+
+/** Таблица классов «Сети» для новых весов. Номера прежней к ним не относятся,
+ *  но класс, чьё имя в весах совпало с прежним, забирает свою строку — имя в
+ *  агенте и галочку: переобученные веса с теми же классами не должны стирать
+ *  настройку. Прочие — имя из весов, включены. */
+export function carryClasses(oldNames: string[], oldRows: NetRow[], names: string[]): NetRow[] {
+  const kept = new Map<string, NetRow>();
+  oldNames.forEach((n, i) => {
+    if (oldRows[i] && !kept.has(n)) kept.set(n, oldRows[i]);
+  });
+  return names.map((n) => kept.get(n) ?? { agent: n, on: true });
 }

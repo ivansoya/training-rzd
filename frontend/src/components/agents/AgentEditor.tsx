@@ -7,7 +7,9 @@
 // «Классы агента» показывает, откуда пришёл каждый.
 //
 // Проверку формы делает сервер при сохранении версии (common/agent_graph.py) —
-// второй проверяющий в браузере разошёлся бы с ним на первой правке.
+// второй проверяющий в браузере разошёлся бы с ним на первой правке. Пределы
+// чисел — исключение: форма берёт их из той же таблицы (agentDoc.LIMITS) и не
+// даёт за них выйти, иначе ошибка всплывала только на «Сохранить версию».
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
@@ -30,13 +32,14 @@ import * as api from "../../api/agents";
 import type { GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
 import { edgeKey, findCycle } from "../aug/counts";
 import Banner from "../Banner";
+import { NumInput } from "../NumInput";
 import Sep from "../Sep";
 import {
-  CYRILLIC, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODEL, TEXT_MODELS, YOLOE_MB, agentClasses, isExamples,
-  promptsOf, rowTarget, rowsOf, switchTextModel, textConfDefault, textModel, upstream, type FilterRow,
-  type NetRow, type PromptRow,
+  CYRILLIC, LIMITS, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODEL, TEXT_MODELS, TITLES, YOLOE_MB, agentClasses,
+  carryClasses, isExamples, keepWired, mergeInputs, offLimits, promptsOf, rowTarget, rowsOf, switchTextModel, textConfDefault,
+  textModel, upstream, type FilterRow, type Limit, type NetRow, type PromptRow,
 } from "./agentDoc";
-import { TITLES, agentNodeTypes, mergeInputs, type AgentNodeData } from "./AgentNodes";
+import { agentNodeTypes, type AgentNodeData } from "./AgentNodes";
 import AgentPreview from "./AgentPreview";
 import { ExampleStrip, ExamplesDialog } from "./ExamplesDialog";
 import WeightsPicker from "./WeightsPicker";
@@ -260,16 +263,24 @@ function Editor() {
             },
           };
         }
+        if (d.kind === "filter") {
+          const up = upstream(n.id, draft.edges);
+          return { ...n, data: { ...d, incoming: agentClasses(draft.nodes.filter((x) => up.has(x.id)), namesOf).map((c) => c.name) } };
+        }
         if (d.kind !== "net") return n;
         const w = weightsOf(d.params);
         const rows = rowsOf({ params: d.params });
+        const caption = w ? w.name.replace(/\.pt$/i, "") : undefined;
         return {
           ...n,
           data: {
             ...d,
-            caption: w ? w.name.replace(/\.pt$/i, "") : undefined,
+            caption,
             why: w
               ? [
+                  // С подписью имя весов уходит из заголовка сюда: без него две
+                  // сети на одних весах не отличить от сетей на разных.
+                  d.params.label ? caption : null,
                   `${w.task}, ${num(d.params.imgsz, w.imgsz ?? 640)}, conf ${String(num(d.params.conf, 0.25)).replace(".", ",")}`,
                   d.params.tiles ? "плитки" : null,
                   tta(d.params) > 1 ? `TTA ×${tta(d.params)}` : null,
@@ -279,7 +290,7 @@ function Editor() {
           },
         };
       }),
-    [nodes, weightsOf, sam3Ready]
+    [nodes, weightsOf, sam3Ready, draft, namesOf]
   );
 
   const canConnect = useCallback(
@@ -315,15 +326,17 @@ function Editor() {
   );
 
   const patchParams = useCallback(
-    (id: string, next: Record<string, unknown>) =>
+    (id: string, next: Record<string, unknown>) => {
       setNodes((old) =>
         old.map((n) =>
           n.id === id
             ? { ...n, data: { ...(n.data as AgentNodeData), params: { ...(n.data as AgentNodeData).params, ...next } } }
             : n
         )
-      ),
-    [setNodes]
+      );
+      if ("inputs" in next) setEdges((old) => keepWired(old, id, next));
+    },
+    [setNodes, setEdges]
   );
 
   const addNode = useCallback(
@@ -340,10 +353,17 @@ function Editor() {
         filter: { classes: [], min_side: null, max_side: null },
         sam: { ...SAM_DEFAULTS },
       }[kind];
-      setNodes((old) => [
-        ...old.map((n) => ({ ...n, selected: false })),
-        { id, type: kind, position: point, selected: true, data: { kind, params } as AgentNodeData },
-      ]);
+      setNodes((old) => {
+        // Два щелчка по палитре подряд клали узлы ровно друг на друга, и
+        // второй казался пропавшим. Занято — сдвигаем лесенкой.
+        let spot = point;
+        while (old.some((n) => Math.abs(n.position.x - spot.x) < 24 && Math.abs(n.position.y - spot.y) < 24))
+          spot = { x: spot.x + 36, y: spot.y + 36 };
+        return [
+          ...old.map((n) => ({ ...n, selected: false })),
+          { id, type: kind, position: spot, selected: true, data: { kind, params } as AgentNodeData },
+        ];
+      });
       setSelected(id);
       setTab("node");
     },
@@ -551,13 +571,15 @@ function Editor() {
           onClose={() => setPicking(null)}
           onPick={(w) => {
             setShelf((old) => (old.some((x) => x.id === w.id) ? old : [w, ...old]));
-            // Новые веса — новая таблица классов: номера прежней к ним не
-            // относятся. Имя класса агента по умолчанию — имя из весов.
-            patchParams(pickedFor.id, {
-              weights: w.id,
-              classes: w.names.map((name) => ({ agent: name, on: true })),
-              imgsz: w.imgsz ?? undefined,
-            });
+            const p = (pickedFor.data as AgentNodeData).params;
+            // Те же веса — таблицу не трогаем: «Выбрать» на текущей строке
+            // молча сбрасывал переименования и выключенные классы.
+            if (p.weights !== w.id)
+              patchParams(pickedFor.id, {
+                weights: w.id,
+                classes: carryClasses(weightsOf(p)?.names ?? [], rowsOf({ params: p }), w.names),
+                imgsz: w.imgsz ?? undefined,
+              });
             setPicking(null);
           }}
         />
@@ -618,33 +640,40 @@ function NodePanel({
   const p = d.params;
   const model = textModel(p);
   const missing = d.kind === "text" && model === "sam3" && sam3Ready === false;
+  // Пределы — из той же таблицы, что у сервера. Значение вне их (сохранённое
+  // до пределов) подсвечено: поле держит его, пока человек не исправит.
+  const limit = (key: string): Limit | undefined => LIMITS[d.kind]?.[key];
+  const numInput = (key: string, value: number | undefined, step: number, empty?: boolean) => {
+    const lim = limit(key);
+    const bad = offLimits(lim, p[key]);
+    return (
+      <NumInput
+        id={`ag-${key}`}
+        value={value}
+        min={lim?.lo}
+        max={lim?.hi}
+        step={step}
+        integer={lim?.int}
+        allowEmpty={empty}
+        placeholder={empty ? "—" : undefined}
+        disabled={readOnly}
+        aria-invalid={bad || undefined}
+        title={bad && lim ? `от ${decimal(lim.lo)} до ${decimal(lim.hi)}` : undefined}
+        // Пустое необязательное поле — «без предела», поэтому null, а не умолчание.
+        onValue={(v) => onChange({ [key]: v ?? null })}
+      />
+    );
+  };
   const field = (key: string, label: string, value: number, step: number) => (
     <div className="mag-field ag-num">
       <label htmlFor={`ag-${key}`}>{label}</label>
-      <input
-        id={`ag-${key}`}
-        type="number"
-        step={step}
-        value={value}
-        disabled={readOnly}
-        onChange={(e) => onChange({ [key]: e.target.value === "" ? undefined : Number(e.target.value) })}
-      />
+      {numInput(key, value, step)}
     </div>
   );
-  // Пустое поле — «без предела», поэтому null, а не значение по умолчанию.
   const optional = (key: string, label: string, value: unknown) => (
     <div className="mag-field ag-num">
       <label htmlFor={`ag-${key}`}>{label}</label>
-      <input
-        id={`ag-${key}`}
-        type="number"
-        min={0}
-        step={1}
-        placeholder="—"
-        value={typeof value === "number" ? value : ""}
-        disabled={readOnly}
-        onChange={(e) => onChange({ [key]: e.target.value === "" ? null : Number(e.target.value) })}
-      />
+      {numInput(key, typeof value === "number" ? value : undefined, 1, true)}
     </div>
   );
 
@@ -675,6 +704,13 @@ function NodePanel({
   return (
     <div className="ag-node">
       <div className="g-insp-name">{TITLES[d.kind]}</div>
+      {d.kind !== "frame" && d.kind !== "output" && (
+        <div className="mag-field">
+          <label htmlFor="ag-label">Подпись</label>
+          <input id="ag-label" value={String(p.label ?? "")} disabled={readOnly} maxLength={60}
+            onChange={(e) => onChange({ label: e.target.value || undefined })} />
+        </div>
+      )}
 
       {d.kind === "net" && (
         <>
@@ -884,7 +920,9 @@ function PromptTable({
   const [filter, setFilter] = useState<"all" | "on" | "off">("all");
   const [prompt, setPrompt] = useState("");
   const [agent, setAgent] = useState("");
-  const [open, setOpen] = useState<Set<number>>(new Set());
+  // Раскрытые полосы образцов — по id набора, а не по номеру строки: номер
+  // съезжал при удалении строки выше, и раскрытой оказывалась соседняя.
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState(false);
   const set = (i: number, patch: Partial<PromptRow>) => onRows(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
   const q = query.trim().toLowerCase();
@@ -900,10 +938,10 @@ function PromptTable({
     setPrompt("");
     setAgent("");
   };
-  const toggle = (i: number) =>
+  const toggle = (id: string) =>
     setOpen((old) => {
       const next = new Set(old);
-      if (next.has(i)) next.delete(i); else next.add(i);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
 
@@ -970,9 +1008,9 @@ function PromptTable({
               />
               <span className={`ag-kind${ex ? " ex" : ""}`} title={ex ? "образцы" : "слово"}>{ex ? "обр" : "сл"}</span>
               {ex ? (
-                <button type="button" className="ag-src-btn" aria-expanded={open.has(r.i)} onClick={() => toggle(r.i)}>
-                  <b>{exSet?.class_name ?? "набор"} {open.has(r.i) ? "▾" : "▸"}</b>
-                  <span className="mono">{exSet ? `${exSet.items.length} обр. · ${exSet.project}` : "загружаю…"}</span>
+                <button type="button" className="ag-src-btn" aria-expanded={open.has(r.set ?? "")} onClick={() => toggle(r.set ?? "")}>
+                  <b>{exSet?.class_name ?? "набор"} {open.has(r.set ?? "") ? "▾" : "▸"}</b>
+                  <span className="mono">{exSet ? <>{exSet.items.length} обр. <Sep /> {exSet.project}</> : "загружаю…"}</span>
                 </button>
               ) : (
                 <input
@@ -999,17 +1037,18 @@ function PromptTable({
                   </b>
                 )}
               </span>
-              <input
+              <NumInput
                 className="ag-pr-thr mono"
-                type="number"
                 min={0}
                 max={1}
                 step={0.05}
+                allowEmpty
                 disabled={readOnly}
                 placeholder={String(nodeConf).replace(".", ",")}
-                value={typeof r.conf === "number" ? r.conf : ""}
+                value={typeof r.conf === "number" ? r.conf : undefined}
                 aria-label="Порог строки"
-                onChange={(e) => set(r.i, { conf: e.target.value === "" ? null : Number(e.target.value) })}
+                aria-invalid={offLimits({ lo: 0, hi: 1 }, r.conf) || undefined}
+                onValue={(v) => set(r.i, { conf: v ?? null })}
               />
               {!readOnly ? (
                 <button type="button" className="ag-x" aria-label={`Удалить строку ${label(r)}`}
@@ -1018,12 +1057,15 @@ function PromptTable({
                 </button>
               ) : <span />}
               {cyr && <span className="ag-pr-warn">Слово по-русски — модель понимает английский</span>}
-              {ex && open.has(r.i) && exSet && (
+              {ex && open.has(r.set ?? "") && exSet && (
                 <ExampleStrip
                   set={exSet}
                   readOnly={readOnly}
                   onSet={(next) => {
                     onSet(next);
+                    // Набор неизменяем: правка рождает новый id — раскрытой
+                    // остаётся та же строка.
+                    setOpen((old) => new Set([...old].map((id) => (id === exSet.id ? next.id : id))));
                     set(r.i, { set: next.id });
                   }}
                 />
@@ -1035,7 +1077,7 @@ function PromptTable({
       {!readOnly && (
         <>
           <form className="ag-pr-add" onSubmit={(e) => { e.preventDefault(); add(); }}>
-            <input className="ag-search mono" placeholder="слово, например shovel" value={prompt}
+            <input className="ag-search mono" placeholder="слово" value={prompt}
               aria-label="Новое слово" onChange={(e) => setPrompt(e.target.value)} />
             <input className="ag-search" placeholder="класс агента" value={agent} list="ag-agent-classes"
               aria-label="Класс агента для нового слова" onChange={(e) => setAgent(e.target.value)} />
@@ -1056,7 +1098,7 @@ function PromptTable({
             onSet(made);
             // Образцы шкалой ниже слов: у YOLOE лучший F1 по ним при 0,05–0,15.
             onRows([...rows, { kind: "examples", set: made.id, agent: agentName, on: true, conf: 0.1 }]);
-            setOpen((old) => new Set(old).add(rows.length));
+            setOpen((old) => new Set(old).add(made.id));
             setDialog(false);
           }}
         />
@@ -1219,9 +1261,10 @@ function FilterClasses({
               <i className="ag-dot" style={{ background: colorOf.get(r.cls)?.color ?? "var(--hair)" }} />
               <span className="ag-wn" title={r.cls}>{r.cls}</span>
             </span>
-            <input className="ag-conf mono" type="number" min={0} max={1} step={0.05} value={r.conf}
+            <NumInput className="ag-conf mono" min={0} max={1} step={0.05} value={r.conf}
               disabled={readOnly || !r.on} aria-label={`Порог для ${r.cls}`}
-              onChange={(e) => set(r.cls, { conf: Number(e.target.value) || 0 })} />
+              aria-invalid={offLimits({ lo: 0, hi: 1 }, r.conf) || undefined}
+              onValue={(v) => set(r.cls, { conf: v ?? 0 })} />
           </div>
         ))}
       </div>
