@@ -151,6 +151,13 @@ def main():
         model = YOLO(spec)
 
         hot = {"last": 0.0, "epoch_started": time.time()}
+        # Эпохи кончились — дальше идёт итоговая проверка ultralytics. Она
+        # зовёт тот же `on_fit_epoch_end` с номером N+1, и раньше это
+        # становилось ещё одной «эпохой»: лишняя точка на графике, «эпоха 3
+        # из 2» и полоса в полтора раза шире. Флаг ставим по `trainer.stop`:
+        # он поднимается перед обработчиком последней настоящей эпохи — и
+        # по сроку, и по ранней остановке.
+        final = {"on": False}
 
         def loss_items(trn):
             out = {}
@@ -199,7 +206,7 @@ def main():
                 raise KeyboardInterrupt("Обучение сняли.")
 
         def val_start(validator):
-            run.phase = "val"
+            run.phase = "final" if final["on"] else "val"
             run.val_batch = 0
             try:
                 run.val_total = len(validator.dataloader)
@@ -210,9 +217,13 @@ def main():
 
         def val_batch_end(validator):
             run.val_batch = int(run.val_batch or 0) + 1
-            hot_write(phase="val")
+            hot_write(phase=run.phase)
 
         def fit_epoch_end(trn):
+            if final["on"]:
+                # Итоговая проверка ultralytics: её числа — лучшие веса, а
+                # не эпоха. Свою итоговую проверку мы делаем ниже сами.
+                return
             epoch = int(getattr(trn, "epoch", 0)) + 1
             raw = getattr(trn, "metrics", None) or {}
             metrics = {
@@ -220,6 +231,17 @@ def main():
                 if isinstance(v, (int, float))
             }
             metrics.update(loss_items(trn))
+            # Пригодность ultralytics выкидывает из словаря метрик и держит
+            # отдельно — по ней выбран best.pt. Кладём в строку эпохи: без
+            # неё «лучшая эпоха» не находилась ни у одного рана.
+            try:
+                fit = float(getattr(trn, "fitness", None))
+            except (TypeError, ValueError):
+                fit = None
+            if fit is None or fit != fit:  # нет или NaN
+                fit = metrics_lib.fitness_of(metrics, run.task)
+            if fit is not None:
+                metrics["fitness"] = fit
             row = db.get(TrainEpoch, (run.id, epoch))
             seconds = time.time() - hot["epoch_started"]
             if row is None:
@@ -247,6 +269,8 @@ def main():
             live.notify(db, "run", run.id, run.project_id, e=epoch)
             if run.gpu_lease_id:
                 gpu.beat(db, run.gpu_lease_id, run.peak_vram_mb)
+            if getattr(trn, "stop", False):
+                final["on"] = True
 
         model.add_callback("on_train_epoch_start", epoch_start)
         model.add_callback("on_train_batch_end", batch_end)
@@ -300,20 +324,21 @@ def main():
         # Итоговая проверка: метрики по классам, матрица ошибок и кривые.
         # `model.validator` после обучения пуст — раньше отсюда и брали, и
         # поэтому матрица всегда была пустой.
-        run.phase = "val"
+        run.phase = "final"
         run.val_batch = 0
         db.commit()
-        final = _final_metrics(model, data_yaml, device, overrides, out_dir)
-        if final.get("error"):
-            run.per_class = {"rows": [], "totals": None, "error": final["error"]}
+        final["on"] = True
+        got = _final_metrics(model, data_yaml, device, overrides, out_dir)
+        if got.get("error"):
+            run.per_class = {"rows": [], "totals": None, "error": got["error"]}
         else:
-            run.per_class = final.get("per_class")
-            run.confusion = final.get("confusion")
-            run.curves = final.get("curves")
-            if final.get("summary"):
+            run.per_class = got.get("per_class")
+            run.confusion = got.get("confusion")
+            run.curves = got.get("curves")
+            if got.get("summary"):
                 # Итоги проверки поверх, но не вместо: сколько эпох прошло и
                 # была ли ранняя остановка — знает только обучение.
-                run.summary = dict(run.summary or {}, **final["summary"])
+                run.summary = dict(run.summary or {}, **got["summary"])
 
         run.peak_vram_mb = _peak_mb(device) or run.peak_vram_mb
         run.status = "done"

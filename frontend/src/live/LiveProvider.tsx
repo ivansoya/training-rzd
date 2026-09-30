@@ -32,7 +32,7 @@ export interface LiveEvent {
 type Listener = (event: LiveEvent) => void;
 
 interface LiveApi {
-  // Подписаться на события одного рода. Возвращает отписку.
+  // Подписаться на события одного рода («*» — на все). Возвращает отписку.
   on: (kind: string, fn: Listener) => () => void;
   mode: "live" | "poll" | "off";
   note: string | null;
@@ -83,12 +83,16 @@ export function LiveProvider({
     };
   }, []);
 
+  // Каждый слушатель — не больше одного раза на событие. Подписка на «*»
+  // слышит всё; «пересчитай всё» (k = "*") слышат все. Раньше на «*»
+  // подписчики «*» звались дважды: по своему роду и в общем обходе.
   const emit = useCallback((event: LiveEvent) => {
-    listeners.current.get(event.k)?.forEach((fn) => fn(event));
-    // «Пересчитай всё» приходит без вида сущности: слушают его все.
-    if (event.k === "*") {
-      listeners.current.forEach((set) => set.forEach((fn) => fn(event)));
-    }
+    const hit = new Set<Listener>();
+    const kinds =
+      event.k === "*" ? [...listeners.current.values()]
+        : [listeners.current.get(event.k), listeners.current.get("*")];
+    kinds.forEach((set) => set?.forEach((fn) => hit.add(fn)));
+    hit.forEach((fn) => fn(event));
   }, []);
 
   useEffect(() => {

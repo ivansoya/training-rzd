@@ -52,8 +52,9 @@ export interface Run {
   device: string;
   epochs: number;
   current_epoch: number;
-  /** «weights» — качает предобученные веса на том перед первой эпохой. */
-  phase: "train" | "val" | "weights" | null;
+  /** «weights» — качает предобученные веса на том перед первой эпохой;
+   *  «final» — итоговая проверка лучших весов после всех эпох. */
+  phase: "train" | "val" | "weights" | "final" | null;
   current_batch: number;
   total_batches: number | null;
   val_batch: number;

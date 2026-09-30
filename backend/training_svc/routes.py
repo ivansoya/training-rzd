@@ -17,7 +17,7 @@ from common.models import (
     GpuDevice, TrainEpoch, TrainRun, TrainSet, TrainSetFeed, User, utcnow,
 )
 from common.storage import load_json
-from training_svc import trainer
+from training_svc import metrics as metrics_lib, trainer
 
 bp = Blueprint("training", __name__)
 
@@ -157,9 +157,38 @@ def kill_lease(lease_id):
 # --------------------------------------------------------------------------- #
 # Обучения
 # --------------------------------------------------------------------------- #
-def _run_view(db, run, *, full=False):
+def _best_epochs(db, runs):
+    """Лучшая эпоха для ранов, у которых она не записана.
+
+    Бегун до 01.10.2026 искал в метриках эпохи ключ ``fitness``, а
+    ultralytics его оттуда выкидывает, — лучшая эпоха не записалась ни у
+    одного рана. Досчитываем при чтении по строкам эпох, данные не трогаем.
+    Одним запросом на весь список, а не по запросу на ран.
+    """
+    need = [r for r in runs if r.best_epoch is None]
+    if not need:
+        return {}
+    rows = {}
+    for row in db.execute(
+        select(TrainEpoch.run_id, TrainEpoch.epoch, TrainEpoch.metrics)
+        .where(TrainEpoch.run_id.in_([r.id for r in need]))
+    ):
+        rows.setdefault(row.run_id, []).append((row.epoch, row.metrics))
+    out = {}
+    for run in need:
+        done = (run.summary or {}).get("epochs_done")
+        last = min(int(done), run.epochs) if done else run.epochs
+        out[run.id] = metrics_lib.best_of(rows.get(run.id, []), run.task, last)
+    return out
+
+
+def _run_view(db, run, *, full=False, best=None):
     # Набор могли удалить: обучение живёт дальше, с весами и метриками.
     tset = db.get(TrainSet, run.set_id) if run.set_id else None
+    best_epoch, best_fitness = (run.best_epoch, run.best_fitness)
+    if best_epoch is None:
+        best_epoch, best_fitness = (best or _best_epochs(db, [run])).get(
+            run.id, (None, None))
     author = db.get(User, run.created_by) if run.created_by else None
     got = {
         "id": str(run.id),
@@ -177,8 +206,8 @@ def _run_view(db, run, *, full=False):
         "val_batch": run.val_batch,
         "val_total": run.val_total,
         "batch_metrics": run.batch_metrics,
-        "best_epoch": run.best_epoch,
-        "best_fitness": run.best_fitness,
+        "best_epoch": best_epoch,
+        "best_fitness": best_fitness,
         "peak_vram_mb": run.peak_vram_mb,
         "has_weights": bool(run.weights_path),
         "weights_bytes": run.weights_bytes,
@@ -211,8 +240,9 @@ def list_runs(code):
             select(TrainRun).where(TrainRun.project_id == project.id)
             .order_by(TrainRun.created_at.desc())
         ).scalars().all()
+        best = _best_epochs(db, rows)
         return jsonify({
-            "runs": [_run_view(db, r) for r in rows],
+            "runs": [_run_view(db, r, best=best) for r in rows],
             "role": role_in(db, user, project),
         })
     finally:
@@ -344,6 +374,14 @@ def stop_run(code, run_id):
         if run.status in ("done", "error", "stopped"):
             return jsonify({"ok": True, "status": run.status})
         run.cancel_requested = True
+        # Просьбу читает `watch_run` живого воркера. Если исполнитель молчит
+        # дольше аренды (воркер перезапускали), читать её некому — ран
+        # закрывается сразу, а не висит «останавливается» вечно.
+        now = utcnow()
+        if trainer.orphan_verdict(run.status, True, trainer.beat_of(run),
+                                  now, gpu.LEASE_SECONDS):
+            trainer.close_orphan(db, run, "stopped", now)
+            return jsonify({"ok": True, "status": run.status})
         # Снимаем сразу всё, под чем ещё нет процесса обучения. Просьбу об
         # остановке читает только `watch_run`, а он появляется вместе с
         # процессом: пока `pid` пуст, флаг некому увидеть, и кнопка молчала бы

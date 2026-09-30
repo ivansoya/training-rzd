@@ -389,3 +389,50 @@ def confusion_enabled():
         yield
     finally:
         ConfusionMatrix.plot = original
+
+
+# --------------------------------------------------------------------------- #
+# Осиротевшие обучения
+# --------------------------------------------------------------------------- #
+LIVE_STATES = ("preparing", "running", "stopping")
+ORPHAN_TEXT = "Прерван перезапуском воркера обучения."
+
+
+def orphan_verdict(status, cancel_requested, beat_at, now, stale_seconds):
+    """Во что перевести ран, которого, похоже, никто не ведёт, — или None.
+
+    Признак жизни — ``lease_until`` рана: его раз в пятнадцать секунд
+    продлевает ``watch_run`` вместе с бронью карты, и горячий путь бегуна.
+    Воркер перезапустили — процесс обучения умер вместе с контейнером,
+    продлевать некому, и ран навсегда оставался «идёт», а «Остановить»
+    отвечала 200 и ничего не меняла. Срок — аренда брони: раньше неё живой
+    ран молчать не может, позже — уже чужая бронь истекла бы.
+
+    Просили остановить — «остановлено», иначе — ошибка с причиной.
+    """
+    if status not in LIVE_STATES:
+        return None
+    if beat_at is not None and (now - beat_at).total_seconds() < stale_seconds:
+        return None
+    return "stopped" if (cancel_requested or status == "stopping") else "error"
+
+
+def beat_of(run):
+    """Когда ран последний раз подавал признак жизни. До первого пульса —
+    время старта или постановки: ран, взятый секунду назад, не сирота."""
+    return run.lease_until or run.started_at or run.created_at
+
+
+def close_orphan(db, run, verdict, now):
+    """Закрыть ран без исполнителя: состояние, причина, бронь, событие."""
+    from common import gpu, live
+
+    run.status = verdict
+    if verdict == "error":
+        run.error = ORPHAN_TEXT
+    run.phase = None
+    run.finished_at = now
+    db.commit()
+    if run.gpu_lease_id:
+        gpu.cancel(db, run.gpu_lease_id, ORPHAN_TEXT)
+    live.notify(db, "run", run.id, run.project_id, s=verdict)

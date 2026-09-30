@@ -7,6 +7,8 @@
 import { useId, useState } from "react";
 import type { ClassMetric, CurveSeries, EpochRow, PerClass } from "../../api/runs";
 import Sep from "../Sep";
+import { count } from "../ru";
+import { epochX } from "./runMath";
 
 const AREA = { x0: 44, y0: 16, x1: 596, y1: 196 };
 
@@ -14,10 +16,7 @@ function scaleY(v: number) {
   return AREA.y1 - Math.max(0, Math.min(1, v)) * (AREA.y1 - AREA.y0);
 }
 
-function scaleX(epoch: number, total: number) {
-  const span = Math.max(1, total);
-  return AREA.x0 + ((epoch - 1) / span) * (AREA.x1 - AREA.x0);
-}
+const scaleX = (epoch: number, total: number) => epochX(epoch, total, AREA.x0, AREA.x1);
 
 // Показываем всё, что меряется по эпохам, а не одну mAP. «Модель стала лучше»
 // — это четыре разных вопроса: находит ли (полнота), не выдумывает ли
@@ -61,9 +60,13 @@ function lastOf(epochs: EpochRow[], key: string): number | null {
 export function MetricChart({
   epochs,
   total,
+  running,
 }: {
   epochs: EpochRow[];
   total: number;
+  /** Идёт ли обучение: метка «сейчас» — только у идущего. У остановленного
+   *  на полпути она врала бы, что оно ещё продолжается. */
+  running: boolean;
 }) {
   const id = useId();
   const present = LINES.filter((l) => epochs.some((e) => pick(e, l.key) !== null));
@@ -127,16 +130,20 @@ export function MetricChart({
           <text x={AREA.x0} y={AREA.y1 + 20}>
             0
           </text>
-          <text x={(AREA.x0 + AREA.x1) / 2} y={AREA.y1 + 20}>
-            {Math.round(total / 2)}
-          </text>
+          {total > 1 && (
+            <text x={scaleX(Math.round(total / 2), total)} y={AREA.y1 + 20}>
+              {Math.round(total / 2)}
+            </text>
+          )}
+          {/* Числа — ровно над своими эпохами; слово «эпох» уже в заголовке,
+              а приклеенное к последнему числу сдвигало его с отметки. */}
           <text x={AREA.x1} y={AREA.y1 + 20}>
-            {total} эпох
+            {total}
           </text>
         </g>
 
         {/* Докуда дошли: пустая часть графика честно говорит, что рано судить. */}
-        {last && last.epoch < total && (
+        {running && last && last.epoch < total && (
           <>
             <line
               x1={nowX}
@@ -324,7 +331,7 @@ export function ClassMetrics({ data }: { data: PerClass }) {
         {data.totals && (
           <span style={{ marginLeft: "auto", color: "var(--faint)", fontSize: 11.5 }}>
             измерено {data.totals.measured} из {data.totals.classes} <Sep />{" "}
-            {data.totals.instances.toLocaleString("ru-RU")} объектов
+            {count(data.totals.instances, "объект", "объекта", "объектов")}
           </span>
         )}
       </div>

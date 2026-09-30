@@ -189,3 +189,46 @@ def from_validator(validator):
     except Exception:  # noqa: BLE001
         got["summary"] = None
     return got
+
+
+# --------------------------------------------------------------------------- #
+# Лучшая эпоха
+# --------------------------------------------------------------------------- #
+def fitness_of(metrics, task="detect"):
+    """Пригодность эпохи — так, как её считает ultralytics при выборе best.pt.
+
+    В установленной 8.4 это mAP50-95 по рамкам (веса [0, 0, 0, 1] в
+    ``Metric.fitness``; старое «0,1·mAP50 + 0,9·mAP50-95» — это 8.0–8.3), а у
+    сегментации — сумма mAP50-95 масок и рамок (``SegmentMetrics.fitness``).
+    Своя формула, а не чтение ultralytics: у ранов, учившихся до этой правки,
+    ключа ``fitness`` в метриках эпох нет — ultralytics выкидывает его из
+    словаря, — и лучшую эпоху им досчитываем по той же формуле.
+    """
+    box = (metrics or {}).get("metrics/mAP50-95(B)")
+    if not isinstance(box, (int, float)):
+        return None
+    fit = float(box)
+    if task == "segment":
+        mask = metrics.get("metrics/mAP50-95(M)")
+        if isinstance(mask, (int, float)):
+            fit += float(mask)
+    return fit
+
+
+def best_of(rows, task="detect", last=None):
+    """(эпоха, пригодность) лучшей из ``rows`` — пар (эпоха, метрики).
+
+    ``last`` — сколько эпох было на самом деле: строка итоговой проверки
+    (эпоха N+1) — это лучшие веса, проверенные ещё раз, а не эпоха, и лучшей
+    она вышла бы всегда. Равные — за ранней, как у ultralytics (строгое «>»).
+    """
+    best = (None, None)
+    for epoch, metrics in sorted(rows, key=lambda r: r[0]):
+        if last is not None and epoch > last:
+            continue
+        fit = (metrics or {}).get("fitness")
+        if not isinstance(fit, (int, float)):
+            fit = fitness_of(metrics, task)
+        if fit is not None and (best[1] is None or fit > best[1]):
+            best = (epoch, float(fit))
+    return best

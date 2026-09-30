@@ -65,10 +65,36 @@ def discover_loop():
         _stop.wait(DISCOVER_EVERY)
 
 
+def reap_orphans(db, fresh_start=False):
+    """Закрыть обучения, которые никто не ведёт.
+
+    Процесс обучения живёт внутри контейнера воркера и умирает вместе с ним
+    при перезапуске; ран оставался «идёт» навсегда. На старте свои раны
+    (``worker_id`` — это имя контейнера) закрываются сразу: вести их этому
+    процессу нечем. Чужие и все прочие — по тишине дольше аренды брони.
+    """
+    now = utcnow()
+    rows = db.execute(
+        select(TrainRun).where(TrainRun.status.in_(trainer.LIVE_STATES))
+    ).scalars().all()
+    closed = 0
+    for run in rows:
+        stale = 0 if fresh_start and run.worker_id == me() else gpu.LEASE_SECONDS
+        verdict = trainer.orphan_verdict(
+            run.status, run.cancel_requested, trainer.beat_of(run), now, stale
+        )
+        if verdict is not None:
+            log.warning("ран %s без исполнителя (%s) — %s", run.id, run.status, verdict)
+            trainer.close_orphan(db, run, verdict, now)
+            closed += 1
+    return closed
+
+
 def reaper():
     while not _stop.is_set():
         db = SessionLocal()
         try:
+            reap_orphans(db)
             freed = gpu.reap(db)
             if freed:
                 log.info("вернул памяти по просроченным броням: %s", freed)
@@ -415,6 +441,13 @@ def prep_loop():
 def main():
     wait_for_db()
     config.ensure_dirs()
+    db = SessionLocal()
+    try:
+        reap_orphans(db, fresh_start=True)
+    except Exception:
+        log.exception("не удалось закрыть осиротевшие обучения")
+    finally:
+        db.close()
 
     def bye(*_):
         log.info("остановка")

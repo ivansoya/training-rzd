@@ -12,6 +12,7 @@ import type { Run } from "../../api/runs";
 import type { TrainSet } from "../../api/trainsets";
 import { useLive } from "../../live/LiveProvider";
 import StartRunModal from "./StartRunModal";
+import { progress, stageText } from "./runMath";
 import Sep from "../Sep";
 import Banner from "../Banner";
 
@@ -54,8 +55,12 @@ export default function TrainingHome() {
   const [search, setSearch] = useSearchParams();
   const tab = search.get("tab") === "runs" ? "runs" : "sets";
 
-  const [sets, setSets] = useState<TrainSet[]>([]);
-  const [runs, setRuns] = useState<Run[]>([]);
+  // null — ответа ещё нет. С пустым массивом до ответа на полсекунды
+  // мелькало «Обучающих наборов пока нет» у проекта с десятком наборов.
+  const [sets, setSets] = useState<TrainSet[] | null>(null);
+  const [runs, setRuns] = useState<Run[] | null>(null);
+  // Набор, который сейчас удаляется по щелчку: двойной щелчок слал два DELETE.
+  const [removing, setRemoving] = useState<string | null>(null);
   const [role, setRole] = useState("viewer");
   const [error, setError] = useState<string | null>(null);
   const [starting, setStarting] = useState<TrainSet | null>(null);
@@ -80,16 +85,18 @@ export default function TrainingHome() {
     refresh();
   }, [refresh]);
 
-  useLive("run", refresh);
-  useLive("prep", refresh);
-  useLive("*", refresh);
+  // Одна подписка на всё: «пересчитай всё» раньше будило и её, и подписки
+  // на обучения и сборки — четыре одинаковых запроса на одно событие.
+  useLive("*", (event) => {
+    if (["run", "prep", "*"].includes(event.k)) refresh();
+  });
 
   // Пока что-то собирается или учится, страница обновляется сама даже без
   // живой связи: сборка не шлёт события так часто, как обучение.
   useEffect(() => {
     const busy =
-      sets.some((s) => ["building", "queued", "deleting"].includes(s.status)) ||
-      runs.some((r) => !["done", "error", "stopped"].includes(r.status));
+      (sets ?? []).some((s) => ["building", "queued", "deleting"].includes(s.status)) ||
+      (runs ?? []).some((r) => !["done", "error", "stopped"].includes(r.status));
     if (!busy) return;
     const timer = window.setInterval(refresh, 2500);
     return () => window.clearInterval(timer);
@@ -105,14 +112,14 @@ export default function TrainingHome() {
           className={`t-tab${tab === "sets" ? " on" : ""}`}
           onClick={() => setSearch({})}
         >
-          Наборы <b>{sets.length}</b>
+          Наборы <b>{sets?.length ?? "—"}</b>
         </button>
         <button
           type="button"
           className={`t-tab${tab === "runs" ? " on" : ""}`}
           onClick={() => setSearch({ tab: "runs" })}
         >
-          Обучения <b>{runs.length}</b>
+          Обучения <b>{runs?.length ?? "—"}</b>
         </button>
         {canEdit && (
           <Link
@@ -127,7 +134,7 @@ export default function TrainingHome() {
 
       {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
-      {tab === "sets" &&
+      {tab === "sets" && sets &&
         (sets.length === 0 ? (
           <div className="mag-empty-big">
             <b>Обучающих наборов пока нет.</b>
@@ -164,8 +171,13 @@ export default function TrainingHome() {
                           образцов <b>{ru(s.counts.samples)}</b><Sep /> обучение{" "}
                           <b>{ru(s.counts.train)}</b><Sep /> проверка{" "}
                           <b>{ru(s.counts.val)}</b><Sep />{" "}
-                          {s.kind === "polygon" ? "сегментация" : "рамки"} <Sep />{" "}
-                          <b>{bytes(s.size_bytes)}</b>
+                          {s.kind === "polygon" ? "сегментация" : "рамки"}
+                          {/* «0 Б» у набора целиком из ссылок читался как
+                              «пустой»: место он не занимает, но кадры в нём
+                              есть. Ноль не пишем, ссылки подписаны. */}
+                          {s.size_bytes > 0 && (
+                            <><Sep /> занимает <b>{bytes(s.size_bytes)}</b></>
+                          )}
                           {s.hardlinked_bytes > 0 && (
                             <><Sep /> ссылками {bytes(s.hardlinked_bytes)}</>
                           )}
@@ -220,8 +232,9 @@ export default function TrainingHome() {
                       <button
                         type="button"
                         className="mag-ghost"
+                        disabled={removing !== null}
                         onClick={async () => {
-                          if (!code) return;
+                          if (!code || removing) return;
                           if (
                             !confirm(
                               `Удалить набор «${s.name}»? Файлы уйдут с диска.` +
@@ -229,10 +242,12 @@ export default function TrainingHome() {
                             )
                           )
                             return;
+                          setRemoving(s.id);
                           await setsApi.deleteSet(code, s.id).catch((e) =>
                             setError((e as Error).message)
                           );
-                          refresh();
+                          await refresh();
+                          setRemoving(null);
                         }}
                       >
                         {s.status === "error" && s.error?.startsWith("Удалить не вышло")
@@ -247,7 +262,7 @@ export default function TrainingHome() {
           </div>
         ))}
 
-      {tab === "runs" &&
+      {tab === "runs" && runs &&
         (runs.length === 0 ? (
           <div className="mag-empty-big">
             <b>Обучений пока не было.</b>
@@ -257,7 +272,7 @@ export default function TrainingHome() {
           <div className="t-rows">
             {runs.map((r) => {
               const [look, label] = RUN_LOOK[r.status] ?? ["idle", r.status];
-              const busy = ["running", "preparing"].includes(r.status);
+              const busy = ["running", "preparing", "stopping"].includes(r.status);
               return (
                 <Link
                   className="t-row"
@@ -270,17 +285,17 @@ export default function TrainingHome() {
                       <span className={`t-pill ${look}`}>
                         <i />
                         {label}
-                        {busy && ` — эпоха ${r.current_epoch} из ${r.epochs}`}
+                        {busy && ` — ${stageText(r)}`}
                       </span>
                     </div>
                     <div className="meta">
                       {r.base_model} <Sep /> {r.device} <Sep />{" "}
                       {r.set ? `набор «${r.set.name}»` : "набор удалён"}
                       {r.author ? ` — ${r.author}` : ""}
-                      {r.best_fitness !== null && (
+                      {r.best_epoch !== null && (
                         <>
                           {" "}
-<Sep /> лучшая эпоха <b>{r.best_epoch}</b>
+                          <Sep /> лучшая эпоха <b>{r.best_epoch}</b>
                         </>
                       )}
                     </div>
@@ -294,7 +309,7 @@ export default function TrainingHome() {
                         <i
                           className="done"
                           style={{
-                            width: `${(r.current_epoch / Math.max(1, r.epochs)) * 100}%`,
+                            width: `${progress(r) * 100}%`,
                           }}
                         />
                       </div>

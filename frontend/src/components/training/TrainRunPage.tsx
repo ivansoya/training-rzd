@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import * as runsApi from "../../api/runs";
 import type { EpochRow, Run } from "../../api/runs";
+import { isFinalCheck, left, progress, stageText, trainedEpochs } from "./runMath";
 import { useLive } from "../../live/LiveProvider";
 import { ClassMetrics, ConfusionMatrix, CurveChart, LossChart, MetricChart } from "./Charts";
 import Sep from "../Sep";
@@ -63,8 +64,18 @@ function paramText(key: string, value: unknown): string {
   if (key === "augment_mode") return AUG_MODE[String(value)] ?? String(value);
   if (typeof value === "boolean") return value ? "да" : "нет";
   if (key === "patience" && value === 0) return "не останавливать";
+  if (typeof value === "number") return value.toLocaleString("ru-RU", { maximumFractionDigits: 6 });
   return String(value);
 }
+
+// Порядок строк настроек — порядок подписей выше: основное, остановка,
+// оптимизация, аугментации. Сервер отдаёт словарь как придётся, и основное
+// перемешивалось с аугментациями.
+const PARAM_ORDER = Object.keys(PARAM_LABEL);
+const paramRank = (key: string) => {
+  const i = PARAM_ORDER.indexOf(key);
+  return i < 0 ? PARAM_ORDER.length : i;
+};
 
 const LOOK: Record<string, [string, string]> = {
   queued: ["wait", "в очереди"],
@@ -77,24 +88,13 @@ const LOOK: Record<string, [string, string]> = {
   error: ["bad", "ошибка"],
 };
 
-function left(run: Run, epochs: EpochRow[]) {
-  const timed = epochs.filter((e) => e.seconds);
-  if (!timed.length || run.current_epoch >= run.epochs) return null;
-  // Считаем по последним пяти: первая эпоха всегда медленнее остальных, и
-  // среднее по всем врёт в начале сильнее всего.
-  const recent = timed.slice(-5);
-  const per = recent.reduce((a, e) => a + (e.seconds ?? 0), 0) / recent.length;
-  const secs = per * (run.epochs - run.current_epoch);
-  const h = Math.floor(secs / 3600);
-  const m = Math.round((secs % 3600) / 60);
-  return h ? `${h} ч ${m} мин` : `${m} мин`;
-}
-
 export default function TrainRunPage() {
   const { code, runId } = useParams<{ code: string; runId: string }>();
   const [run, setRun] = useState<Run | null>(null);
   const [epochs, setEpochs] = useState<EpochRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     if (!code || !runId) return;
@@ -123,12 +123,22 @@ export default function TrainRunPage() {
     return () => window.clearInterval(timer);
   }, [run, refresh]);
 
-  if (error) return <div className="mag-error">{error}</div>;
+  if (error)
+    return (
+      <div className="mag-empty-big">
+        <b>{error}</b>
+        <Link to={`/projects/${code}/training?tab=runs`} className="mag-btn">
+          ← К обучению
+        </Link>
+      </div>
+    );
   if (!run) return <div className="mag-empty">Загружаем обучение…</div>;
 
   const [look, label] = LOOK[run.status] ?? ["idle", run.status];
   const busy = ["running", "preparing", "stopping"].includes(run.status);
   const eta = left(run, epochs);
+  const shown = trainedEpochs(run, epochs);
+  const final = isFinalCheck(run);
 
   return (
     <div className="t-run">
@@ -141,7 +151,7 @@ export default function TrainRunPage() {
           <span className={`t-pill ${look}`}>
             <i />
             {label}
-            {busy && ` — эпоха ${run.current_epoch} из ${run.epochs}`}
+            {busy && ` — ${stageText(run)}`}
           </span>
         </div>
 
@@ -187,9 +197,9 @@ export default function TrainRunPage() {
                   {ru(run.val_batch)} / {run.val_total ? ru(run.val_total) : "?"} МБ
                 </span>
               </div>
-            ) : run.phase === "val" ? (
+            ) : run.phase === "val" || run.phase === "final" ? (
               <div className="t-barrow">
-                <span className="k">Проверка эпохи</span>
+                <span className="k">{final ? "Итоговая проверка" : "Проверка эпохи"}</span>
                 <div className="bar">
                   <i
                     style={{
@@ -229,28 +239,29 @@ export default function TrainRunPage() {
                 <i
                   className="e"
                   style={{
-                    width: `${(run.current_epoch / Math.max(1, run.epochs)) * 100}%`,
+                    width: `${progress(run) * 100}%`,
                   }}
                 />
               </div>
               <span className="v">
-                {run.current_epoch} / {run.epochs} эпох
+                {Math.min(run.current_epoch, run.epochs)} / {run.epochs} эпох
               </span>
             </div>
           </div>
         )}
 
-        {epochs.length > 0 ? (
+        {shown.length > 0 ? (
           <>
-            <MetricChart epochs={epochs} total={run.epochs} />
-            <LossChart epochs={epochs} total={run.epochs} />
+            <MetricChart epochs={shown} total={run.epochs} running={run.status === "running"} />
+            <LossChart epochs={shown} total={run.epochs} />
           </>
         ) : (
           <div className="t-card">
             <span className="g-label">Качество по эпохам</span>
             <p style={{ color: "var(--faint)", fontSize: 12.5, marginTop: 8 }}>
-              Первая эпоха ещё не закончилась. График появится, когда будет что
-              на нём рисовать.
+              {["done", "error", "stopped"].includes(run.status)
+                ? "Ни одна эпоха не закончилась — графика нет."
+                : "Первая эпоха ещё не закончилась. График появится, когда будет что на нём рисовать."}
             </p>
           </div>
         )}
@@ -304,6 +315,7 @@ export default function TrainRunPage() {
           <div className="g-label">Настройки</div>
           {Object.entries(run.params ?? {})
             .filter(([k]) => !AUG_KEYS.has(k) || run.params?.augment_mode === "yolo")
+            .sort(([a], [b]) => paramRank(a) - paramRank(b))
             .map(([k, v]) => (
               <div className="t-kv" key={k}>
                 <span>{PARAM_LABEL[k] ?? k}</span>
@@ -332,9 +344,17 @@ export default function TrainRunPage() {
               type="button"
               className="mag-ghost"
               style={{ flex: 1 }}
-              onClick={() =>
-                code && runId && runsApi.stopRun(code, runId).then(refresh)
-              }
+              disabled={stopping || run.status === "stopping"}
+              onClick={() => {
+                if (!code || !runId) return;
+                setStopping(true);
+                setStopError(null);
+                runsApi
+                  .stopRun(code, runId)
+                  .catch((e) => setStopError((e as Error).message))
+                  .then(refresh)
+                  .finally(() => setStopping(false));
+              }}
             >
               Остановить
             </button>
@@ -349,6 +369,7 @@ export default function TrainRunPage() {
             </a>
           )}
         </div>
+        {stopError && <div className="mag-error">{stopError}</div>}
       </aside>
     </div>
   );
