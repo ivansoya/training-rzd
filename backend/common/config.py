@@ -62,6 +62,16 @@ AUTOLABEL_DIR = os.path.join(DATA_DIR, "_autolabel")
 def auto_weights_dir(model):
     return os.path.join(AUTOLABEL_DIR, model)
 
+
+# Веса SAM 3 для «Сети по тексту» — рядом с SAM2, на томе, а не в образе:
+# 3,45 ГБ, и скачать их можно только по заявке на HuggingFace. Кладутся
+# руками; нет файла — узел с SAM 3 не проходит проверку версии.
+SAM3_WEIGHTS = os.path.join(AUTOLABEL_DIR, "sam3", "sam3.pt")
+
+
+def sam3_ready():
+    return os.path.isfile(SAM3_WEIGHTS)
+
 # Веса сети, которая считает признаки кадров для умного деления. Тем же
 # способом, что и веса полуавтомата: на томе, а не в образе.
 EMBED_DIR = os.path.join(DATA_DIR, "_embed")

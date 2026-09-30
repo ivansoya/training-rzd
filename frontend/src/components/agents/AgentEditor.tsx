@@ -31,15 +31,21 @@ import type { GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
 import { edgeKey, findCycle } from "../aug/counts";
 import Banner from "../Banner";
 import Sep from "../Sep";
-import { SAM_DEFAULTS, SAM_MODELS, agentClasses, rowsOf, upstream, type FilterRow, type NetRow } from "./agentDoc";
+import {
+  CYRILLIC, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODEL, TEXT_MODELS, YOLOE_MB, agentClasses, isExamples,
+  promptsOf, rowTarget, rowsOf, switchTextModel, textConfDefault, textModel, upstream, type FilterRow,
+  type NetRow, type PromptRow,
+} from "./agentDoc";
 import { TITLES, agentNodeTypes, mergeInputs, type AgentNodeData } from "./AgentNodes";
 import AgentPreview from "./AgentPreview";
+import { ExampleStrip, ExamplesDialog } from "./ExamplesDialog";
 import WeightsPicker from "./WeightsPicker";
 
 const DRAFT_WAIT_MS = 700;
-type Addable = "net" | "merge" | "nms" | "filter" | "sam";
+type Addable = "net" | "text" | "merge" | "nms" | "filter" | "sam";
 const PALETTE = [
   ["net", "Сеть", "k-flow"],
+  ["text", "Сеть по тексту", "k-block"],
   ["merge", "Объединение", "k-noise"],
   ["nms", "NMS", "k-light"],
   ["filter", "Фильтр", "k-light"],
@@ -52,6 +58,7 @@ const occupies = (e: Edge, c: { target?: string | null; targetHandle?: string | 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 // Проходов TTA на вид — как agent_graph.variants на сервере.
 const tta = (p: Record<string, unknown>) => (p.tta_flip ? 2 : 1) * (p.tta_scales ? 3 : 1);
+const decimal = (v: number) => String(v).replace(".", ",");
 
 function toFlow(doc: GraphDoc): [Node[], Edge[]] {
   return [
@@ -98,6 +105,11 @@ function Editor() {
   const [title, setTitle] = useState("");
   const [versions, setVersions] = useState<aug.VersionRow[]>([]);
   const [shelf, setShelf] = useState<api.Weights[]>([]);
+  // Лежат ли веса SAM 3 на сервере; null — ещё не знаем, и не пугаем.
+  const [sam3Ready, setSam3Ready] = useState<boolean | null>(null);
+  // Наборы образцов, на которые ссылаются строки: паспорт и миниатюры.
+  const [sets, setSets] = useState<Map<string, api.ExampleSet>>(new Map());
+  const keepSet = useCallback((s: api.ExampleSet) => setSets((old) => new Map(old).set(s.id, s)), []);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selected, setSelected] = useState<string | null>(null);
@@ -121,7 +133,10 @@ function Editor() {
   );
 
   useEffect(() => {
-    api.listWeights().then((r) => setShelf(r.weights)).catch(() => undefined);
+    api.listWeights().then((r) => {
+      setShelf(r.weights);
+      setSam3Ready(r.sam3 ?? null);
+    }).catch(() => undefined);
   }, []);
 
   useEffect(() => {
@@ -151,6 +166,16 @@ function Editor() {
   }, [graphId, wanted, setNodes, setEdges]);
 
   const draft = useMemo(() => toDoc(nodes, edges), [nodes, edges]);
+
+  const wantedSets = useMemo(
+    () => [...new Set(draft.nodes.filter((n) => n.type === ("text" as string))
+      .flatMap((n) => promptsOf(n).filter(isExamples).map((r) => r.set ?? "")).filter(Boolean))],
+    [draft]
+  );
+  useEffect(() => {
+    const missing = wantedSets.filter((id) => !sets.has(id));
+    if (missing.length) api.listExamples(missing).then((r) => r.sets.forEach(keepSet)).catch(() => undefined);
+  }, [wantedSets, sets, keepSet]);
 
   // Автосохранение настоящей копии — как у графа аугментаций.
   useEffect(() => {
@@ -210,6 +235,31 @@ function Editor() {
     () =>
       nodes.map((n) => {
         const d = n.data as AgentNodeData;
+        if (d.kind === "text") {
+          const model = textModel(d.params);
+          const rows = promptsOf(d);
+          const on = rows.filter((r) => r.on && rowTarget(r) && r.agent.trim()).length;
+          const exN = rows.filter((r) => r.on && rowTarget(r) && isExamples(r)).length;
+          const missing = model === "sam3" && sam3Ready === false;
+          const yolo = model !== "sam3";
+          return {
+            ...n,
+            data: {
+              ...d,
+              why: missing
+                ? "нет весов SAM 3"
+                : [
+                    yolo ? `YOLOE-26 ${model}` : "SAM 3",
+                    exN ? `${on - exN ? `${on - exN} сл. + ` : ""}${exN} обр.` : null,
+                    `conf ${decimal(num(d.params.conf, textConfDefault(model)))}`,
+                    yolo && d.params.tiles ? "плитки" : null,
+                    yolo && tta(d.params) > 1 ? `TTA ×${tta(d.params)}` : null,
+                  ].filter(Boolean).join(", "),
+              badge: `${on}/${rows.length}`,
+              bad: missing || on === 0,
+            },
+          };
+        }
         if (d.kind !== "net") return n;
         const w = weightsOf(d.params);
         const rows = rowsOf({ params: d.params });
@@ -229,7 +279,7 @@ function Editor() {
           },
         };
       }),
-    [nodes, weightsOf]
+    [nodes, weightsOf, sam3Ready]
   );
 
   const canConnect = useCallback(
@@ -284,6 +334,7 @@ function Editor() {
         at ?? screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 600) / 2, y: (box?.top ?? 0) + 160 });
       const params = {
         net: { weights: null, classes: [], conf: 0.25 },
+        text: { model: TEXT_MODEL, prompts: [], conf: textConfDefault(TEXT_MODEL), imgsz: TEXT_IMGSZ },
         merge: { inputs: 2 },
         nms: { iou: 0.6, agnostic: false },
         filter: { classes: [], min_side: null, max_side: null },
@@ -481,6 +532,9 @@ function Editor() {
               node={current}
               readOnly={readOnly}
               weights={current ? weightsOf((current.data as AgentNodeData).params) : undefined}
+              sam3Ready={sam3Ready}
+              sets={sets}
+              onSet={keepSet}
               colorOf={colorOf}
               incoming={incoming}
               onChange={(next) => current && patchParams(current.id, next)}
@@ -524,7 +578,7 @@ function AgentClassList({ classes }: { classes: ReturnType<typeof agentClasses> 
           <span className="ag-src">
             {c.sources.map((s) => (
               <span key={`${s.node}:${s.index}`}>
-                №{s.index} {s.weightsName}
+                {s.label}
               </span>
             ))}
           </span>
@@ -538,6 +592,9 @@ function NodePanel({
   node,
   readOnly,
   weights,
+  sam3Ready,
+  sets,
+  onSet,
   colorOf,
   incoming,
   onChange,
@@ -547,6 +604,9 @@ function NodePanel({
   node: Node | null;
   readOnly: boolean;
   weights?: api.Weights;
+  sam3Ready: boolean | null;
+  sets: Map<string, api.ExampleSet>;
+  onSet: (set: api.ExampleSet) => void;
   colorOf: Map<string, { color: string; sources: unknown[] }>;
   incoming: string[];
   onChange: (next: Record<string, unknown>) => void;
@@ -556,6 +616,8 @@ function NodePanel({
   if (!node) return <p className="ag-muted">Выберите узел на холсте.</p>;
   const d = node.data as AgentNodeData;
   const p = d.params;
+  const model = textModel(p);
+  const missing = d.kind === "text" && model === "sam3" && sam3Ready === false;
   const field = (key: string, label: string, value: number, step: number) => (
     <div className="mag-field ag-num">
       <label htmlFor={`ag-${key}`}>{label}</label>
@@ -584,6 +646,30 @@ function NodePanel({
         onChange={(e) => onChange({ [key]: e.target.value === "" ? null : Number(e.target.value) })}
       />
     </div>
+  );
+
+  const passes = (
+    <>
+      {(
+        [
+          ["tiles", "Плитки размером со вход и целый кадр"],
+          ["tta_flip", "TTA: отражение по горизонтали"],
+          ["tta_scales", "TTA: масштабы ×0,8 и ×1,25"],
+        ] as const
+      ).map(([key, label]) => (
+        <label key={key} className="ag-check ag-flag">
+          <input type="checkbox" checked={Boolean(p[key])} disabled={readOnly}
+            onChange={(e) => onChange({ [key]: e.target.checked })} />
+          {label}
+        </label>
+      ))}
+      {Boolean(p.tiles) && (
+        <div className="ag-two">
+          {field("overlap", "Перекрытие плиток", num(p.overlap, 0.2), 0.05)}
+          {field("glue", "Склейка от, IoS", num(p.glue, 0.5), 0.05)}
+        </div>
+      )}
+    </>
   );
 
   return (
@@ -626,24 +712,75 @@ function NodePanel({
             {field("conf", "Уверенность от", num(p.conf, 0.25), 0.05)}
             {field("imgsz", "Размер входа", num(p.imgsz, weights?.imgsz ?? 640), 32)}
           </div>
-          {(
-            [
-              ["tiles", "Плитки размером со вход и целый кадр"],
-              ["tta_flip", "TTA: отражение по горизонтали"],
-              ["tta_scales", "TTA: масштабы ×0,8 и ×1,25"],
-            ] as const
-          ).map(([key, label]) => (
-            <label key={key} className="ag-check ag-flag">
-              <input type="checkbox" checked={Boolean(p[key])} disabled={readOnly}
-                onChange={(e) => onChange({ [key]: e.target.checked })} />
-              {label}
-            </label>
-          ))}
-          {Boolean(p.tiles) && (
-            <div className="ag-two">
-              {field("overlap", "Перекрытие плиток", num(p.overlap, 0.2), 0.05)}
-              {field("glue", "Склейка от, IoS", num(p.glue, 0.5), 0.05)}
+          {passes}
+        </>
+      )}
+
+      {d.kind === "text" && (
+        <>
+          <div className="mag-field">
+            <label>Модель</label>
+            <div className="ag-seg" role="group" aria-label="Модель">
+              {TEXT_MODELS.map((m) => (
+                <button key={m} type="button" aria-pressed={model === m} disabled={readOnly}
+                  onClick={() => onChange(switchTextModel(p, m))}>
+                  {m === "sam3" ? "SAM 3" : m}
+                </button>
+              ))}
             </div>
+            <div className="ag-seg-cap"><span>YOLOE-26</span></div>
+          </div>
+          <div className={`ag-weights${missing ? " ag-miss" : ""}`}>
+            {model !== "sam3" ? (
+              <>
+                <b className="mono">yoloe-26{model}-seg.pt</b>
+                <span>{YOLOE_MB[model]} МБ <Sep /> в образе <Sep /> только рамки</span>
+              </>
+            ) : missing ? (
+              <>
+                <b>Нет весов SAM 3 на сервере</b>
+                <span>Нужен файл _autolabel/sam3/sam3.pt — без него версию не сохранить.</span>
+              </>
+            ) : (
+              <>
+                <b className="mono">sam3.pt</b>
+                <span>3,45 ГБ <Sep /> на сервере <Sep /> рамка и контур</span>
+              </>
+            )}
+          </div>
+          <PromptTable
+            rows={promptsOf({ params: p })}
+            readOnly={readOnly}
+            colorOf={colorOf}
+            nodeConf={num(p.conf, textConfDefault(model))}
+            sets={sets}
+            onSet={onSet}
+            onRows={(rows) => onChange({ prompts: rows })}
+          />
+          {model === "sam3" ? (
+            <>
+              <div className="ag-two">
+                {field("conf", "Порог узла", num(p.conf, textConfDefault(model)), 0.05)}
+              </div>
+              <div className="ag-cap">Контур</div>
+              <div className="ag-two">
+                {field("polygon_points", "Точек до", num(p.polygon_points, SAM_DEFAULTS.polygon_points), 8)}
+                {field("min_area", "Кусок от, px²", num(p.min_area, SAM_DEFAULTS.min_area), 16)}
+              </div>
+              <label className="ag-check ag-flag">
+                <input type="checkbox" checked={p.fill_holes !== false} disabled={readOnly}
+                  onChange={(e) => onChange({ fill_holes: e.target.checked })} />
+                Заливать дыры
+              </label>
+            </>
+          ) : (
+            <>
+              <div className="ag-two">
+                {field("conf", "Порог узла", num(p.conf, textConfDefault(model)), 0.05)}
+                {field("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
+              </div>
+              {passes}
+            </>
           )}
         </>
       )}
@@ -717,6 +854,212 @@ function NodePanel({
         <button type="button" className="mag-ghost mag-danger ag-wide" onClick={onRemove}>
           Удалить узел
         </button>
+      )}
+    </div>
+  );
+}
+
+/** Таблица «Сети по тексту»: строка — слово или набор образцов → класс
+ *  агента, у каждой свой порог (пусто — порог узла). Строки заводит человек,
+ *  поэтому здесь есть «Добавить» и крестик, которых нет у классов сети. Слово
+ *  по-русски не запрещено — модель его примет, только найдёт хуже или не то. */
+function PromptTable({
+  rows,
+  readOnly,
+  colorOf,
+  nodeConf,
+  sets,
+  onSet,
+  onRows,
+}: {
+  rows: PromptRow[];
+  readOnly: boolean;
+  colorOf: Map<string, { color: string; sources: unknown[] }>;
+  nodeConf: number;
+  sets: Map<string, api.ExampleSet>;
+  onSet: (set: api.ExampleSet) => void;
+  onRows: (rows: PromptRow[]) => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"all" | "on" | "off">("all");
+  const [prompt, setPrompt] = useState("");
+  const [agent, setAgent] = useState("");
+  const [open, setOpen] = useState<Set<number>>(new Set());
+  const [dialog, setDialog] = useState(false);
+  const set = (i: number, patch: Partial<PromptRow>) => onRows(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  const q = query.trim().toLowerCase();
+  const label = (r: PromptRow) => (isExamples(r) ? sets.get(r.set ?? "")?.class_name ?? "образцы" : r.prompt ?? "");
+  const visible = rows
+    .map((r, i) => ({ ...r, i }))
+    .filter((r) => filter === "all" || (filter === "on" ? r.on : !r.on))
+    .filter((r) => !q || `${label(r)} ${r.agent}`.toLowerCase().includes(q));
+  const add = () => {
+    const clean = prompt.trim();
+    if (!clean) return;
+    onRows([...rows, { kind: "text", prompt: clean, agent: agent.trim() || clean, on: true }]);
+    setPrompt("");
+    setAgent("");
+  };
+  const toggle = (i: number) =>
+    setOpen((old) => {
+      const next = new Set(old);
+      if (next.has(i)) next.delete(i); else next.add(i);
+      return next;
+    });
+
+  return (
+    <div className="ag-cls">
+      <div className="ag-cls-h">
+        <div className="ag-cls-title">
+          <b>Строки</b>
+          <span className="mono">
+            {rows.length} <Sep /> в агент {rows.filter((r) => r.on).length}
+          </span>
+        </div>
+        <input className="ag-search" placeholder="Поиск по слову, образцам и классу" value={query}
+          onChange={(e) => setQuery(e.target.value)} />
+        <div className="ag-pills">
+          {(
+            [
+              ["all", "Все"],
+              ["on", "Включены"],
+              ["off", "Выключены"],
+            ] as const
+          ).map(([v, l]) => (
+            <button key={v} type="button" aria-pressed={filter === v} onClick={() => setFilter(v)}>
+              {l}
+            </button>
+          ))}
+          <span className="ag-grow" />
+          {!readOnly && (
+            <>
+              <button type="button" title="Включить все" onClick={() => onRows(rows.map((r) => ({ ...r, on: true })))}>
+                + все
+              </button>
+              <button type="button" title="Выключить все" onClick={() => onRows(rows.map((r) => ({ ...r, on: false })))}>
+                − все
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="ag-pr ag-cr-head">
+        <span />
+        <span />
+        <span>слово / образцы</span>
+        <span>класс агента</span>
+        <span className="ag-pr-thr-h">порог</span>
+        <span />
+      </div>
+      <div className="ag-cls-body ag-pr-body">
+        {rows.length === 0 && <p className="ag-muted">Строк нет — добавьте слово или образцы ниже.</p>}
+        {rows.length > 0 && visible.length === 0 && <p className="ag-muted">Ничего не найдено.</p>}
+        {visible.map((r) => {
+          const c = r.on ? colorOf.get(r.agent.trim()) : undefined;
+          const ex = isExamples(r);
+          const exSet = ex ? sets.get(r.set ?? "") : undefined;
+          const cyr = !ex && CYRILLIC.test(r.prompt ?? "");
+          return (
+            <div key={r.i} className={`ag-pr${r.on ? "" : " off"}${cyr ? " cyr" : ""}`}>
+              <input
+                type="checkbox"
+                checked={r.on}
+                disabled={readOnly}
+                aria-label={label(r) || "строка"}
+                onChange={(e) => set(r.i, { on: e.target.checked })}
+              />
+              <span className={`ag-kind${ex ? " ex" : ""}`} title={ex ? "образцы" : "слово"}>{ex ? "обр" : "сл"}</span>
+              {ex ? (
+                <button type="button" className="ag-src-btn" aria-expanded={open.has(r.i)} onClick={() => toggle(r.i)}>
+                  <b>{exSet?.class_name ?? "набор"} {open.has(r.i) ? "▾" : "▸"}</b>
+                  <span className="mono">{exSet ? `${exSet.items.length} обр. · ${exSet.project}` : "загружаю…"}</span>
+                </button>
+              ) : (
+                <input
+                  className="ag-pr-in mono"
+                  value={r.prompt ?? ""}
+                  disabled={readOnly}
+                  aria-label="Слово"
+                  onChange={(e) => set(r.i, { prompt: e.target.value })}
+                />
+              )}
+              <span className="ag-an">
+                <i className="ag-dot" style={{ background: c?.color ?? "var(--hair)" }} />
+                <input
+                  value={r.agent}
+                  disabled={readOnly}
+                  aria-label={`Класс агента для ${label(r)}`}
+                  title={r.agent}
+                  onChange={(e) => set(r.i, { agent: e.target.value })}
+                  onBlur={(e) => !e.target.value.trim() && set(r.i, { agent: label(r) })}
+                />
+                {c && c.sources.length > 1 && (
+                  <b className="ag-merge" title="В этот класс агента сходятся несколько строк">
+                    ×{c.sources.length}
+                  </b>
+                )}
+              </span>
+              <input
+                className="ag-pr-thr mono"
+                type="number"
+                min={0}
+                max={1}
+                step={0.05}
+                disabled={readOnly}
+                placeholder={String(nodeConf).replace(".", ",")}
+                value={typeof r.conf === "number" ? r.conf : ""}
+                aria-label="Порог строки"
+                onChange={(e) => set(r.i, { conf: e.target.value === "" ? null : Number(e.target.value) })}
+              />
+              {!readOnly ? (
+                <button type="button" className="ag-x" aria-label={`Удалить строку ${label(r)}`}
+                  onClick={() => onRows(rows.filter((_, k) => k !== r.i))}>
+                  ×
+                </button>
+              ) : <span />}
+              {cyr && <span className="ag-pr-warn">Слово по-русски — модель понимает английский</span>}
+              {ex && open.has(r.i) && exSet && (
+                <ExampleStrip
+                  set={exSet}
+                  readOnly={readOnly}
+                  onSet={(next) => {
+                    onSet(next);
+                    set(r.i, { set: next.id });
+                  }}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {!readOnly && (
+        <>
+          <form className="ag-pr-add" onSubmit={(e) => { e.preventDefault(); add(); }}>
+            <input className="ag-search mono" placeholder="слово, например shovel" value={prompt}
+              aria-label="Новое слово" onChange={(e) => setPrompt(e.target.value)} />
+            <input className="ag-search" placeholder="класс агента" value={agent} list="ag-agent-classes"
+              aria-label="Класс агента для нового слова" onChange={(e) => setAgent(e.target.value)} />
+            <button type="submit" className="mag-ghost" disabled={!prompt.trim()}>+ Слово</button>
+            <datalist id="ag-agent-classes">
+              {[...colorOf.keys()].map((name) => <option key={name} value={name} />)}
+            </datalist>
+          </form>
+          <div className="ag-pr-ex">
+            <button type="button" className="ag-ex-btn" onClick={() => setDialog(true)}>+ Образцы из разметки</button>
+          </div>
+        </>
+      )}
+      {dialog && (
+        <ExamplesDialog
+          onClose={() => setDialog(false)}
+          onDone={(made, agentName) => {
+            onSet(made);
+            // Образцы шкалой ниже слов: у YOLOE лучший F1 по ним при 0,05–0,15.
+            onRows([...rows, { kind: "examples", set: made.id, agent: agentName, on: true, conf: 0.1 }]);
+            setOpen((old) => new Set(old).add(rows.length));
+            setDialog(false);
+          }}
+        />
       )}
     </div>
   );

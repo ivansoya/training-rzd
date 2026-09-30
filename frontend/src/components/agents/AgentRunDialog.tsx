@@ -15,7 +15,7 @@ import * as api from "../../api/agents";
 import { plural } from "../mag/ProjectsPage";
 import Sep from "../Sep";
 import { useBackdrop } from "../useBackdrop";
-import ScoutStats from "./ScoutStats";
+import ScoutOverview from "./ScoutOverview";
 
 const SOURCE_TITLE: Record<"files" | "videos", string> = {
   files: "Загружено файлами",
@@ -407,9 +407,7 @@ export function AgentRunBar({
           Скрыть
         </button>
       )}
-      {statsOpen && run.videos.length > 0 && (
-        <ScoutStats taskId={taskId} videoId={run.videos[0]} onClose={() => setStatsOpen(false)} />
-      )}
+      {statsOpen && <ScoutOverview taskId={taskId} onClose={() => setStatsOpen(false)} />}
     </div>
   );
 }

@@ -10,11 +10,12 @@
 """
 import hashlib
 import os
+import random
 import time
 import uuid
 from datetime import timedelta
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import func, select, text
 from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
@@ -23,10 +24,12 @@ from common import agent_graph, config, live, task_frames
 from common.auth import current_user, has_role, role_in
 from common.db import SessionLocal
 from common.models import (
-    AgentClassMap, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, Image,
-    LabelClass, Project, ProjectMember, Task, TaskVideo, TrainRun, VideoScout, utcnow,
+    AgentClassMap, AgentExamples, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph,
+    AugGraphVersion, Dataset, Image, LabelClass, Project, ProjectMember, Task, TaskVideo, TrainRun,
+    VideoScout, utcnow,
 )
-from training_svc import agent_preview as agent_preview_lib, pt_guard
+from common import agent_examples as ax
+from training_svc import agent_preview as agent_preview_lib, examples as examples_lib, pt_guard
 
 bp = Blueprint("agents", __name__)
 
@@ -140,7 +143,10 @@ def list_weights():
         run_ids = {r.source_run_id for r in rows if r.source_run_id}
         runs = {r.id: r for r in db.execute(
             select(TrainRun).where(TrainRun.id.in_(run_ids))).scalars()} if run_ids else {}
-        return jsonify({"weights": [_weights_view(r, runs) for r in rows]})
+        # Лежат ли веса SAM 3 — редактору: без них «Сеть по тексту» с SAM 3
+        # версию не сохранит, и узел должен сказать это сразу.
+        return jsonify({"weights": [_weights_view(r, runs) for r in rows],
+                        "sam3": config.sam3_ready()})
     finally:
         db.close()
 
@@ -616,7 +622,8 @@ def agent_preview():
         shelf = {str(w.id): len(w.names or []) for w in db.execute(
             select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars()}
         try:
-            agent_graph.check(doc, weights=shelf)
+            agent_graph.check(doc, weights=shelf, sam3=config.sam3_ready(),
+                              examples=examples_lib.readiness(db, user.id, doc))
         except agent_graph.AgentGraphError as exc:
             return jsonify({"error": str(exc)}), 400
 
@@ -727,5 +734,179 @@ def task_scout(task_id, video_id):
             "segments": scout.segments,
             **agent_graph.scout_stats(scout.frames),
         })
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Наборы образцов «Сети по тексту»: собрать, убрать/переставить/добрать
+# --------------------------------------------------------------------------- #
+EXAMPLES_WAIT_S = 180   # четыре размера YOLOE по 32 образца — секунды; запас на очередь
+MAX_EXAMPLES = 256
+
+
+def _examples_row(db, user, set_id):
+    row = db.get(AgentExamples, _uuid(set_id))
+    return row if row is not None and row.owner_id == user.id else None
+
+
+def _wait_examples(db, row):
+    """Сборку делает воркер: ждём ответа в той же строке, как превью."""
+    db.execute(text(f"NOTIFY {examples_lib.CHANNEL}"))
+    db.commit()
+    deadline = time.monotonic() + EXAMPLES_WAIT_S
+    while time.monotonic() < deadline:
+        db.refresh(row)
+        if row.status != "queued":
+            break
+        time.sleep(0.2)
+    if row.status == "queued":
+        return jsonify({"error": "Воркер не ответил — он запущен?", "set": examples_lib.view(row)}), 504
+    if row.status == "error":
+        return jsonify({"error": row.error, "set": examples_lib.view(row)}), 422
+    return jsonify({"set": examples_lib.view(row)}), 201
+
+
+@bp.get("/api/agents/examples/sources")
+def examples_sources():
+    """Что можно собрать в проекте: датасеты и ручные рамки по классам."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project = db.execute(
+            select(Project).where(Project.code == request.args.get("project"))).scalar_one_or_none()
+        if project is None or not has_role(role_in(db, user, project), "viewer"):
+            return jsonify({"error": "Проект не найден."}), 404
+        datasets = db.execute(
+            select(Dataset.id, Dataset.name, func.count(Image.id))
+            .outerjoin(Image, Image.dataset_id == Dataset.id)
+            .where(Dataset.project_id == project.id).group_by(Dataset.id).order_by(Dataset.name)
+        ).all()
+        classes = {c.id: {"id": str(c.id), "name": c.name, "color": c.color, "datasets": {}}
+                   for c in db.execute(select(LabelClass).where(LabelClass.project_id == project.id)
+                                       .order_by(LabelClass.class_index)).scalars()}
+        seen = set()
+        for class_id, dataset_id, image_id, ann_type, geometry in db.execute(
+                select(Annotation.class_id, Image.dataset_id, Image.id, Annotation.ann_type, Annotation.geometry)
+                .join(Image, Image.id == Annotation.image_id)
+                .where(Image.project_id == project.id, Image.dataset_id.isnot(None),
+                       Annotation.source == "human")):
+            if class_id not in classes:
+                continue
+            stat = classes[class_id]["datasets"].setdefault(
+                str(dataset_id), {"boxes": 0, "usable": 0, "frames": 0})
+            stat["boxes"] += 1
+            if ax.usable(ax.geometry_box(ann_type, geometry)):
+                stat["usable"] += 1
+                if (class_id, image_id) not in seen:
+                    seen.add((class_id, image_id))
+                    stat["frames"] += 1
+        return jsonify({
+            "project": {"code": project.code, "name": project.name},
+            "datasets": [{"id": str(i), "name": n, "frames": k} for i, n, k in datasets],
+            "classes": list(classes.values()),
+        })
+    finally:
+        db.close()
+
+
+@bp.post("/api/agents/examples")
+def create_examples():
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        data = request.get_json(silent=True) or {}
+        project = db.execute(select(Project).where(Project.code == data.get("project"))).scalar_one_or_none()
+        if project is None or not has_role(role_in(db, user, project), "viewer"):
+            return jsonify({"error": "Проект не найден."}), 404
+        cls = db.get(LabelClass, _uuid(data.get("class_id")))
+        if cls is None or cls.project_id != project.id:
+            return jsonify({"error": "Класса нет в проекте."}), 404
+        try:
+            n = int(data.get("n") or 32)
+            collage = int(data.get("collage") or 6)
+            ctx = float(data.get("ctx") or 2.5)
+        except (TypeError, ValueError):
+            return jsonify({"error": "Числа набора — не числа."}), 400
+        if not 1 <= n <= MAX_EXAMPLES or not 1 <= collage <= ax.COLLAGE_MAX or not 1 <= ctx <= 16:
+            return jsonify({"error": f"Образцов от 1 до {MAX_EXAMPLES}, в коллаже от 1 до "
+                                     f"{ax.COLLAGE_MAX}, вырезка от ×1 до ×16."}), 400
+        datasets = [d for d in (_uuid(x) for x in data.get("datasets") or []) if d] or None
+        row = AgentExamples(
+            owner_id=user.id, project_id=project.id, project_name=project.name,
+            class_id=cls.id, class_name=cls.name, items=[], dir="", status="queued",
+            params={"datasets": [str(d) for d in datasets] if datasets else None, "n": n,
+                    "collage": collage, "ctx": ctx, "seed": random.randrange(1 << 31)},
+            created_by=user.id)
+        db.add(row)
+        db.flush()
+        return _wait_examples(db, row)
+    finally:
+        db.close()
+
+
+@bp.post("/api/agents/examples/<set_id>/derive")
+def derive_examples(set_id):
+    """Новый набор из старого: `order` — uid в новом порядке (убрать и
+    переставить, сразу), `collage` — сколько в коллаж, `add` — добрать
+    столько (через воркер)."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        parent = _examples_row(db, user, set_id)
+        if parent is None or parent.status != "ready":
+            return jsonify({"error": "Набор не найден."}), 404
+        data = request.get_json(silent=True) or {}
+        add = int(data.get("add") or 0)
+        if add:
+            if not 1 <= add <= MAX_EXAMPLES - len(parent.items):
+                return jsonify({"error": f"В наборе не больше {MAX_EXAMPLES} образцов."}), 400
+            row = AgentExamples(
+                owner_id=user.id, parent_id=parent.id, project_id=parent.project_id,
+                project_name=parent.project_name, class_id=parent.class_id, class_name=parent.class_name,
+                params={**parent.params, "add": add}, items=[], dir="", status="queued", created_by=user.id)
+            db.add(row)
+            db.flush()
+            return _wait_examples(db, row)
+        order = data.get("order") or [it["uid"] for it in parent.items]
+        try:
+            row = examples_lib.derive(db, parent, order, user.id, data.get("collage"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        db.commit()
+        return jsonify({"set": examples_lib.view(row)}), 201
+    finally:
+        db.close()
+
+
+@bp.get("/api/agents/examples")
+def list_examples():
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        ids = [i for i in (_uuid(x) for x in (request.args.get("ids") or "").split(",")) if i]
+        rows = db.execute(select(AgentExamples).where(
+            AgentExamples.owner_id == user.id, AgentExamples.id.in_(ids))).scalars() if ids else []
+        return jsonify({"sets": [examples_lib.view(r) for r in rows]})
+    finally:
+        db.close()
+
+
+@bp.get("/api/agents/examples/<set_id>/crops/<uid>")
+def example_crop(set_id, uid):
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        row = _examples_row(db, user, set_id)
+        if row is None or not any(it["uid"] == uid for it in row.items):
+            return jsonify({"error": "Образца нет."}), 404
+        # Набор неизменяем — вырезку браузер может держать в кеше сколько угодно.
+        return send_file(os.path.join(config.DATA_DIR, row.dir, f"{uid}.jpg"),
+                         mimetype="image/jpeg", max_age=86400 * 30)
     finally:
         db.close()

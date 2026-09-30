@@ -321,3 +321,115 @@ def test_статистика_разведки():
     assert person["conf"]["hist"][7] == 1 and person["conf"]["hist"][9] == 2
     assert person["size"] == [100, 200]
     assert ag.scout_stats({})["max_at"] is None
+
+
+# --------------------------------------------------------------------------- #
+# «Сеть по тексту»
+# --------------------------------------------------------------------------- #
+def _text(nid, rows, **params):
+    return {"id": nid, "type": "text",
+            "params": {"prompts": [{"prompt": p, "agent": a, "on": on} for p, a, on in rows], **params}}
+
+
+def _text_doc(node):
+    return {"nodes": [{"id": "f", "type": "frame"}, node, {"id": "o", "type": "output"}],
+            "edges": [{"from": "f", "out": "out", "to": node["id"], "in": "in"},
+                      {"from": node["id"], "out": "out", "to": "o", "in": "in"}]}
+
+
+ROWS = [("person", "Человек", True), ("rag", "Тряпьё", False), ("worker", "Человек", True),
+        ("", "Пусто", True), ("bottle", "Тряпьё", True)]
+
+
+def test_текст_модель_видит_только_включённые_промты_а_номер_строки_сохраняется():
+    node = _text("t", ROWS)
+    # выключенная строка и строка без промта в модель не идут
+    assert ag.text_prompts(node) == [(0, "person"), (2, "worker"), (4, "bottle")]
+    # синонимы сходятся в один класс; класс «Пусто» без промта не рождается
+    assert [(c["name"], c["sources"]) for c in ag.classes(_text_doc(node))] == [
+        ("Человек", [("t", 0), ("t", 2)]), ("Тряпьё", [("t", 4)])]
+
+
+def test_текст_в_графе_номер_строки_переводится_в_класс_агента():
+    doc = _text_doc(_text("t", ROWS))
+    out = ag.run(doc, lambda node: [(2, 0.7, 1, 1, 5, 5), (4, 0.6, 9, 9, 5, 5), (1, 0.9, 0, 0, 1, 1)])
+    # строка 1 выключена — её находку не пропускаем, даже если модель её дала
+    assert [(d["cls"], d["conf"]) for d in out] == [("Человек", 0.7), ("Тряпьё", 0.6)]
+
+
+def test_текст_контур_sam3_только_когда_он_нужен():
+    shape = {"box": (2, 2, 3, 3), "parts": [[[2, 2], [5, 2], [5, 5]]], "sam": 0.8}
+    doc = _text_doc(_text("t", ROWS, model="sam3"))
+    answer = lambda node: [(0, 0.8, 1, 1, 5, 5, shape), (2, 0.5, 9, 9, 5, 5, None)]
+    out = ag.run(doc, answer, segment=lambda *a: None)
+    assert out[0]["parts"] == shape["parts"] and out[0]["box"] == (2, 2, 3, 3)
+    assert "parts" not in out[1]
+    # разведка идёт без segment — контур ей не пишется
+    assert all("parts" not in d for d in ag.run(doc, answer))
+
+
+def test_текст_проверка_формы():
+    ag.check(_text_doc(_text("t", ROWS)))
+    with pytest.raises(ag.AgentGraphError, match="ни одна строка"):
+        ag.check(_text_doc(_text("t", [("person", "Человек", False)])))
+    with pytest.raises(ag.AgentGraphError, match="повторяется"):
+        ag.check(_text_doc(_text("t", [("person", "Человек", True), ("Person ", "Люди", True)])))
+    with pytest.raises(ag.AgentGraphError, match="неизвестная модель"):
+        ag.check(_text_doc(_text("t", ROWS, model="n")))
+    sam3 = _text_doc(_text("t", ROWS, model="sam3"))
+    ag.check(sam3)               # не сверяем — черновик
+    ag.check(sam3, sam3=True)
+    with pytest.raises(ag.AgentGraphError, match="нет весов SAM 3"):
+        ag.check(sam3, sam3=False)
+
+
+def test_текст_порог_по_модели():
+    assert ag.text_conf({}) == 0.25
+    assert ag.text_conf({"model": "sam3"}) == 0.4
+    assert ag.text_conf({"model": "sam3", "conf": 0.1}) == 0.1
+    assert ag.text_model({"model": "мусор"}) == "l"
+
+
+def test_текст_контур_sam3_возвращается_в_пиксели_кадра():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("cv2")
+    k = 0.5
+    mask = np.zeros((60, 100), dtype=bool)
+    mask[10:30, 20:60] = True   # в ужатом кадре: x 20..59, y 10..29
+    got = ag.text_outline((38, 18, 84, 44), mask, 0.9, {}, k)
+    x, y, w, h = got["box"]
+    assert (x, y, w, h) == (40, 20, 80, 40)
+    xs = [px for ring in got["parts"] for px, _ in ring]
+    assert min(xs) >= 40 and max(xs) <= 120
+    # пятнышко меньше 5 % рамки — контура нет
+    tiny = np.zeros((60, 100), dtype=bool)
+    tiny[10:11, 20:21] = True
+    assert ag.text_outline((38, 18, 84, 44), tiny, 0.9, {}, k) is None
+
+
+def test_текст_образцы_и_порог_строки():
+    rows = [{"prompt": "person", "agent": "Человек", "on": True},
+            {"kind": "examples", "set": "s1", "agent": "Инструмент", "on": True, "conf": 0.1},
+            {"kind": "examples", "set": "", "agent": "Пусто", "on": True},
+            {"prompt": "rag", "agent": "Тряпьё", "on": True, "conf": 0.5}]
+    node = {"id": "t", "type": "text", "params": {"prompts": rows}}
+    doc = _text_doc(node)
+    # строка-образцы без набора не считается; порядок классов модели — строки
+    assert [i for i, _ in ag.text_rows(node)] == [0, 1, 3]
+    assert ag.text_sets(node) == [(1, "s1")] and ag.text_prompts(node) == [(0, "person"), (3, "rag")]
+    assert ag.min_conf(node) == 0.1
+    # у каждой строки свой порог: 0,2 проходит у образцов (0,1), но не у слова (0,25)
+    out = ag.run(doc, lambda n: [(0, 0.2, 0, 0, 5, 5), (1, 0.2, 9, 9, 5, 5), (3, 0.45, 20, 20, 5, 5)])
+    assert [(d["cls"], d["conf"]) for d in out] == [("Инструмент", 0.2)]
+    ag.check(doc, examples={"s1": True})
+    with pytest.raises(ag.AgentGraphError, match="нет на вашей полке"):
+        ag.check(doc, examples={})
+    with pytest.raises(ag.AgentGraphError, match="ещё не собран"):
+        ag.check(doc, examples={"s1": False})
+    rows.append({"kind": "examples", "set": "s1", "agent": "Другое", "on": True})
+    with pytest.raises(ag.AgentGraphError, match="в двух строках"):
+        ag.check(doc)
+    rows.pop()
+    rows[1]["conf"] = 1.5
+    with pytest.raises(ag.AgentGraphError, match="от 0 до 1"):
+        ag.check(doc)

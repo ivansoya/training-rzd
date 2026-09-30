@@ -57,6 +57,20 @@ def test_кадр_отдаётся_картинкой(api, task, video):
     assert len(res.content) > 500
 
 
+def test_уменьшенный_кадр_для_карточки_разведки(api, task, video):
+    """`w` — ширина для карточки при наведении; меньше исходной — ужимается,
+    пропорции те же."""
+    from io import BytesIO
+    from PIL import Image
+    url = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frame"
+    full = Image.open(BytesIO(api.get(url, params={"n": 5}).content))
+    res = api.get(url, params={"n": 5, "w": 32})
+    assert res.status_code == 200 and res.headers["Content-Type"] == "image/jpeg"
+    small = Image.open(BytesIO(res.content))
+    assert small.width == 32
+    assert abs(small.height - round(full.height * 32 / full.width)) <= 1
+
+
 def test_разные_кадры_дают_разные_картинки(api, task, video):
     a = api.get(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frame?n=2")
     b = api.get(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frame?n=25")

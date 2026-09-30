@@ -5,13 +5,15 @@ import { Handle, Position, type NodeProps } from "@xyflow/react";
 import type { ReactNode } from "react";
 
 export interface AgentNodeData extends Record<string, unknown> {
-  kind: "frame" | "net" | "merge" | "nms" | "filter" | "sam" | "output";
+  kind: "frame" | "net" | "text" | "merge" | "nms" | "filter" | "sam" | "output";
   params: Record<string, unknown>;
   /** Подпись сети: имя весов и паспорт. Считает редактор — у него полка. */
   caption?: string;
   why?: string;
   /** Сколько классов сети включено в агента. */
   badge?: string;
+  /** Узел в таком виде версию не сохранит: нет весов, промтов или SAM 3. */
+  bad?: boolean;
 }
 
 function Card({
@@ -52,6 +54,7 @@ export const mergeInputs = (params: Record<string, unknown>) =>
 export const TITLES: Record<AgentNodeData["kind"], string> = {
   frame: "Кадр",
   net: "Сеть",
+  text: "Сеть по тексту",
   merge: "Объединение",
   nms: "NMS",
   filter: "Фильтр",
@@ -108,6 +111,12 @@ function NetNode({ data }: NodeProps) {
   );
 }
 
+// Подпись и значок считает редактор — ему известно, лежат ли веса SAM 3.
+function TextNode({ data }: NodeProps) {
+  const d = data as AgentNodeData;
+  return <Card data={d} klass={`k-block${d.bad ? " bad" : ""}`} title="Сеть по тексту" ins={["in"]} outs={["out"]} />;
+}
+
 function MergeNode({ data }: NodeProps) {
   const d = data as AgentNodeData;
   const n = mergeInputs(d.params);
@@ -130,6 +139,7 @@ function OutputNode({ data }: NodeProps) {
 export const agentNodeTypes = {
   frame: FrameNode,
   net: NetNode,
+  text: TextNode,
   merge: MergeNode,
   nms: NmsNode,
   filter: FilterNode,

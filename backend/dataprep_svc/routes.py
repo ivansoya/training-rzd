@@ -20,7 +20,7 @@ from common import selection as sel_lib
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
-    GRAPH_KINDS, AgentWeights, AugGraph, AugGraphUse, AugGraphVersion,
+    GRAPH_KINDS, AgentExamples, AgentWeights, AugGraph, AugGraphUse, AugGraphVersion,
     DataprepJob, Project, ProjectAugGraph, TrainSet, TrainSetFeed, User, utcnow,
 )
 from common import config, live
@@ -278,12 +278,15 @@ def _agent_stats(db, graph, doc):
             select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)
         ).scalars()
     }
-    agent_graph.check(doc, weights=weights)
+    # Наборы образцов — запросом: модулей обучения в образе dataprep нет.
+    sets = {str(r.id): r.status == "ready" for r in db.execute(
+        select(AgentExamples).where(AgentExamples.owner_id == graph.owner_id)).scalars()}
+    agent_graph.check(doc, weights=weights, sam3=config.sam3_ready(), examples=sets)
     return {
         # Классы агента — в паспорт версии: окно запуска сопоставляет их с
         # классами проекта, не разбирая документ.
         "classes": [c["name"] for c in agent_graph.classes(doc)],
-        "nets": sum(1 for n in doc["nodes"] if n["type"] == "net"),
+        "nets": sum(1 for n in doc["nodes"] if n["type"] in agent_graph.FINDERS),
         "nodes": len(doc["nodes"]),
     }
 

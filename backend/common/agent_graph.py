@@ -22,15 +22,26 @@
 нашла, и терять находку из-за неудачной маски незачем, человек всё равно
 смотрит каждый кадр.
 
+«Сеть по тексту» — та же «Сеть», только классы заданы словами: строка
+таблицы — «промт → класс агента», модель — встроенная YOLOE-26 или SAM 3.
+Отдельный узел, а не режим «Сети» (решение владельца 24.09.2026): по графу
+видно, где своя обученная сеть, а где открытый словарь, и строгая сверка
+таблицы «Сети» с весами не обрастает исключениями. SAM 3 сразу дописывает
+контур — прогонять после него ещё и «Уточнение SAM» значило бы платить дважды.
+Строка таблицы бывает словом или набором образцов (`common.agent_examples`),
+и у каждой свой порог: у образцов и слов разные шкалы уверенности.
+
 Чистый модуль, без базы и torch: его читают и `dataprep` (проверка при
 сохранении версии), и `training-worker` (прогон), а закрывается он числами.
-Сеть сюда приходит функцией `predict(node) -> [(номер, уверенность, x, y, w, h)]`,
-SAM — функцией `segment(node, box) -> (маски, оценки)`.
+Сеть сюда приходит функцией `predict(node) -> [(номер, уверенность, x, y, w, h)]`
+(у SAM 3 седьмым — контур или None), SAM — `segment(node, box) -> (маски, оценки)`.
 """
 import math
 import statistics
 
-KINDS = ("frame", "net", "merge", "nms", "filter", "sam", "output")
+KINDS = ("frame", "net", "text", "merge", "nms", "filter", "sam", "output")
+# Узлы, которые сами находят объекты: номер класса переводят в имя агента.
+FINDERS = ("net", "text")
 MAX_NODES = 100
 MAX_INPUTS = 8
 # Порог «NMS» по умолчанию. У РСМ yolo26n дубли перекрыты на 0,76–0,99, и
@@ -53,14 +64,25 @@ MASK_MIN_SHARE = 0.05
 # режет край объекта, и запас даёт маске его вернуть, но не утечь на соседа.
 MASK_SLACK = 0.10
 
+# «Сеть по тексту». Размер n не даём: на редких словах он промахивается, а
+# промты у нас как раз такие. Умолчание l — по замеру на «РСМ-2000 · тест»
+# m и l равны, x не лучше, а 69 мс на кадр не жалко.
+TEXT_MODELS = ("s", "m", "l", "x", "sam3")
+TEXT_MODEL = "l"
+# Шкалы уверенности у моделей разные: у SAM 3 при 0,25 людей он находит с
+# точностью 0,81, при 0,4 — 0,92, а полнота почти та же (замер 24.09.2026).
+TEXT_CONF = {"yoloe": 0.25, "sam3": 0.4}
+# Вход YOLOE: кадры РСМ 2688×1520, на 640 мелочь пропадает.
+TEXT_IMGSZ = 1280
+
 
 class AgentGraphError(ValueError):
     """Ошибка формы. Текст показывается человеку целиком."""
 
 
 def title(node):
-    names = {"frame": "Кадр", "net": "Сеть", "merge": "Объединение", "nms": "NMS",
-             "filter": "Фильтр", "sam": "Уточнение SAM", "output": "Выход"}
+    names = {"frame": "Кадр", "net": "Сеть", "text": "Сеть по тексту", "merge": "Объединение",
+             "nms": "NMS", "filter": "Фильтр", "sam": "Уточнение SAM", "output": "Выход"}
     label = (node.get("params") or {}).get("label")
     base = names.get(node.get("type"), str(node.get("type")))
     return f"«{base} — {label}»" if label else f"«{base}»"
@@ -78,7 +100,7 @@ def ports(node):
     kind = node.get("type")
     if kind == "frame":
         return [], ["out"]
-    if kind in ("net", "nms", "filter", "sam"):
+    if kind in ("net", "text", "nms", "filter", "sam"):
         return ["in"], ["out"]
     if kind == "merge":
         return [f"i{i}" for i in range(inputs_count(node))], ["out"]
@@ -87,16 +109,69 @@ def ports(node):
     raise AgentGraphError(f"Неизвестный узел: {kind!r}")
 
 
+def is_examples(row):
+    return row.get("kind") == "examples"
+
+
+def _row_target(row):
+    """Что ищет строка «Сети по тексту»: промт или id набора; пусто — ничего."""
+    return str((row.get("set") if is_examples(row) else row.get("prompt")) or "").strip()
+
+
 def net_classes(node):
-    """Таблица сети: [(номер, имя класса агента)] — только включённые."""
+    """Таблица сети: [(номер строки, имя класса агента)] — только включённые.
+    У «Сети по тексту» строка без промта или без набора не считается: искать
+    нечего."""
+    params = node.get("params") or {}
+    text = node.get("type") == "text"
     out = []
-    for i, row in enumerate((node.get("params") or {}).get("classes") or []):
+    for i, row in enumerate(params.get("prompts" if text else "classes") or []):
         if not isinstance(row, dict) or not row.get("on"):
+            continue
+        if text and not _row_target(row):
             continue
         name = str(row.get("agent") or "").strip()
         if name:
             out.append((i, name))
     return out
+
+
+def text_rows(node):
+    """[(номер строки, строка)] включённых строк «Сети по тексту» — в этом
+    порядке классы и уходят в модель: её номер k — это `text_rows[k]`."""
+    rows = (node.get("params") or {}).get("prompts") or []
+    return [(i, rows[i]) for i, _ in net_classes(node)]
+
+
+def text_prompts(node):
+    """[(номер строки, промт)] только строк-слов."""
+    return [(i, str(r.get("prompt")).strip()) for i, r in text_rows(node) if not is_examples(r)]
+
+
+def text_sets(node):
+    """[(номер строки, id набора)] только строк-образцов."""
+    return [(i, str(r.get("set")).strip()) for i, r in text_rows(node) if is_examples(r)]
+
+
+def row_conf(node, row):
+    """Порог строки; пусто — порог узла."""
+    own = _num(row.get("conf"))
+    return own if own is not None else text_conf(node.get("params"))
+
+
+def min_conf(node):
+    """С каким порогом гнать модель: дорезает каждую строку уже `run`."""
+    return min([row_conf(node, r) for _, r in text_rows(node)] or [text_conf(node.get("params"))])
+
+
+def text_model(params):
+    model = (params or {}).get("model") or TEXT_MODEL
+    return model if model in TEXT_MODELS else TEXT_MODEL
+
+
+def text_conf(params):
+    family = "sam3" if text_model(params) == "sam3" else "yoloe"
+    return _num((params or {}).get("conf"), TEXT_CONF[family])
 
 
 def classes(doc):
@@ -107,16 +182,18 @@ def classes(doc):
     """
     found = {}
     for node in doc.get("nodes") or []:
-        if node.get("type") != "net":
+        if node.get("type") not in FINDERS:
             continue
         for i, name in net_classes(node):
             found.setdefault(name, []).append((node["id"], i))
     return [{"name": n, "sources": s} for n, s in found.items()]
 
 
-def check(doc, weights=None):
+def check(doc, weights=None, sam3=None, examples=None):
     """Проверить форму. `weights` — {id: число классов в весах} у владельца;
-    без него файлы весов не сверяются (черновик, тесты).
+    без него файлы весов не сверяются (черновик, тесты). `sam3` — лежат ли
+    веса SAM 3 на томе; None — не сверять. `examples` — {id набора: готов ли}
+    у владельца; None — не сверять.
 
     Возвращает узлы в порядке прогона.
     """
@@ -178,6 +255,8 @@ def check(doc, weights=None):
                         "выберите веса заново.")
             if not net_classes(node):
                 raise AgentGraphError(f"{title(node)}: не включён ни один класс.")
+        if node["type"] == "text":
+            _check_text(node, sam3, examples)
         if node["type"] == "sam":
             model = (node.get("params") or {}).get("model") or SAM_DEFAULTS["model"]
             if model not in SAM_MODELS:
@@ -193,6 +272,35 @@ def check(doc, weights=None):
     if not classes(doc):
         raise AgentGraphError("У агента нет ни одного класса.")
     return order
+
+
+def _check_text(node, sam3, examples):
+    params = node.get("params") or {}
+    if params.get("model") not in (None, *TEXT_MODELS):
+        raise AgentGraphError(f"{title(node)}: неизвестная модель {params.get('model')!r}.")
+    if text_model(params) == "sam3" and sam3 is False:
+        raise AgentGraphError(f"{title(node)}: нет весов SAM 3 на сервере.")
+    if not text_rows(node):
+        raise AgentGraphError(f"{title(node)}: не включена ни одна строка.")
+    # Одно слово или один набор дважды — два класса модели на одно и то же:
+    # они делили бы находки между собой. Синоним пишется другим словом.
+    prompts = [p.lower() for _, p in text_prompts(node)]
+    twice = next((p for p in prompts if prompts.count(p) > 1), None)
+    if twice:
+        raise AgentGraphError(f"{title(node)}: промт «{twice}» повторяется.")
+    sets = [s for _, s in text_sets(node)]
+    if any(sets.count(s) > 1 for s in sets):
+        raise AgentGraphError(f"{title(node)}: один набор образцов стоит в двух строках.")
+    if examples is not None:
+        for s in sets:
+            if s not in examples:
+                raise AgentGraphError(f"{title(node)}: набора образцов нет на вашей полке.")
+            if not examples[s]:
+                raise AgentGraphError(f"{title(node)}: набор образцов ещё не собран.")
+    for conf in [params.get("conf")] + [r.get("conf") for _, r in text_rows(node)]:
+        value = _num(conf, 0.5)
+        if value is None or not 0 <= value <= 1:
+            raise AgentGraphError(f"{title(node)}: уверенность — число от 0 до 1.")
 
 
 def _topo(nodes, taken_in):
@@ -289,6 +397,23 @@ def outline(det, masks, scores, params):
     if not parts:
         return det
     return {**det, "box": contours.mask_bounds(clipped), "parts": parts, "sam": round(score, 3)}
+
+
+def text_outline(box, mask, conf, params, k):
+    """Контур SAM 3 для обнаружения → {box, parts, sam} в пикселях кадра или None.
+
+    SAM 3 смотрит на кадр, ужатый в `k` раз (маски ultralytics растягивает до
+    входа, и на полном кадре с сотней масок это десятки гигабайт), поэтому
+    рамка приходит в пикселях кадра, а маска — ужатой. Чистка та же, что у
+    «Уточнения SAM»; оценку маски SAM 3 не даёт отдельно от уверенности, а
+    уверенность уже прошла порог узла — поэтому порог маски здесь нулевой."""
+    small = {"box": tuple(v * k for v in box)}
+    got = outline(small, [mask], [conf], {**(params or {}), "score_min": 0, "detail": "auto"})
+    if "parts" not in got:
+        return None
+    x, y, w, h = got["box"]
+    return {"box": (x / k, y / k, w / k, h / k), "sam": got["sam"],
+            "parts": [[[px / k, py / k] for px, py in ring] for ring in got["parts"]]}
 
 
 # --------------------------------------------------------------------------- #
@@ -433,13 +558,21 @@ def run(doc, predict, order=None, segment=None, trace=None):
         kind = node["type"]
         if kind == "frame":
             value[nid] = []
-        elif kind == "net":
+        elif kind in FINDERS:
             table = dict(net_classes(node))
-            own = [
-                {"id": f"{nid}.{k}", "cls": table[int(c)], "conf": float(conf), "box": (x, y, w, h)}
-                for k, (c, conf, x, y, w, h) in enumerate(predict(node))
-                if int(c) in table
-            ]
+            rows = (node.get("params") or {}).get("prompts") or []
+            own = []
+            for k, (c, conf, x, y, w, h, *shape) in enumerate(predict(node)):
+                if int(c) not in table:
+                    continue
+                # Модель шла с самым низким порогом строк — дорезаем по своему.
+                if kind == "text" and conf < row_conf(node, rows[int(c)]):
+                    continue
+                det = {"id": f"{nid}.{k}", "cls": table[int(c)], "conf": float(conf), "box": (x, y, w, h)}
+                # Контур SAM 3 — {box, parts, sam}; разведке он не нужен.
+                if shape and shape[0] and segment:
+                    det.update(shape[0])
+                own.append(det)
             value[nid] = ins[0] + own
         elif kind == "merge":
             value[nid] = [d for branch in ins for d in branch]

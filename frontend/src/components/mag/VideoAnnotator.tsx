@@ -49,7 +49,7 @@ import {
   trackEnd,
 } from "./trackMath";
 import Sep from "../Sep";
-import { scoutLanes, useScouts } from "../agents/scout";
+import { scoutLanes, taskColors, useScouts } from "../agents/scout";
 
 /** Управление редактором: клавиша и что она делает.
  *
@@ -175,7 +175,8 @@ export default function VideoAnnotator({
   // а не из прикидки по длительности: разметка адресуется номером кадра, и
   // «примерно столько» тут не годится.
   const clip = useClip(taskId, video.id);
-  const scout = scoutLanes(useScouts(taskId)[video.id]);
+  const scouts = useScouts(taskId);
+  const scout = scoutLanes(scouts[video.id], taskColors(scouts));
   // Разведка — по кнопке и вместо треков, а не рядом с ними (решение
   // владельца 24.09.2026): полосы агента среди дорожек сбивали с толку, что
   // здесь правится, а что только подсказка.

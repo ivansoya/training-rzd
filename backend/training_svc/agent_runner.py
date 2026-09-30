@@ -38,6 +38,14 @@ log = logging.getLogger("training")
 NET_VRAM_MB = 1500
 # SAM2 small на кадре 1920×1400 — около гигабайта; large вдвое больше.
 SAM_VRAM_MB = 1500
+# «Сеть по тексту»: YOLOE-26 — как своя сеть; SAM 3 на четырёх промтах занял
+# 3,2 ГБ (замер 24.09.2026), с запасом на промты.
+TEXT_VRAM_MB = {"yoloe": 1500, "sam3": 4000}
+# Веса YOLOE-26 и кодировщик промтов лежат в образе (training_svc/fetch_yoloe.py).
+YOLOE_DIR = os.environ.get("YOLOE_DIR", "/opt/yoloe")
+# SAM 3 смотрит на вход 1008 и маски отдаёт по размеру поданного кадра: целый
+# кадр 2688×1520 с сотней масок — десятки гигабайт. Подаём ужатым до входа.
+SAM3_SIDE = 1008
 NOTIFY_EVERY = 1.0
 
 # Файл и конфиг — как у полуавтомата (autolabel_svc/runners/sam2_runner.py);
@@ -104,13 +112,20 @@ def execute(db, run):
         _finish(db, run, "error", "Версии агента больше нет.")
         return True
     doc = version.doc
+    from training_svc import examples
+
+    sets = examples.rows_for(db, run.created_by, doc)
     try:
-        order = agent_graph.check(doc)
+        order = agent_graph.check(doc, sam3=config.sam3_ready(),
+                                  examples={k: r.status == "ready" for k, r in sets.items()})
     except agent_graph.AgentGraphError as exc:
         _finish(db, run, "error", str(exc))
         return True
 
     nets = [n for n in doc["nodes"] if n["type"] == "net"]
+    texts = [n for n in doc["nodes"] if n["type"] == "text"]
+    families = sorted("sam3" if agent_graph.text_model(n.get("params")) == "sam3" else "yoloe"
+                      for n in texts)
     weights = {}
     for node in nets:
         row = db.get(AgentWeights, _uuid(node["params"].get("weights")))
@@ -123,10 +138,12 @@ def execute(db, run):
                    for n in doc["nodes"] if n["type"] == "sam"})
     # Плитки и TTA гонят вырезки пачкой — памяти нужно больше, и замер
     # диспетчера не должен смешиваться с замером одиночного прохода.
-    batch = max(len(agent_graph.variants(n["params"])) * (8 if n["params"].get("tiles") else 1)
-                for n in nets)
-    sig = f"agent:{len(nets)}:b{batch}:{','.join(sams)}"
-    want, _ = gpu.estimate(db, "agent", sig, NET_VRAM_MB * len(nets) + SAM_VRAM_MB * len(sams))
+    batch = max((len(agent_graph.variants(n.get("params") or {}))
+                 * (8 if (n.get("params") or {}).get("tiles") else 1)
+                 for n in nets + texts), default=1)
+    sig = f"agent:{len(nets)}:b{batch}:{','.join(sams)}:{','.join(families)}"
+    want, _ = gpu.estimate(db, "agent", sig, NET_VRAM_MB * len(nets) + SAM_VRAM_MB * len(sams)
+                           + sum(TEXT_VRAM_MB[f] for f in families))
     # Прошлая бронь больше не нужна — та же причина, что у обучения: без
     # отмены каждая попытка оставляла в очереди ещё одну запись. А пока ждём,
     # бронь стоит в очереди: по её возрасту диспетчер придерживает место.
@@ -161,6 +178,7 @@ def execute(db, run):
         db.commit()
         with _beating(lease.id):
             models = _load(weights)
+            models.update({n["id"]: load_text(n, device, sets) for n in texts})
             # Разведке нужны где и что, а не контур: SAM не грузим вовсе.
             if mode != "scout":
                 models.update({name: _load_sam(name, device) for name in sams})
@@ -205,13 +223,14 @@ def _one(db, run, image_id, doc, order, models, weights, mapping, device):
     return _write(db, run, image, found, mapping)
 
 
-def frame_fns(path, file_name, models, weights, device, picture=None):
+def frame_fns(path, file_name, models, weights, device, picture=None, contour=True):
     """(predict, segment) для одного кадра — их зовёт `agent_graph.run`.
 
     Общие у прогона и превью: превью обязано показывать ровно то, что ляжет
-    в разметку. `models` — {узел сети: YOLO, имя SAM: предиктор}, `weights` —
-    {узел сети: строка полки}. `picture` — кадр ролика, уже распакованный
-    декодером (PIL, RGB); тогда `path` не читается."""
+    в разметку. `models` — {узел сети или «Сети по тексту»: модель, имя SAM:
+    предиктор}, `weights` — {узел сети: строка полки}. `picture` — кадр ролика,
+    уже распакованный декодером (PIL, RGB); тогда `path` не читается.
+    `contour=False` — разведка: контур SAM 3 ей не нужен, и его не считаем."""
     frame = []
 
     def predict(node):
@@ -226,7 +245,17 @@ def frame_fns(path, file_name, models, weights, device, picture=None):
             frame.append(got)
         pixels = frame[0]
         params = node.get("params") or {}
-        side = int(params.get("imgsz") or weights[node["id"]].imgsz or 640)
+        text = node["type"] == "text"
+        if text:
+            rows = agent_graph.text_rows(node)
+            if agent_graph.text_model(params) == "sam3":
+                return _sam3(models[node["id"]], pixels, rows, node, contour)
+            side = int(params.get("imgsz") or agent_graph.TEXT_IMGSZ)
+            # Модель идёт с самым низким порогом строк, каждую дорезает `run`.
+            conf = agent_graph.min_conf(node)
+        else:
+            side = int(params.get("imgsz") or weights[node["id"]].imgsz or 640)
+            conf = float(params.get("conf") or 0.25)
 
         def infer(jobs, scale):
             crops = []
@@ -237,8 +266,7 @@ def frame_fns(path, file_name, models, weights, device, picture=None):
             # IoU не передаём: встроенный NMS у yolo11 и v8 работает со своим
             # мягким 0,7, у yolo26 его нет вовсе. Строже — узел «NMS» в графе.
             results = models[node["id"]].predict(
-                crops, verbose=False, device=device,
-                conf=float(params.get("conf") or 0.25),
+                crops, verbose=False, device=device, conf=conf,
                 # ultralytics требует кратность шагу сети — 32.
                 imgsz=max(32, round(side * scale / 32) * 32),
             )
@@ -249,7 +277,10 @@ def frame_fns(path, file_name, models, weights, device, picture=None):
             ]
 
         h, w = pixels.shape[:2]
-        return agent_graph.detect(params, w, h, side, infer)
+        found = agent_graph.detect(params, w, h, side, infer)
+        # У YOLOE номер класса — место промта среди включённых, а таблица узла
+        # считает строки вместе с выключенными.
+        return [(rows[c][0], *rest) for c, *rest in found] if text else found
 
     encoded = set()
 
@@ -274,6 +305,143 @@ def frame_fns(path, file_name, models, weights, device, picture=None):
         return masks, scores
 
     return predict, segment
+
+
+class Sam3Text:
+    """SAM 3 узла: предиктор и вырезки коллажа для каждой строки-образцов."""
+
+    def __init__(self, predictor, crops):
+        self.predictor = predictor
+        self.crops = crops   # {id набора: [(вырезка BGR, рамка в вырезке)]}
+
+
+def _sam3(model, pixels, rows, node, contour):
+    """«Сеть по тексту» на SAM 3: [(строка, уверенность, x, y, w, h, контур)].
+
+    Слова — одним вызовом. Каждая строка-образцы — свой вызов с коллажем:
+    SAM 3 берёт рамки-образцы только на том же кадре, поэтому над кадром
+    кладётся полоса вырезок, образцы обводятся рамками в ней, а находки
+    ниже полосы — это находки в кадре (FSS-SAM3, замер 25.09.2026)."""
+    import cv2
+    import numpy as np
+
+    from common import agent_examples as ax
+
+    params = node.get("params") or {}
+    predictor = model.predictor
+    predictor.args.conf = agent_graph.min_conf(node)
+    h, w = pixels.shape[:2]
+    out = []
+
+    def collect(r, k, top, row_of):
+        if r.boxes is None or not len(r.boxes):
+            return
+        masks = r.masks.data.cpu().numpy() if contour and r.masks is not None else None
+        cut = round(top * k)
+        for j, (c, p, (x1, y1, x2, y2)) in enumerate(zip(
+                r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist())):
+            y1, y2 = y1 / k - top, y2 / k - top
+            if y2 <= 0:
+                continue          # находка в полосе образцов
+            y1 = max(0.0, y1)
+            box = (x1 / k, y1, (x2 - x1) / k, y2 - y1)
+            shape = (agent_graph.text_outline(box, masks[j][cut:], p, params, k)
+                     if masks is not None else None)
+            out.append((row_of(c), p, *box, shape))
+
+    def shrink(image):
+        k = min(1.0, SAM3_SIDE / max(image.shape[:2]))
+        if k < 1:
+            image = cv2.resize(image, (round(image.shape[1] * k), round(image.shape[0] * k)),
+                               interpolation=cv2.INTER_AREA)
+        return image, k
+
+    words = [(i, r) for i, r in rows if not agent_graph.is_examples(r)]
+    if words:
+        small, k = shrink(pixels)
+        predictor.set_image(small)
+        collect(predictor(text=[str(r["prompt"]).strip() for _, r in words])[0], k, 0,
+                lambda c: words[int(c)][0])
+    for i, r in rows:
+        if not agent_graph.is_examples(r):
+            continue
+        crops = model.crops[str(r["set"])]
+        top, places = ax.strip_layout([(c.shape[1], c.shape[0]) for c, _ in crops], w, len(crops))
+        strip = np.zeros((top, w, 3), np.uint8)
+        boxes = []
+        for (img, (bx, by, bw, bh)), (px, py, sc) in zip(crops, places):
+            fit = cv2.resize(img, (max(1, round(img.shape[1] * sc)), max(1, round(img.shape[0] * sc))))
+            x0, y0 = int(px), int(py)
+            part = fit[:top - y0, :w - x0]
+            strip[y0:y0 + part.shape[0], x0:x0 + part.shape[1]] = part
+            boxes.append([px + bx * sc, py + by * sc, px + (bx + bw) * sc, py + (by + bh) * sc])
+        small, k = shrink(np.vstack([strip, pixels]))
+        predictor.set_image(small)
+        found = predictor(bboxes=np.array(boxes, np.float32) * k, labels=np.ones(len(boxes)))[0]
+        collect(found, k, top, lambda _c, row=i: row)
+    return out
+
+
+def load_text(node, device, sets=None):
+    """Модель «Сети по тексту»: YOLOE с вшитыми классами — векторы слов и
+    средние векторы наборов образцов по порядку строк, — или SAM 3 с
+    вырезками коллажа. `sets` — {id набора: строка agent_examples}."""
+    from training_svc import examples
+
+    params = node.get("params") or {}
+    model = agent_graph.text_model(params)
+    sets = sets or {}
+    missing = [s for _, s in agent_graph.text_sets(node) if s not in sets]
+    if missing:
+        raise RuntimeError("Набора образцов нет на полке владельца агента.")
+    if model == "sam3":
+        if not config.sam3_ready():
+            raise RuntimeError(f"Нет весов SAM 3: положите sam3.pt в {config.SAM3_WEIGHTS}.")
+        from ultralytics.models.sam import SAM3SemanticPredictor
+
+        return Sam3Text(SAM3SemanticPredictor(overrides=dict(
+            task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
+            half=device != "cpu", device="cpu" if device == "cpu" else 0)),
+            {s: examples.collage_crops(sets[s]) for _, s in agent_graph.text_sets(node)})
+
+    import torch
+    from ultralytics import YOLOE
+    from ultralytics.nn.text_model import MobileCLIPTS
+
+    yoloe = YOLOE(os.path.join(YOLOE_DIR, f"yoloe-26{model}-seg.pt"))
+    rows = agent_graph.text_rows(node)
+    words = [str(r["prompt"]).strip() for _, r in rows if not agent_graph.is_examples(r)]
+    text = {}
+    if words:
+        # Кодировщик нужен один раз — перевести промты в векторы. Сам ultralytics
+        # ищет его файл по имени в текущей папке, поэтому даём его сами, на
+        # процессоре, и потом выбрасываем: держать 254 МБ ради готовых векторов незачем.
+        yoloe.model.clip_model = MobileCLIPTS(torch.device("cpu"),
+                                              weight=os.path.join(YOLOE_DIR, "mobileclip2_b.ts"))
+        pe = yoloe.model.get_text_pe(words, cache_clip_model=True)[0].float()
+        del yoloe.model.clip_model
+        text = dict(zip(words, pe))
+    names, vectors = [], []
+    for _, r in rows:
+        if agent_graph.is_examples(r):
+            names.append(f"examples:{r['set']}")
+            vectors.append(torch.from_numpy(examples.mean_vector(sets[str(r["set"])], model)))
+        else:
+            names.append(str(r["prompt"]).strip())
+            vectors.append(text[names[-1]])
+    yoloe.set_classes(names, torch.stack(vectors)[None])
+    return yoloe
+
+
+def text_key(node):
+    """Чем отличаются загруженные модели узла: у YOLOE классы вшиты в веса,
+    у SAM 3 — вырезки коллажа."""
+    params = node.get("params") or {}
+    model = agent_graph.text_model(params)
+    sets = tuple(s for _, s in agent_graph.text_sets(node))
+    if model == "sam3":
+        return (model, *sets)
+    return (model, *(p for _, p in agent_graph.text_prompts(node)), *sets)
 
 
 def _write(db, run, image, found, mapping):
@@ -383,7 +551,7 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
 
         def on_frame(frame_no, _time_ms, picture):
             predict, segment = frame_fns(None, f"{video.file_name} #{frame_no}", models, weights,
-                                         device, picture=picture)
+                                         device, picture=picture, contour=mode == "annotate")
             found = agent_graph.run(doc, predict, order, segment if mode == "annotate" else None)
             if mode == "annotate":
                 put = _write_video(db, run, video, frame_no, found, mapping)

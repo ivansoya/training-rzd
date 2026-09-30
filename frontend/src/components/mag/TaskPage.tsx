@@ -36,6 +36,8 @@ import VideoCutModal from "./VideoCutModal";
 import Sep from "../Sep";
 import Banner from "../Banner";
 import AgentRunDialog, { AgentRunBar } from "../agents/AgentRunDialog";
+import ScoutOverview from "../agents/ScoutOverview";
+import { useScouts } from "../agents/scout";
 import { runContext, type RunView } from "../../api/agents";
 
 const NEXT: Record<TaskStatus, { to: TaskStatus; label: string; hint: string }[]> = {
@@ -99,6 +101,9 @@ export default function TaskPage() {
   // Агент: окно запуска и последний прогон по этой таске.
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentRun, setAgentRun] = useState<RunView | null>(null);
+  // Общая статистика разведки: кнопка есть, если разведан хоть один ролик.
+  const scouted = Object.keys(useScouts(taskId || "")).length > 0;
+  const [overviewOpen, setOverviewOpen] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
   // Два поля выбора файла на две вкладки: режим ролика решает вкладка, а не
@@ -459,6 +464,11 @@ export default function TaskPage() {
         </div>
 
         <div className="mag-task-submit">
+          {scouted && (
+            <button className="ag-scout-btn ag-scout-btn-head" type="button" onClick={() => setOverviewOpen(true)}>
+              Статистика разведки
+            </button>
+          )}
           {task.status !== "closed" && (
             <button className="mag-ghost mag-ghost-inline" type="button"
               disabled={busy || !task.can_work || Boolean(agentRun && ["queued", "waiting_gpu", "running"].includes(agentRun.status))}
@@ -501,6 +511,7 @@ export default function TaskPage() {
         ))}
       </nav>
 
+      {overviewOpen && <ScoutOverview taskId={task.id} onClose={() => setOverviewOpen(false)} />}
       {agentOpen && (
         <AgentRunDialog
           taskId={task.id}

@@ -12,10 +12,12 @@
 вовсе. Быстрая перемотка держится на прогреве окна кадров одним проходом
 декодера — подряд идущие кадры дешевле одиночных примерно в восемьдесят раз.
 """
+import io
 import os
 import threading
 
 from flask import Blueprint, jsonify, request, send_file
+from PIL import Image as PilImage
 from sqlalchemy import func, select
 
 from common import attribution, config, jobs
@@ -281,7 +283,21 @@ def video_frame(task_id, video_id):
             os.replace(tmp, cached)
             _trim_cache(folder)
 
-        resp = send_file(cached, mimetype="image/jpeg", conditional=True)
+        width = request.args.get("w", type=int)
+        if width and video.width and width < video.width:
+            # Уменьшенный кадр — для карточки при наведении на разведку: гнать
+            # в браузер полный 2688×1520 ради картинки в 320 px незачем.
+            # Снимается с того же кэша, отдельно не хранится: сжать готовый
+            # кадр — миллисекунды, дорого только первое извлечение из ролика.
+            with PilImage.open(cached) as img:
+                small = img.convert("RGB")
+                small.thumbnail((max(16, min(width, 1280)), 10_000))
+                buf = io.BytesIO()
+                small.save(buf, "JPEG", quality=82)
+            buf.seek(0)
+            resp = send_file(buf, mimetype="image/jpeg")
+        else:
+            resp = send_file(cached, mimetype="image/jpeg", conditional=True)
         # Кадр по номеру неизменен, пока существует ролик.
         resp.headers["Cache-Control"] = "private, max-age=86400"
         # В каких пикселях этот кадр. Разметке полуавтоматом важно не «видимо

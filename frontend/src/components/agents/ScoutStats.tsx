@@ -1,31 +1,32 @@
-// Окно статистики разведки: общие числа по ролику, классы и «по времени».
+// Статистика разведки одного ролика: общие числа, классы и «по времени».
 //
-// Решения владельца (24.09.2026): окно открывают строка сводки под именем
-// ролика и «Статистика» в полосе прогона, само оно не выскакивает — прогон
-// может кончиться посреди другой работы. Разведано несколько роликов —
-// вкладки наверху. Числа считает сервер (agent_graph.scout_stats): у часового
-// ролика тысячи проверенных кадров, и гнать их в браузер ради десятка чисел
-// незачем.
+// Решения владельца (24.09.2026):
+// - кнопка «Разведка» у ролика открывает окно только этого ролика; между
+//   роликами переключаются в общей статистике таски (ScoutOverview);
+// - шкала приближается: над полосами весь ролик тонкой полосой с рамкой
+//   окна, колесо — масштаб у указателя, протяжка — сдвиг, рамку можно
+//   тащить; на часовом ролике иначе отметки сливались в штрихи;
+// - кадр — в карточке при наведении, ленты кадров нет.
+// Числа считает сервер (agent_graph.scout_stats): у часового ролика тысячи
+// проверенных кадров, и гнать их в браузер ради десятка чисел незачем.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import * as api from "../../api/agents";
 import { plural } from "../mag/ProjectsPage";
 import Sep from "../Sep";
 import { useBackdrop } from "../useBackdrop";
-import { scoutLanes, useScouts } from "./scout";
+import FramePeek from "./FramePeek";
+import { taskColors, useScouts } from "./scout";
+import { clampView, clock, nearest, timeTicks } from "./scoutMath";
 
 const comma = (v: number, digits = 2) => v.toFixed(digits).replace(".", ",");
-// Шаги шкалы времени, секунды.
-const TICK_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
-
-function clock(sec: number): string {
-  const s = Math.floor(sec);
-  const tail = `${String(Math.floor(s / 60) % 60).padStart(s >= 3600 ? 2 : 1, "0")}:${String(s % 60).padStart(2, "0")}`;
-  return s >= 3600 ? `${Math.floor(s / 3600)}:${tail}` : tail;
-}
 
 const when = (iso: string) =>
   new Date(iso).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+
+type View = { a: number; b: number };
+interface Hover { i: number; row: string; x: number; y: number }
 
 /** Уверенность по десятым: столбик на десятую, белая черта — медиана. */
 function Hist({ hist, median, color }: { hist: number[]; median: number; color: string }) {
@@ -42,116 +43,199 @@ function Hist({ hist, median, color }: { hist: number[]; median: number; color: 
   );
 }
 
-/** Проверенный кадр под указателем: ближайший к x на шкале ролика. */
-function nearest(checked: number[], frame: number): number {
-  let lo = 0;
-  let hi = checked.length - 1;
-  while (lo < hi) {
-    const mid = (lo + hi) >> 1;
-    if (checked[mid] < frame) lo = mid + 1;
-    else hi = mid;
-  }
-  return lo > 0 && frame - checked[lo - 1] < checked[lo] - frame ? lo - 1 : lo;
-}
-
-interface Hover { i: number; row: string; x: number; y: number }
-
-/** Рамок на каждом проверенном кадре — столбиками на шкале ролика.
- *
- *  Наведение общее на все полосы: подсвечивается один и тот же кадр во всех
- *  классах, а подсказка перечисляет их разом. Попадать мышью в столбик шириной
- *  в пиксель не нужно — берётся ближайший проверенный кадр. */
-function Strip({ stats, counts, max, color, row, hover, onHover }: {
-  stats: api.ScoutStats; counts: number[]; max: number; color: string; row: string;
-  hover: Hover | null; onHover: (h: Hover | null) => void;
+/** Рамок на каждом проверенном кадре — столбиками в окне `view` (кадры).
+ *  Окно — это viewBox: приближение не пересчитывает столбики, а растягивает
+ *  их, и за краями окна их режет сам SVG. */
+export function Bars({ stats, counts, max, color, view, hover }: {
+  stats: api.ScoutStats; counts: number[]; max: number; color: string; view: View; hover: number | null;
 }) {
   const width = Math.max(1, stats.step * 0.72);
-  const on = hover ? stats.checked[hover.i] : null;
+  const on = hover === null ? null : stats.checked[hover];
   return (
-    <span
-      className="ag-stats-strip"
-      onMouseMove={(e) => {
-        const r = e.currentTarget.getBoundingClientRect();
-        const frame = ((e.clientX - r.left) / Math.max(1, r.width)) * stats.last_frame;
-        onHover({ i: nearest(stats.checked, frame), row, x: e.clientX, y: e.clientY });
-      }}
-      onMouseLeave={() => onHover(null)}
-    >
-      <svg viewBox={`0 0 ${Math.max(1, stats.last_frame)} 100`} preserveAspectRatio="none" aria-hidden="true">
-        {on !== null && (
-          <rect x={on - stats.step * 0.14} y={0} width={stats.step} height={100} style={{ fill: "var(--ink)" }} fillOpacity={0.12} />
-        )}
-        {counts.map((k, i) => {
-          if (!k) return null;
-          const f = stats.checked[i];
-          const h = Math.max(6, (k / Math.max(1, max)) * 100);
-          return (
-            <rect key={f} x={f} y={100 - h} width={width} height={h} style={{ fill: color }}
-              fillOpacity={on === null ? 0.8 : f === on ? 1 : 0.4} />
-          );
-        })}
-      </svg>
-    </span>
+    <svg viewBox={`${view.a} 0 ${Math.max(1, view.b - view.a)} 100`} preserveAspectRatio="none" aria-hidden="true">
+      {on !== null && (
+        <rect x={on - stats.step * 0.14} y={0} width={stats.step} height={100} style={{ fill: "var(--ink)" }} fillOpacity={0.12} />
+      )}
+      {counts.map((k, i) => {
+        const f = stats.checked[i];
+        if (!k || f < view.a - stats.step || f > view.b) return null;
+        const h = Math.max(6, (k / Math.max(1, max)) * 100);
+        return (
+          <rect key={f} x={f} y={100 - h} width={width} height={h} style={{ fill: color }}
+            fillOpacity={on === null ? 0.8 : f === on ? 1 : 0.4} />
+        );
+      })}
+    </svg>
   );
 }
 
-/** Подсказка у указателя — в стиле панелей сайта, а не системная. */
-function Tip({ stats, hover, rows, fps }: {
-  stats: api.ScoutStats; hover: Hover; fps: number;
-  rows: { name: string; color: string; counts: number[]; all: boolean }[];
+/** Шкала «по времени» с приближением и карточкой кадра при наведении. */
+function Timeline({ taskId, videoId, stats, colors }: {
+  taskId: string; videoId: string; stats: api.ScoutStats; colors: Map<string, string>;
 }) {
-  const f = stats.checked[hover.i];
-  const found = rows.filter((r) => !r.all && r.counts[hover.i]);
-  const total = stats.per_frame[hover.i] ?? 0;
-  // У правого края окна подсказка встаёт слева от указателя, иначе её режет.
-  const left = hover.x + 260 > window.innerWidth ? hover.x - 256 : hover.x + 14;
+  const fps = stats.fps || 25;
+  const last = Math.max(1, stats.last_frame);
+  // Уже восьми проверенных кадров окно не бывает: дальше смотреть нечего.
+  const minSpan = stats.step * 8;
+  const [view, setView] = useState<View>({ a: 0, b: last });
+  const [hover, setHover] = useState<Hover | null>(null);
+  const lanes = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; a: number; span: number; width: number; scale: number } | null>(null);
+  const span = view.b - view.a;
+  const full = view.a <= 0 && view.b >= last;
+
+  useEffect(() => setView({ a: 0, b: last }), [videoId, last]);
+
+  // Колесо — нативно и не пассивно: у React onWheel нет права на
+  // preventDefault, и вместо масштаба уезжало бы окно.
+  useEffect(() => {
+    const el = lanes.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      const strip = (e.target as Element).closest(".ag-stats-strip");
+      if (!strip) return;
+      e.preventDefault();
+      const r = strip.getBoundingClientRect();
+      const ratio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
+      setView((v) => {
+        const s = v.b - v.a;
+        const next = s * (e.deltaY > 0 ? 1.25 : 0.8);
+        return clampView(v.a + ratio * s - ratio * next, next, last, minSpan);
+      });
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [last, minSpan]);
+
+  const rows = [
+    { name: "Все классы", color: "var(--dim)", counts: stats.per_frame, max: stats.max },
+    ...stats.classes.map((c) => ({ name: c.name, counts: c.counts, max: c.max, color: colors.get(c.name) ?? "var(--dim)" })),
+  ];
+
+  function frameAt(el: HTMLElement, clientX: number) {
+    const r = el.getBoundingClientRect();
+    return view.a + ((clientX - r.left) / Math.max(1, r.width)) * span;
+  }
+
+  // Протяжка сдвигает окно: по полосам — в масштабе окна, по обзору — в
+  // масштабе всего ролика (`scale` — сколько кадров в ширине полосы).
+  function grab(e: ReactPointerEvent<HTMLElement>, a: number, scale: number) {
+    if (e.button !== 0) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    drag.current = { x: e.clientX, a, span, width: r.width, scale };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  }
+  function move(e: ReactPointerEvent<HTMLElement>, sign: number) {
+    const d = drag.current;
+    if (!d) return;
+    const shift = ((e.clientX - d.x) / Math.max(1, d.width)) * d.scale;
+    setView(clampView(d.a + sign * shift, d.span, last, minSpan));
+  }
+  const drop = () => { drag.current = null; };
+
+  const label = full
+    ? `весь ролик, ${clock(last / fps)}`
+    : `${clock(view.a / fps)}–${clock(view.b / fps)}, окно ${clock(span / fps)}`;
+  const at = hover === null ? null : stats.checked[hover.i];
+  const marks = [
+    [view.a, clock(view.a / fps), "first"] as const,
+    ...timeTicks(view.a, view.b, fps).map((s) => [s * fps, clock(s), ""] as const),
+    [view.b, clock(view.b / fps), "last"] as const,
+  ];
+
   return (
-    <div className="ag-stats-tip" style={{ left, top: hover.y + 16 }} role="tooltip">
-      <div className="ag-stats-tip-h"><b>Кадр {f}</b><span>{clock(f / fps)}</span></div>
-      {found.length === 0 ? (
-        <p>ничего не найдено</p>
-      ) : (
-        <>
-          {found.map((r) => (
-            <div key={r.name} className={r.name === hover.row ? "on" : undefined}>
-              <i style={{ background: r.color }} /><span>{r.name}</span><b>{r.counts[hover.i]}</b>
-            </div>
-          ))}
-          {found.length > 1 && (
-            <div className="ag-stats-tip-sum"><span>всего</span><b>{total} {plural(total, "рамка", "рамки", "рамок")}</b></div>
-          )}
-        </>
+    <div className="ag-tl">
+      <div className="ag-tl-h">
+        <h4>По времени</h4>
+        <span className="ag-tl-win">{label}</span>
+        <span className="ag-tl-hint">колесо — масштаб, протяжка — сдвиг</span>
+        {/* Кнопка стоит всегда, на полном ролике — погашенная: появляясь,
+            она сдвигала бы полосы под указателем посреди прокрутки. */}
+        <button type="button" className="mag-ghost mag-ghost-inline" disabled={full}
+          onClick={() => setView({ a: 0, b: last })}>
+          Весь ролик
+        </button>
+      </div>
+
+      <div className="ag-stats-row ag-tl-over">
+        <span className="ag-stats-cls ag-muted">обзор</span>
+        {/* Весь ролик с рамкой окна: щелчок мимо рамки ставит туда окно,
+            протяжка везёт рамку. */}
+        <span className="ag-stats-strip"
+          onPointerDown={(e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            const f = ((e.clientX - r.left) / r.width) * last;
+            let a = view.a;
+            if (f < view.a || f > view.b) {
+              a = clampView(f - span / 2, span, last, minSpan).a;
+              setView({ a, b: a + span });
+            }
+            grab(e, a, last);
+          }}
+          onPointerMove={(e) => move(e, 1)} onPointerUp={drop} onPointerCancel={drop}>
+          <Bars stats={stats} counts={stats.per_frame} max={stats.max} color="var(--faint)" view={{ a: 0, b: last }} hover={null} />
+          <i className="ag-tl-box" style={{ left: `${(view.a / last) * 100}%`, width: `${Math.max(0.5, (span / last) * 100)}%` }} />
+        </span>
+        <span />
+      </div>
+
+      <div className="ag-stats-strips" ref={lanes}>
+        {rows.map((r) => (
+          <div className="ag-stats-row" key={r.name}>
+            <span className="ag-stats-cls"><i style={{ background: r.color }} /><span title={r.name}>{r.name}</span></span>
+            <span className="ag-stats-strip"
+              onPointerDown={(e) => grab(e, view.a, span)}
+              onPointerMove={(e) => {
+                // Протяжка тянет ролик за собой: окно едет навстречу руке.
+                move(e, -1);
+                const i = nearest(stats.checked, frameAt(e.currentTarget, e.clientX));
+                setHover({ i, row: r.name, x: e.clientX, y: e.clientY });
+              }}
+              onPointerUp={drop}
+              onPointerCancel={drop}
+              onPointerLeave={() => setHover(null)}>
+              <Bars stats={stats} counts={r.counts} max={r.max} color={r.color} view={view} hover={hover?.i ?? null} />
+            </span>
+            <span className="ag-stats-max">до {r.max}</span>
+          </div>
+        ))}
+        <div className="ag-stats-axis">
+          <i />
+          <div>
+            {marks.map(([f, text, klass], i) => (
+              <span key={i} className={klass || undefined} style={{ left: `${((f - view.a) / Math.max(1, span)) * 100}%` }}>{text}</span>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {hover && at !== null && (
+        <FramePeek taskId={taskId} videoId={videoId} frame={at} fps={fps} x={hover.x} y={hover.y} focus={hover.row}
+          rows={stats.classes.filter((c) => c.counts[hover.i]).map((c) => ({
+            name: c.name, color: colors.get(c.name) ?? "var(--dim)", count: c.counts[hover.i],
+          }))} />
       )}
     </div>
   );
 }
 
-function Body({ stats, colors, showName }: { stats: api.ScoutStats; colors: Map<string, string>; showName: boolean }) {
-  const [hover, setHover] = useState<Hover | null>(null);
+/** Тело статистики ролика — в своём окне и в правой части общей статистики. */
+export function ScoutBody({ taskId, videoId, stats, colors }: {
+  taskId: string; videoId: string; stats: api.ScoutStats; colors: Map<string, string>;
+}) {
   const fps = stats.fps || 25;
   const checked = stats.checked.length;
   const seconds = (name: string) =>
     (stats.segments[name] ?? []).reduce((s, [a, b]) => s + (b - a + 1), 0) / fps;
-  // Подписи шкалы — круглые отметки (0:15, 0:30…) примерно на четвертях
-  // ролика и его конец; четверть от 59 с дала бы «0:44».
-  const end = Math.floor(stats.last_frame / fps);
-  const every = TICK_STEPS.find((s) => s >= end / 4) ?? 3600;
-  const ticks = Array.from({ length: Math.ceil(end / every) }, (_, i) => i * every)
-    .map((sec) => [sec * fps, clock(sec)] as const)
-    .concat([[stats.last_frame, clock(end)] as const]);
-  const rows = [
-    { name: "Все классы", color: "var(--dim)", counts: stats.per_frame, max: stats.max, all: true },
-    ...stats.classes.map((c) => ({ ...c, color: colors.get(c.name) ?? "var(--dim)", all: false })),
-  ];
   return (
     <>
       <p className="ag-stats-meta">
         «{stats.agent ?? "агент"}»{stats.version ? ` v${stats.version}` : ""} <Sep /> {when(stats.created_at)}{" "}
-        <Sep /> каждый {stats.step}-й кадр: проверено {checked} из {(stats.last_frame + 1).toLocaleString("ru-RU")}
-        {showName && <> <Sep /> {stats.file_name}</>}
+        <Sep /> каждый {stats.step}-й кадр: проверено {checked.toLocaleString("ru-RU")} из {(stats.last_frame + 1).toLocaleString("ru-RU")}
+        {" "}<Sep /> {clock(stats.last_frame / fps)}
       </p>
       <div className="ag-stats-figs">
-        <div><b>{stats.with_hits}<small> из {checked}</small></b><span>кадров с находками</span></div>
+        <div><b>{stats.with_hits.toLocaleString("ru-RU")}<small> из {checked.toLocaleString("ru-RU")}</small></b><span>кадров с находками</span></div>
         <div><b>{stats.boxes.toLocaleString("ru-RU")}</b><span>{plural(stats.boxes, "рамка", "рамки", "рамок")}</span></div>
         <div><b>{comma(stats.boxes / Math.max(1, checked), 1)}</b><span>в среднем на кадр</span></div>
         <div>
@@ -204,56 +288,30 @@ function Body({ stats, colors, showName }: { stats: api.ScoutStats; colors: Map<
               </tbody>
             </table>
           </div>
-          <div className="ag-stats-time">
-            <h4>По времени</h4>
-            <span>рамок на каждом проверенном кадре; наведите на столбик — номер кадра и время</span>
-          </div>
-          <div className="ag-stats-strips">
-            {rows.map((r) => (
-              <div className="ag-stats-row" key={r.name}>
-                <span className="ag-stats-cls"><i style={{ background: r.color }} /><span title={r.name}>{r.name}</span></span>
-                <Strip stats={stats} counts={r.counts} max={r.max} color={r.color} row={r.name}
-                  hover={hover} onHover={setHover} />
-                <span className="ag-stats-max">до {r.max}</span>
-              </div>
-            ))}
-            {/* Шкала — в колонке полос: подписи ставятся по той же ширине. */}
-            <div className="ag-stats-axis">
-              <i />
-              <div>
-                {ticks.map(([f, label], i) => (
-                  <span key={i} className={i === 0 ? "first" : i === ticks.length - 1 ? "last" : undefined}
-                    style={{ left: `${(f / Math.max(1, stats.last_frame)) * 100}%` }}>{label}</span>
-                ))}
-              </div>
-            </div>
-          </div>
-          {hover && <Tip stats={stats} hover={hover} rows={rows} fps={fps} />}
+          <Timeline taskId={taskId} videoId={videoId} stats={stats} colors={colors} />
         </>
       )}
     </>
   );
 }
 
+/** Окно разведки одного ролика — по кнопке «Разведка» у этого ролика. */
 export default function ScoutStats({ taskId, videoId, onClose }: {
   taskId: string;
   videoId: string;
   onClose: () => void;
 }) {
   const scouts = useScouts(taskId);
-  const [current, setCurrent] = useState(videoId);
   const [stats, setStats] = useState<api.ScoutStats | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    setStats(null);
-    setError(null);
-    api.scoutStats(taskId, current)
+    api.scoutStats(taskId, videoId)
       .then((s) => alive && setStats(s))
       .catch((e) => alive && setError((e as Error).message));
     return () => { alive = false; };
-  }, [taskId, current]);
+  }, [taskId, videoId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -261,32 +319,17 @@ export default function ScoutStats({ taskId, videoId, onClose }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const tabs = Object.entries(scouts)
-    .map(([id, s]) => ({ id, name: s.file_name }))
-    .sort((a, b) => a.name.localeCompare(b.name, "ru"));
-  // Цвета — те же, что у полос разведки на шкалах ролика.
-  const colors = new Map(scoutLanes(scouts[current]).map((l) => [l.name, l.color]));
-
   return (
     <div className="mag-backdrop" {...useBackdrop(onClose)}>
       <div className="mag-modal ag-stats" role="dialog" aria-label="Статистика разведки">
         <div className="ag-stats-h">
           <h1>Разведка</h1>
-          {tabs.length > 1 && (
-            <div className="ag-stats-tabs" role="tablist">
-              {tabs.map((t) => (
-                <button key={t.id} type="button" role="tab" aria-selected={t.id === current}
-                  title={t.name} onClick={() => setCurrent(t.id)}>
-                  {t.name}
-                </button>
-              ))}
-            </div>
-          )}
+          <span className="ag-stats-video" title={stats?.file_name}>{stats?.file_name}</span>
           <button className="ag-stats-x" type="button" aria-label="Закрыть" onClick={onClose}>✕</button>
         </div>
         {error && <div className="mag-error">{error}</div>}
         {!stats && !error && <p className="ag-muted">Считаю…</p>}
-        {stats && <Body stats={stats} colors={colors} showName={tabs.length <= 1} />}
+        {stats && <ScoutBody taskId={taskId} videoId={videoId} stats={stats} colors={taskColors(scouts)} />}
       </div>
     </div>
   );

@@ -26,7 +26,7 @@ export interface TrainedRun {
   finished_at: string | null;
 }
 
-export const listWeights = () => get<{ weights: Weights[] }>("agents/weights");
+export const listWeights = () => get<{ weights: Weights[]; sam3?: boolean }>("agents/weights");
 
 // Сырым телом, а не формой: сервер пишет его прямо в файл и считает отпечаток
 // на лету — промежуточной копии, на которой не доезжал архив импорта, нет.
@@ -202,3 +202,58 @@ export const runPreview = (
   },
   signal?: AbortSignal
 ) => post<AgentPreview>("agents/preview", body, signal);
+
+// --- Наборы образцов «Сети по тексту» (training_svc/examples.py) -----------
+
+export interface ExampleItem {
+  uid: string;
+  file_name: string;
+  /** Меньшая сторона рамки, px. */
+  side: number;
+}
+
+/** Набор неизменяем: убрать, переставить, добрать — это новый набор. */
+export interface ExampleSet {
+  id: string;
+  status: "queued" | "ready" | "error";
+  error: string | null;
+  project: string;
+  class_name: string;
+  params: { datasets: string[] | null; n: number; collage: number; ctx: number; seed: number };
+  parent_id: string | null;
+  items: ExampleItem[];
+  frames: number;
+  created_at: string;
+}
+
+export interface ExampleSources {
+  project: { code: string; name: string };
+  datasets: { id: string; name: string; frames: number }[];
+  classes: {
+    id: string;
+    name: string;
+    color: string;
+    /** По датасетам: всего ручных рамок, годных (от 8 px) и кадров с ними. */
+    datasets: Record<string, { boxes: number; usable: number; frames: number }>;
+  }[];
+}
+
+export const exampleSources = (project: string) =>
+  get<ExampleSources>(`agents/examples/sources?project=${encodeURIComponent(project)}`);
+
+export const createExamples = (body: {
+  project: string;
+  class_id: string;
+  datasets: string[] | null;
+  n: number;
+  collage: number;
+  ctx: number;
+}) => post<{ set: ExampleSet }>("agents/examples", body);
+
+export const deriveExamples = (id: string, body: { order?: string[]; add?: number; collage?: number }) =>
+  post<{ set: ExampleSet }>(`agents/examples/${id}/derive`, body);
+
+export const listExamples = (ids: string[]) =>
+  get<{ sets: ExampleSet[] }>(`agents/examples?ids=${ids.join(",")}`);
+
+export const exampleCrop = (id: string, uid: string) => `/api/agents/examples/${id}/crops/${uid}`;

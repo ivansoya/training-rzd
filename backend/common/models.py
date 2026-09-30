@@ -1578,6 +1578,56 @@ class AgentWeights(Base, AuditMixin):
     )
 
 
+class AgentExamples(Base, AuditMixin):
+    """Набор образцов для «Сети по тексту» — на личной полке, как веса.
+
+    Собирается из ручной разметки проекта (решения владельца 25.09.2026) и
+    с проектом не умирает: на полке лежат вектор каждого образца для YOLOE
+    всех четырёх размеров и вырезки для коллажа SAM 3. Векторы считаются по
+    целым кадрам, а не по вырезкам: YOLOE помнит масштаб, и растянутая
+    вырезка давала ему другой объект (замер 25.09.2026).
+
+    **Набор неизменяем.** «Убрать», «переставить», «добрать» рождают новый
+    набор (`parent_id` — откуда): иначе правка черновика незаметно меняла бы
+    уже сохранённые версии агента. Статусы: queued → ready | error; наборы,
+    на которые не ссылается ни один агент, убирает воркер.
+    """
+
+    __tablename__ = "agent_examples"
+    __table_args__ = (
+        sa.Index("ix_agent_examples_queued", "created_at",
+                 postgresql_where=sa.text("status = 'queued'")),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("agent_examples.id", ondelete="SET NULL")
+    )
+    project_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="SET NULL")
+    )
+    # Имена строками: проект и класс могут уйти, паспорт набора — нет.
+    project_name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    class_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("classes.id", ondelete="SET NULL")
+    )
+    class_name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    # {"datasets": [id] | null, "n", "collage", "ctx", "seed", "add"}
+    params: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    # По порядку: [{"uid", "image_id", "file_name", "box": [x, y, w, h],
+    #   "crop_box": [x, y, w, h]}]; первые `collage` идут в коллаж SAM 3.
+    items: Mapped[list] = mapped_column(JsonCol, nullable=False)
+    # Папка относительно DATA_DIR: vectors.npz и вырезки <uid>.jpg.
+    dir: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    status: Mapped[str] = mapped_column(
+        sa.String(16), nullable=False, default="queued", server_default="queued"
+    )
+    error: Mapped[str | None] = mapped_column(sa.Text)
+
+
 class AgentClassMap(Base):
     """Как классы агента ложатся на классы проекта.
 

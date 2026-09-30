@@ -11,7 +11,7 @@ import { plural } from "./ProjectsPage";
 import VideoStrip from "./VideoStrip";
 import Sep from "../Sep";
 import Banner from "../Banner";
-import { ScoutBars, useScouts } from "../agents/scout";
+import { ScoutBand, taskColors, useScouts } from "../agents/scout";
 
 const COLORS = ["#e21a1a", "#1f6feb", "#1a7f4b", "#8957e5", "#e8590c"];
 const STEPS_MS = [100, 250, 500, 1000, 2000, 5000];
@@ -239,7 +239,8 @@ export default function VideoCutModal({
 }) {
   const duration = video.duration_ms || 0;
   const frameMs = 1000 / (video.fps || 25);
-  const scout = useScouts(taskId)[video.id];
+  const scouts = useScouts(taskId);
+  const scout = scouts[video.id];
   const minSpan = Math.max(500, frameMs * 20);
 
   // Сохранённый план — то, из чего таска нарезана; открываем ровно его.
@@ -343,6 +344,20 @@ export default function VideoCutModal({
     [duration]
   );
 
+  // Приближение ленты: колесо у указателя (`ratio` — доля ширины), с Shift —
+  // сдвиг. Одно на ленту и полосу разведки под ней: у них общая шкала.
+  const zoomAt = useCallback((ratio: number, deltaY: number, shift: boolean, width: number) => {
+    setView((v) => {
+      if (shift) {
+        return { ...v, start: clampStart(v.start + (deltaY / Math.max(1, width)) * v.span, v.span) };
+      }
+      const k = deltaY > 0 ? 1.25 : 1 / 1.25;
+      const span = Math.min(Math.max(1, duration), Math.max(minSpan, v.span * k));
+      const anchor = v.start + ratio * v.span;
+      return { span, start: clampStart(anchor - ratio * span, span) };
+    });
+  }, [duration, minSpan, clampStart]);
+
   // Колесо слушается нативно и не пассивно: у React onWheel нет права на
   // preventDefault, и страница уедет вместо масштаба ленты.
   useEffect(() => {
@@ -351,20 +366,11 @@ export default function VideoCutModal({
     function onWheel(e: WheelEvent) {
       e.preventDefault();
       const r = el!.getBoundingClientRect();
-      const ratio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
-      setView((v) => {
-        if (e.shiftKey) {
-          return { ...v, start: clampStart(v.start + (e.deltaY / r.width) * v.span, v.span) };
-        }
-        const k = e.deltaY > 0 ? 1.25 : 1 / 1.25;
-        const span = Math.min(Math.max(1, duration), Math.max(minSpan, v.span * k));
-        const anchor = v.start + ratio * v.span;
-        return { span, start: clampStart(anchor - ratio * span, span) };
-      });
+      zoomAt(Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), e.deltaY, e.shiftKey, r.width);
     }
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [duration, minSpan, clampStart]);
+  }, [zoomAt]);
 
   const pct = useCallback(
     (ms: number) => ((ms - view.start) / view.span) * 100,
@@ -913,16 +919,27 @@ export default function VideoCutModal({
               )}
             </div>
 
-            <div className="mag-cut-ticks">
-              <span>{fmtTime(view.start)}</span>
-              <span>{zoomed ? `окно ${fmtTime(view.span)} — колесо — масштаб` : "колесо — масштаб, протяжка — сдвиг"}</span>
-              <span>{fmtTime(view.start + view.span)}</span>
-            </div>
+            {/* Разведка — одной полосой ровно под лентой, в её окне; шкала
+                времени — под полосой, чипы классов — под шкалой. */}
+            {(() => {
+              const ticks = (
+                <div className="mag-cut-ticks">
+                  <span>{fmtTime(view.start)}</span>
+                  <span>{zoomed ? `окно ${fmtTime(view.span)} — колесо — масштаб` : "колесо — масштаб, протяжка — сдвиг"}</span>
+                  <span>{fmtTime(view.start + view.span)}</span>
+                </div>
+              );
+              return scout ? (
+                <ScoutBand taskId={taskId} videoId={video.id} scout={scout} colors={taskColors(scouts)}
+                  view={view} at={at} editable={editable} onSeek={seek}
+                  onPlan={(ranges) => ranges.forEach(([a, b]) => addSeg(a, Math.min(b, duration)))}
+                  onWheel={(ratio, deltaY, shift) =>
+                    zoomAt(ratio, deltaY, shift, trackRef.current?.getBoundingClientRect().width ?? 1)}>
+                  {ticks}
+                </ScoutBand>
+              ) : ticks;
+            })()}
 
-            {scout && (
-              <ScoutBars scout={scout} pct={pct} span={view.span} editable={editable} onSeek={seek}
-                onPlan={(ranges) => ranges.forEach(([a, b]) => addSeg(a, Math.min(b, duration)))} />
-            )}
 
             {menu && (
               <>

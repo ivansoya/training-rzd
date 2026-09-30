@@ -16,8 +16,19 @@ ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
 RUN pip install --no-cache-dir torch==2.3.1 torchvision==0.18.1 \
     --index-url ${TORCH_INDEX_URL}
 
+# Веса «Сети по тексту» агента: YOLOE-26 s/m/l/x и кодировщик промтов, ~0,6 ГБ.
+# Слой до зависимостей и кода: зависит только от скрипта, и правка
+# requirements его не перекачивает. SAM 3 сюда не входит — 3,45 ГБ, живёт на
+# томе (common/config.py, SAM3_WEIGHTS).
+COPY training_svc/fetch_yoloe.py /tmp/fetch_yoloe.py
+RUN python /tmp/fetch_yoloe.py /opt/yoloe && rm /tmp/fetch_yoloe.py
+
 COPY training_svc/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Токенизатор промтов YOLOE и SAM 3 — пакет clip из форка ultralytics. Сам
+# ultralytics ставит его через git, а git в образе нет, поэтому архивом.
+RUN pip install --no-cache-dir --no-deps https://github.com/ultralytics/CLIP/archive/refs/heads/main.zip
 
 # SAM2 для узла «Уточнение SAM» агента разметки — тот же пакет, что у
 # полуавтомата, чтобы одна рамка давала один контур. Пакет просит torch 2.5+,

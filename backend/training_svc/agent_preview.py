@@ -29,6 +29,8 @@ log = logging.getLogger("training.preview")
 CHANNEL = "agent_preview"
 IDLE_RELEASE = 180
 # Бронь превью — сеть или две плюс SAM2 small; по замеру диспетчер поправит.
+# SAM 3 в «Сети по тексту» сюда не влезает — на тесной карте превью с ним
+# уйдёт на процессор.
 # ponytail: одна прикидка на любой граф; больше сетей — считать по графу.
 VRAM_MB = 3000
 
@@ -41,13 +43,14 @@ class _Warm:
         self.device = None
         self.nets = {}     # id весов -> YOLO
         self.sams = {}     # имя SAM -> предиктор
+        self.texts = {}    # agent_runner.text_key -> YOLOE с промтами или SAM 3
         self.last = 0.0
         self.note = None   # почему на процессоре
 
     def drop(self, db):
         if self.lease_id:
             gpu.release(db, self.lease_id)
-        self.lease_id, self.device, self.nets, self.sams, self.note = None, None, {}, {}, None
+        self.lease_id, self.device, self.nets, self.sams, self.texts, self.note = None, None, {}, {}, {}, None
         agent_runner._free()
 
     def ensure_device(self, db):
@@ -64,13 +67,22 @@ class _Warm:
             gpu.cancel(db, lease.id, "Превью считает на процессоре")
             device, note = "cpu", lease.reason or "карта занята"
         if device != self.device:
-            self.nets, self.sams = {}, {}
+            self.nets, self.sams, self.texts = {}, {}, {}
         self.device, self.note = device, note
 
-    def models(self, doc, weights):
+    def models(self, doc, weights, sets):
         out = {}
+        # Каждая правка промта — новая YOLOE; держим только те, что в графе
+        # сейчас, иначе за вечер правок карта забилась бы старыми.
+        keys = {agent_runner.text_key(n): n for n in doc["nodes"] if n["type"] == "text"}
+        self.texts = {k: m for k, m in self.texts.items() if k in keys}
+        for key, node in keys.items():
+            if key not in self.texts:
+                self.texts[key] = agent_runner.load_text(node, self.device, sets)
         for node in doc["nodes"]:
-            if node["type"] == "net":
+            if node["type"] == "text":
+                out[node["id"]] = self.texts[agent_runner.text_key(node)]
+            elif node["type"] == "net":
                 row = weights[node["id"]]
                 if row.id not in self.nets:
                     from ultralytics import YOLO
@@ -99,8 +111,12 @@ def _take(db):
 
 
 def _answer(db, warm, row):
+    from training_svc import examples
+
     doc = row.doc
-    order = agent_graph.check(doc)
+    sets = examples.rows_for(db, row.user_id, doc)
+    order = agent_graph.check(doc, sam3=config.sam3_ready(),
+                              examples={k: r.status == "ready" for k, r in sets.items()})
     weights = {}
     for node in doc["nodes"]:
         if node["type"] == "net":
@@ -111,7 +127,7 @@ def _answer(db, warm, row):
     image = db.get(Image, row.image_id)
     warm.ensure_device(db)
     started = time.monotonic()
-    models = warm.models(doc, weights)
+    models = warm.models(doc, weights, sets)
     predict, segment = agent_runner.frame_fns(
         os.path.join(config.DATA_DIR, image.file_path), image.file_name, models, weights, warm.device)
     # Вход и выход каждого узла целиком — обнаружений десятки, а смена
