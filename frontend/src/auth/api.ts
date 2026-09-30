@@ -249,6 +249,24 @@ export async function getProject(code: string): Promise<ProjectDetail> {
   return asJson(await fetch(`/api/projects/${encodeURIComponent(code)}`));
 }
 
+export interface ProjectCost {
+  images: number;
+  annotations: number;
+  tasks: number;
+  train_sets: number;
+  train_runs: number;
+  // Что сейчас работает в проекте; пока не null, сервер удалять откажется.
+  busy: string | null;
+}
+
+export async function getProjectCost(code: string): Promise<ProjectCost> {
+  return asJson(await fetch(`/api/projects/${encodeURIComponent(code)}/cost`));
+}
+
+export async function deleteProject(code: string): Promise<void> {
+  await asJson(await del(`projects/${encodeURIComponent(code)}`));
+}
+
 export async function inviteToProject(
   code: string,
   identity: string,

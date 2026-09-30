@@ -1,27 +1,39 @@
 """Core API: friends, projects, invitations. Lives in the auth service because
 it owns the DB; splits out into its own service when it grows.
 """
+import os
 import secrets
+import shutil
+import threading
+import time
 import uuid
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 
 from auth_svc.routes import ROLE_LABELS
 from auth_svc.sessions import current_session, is_online
+from common import config
 from common.db import SessionLocal
 from common.models import (
+    AgentRun,
     Annotation,
+    DataprepJob,
     Dataset,
     Friendship,
     Image,
     LabelClass,
+    ModelCheck,
     Project,
     ProjectInvitation,
     ProjectMember,
     Superclass,
     Task,
+    TaskVideo,
+    TrainRun,
+    TrainSet,
     User,
+    VideoJob,
 )
 
 bp = Blueprint("core", __name__, url_prefix="/api")
@@ -546,3 +558,116 @@ def decline_invitation(iid):
         inv.status = "declined"
         db.commit()
         return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------- project removal ---
+
+def _project_as_member(db, user, code):
+    """Проект и членство в нём. Чужой проект — «не найден», а не «запрещено»:
+    незачем подтверждать постороннему, что такой код существует."""
+    project = db.execute(
+        select(Project).where(Project.code == (code or "").strip().upper())
+    ).scalar_one_or_none()
+    my = _membership(db, user, project) if project is not None else None
+    return (project, my) if my is not None else (None, None)
+
+
+def _busy_reason(db, project) -> str | None:
+    """Что в проекте сейчас работает. Удалять под работающим воркером нельзя:
+    он допишет файлы в уже снесённую папку и упадёт на пропавших строках."""
+    pid = project.id
+    if project.status == "importing":
+        return "идёт импорт архива"
+    checks = [
+        ("идёт обучение", select(func.count()).select_from(TrainRun).where(
+            TrainRun.project_id == pid,
+            TrainRun.status.in_(("queued", "waiting_gpu", "preparing", "running", "stopping")))),
+        ("идёт проверка модели", select(func.count()).select_from(ModelCheck).where(
+            ModelCheck.project_id == pid,
+            ModelCheck.status.in_(("queued", "waiting_gpu", "running")))),
+        ("работает агент разметки", select(func.count()).select_from(AgentRun).where(
+            AgentRun.project_id == pid,
+            AgentRun.status.in_(("queued", "waiting_gpu", "running")))),
+        ("идёт подготовка данных", select(func.count()).select_from(DataprepJob).where(
+            DataprepJob.project_id == pid, DataprepJob.status.in_(("queued", "running")))),
+        ("обрабатывается видео", select(func.count()).select_from(VideoJob)
+            .join(TaskVideo, TaskVideo.id == VideoJob.video_id)
+            .join(Task, Task.id == TaskVideo.task_id)
+            .where(Task.project_id == pid, VideoJob.status.in_(("queued", "running")))),
+    ]
+    found = [label for label, q in checks if db.execute(q).scalar_one()]
+    return ", ".join(found) or None
+
+
+def _drop_project_files(project_id) -> bool:
+    """Папка проекта (кадры, ролики, наборы, обучения, проверки — всё лежит
+    под ней, см. common/config.py) уезжает в _tmp одним переименованием и
+    стирается в фоне. Стирать прямо в запросе нельзя: у больших проектов это
+    десятки тысяч файлов и минуты — дольше таймаута gunicorn."""
+    src = config.project_dir(project_id)
+    if not os.path.isdir(src):
+        return False
+    trash = os.path.join(config.TMP_DIR, "deleted-projects")
+    os.makedirs(trash, exist_ok=True)
+    dst = os.path.join(trash, f"{project_id}-{int(time.time())}")
+    os.rename(src, dst)
+    # ponytail: поток внутри воркера gunicorn прервётся с перезапуском
+    # контейнера, и хвост останется в _tmp/deleted-projects; уборщик по
+    # возрасту понадобится, если такие хвосты начнут копиться.
+    threading.Thread(target=shutil.rmtree, args=(dst, True), daemon=True).start()
+    return True
+
+
+@bp.get("/projects/<code>/cost")
+def project_cost(code):
+    """Цена удаления: что уйдёт вместе с проектом и не мешает ли работа."""
+    with SessionLocal() as db:
+        _, user = current_session(db)
+        if user is None:
+            return jsonify({"error": "Не выполнен вход."}), 401
+        project, _my = _project_as_member(db, user, code)
+        if project is None:
+            return jsonify({"error": "Проект не найден."}), 404
+        pid = project.id
+
+        def count(model, *where, join=None):
+            q = select(func.count()).select_from(model)
+            if join is not None:
+                q = q.join(*join)
+            return db.execute(q.where(*where)).scalar_one()
+
+        return jsonify({
+            "images": count(Image, Image.project_id == pid),
+            "annotations": count(Annotation, Image.project_id == pid,
+                                 join=(Image, Annotation.image_id == Image.id)),
+            "tasks": count(Task, Task.project_id == pid),
+            "train_sets": count(TrainSet, TrainSet.project_id == pid),
+            "train_runs": count(TrainRun, TrainRun.project_id == pid),
+            "busy": _busy_reason(db, project),
+        })
+
+
+@bp.delete("/projects/<code>")
+def delete_project(code):
+    with SessionLocal() as db:
+        _, user = current_session(db)
+        if user is None:
+            return jsonify({"error": "Не выполнен вход."}), 401
+        project, my = _project_as_member(db, user, code)
+        if project is None:
+            return jsonify({"error": "Проект не найден."}), 404
+        if my.role != "admin":
+            return jsonify({"error": "Удалить проект может только администратор."}), 403
+        busy = _busy_reason(db, project)
+        if busy:
+            return jsonify({"error": f"Сейчас в проекте {busy}. Дождитесь окончания или остановите работу."}), 409
+        pid = project.id
+        # ponytail: между проверкой и удалением воркер может взять новую
+        # работу — окно в миллисекунды; закрывать его блокировкой строки
+        # проекта во всех сервисах пока несоразмерно.
+        # Строки уходят каскадом базы: все ссылки на projects — CASCADE или
+        # SET NULL (проверено по pg_constraint). Удаление через ORM подняло
+        # бы в память весь проект ради того же результата.
+        db.execute(delete(Project).where(Project.id == pid))
+        db.commit()
+    return jsonify({"ok": True, "files_removed": _drop_project_files(pid)})

@@ -1,9 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { inviteToProject } from "../../auth/api";
+import { useNavigate } from "react-router-dom";
+import { deleteProject, getProjectCost, inviteToProject } from "../../auth/api";
+import type { ProjectCost } from "../../auth/api";
+import { useAuth } from "../auth/AuthGate";
+import { useDialog } from "../useDialog";
 import { initials } from "../auth/AccountPage";
 import { useProject } from "./ProjectShell";
-import { plural } from "../ru";
+import { count, plural } from "../ru";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
 import Banner from "../Banner";
@@ -28,6 +32,7 @@ export default function ProjectMembers() {
   const { detail, refresh } = useProject();
   const { project, members, my_role, pending_invitations } = detail;
   const [showInvite, setShowInvite] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const isAdmin = my_role === "admin";
   const online = members.filter((m) => m.online).length;
 
@@ -91,6 +96,23 @@ export default function ProjectMembers() {
             ))}
           </div>
         </div>
+      )}
+
+      {isAdmin && (
+        <div className="mag-card">
+          <div className="mag-card-h">
+            <h4>Удаление проекта</h4>
+            <button className="mag-ghost mag-danger mag-ghost-inline" type="button"
+              onClick={() => setDeleting(true)}>
+              Удалить проект
+            </button>
+          </div>
+        </div>
+      )}
+
+      {deleting && (
+        <DeleteProjectModal code={project.code} name={project.name}
+          onClose={() => setDeleting(false)} />
       )}
 
       {showInvite && (
@@ -182,6 +204,76 @@ function InviteModal({
           </button>
           <button className="mag-btn" type="submit" disabled={busy || !identity.trim()}>
             Отправить приглашение
+          </button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+// Удаление необратимо, поэтому окно сначала называет цену — сколько кадров,
+// разметки, наборов и обучений уйдёт, — и просит набрать название проекта.
+// Простого «Вы уверены?» мало: на него жмут, не читая.
+function DeleteProjectModal({ code, name, onClose }: { code: string; name: string; onClose: () => void }) {
+  const { refresh } = useAuth();
+  const navigate = useNavigate();
+  const [cost, setCost] = useState<ProjectCost | null>(null);
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ref = useDialog<HTMLFormElement>();
+  useEscape(onClose);
+
+  useEffect(() => {
+    getProjectCost(code).then(setCost).catch((e) => setError((e as Error).message));
+  }, [code]);
+
+  async function run(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await deleteProject(code);
+      await refresh();
+      navigate("/", { replace: true });
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  }
+
+  const ready = cost !== null && !cost.busy && typed.trim() === name.trim() && !busy;
+  return (
+    <div className="mag-backdrop">
+      <form className="mag-modal" ref={ref}
+        role="dialog" aria-modal="true" aria-labelledby="del-title" tabIndex={-1} onSubmit={run}>
+        <h1 id="del-title">Удалить проект «{name}»</h1>
+        {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
+        {cost === null ? (
+          !error && <p className="mag-sub">Считаем, что уйдёт…</p>
+        ) : (
+          <>
+            <p className="mag-sub">
+              Вместе с проектом безвозвратно уйдут {count(cost.images, "кадр", "кадра", "кадров")},{" "}
+              {count(cost.annotations, "разметка", "разметки", "разметок")},{" "}
+              {count(cost.tasks, "таска", "таски", "тасок")},{" "}
+              {count(cost.train_sets, "обучающий набор", "обучающих набора", "обучающих наборов")} и{" "}
+              {count(cost.train_runs, "обучение", "обучения", "обучений")} с весами.
+            </p>
+            {cost.busy && (
+              <div className="mag-error">Сейчас в проекте {cost.busy}. Дождитесь окончания или остановите работу.</div>
+            )}
+          </>
+        )}
+        <div className="mag-field">
+          <label htmlFor="del-name">Введите название проекта</label>
+          <input id="del-name" type="text" value={typed} autoComplete="off" placeholder={name}
+            onChange={(e) => setTyped(e.target.value)} />
+        </div>
+        <div className="mag-modal-foot">
+          <button className="mag-ghost" type="button" onClick={onClose}>Отмена</button>
+          <button className="mag-btn mag-danger" type="submit" disabled={!ready}>
+            {busy ? "Удаляем…" : "Удалить навсегда"}
           </button>
         </div>
       </form>
