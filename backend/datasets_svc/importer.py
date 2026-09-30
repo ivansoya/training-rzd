@@ -19,6 +19,9 @@ Rules agreed for the import:
   * an image is atomic — one bad line drops the image with all its shapes;
   * coordinates up to TOLERANCE outside [0,1] are converter noise: clipped
     and counted, not rejected;
+  * a box whose centre and size are in range but whose edges stick out of the
+    frame is cut to the frame as a rectangle and counted — ultralytics does
+    the same on load, and the count is per shape, not per coordinate;
   * a box with zero width or height is rejected, as is a contour whose points
     collapse to fewer than three;
   * an image without a label file is a negative example, not an error.
@@ -67,7 +70,7 @@ def _label_member_for(image_member):
 
 
 def _parse_label_text(text):
-    """Return (shapes, clipped, error).
+    """Return (shapes, clipped, error). ``clipped`` counts shapes, not values.
 
     A shape is ``{"t": "bbox"|"polygon", "c": class_index, "v": [...]}`` with
     values still normalized. Dicts rather than bare tuples because the manifest
@@ -99,17 +102,24 @@ def _parse_label_text(text):
         if class_index < 0:
             return None, 0, f"строка {lineno}: отрицательный id класса {class_index}"
         fixed = []
+        cut = False
         for c in coords:
             if c < -TOLERANCE or c > 1 + TOLERANCE:
                 return None, 0, f"строка {lineno}: координата {c} вне [0,1]"
             if c < 0.0 or c > 1.0:
-                clipped += 1
+                cut = True
                 c = min(max(c, 0.0), 1.0)
             fixed.append(c)
         if kind == "bbox":
             _, _, w, h = fixed
             if w <= 0.0 or h <= 0.0:
                 return None, 0, f"строка {lineno}: вырожденный бокс ({w}×{h})"
+            # Подрезать по одной координате мало: у рамки «центр и размер»
+            # каждое число в [0,1], а края торчат за кадр («0.95 0.5 0.2 0.2»
+            # уходит на 5 % вправо). Такую рамку режем по кадру как рамку.
+            boxed = clip_box(fixed)
+            cut = cut or boxed != fixed
+            fixed = boxed
             shapes.append({"t": "bbox", "c": class_index, "v": fixed})
         else:
             # Clipping to the frame edge can collapse points onto each other;
@@ -121,7 +131,27 @@ def _parse_label_text(text):
                     f"{polylib.MIN_POINTS} различимых точек"
                 )
             shapes.append({"t": "polygon", "c": class_index, "v": fixed})
+        clipped += cut
     return shapes, clipped, None
+
+
+def clip_box(values):
+    """``[cx, cy, w, h]`` в долях → та же рамка, обрезанная по кадру [0,1].
+
+    Центр и размер у обрезанной рамки новые: срезанный край уводит центр
+    внутрь. Раз центр был в кадре, а размер положителен, от рамки всегда
+    что-то остаётся.
+    """
+    def axis(c, size):
+        lo, hi = c - size / 2, c + size / 2
+        if lo >= 0.0 and hi <= 1.0:
+            return c, size          # нетронутую ось не пересчитываем: шум float
+        lo, hi = max(lo, 0.0), min(hi, 1.0)
+        return (lo + hi) / 2, hi - lo
+
+    cx, w = axis(values[0], values[2])
+    cy, h = axis(values[1], values[3])
+    return [cx, cy, w, h]
 
 
 def scan(zip_path, progress=None):

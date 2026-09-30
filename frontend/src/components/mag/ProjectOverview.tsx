@@ -43,11 +43,13 @@ export default function ProjectOverview() {
       <div className="mag-card mag-empty-big">
         <h3>В проекте пока нет данных</h3>
         <p>
-          {tasks
-            ? "Импортируйте YOLO-архив или сдайте кадры таски."
-            : "Импортируйте YOLO-архив."}
+          {classes.length > 0
+            ? "Сдайте кадры таски — импорт архива в проект с классами пока не поддержан."
+            : tasks
+              ? "Импортируйте YOLO-архив или сдайте кадры таски."
+              : "Импортируйте YOLO-архив."}
         </p>
-        {isAdmin && (
+        {isAdmin && classes.length === 0 && (
           <Link className="mag-btn mag-btn-inline" to={`/projects/${project.code}/import`}>
             Импортировать датасет
           </Link>
@@ -146,7 +148,16 @@ export default function ProjectOverview() {
         <div className="mag-card-h"><h4>Исходные данные</h4></div>
         {datasets.slice(0, 5).map((d) => <Link key={d.id} className="workspace-next" to={`/projects/${project.code}/datasets/${d.id}`}><span><b>{d.name}</b><small>{d.images_count.toLocaleString("ru-RU")} изображений</small></span><span aria-hidden="true">→</span></Link>)}
         <Link className="mag-link" to={`/projects/${project.code}/datasets`}>Все датасеты →</Link>
-        {isAdmin && <Link className="mag-ghost mag-ghost-inline" to={`/projects/${project.code}/import`}>Импортировать датасет</Link>}
+        {/* Второй архив сервер отклонит, пока в проекте есть классы
+            (`_import_blocked`): кнопка говорит это сразу, а не после загрузки. */}
+        {isAdmin && (classes.length > 0 ? (
+          <button className="mag-ghost mag-ghost-inline" type="button" disabled
+            title="В проекте уже есть классы — импорт второго архива пока не поддержан">
+            Импортировать датасет
+          </button>
+        ) : (
+          <Link className="mag-ghost mag-ghost-inline" to={`/projects/${project.code}/import`}>Импортировать датасет</Link>
+        ))}
       </section>
     </aside>
     </div>

@@ -200,6 +200,9 @@ export default function ImportWizard() {
   }
   if (!state) return <div className="mag-content mag-empty">Загружаем…</div>;
 
+  // Причину, по которой сервер архив не примет, он говорит заранее — до
+  // выбора файла, а не после минут загрузки.
+  const blocked = (state as ImportState & { blocked?: string }).blocked;
   const report = state.report;
   const unnamed = report
     ? report.classes.filter((c) => !(drafts[c.class_index]?.name || "").trim()).length
@@ -218,7 +221,9 @@ export default function ImportWizard() {
       {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
       {/* ---- 1. Архив ---- */}
-      {state.archive ? (
+      {/* После записи шаг выбора архива больше не предлагаем: над «Импорт
+          завершён» он звал грузить второй архив, который сервер отклонит. */}
+      {state.status === "done" ? null : state.archive ? (
         <StepDone
           title="Архив загружен"
           sub={state.archive.name}
@@ -241,7 +246,9 @@ export default function ImportWizard() {
               <b>Выберите архив</b>
               <span className="sub">Zip с YOLO-разметкой: data.yaml, images/, labels/</span>
             </div>
-            {uploadPct === null ? (
+            {blocked ? (
+              <p className="mag-hint mag-warn">{blocked}</p>
+            ) : uploadPct === null ? (
               <div className="mag-drop">
                 <input
                   ref={fileInput}
@@ -309,7 +316,11 @@ export default function ImportWizard() {
               value: report.images_without_labels.toLocaleString("ru-RU"),
               label: "изображений без разметки",
             },
-            { value: report.clipped.toLocaleString("ru-RU"), label: "координат подрезано", tone: "warn" },
+            {
+              value: report.clipped.toLocaleString("ru-RU"),
+              label: plural(report.clipped, "объект подрезан по кадру", "объекта подрезано по кадру", "объектов подрезано по кадру"),
+              tone: "warn",
+            },
             { value: report.skipped.toLocaleString("ru-RU"), label: "изображений пропущено", tone: "bad" },
           ]}
           extra={

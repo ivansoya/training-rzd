@@ -178,21 +178,26 @@ def start_import(code):
         db.close()
 
 
+def _classes_block(db, project):
+    """Второй архив в проект пока не поддержан: его class_index столкнётся с
+    уже заведёнными классами. Отказываем явно, а не падаем на записи."""
+    if db.execute(
+        select(func.count()).select_from(LabelClass)
+        .where(LabelClass.project_id == project.id)
+    ).scalar_one():
+        return ("В проекте уже есть классы. Импорт второго архива "
+                "появится позже — вместе со сверкой классов.")
+    return None
+
+
 def _import_blocked(db, project):
     """Почему в проект нельзя грузить архив, или ``None``."""
     existing = _state(project.id)
     if existing and existing.get("status") in ("scanning", "writing"):
         return jsonify({"error": "Импорт уже идёт."}), 409
-    # Второй архив в проект пока не поддержан: его class_index столкнётся с
-    # уже заведёнными классами. Отказываем явно, а не падаем на записи.
-    if db.execute(
-        select(func.count()).select_from(LabelClass)
-        .where(LabelClass.project_id == project.id)
-    ).scalar_one():
-        return jsonify({
-            "error": "В проекте уже есть классы. Импорт второго архива "
-                     "появится позже — вместе со сверкой классов."
-        }), 409
+    reason = _classes_block(db, project)
+    if reason:
+        return jsonify({"error": reason}), 409
     return None
 
 
@@ -322,7 +327,14 @@ def get_import(code):
     try:
         state = _state(project.id) or {"status": "none"}
         # zip_path is a server detail; the wizard never needs it.
-        return jsonify({k: v for k, v in state.items() if k not in ("zip_path", "started")})
+        out = {k: v for k, v in state.items() if k not in ("zip_path", "started")}
+        # Отказ, который ждёт архив, — заранее: мастер говорил его только
+        # после выбора и загрузки файла, то есть после минут ожидания.
+        if out.get("status") not in ("scanning", "classes", "writing"):
+            reason = _classes_block(db, project)
+            if reason:
+                out["blocked"] = reason
+        return jsonify(out)
     finally:
         db.close()
 
