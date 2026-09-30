@@ -10,10 +10,15 @@ import type { InvitationItem, ProjectSummary } from "../../auth/api";
 import CreateProjectModal from "./CreateProjectModal";
 import { initials } from "../auth/AccountPage";
 import Banner from "../Banner";
-import { plural } from "../ru";
+import { plural, ru } from "../ru";
+import { useAuth } from "../auth/AuthGate";
 
 export default function ProjectsPage() {
   const navigate = useNavigate();
+  const { refresh: refreshMe } = useAuth();
+  // Приглашение, по которому идёт запрос: второй щелчок по «Принять» слал
+  // второй POST, и тот падал на уникальности участника.
+  const [answering, setAnswering] = useState<string | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [invitations, setInvitations] = useState<InvitationItem[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -41,10 +46,15 @@ export default function ProjectsPage() {
   }, [refresh]);
 
   async function handleInvitation(inv: InvitationItem, accept: boolean) {
+    if (answering) return;
+    setAnswering(inv.id);
     setError(null);
     try {
       if (accept) {
         const { code } = await acceptInvitation(inv.id);
+        // Шапка и меню узнают о проекте из me — без этого до перезагрузки
+        // в шапке стоял код вместо названия.
+        await refreshMe();
         navigate(`/projects/${code}`);
       } else {
         await declineInvitation(inv.id);
@@ -52,6 +62,8 @@ export default function ProjectsPage() {
       }
     } catch (e) {
       setError((e as Error).message);
+    } finally {
+      setAnswering(null);
     }
   }
 
@@ -71,6 +83,7 @@ export default function ProjectsPage() {
             <button
               className="mag-btn mag-btn-inline"
               type="button"
+              disabled={answering !== null}
               onClick={() => handleInvitation(inv, true)}
             >
               Принять
@@ -78,6 +91,7 @@ export default function ProjectsPage() {
             <button
               className="mag-ghost mag-ghost-inline"
               type="button"
+              disabled={answering !== null}
               onClick={() => handleInvitation(inv, false)}
             >
               Отклонить
@@ -129,24 +143,19 @@ export default function ProjectsPage() {
               {p.description && <p className="mag-proj-desc">{p.description}</p>}
 
               <div className="mag-proj-nums">
-                <div>
-                  <b>{p.images_count.toLocaleString("ru-RU")}</b>
-                  <span>изображений</span>
-                </div>
-                <div>
-                  <b>{p.annotations_count.toLocaleString("ru-RU")}</b>
-                  <span>разметок</span>
-                </div>
-                <div>
-                  <b>{p.classes_count}</b>
-                  <span>классов</span>
-                </div>
-                <div>
-                  <b>{p.datasets_count}</b>
-                  <span>
-                    {plural(p.datasets_count, "датасет", "датасета", "датасетов")}
-                  </span>
-                </div>
+                {(
+                  [
+                    [p.images_count, "изображение", "изображения", "изображений"],
+                    [p.annotations_count, "разметка", "разметки", "разметок"],
+                    [p.classes_count, "класс", "класса", "классов"],
+                    [p.datasets_count, "датасет", "датасета", "датасетов"],
+                  ] as const
+                ).map(([n, one, few, many]) => (
+                  <div key={many}>
+                    <b>{ru(n)}</b>
+                    <span>{plural(n, one, few, many)}</span>
+                  </div>
+                ))}
               </div>
 
               <div className="mag-proj-foot">
@@ -179,8 +188,9 @@ export default function ProjectsPage() {
       {showCreate && (
         <CreateProjectModal
           onClose={() => setShowCreate(false)}
-          onCreated={(code) => {
+          onCreated={async (code) => {
             setShowCreate(false);
+            await refreshMe();
             navigate(`/projects/${code}`);
           }}
         />

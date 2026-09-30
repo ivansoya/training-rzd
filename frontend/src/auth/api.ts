@@ -119,13 +119,29 @@ export class ApiError extends Error {
   code?: string;
   email?: string;
   fields?: Record<string, string>;
-  constructor(message: string, code?: string, fields?: Record<string, string>, email?: string) {
+  status?: number;
+  constructor(message: string, code?: string, fields?: Record<string, string>, email?: string, status?: number) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.fields = fields;
     this.email = email;
+    this.status = status;
   }
+}
+
+// Сессию отозвали (смена пароля в другой вкладке, выход на другом устройстве):
+// любой ответ 401 сообщает об этом AuthGate, и тот возвращает на вход. Без
+// этого страница жила со старым me и показывала рядом «Не выполнен вход» и
+// «Проектов пока нет».
+export const UNAUTHORIZED_EVENT = "mag:unauthorized";
+
+// fetch без ответа сервера бросает TypeError «Failed to fetch» — по-английски
+// и без смысла для человека.
+export function errorText(e: unknown): string {
+  return e instanceof TypeError
+    ? "Нет связи с сервером. Проверьте сеть и повторите."
+    : (e as Error).message;
 }
 
 async function asJson<T>(res: Response): Promise<T> {
@@ -139,7 +155,8 @@ async function asJson<T>(res: Response): Promise<T> {
     };
     const message =
       err.error || (err.errors && Object.values(err.errors)[0]) || `HTTP ${res.status}`;
-    throw new ApiError(message, err.code, err.errors, err.email);
+    if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    throw new ApiError(message, err.code, err.errors, err.email, res.status);
   }
   return data as T;
 }

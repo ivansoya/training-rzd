@@ -143,3 +143,20 @@ def test_remove_member_and_revoke_invitation(api, db, project):
     assert res.status_code == 200, res.text
     assert third.get(f"{BASE_URL}/api/invitations").json()["invitations"] == []
     assert third.post(f"{BASE_URL}/api/invitations/{iid}/accept").status_code == 404
+
+
+def test_accept_invitation_twice(api, db, project):
+    """Двойной щелчок «Принять»: два запроса параллельно — оба без 500."""
+    from concurrent.futures import ThreadPoolExecutor
+    code = project["code"]
+    other = person(db)
+    api.post(f"{BASE_URL}/api/projects/{code}/invite",
+             json={"identity": other.login_name, "role": "viewer"})
+    iid = other.get(f"{BASE_URL}/api/invitations").json()["invitations"][0]["id"]
+    with ThreadPoolExecutor(2) as pool:
+        codes = list(pool.map(
+            lambda _: other.post(f"{BASE_URL}/api/invitations/{iid}/accept").status_code,
+            range(2)))
+    assert codes == [200, 200], codes
+    members = api.get(f"{BASE_URL}/api/projects/{code}").json()["members"]
+    assert len(members) == 2

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Outlet, useOutletContext, useParams } from "react-router-dom";
-import { getProject } from "../../auth/api";
+import { ApiError, errorText, getProject } from "../../auth/api";
+import { useAuth } from "../auth/AuthGate";
 import type { ProjectDetail } from "../../auth/api";
 import ExportModal from "./ExportModal";
 import { LiveProvider } from "../../live/LiveProvider";
@@ -34,15 +35,39 @@ export default function ProjectShell() {
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
 
+  const { me, refresh: refreshMe } = useAuth();
+  const shown = useRef(false);
+
   const refresh = useCallback(async () => {
     if (!code) return;
     try {
-      setDetail(await getProject(code));
+      const d = await getProject(code);
+      setDetail(d);
       setError(null);
+      shown.current = true;
     } catch (e) {
-      setError((e as Error).message);
+      // Фоновый опрос раз в 30 с не должен сносить уже показанный проект:
+      // один сбой сети заменял экран на «Failed to fetch», и открытые окна с
+      // набранным пропадали. Экран ошибки — только при первой загрузке или
+      // когда проекта для нас больше нет (удалён, нас исключили).
+      const gone = e instanceof ApiError && (e.status === 404 || e.status === 403);
+      if (!shown.current || gone) setError(errorText(e));
     }
   }, [code]);
+
+  useEffect(() => {
+    shown.current = false;
+    setDetail(null);
+    setError(null);
+  }, [code]);
+
+  // Проект открылся, а в me его нет — me устарел (приняли приглашение в
+  // другой вкладке, создали проект до этой правки). Шапка и меню берут имя
+  // проекта из me, поэтому подтягиваем его, а не показываем код.
+  const known = me.projects.some((p) => p.code === detail?.project.code);
+  useEffect(() => {
+    if (detail && !known) refreshMe();
+  }, [detail, known, refreshMe]);
 
   useEffect(() => {
     refresh();

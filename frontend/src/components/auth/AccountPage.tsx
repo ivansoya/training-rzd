@@ -49,6 +49,7 @@ export default function AccountPage() {
   const [passError, setPassError] = useState<string | null>(null);
   const [passOk, setPassOk] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [answering, setAnswering] = useState(false);
 
   const reload = useCallback(async () => {
     try {
@@ -89,6 +90,9 @@ export default function AccountPage() {
   }
 
   async function handleInvitation(inv: InvitationItem, accept: boolean) {
+    // Второй щелчок по «Принять» слал второй POST — кнопки гаснут до ответа.
+    if (answering) return;
+    setAnswering(true);
     try {
       if (accept) {
         const { code } = await acceptInvitation(inv.id);
@@ -100,6 +104,8 @@ export default function AccountPage() {
       }
     } catch (err) {
       setFriendErr((err as Error).message);
+    } finally {
+      setAnswering(false);
     }
   }
 
@@ -223,6 +229,7 @@ export default function AccountPage() {
                     <button
                       className="mag-btn mag-btn-sm"
                       type="button"
+                      disabled={answering}
                       onClick={() => handleInvitation(inv, true)}
                     >
                       Принять
@@ -230,6 +237,7 @@ export default function AccountPage() {
                     <button
                       className="mag-ghost mag-ghost-sm"
                       type="button"
+                      disabled={answering}
                       onClick={() => handleInvitation(inv, false)}
                     >
                       Отклонить

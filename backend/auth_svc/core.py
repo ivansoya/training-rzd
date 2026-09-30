@@ -530,8 +530,16 @@ def accept_invitation(iid):
         _, user = current_session(db)
         if user is None:
             return jsonify({"error": "Не выполнен вход."}), 401
-        inv = _get_my_pending_invitation(db, user, iid)
-        if inv is None:
+        # Строка приглашения под блокировкой: два «Принять» подряд (двойной
+        # щелчок) шли параллельно, оба видели pending, и второй падал 500 на
+        # уникальности участника. Теперь второй ждёт первого и получает тот же
+        # ответ — повтор принятия безвреден.
+        iuuid = _parse_uuid(iid)
+        inv = db.get(ProjectInvitation, iuuid, with_for_update=True) if iuuid else None
+        if inv is not None and inv.user_id == user.id and inv.status == "accepted" \
+                and _membership(db, user, inv.project) is not None:
+            return jsonify({"ok": True, "code": inv.project.code})
+        if inv is None or inv.user_id != user.id or inv.status != "pending":
             return jsonify({"error": "Приглашение не найдено."}), 404
         inv.status = "accepted"
         db.add(
