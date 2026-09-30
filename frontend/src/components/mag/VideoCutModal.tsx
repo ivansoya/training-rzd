@@ -791,6 +791,7 @@ export default function VideoCutModal({
                   taskId={taskId}
                   videoId={video.id}
                   draggable={false}
+                  aspect={video.width && video.height ? video.width / video.height : undefined}
                 />
               )}
               {segs.map((s, i) => {

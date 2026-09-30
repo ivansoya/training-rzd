@@ -554,7 +554,8 @@ export function VideoCard({
         </div>
 
         <div className="g-vcard-body">
-          <VideoStrip className="g-strip" taskId={taskId} videoId={video.id} />
+          <VideoStrip className="g-strip" taskId={taskId} videoId={video.id}
+            aspect={video.width && video.height ? video.width / video.height : undefined} />
           <div className="g-rail">
             <span className="g-rail-line" />
             {/* Закрашено то, что уже стало кадрами: у нарезки — участки плана,

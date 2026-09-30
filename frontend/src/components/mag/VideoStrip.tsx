@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties } from "react";
 import { videoStripUrl } from "../../auth/api";
 
@@ -18,12 +18,17 @@ export default function VideoStrip({
   className,
   style,
   draggable,
+  aspect,
 }: {
   taskId: string;
   videoId: string;
   className?: string;
   style?: CSSProperties;
   draggable?: boolean;
+  /** Пропорция кадра ролика (ширина к высоте). С ней лента ложится на шкалу
+   *  ролика: i-й кадр ленты — на i-ю долю ширины. Без неё — просто картинка
+   *  (постер). */
+  aspect?: number;
 }) {
   const [url, setUrl] = useState<string | null>(null);
   const [gone, setGone] = useState(false);
@@ -69,7 +74,62 @@ export default function VideoStrip({
 
   if (gone) return <span className={`${className || ""} g-strip-none`} style={style} />;
   if (!url) return <span className={`${className || ""} g-strip-wait`} style={style} />;
+  if (aspect) return <ScaleStrip url={url} aspect={aspect} className={className} style={style} />;
   return (
     <img className={className} src={url} alt="" style={style} draggable={draggable} />
   );
+}
+
+/** Лента, разложенная по шкале.
+ *
+ * Лента — двадцать кадров встык (160×90 у ролика 16:9), а ячейка под ней
+ * втрое шире по пропорции. `object-fit: cover` показывал только середину
+ * ленты, и участки на шкале ложились на чужие кадры; растянуть целиком
+ * значило бы сплющить каждый кадр втрое. Поэтому кадры раскладываются по
+ * одному: i-й — в i-ю долю ширины, с обрезкой по краям своей доли, как
+ * плитки `WindowStrip` при приближении. Число кадров — из ширины ленты и
+ * пропорции ролика: сервер клеит их одинаковой ширины. */
+function ScaleStrip({
+  url, aspect, className, style,
+}: {
+  url: string;
+  aspect: number;
+  className?: string;
+  style?: CSSProperties;
+}) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return undefined;
+    const img = new Image();
+    const draw = () => {
+      const box = canvas.getBoundingClientRect();
+      if (!img.naturalWidth || !box.width || !box.height) return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.round(box.width * dpr);
+      canvas.height = Math.round(box.height * dpr);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const n = Math.max(1, Math.round(img.naturalWidth / (img.naturalHeight * aspect)));
+      const tw = img.naturalWidth / n;
+      const th = img.naturalHeight;
+      const w = canvas.width / n;
+      const h = canvas.height;
+      const k = Math.max(w / tw, h / th);
+      const sw = w / k;
+      const sh = h / k;
+      for (let i = 0; i < n; i += 1) {
+        ctx.drawImage(img, i * tw + (tw - sw) / 2, (th - sh) / 2, sw, sh, i * w, 0, w, h);
+      }
+    };
+    img.onload = draw;
+    img.src = url;
+    const ro = new ResizeObserver(draw);
+    ro.observe(canvas);
+    return () => {
+      img.onload = null;
+      ro.disconnect();
+    };
+  }, [url, aspect]);
+  return <canvas ref={ref} className={className} style={style} />;
 }
