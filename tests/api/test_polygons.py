@@ -162,7 +162,9 @@ def test_план_сегментации_пропускает_боксы_и_го
                    json={**sel, "ann_type": "polygon"}).json()
     assert seg["wrong_kind"] == 1, "бокс обязан быть пропущен и посчитан"
     assert seg["annotations"] == 1
-    assert any("боксы" in w for w in seg["warnings"])
+    # Слов о боксах сервер больше не пишет: окно выгрузки собирает одну строку
+    # с единицами из wrong_kind, а серверное предупреждение её дублировало.
+    assert not any("боксы" in w for w in seg["warnings"])
 
     box = api.post(f"{BASE_URL}/api/projects/{project['code']}/export/preview",
                    json={**sel, "ann_type": "bbox"}).json()
