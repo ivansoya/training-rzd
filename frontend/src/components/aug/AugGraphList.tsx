@@ -45,10 +45,13 @@ export default function AugGraphList() {
     if (making) return;
     setMaking(true);
     setError(null);
-    const taken = new Set((graphs ?? []).map((g) => g.name));
-    let name = "Новый граф";
-    for (let n = 2; taken.has(name); n++) name = `Новый граф ${n}`;
     try {
+      // Имя занято и у архивных: сервер сравнивает со всеми графами человека,
+      // и «Новый граф» из архива давал 409 на первом же щелчке.
+      const [live, archived] = await Promise.all([api.listGraphs("aug"), api.listGraphs("aug", true)]);
+      const taken = new Set([...live.graphs, ...archived.graphs].map((g) => g.name));
+      let name = "Новый граф";
+      for (let n = 2; taken.has(name); n++) name = `Новый граф ${n}`;
       const got = await api.createGraph(name);
       navigate(`/augment/${got.id}`);
     } catch (e) {
