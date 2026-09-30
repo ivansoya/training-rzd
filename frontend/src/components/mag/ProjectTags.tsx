@@ -3,7 +3,7 @@ import { deleteTag, listTags, renameTag } from "../../api/tags";
 import type { Tag } from "../../api/tags";
 import { ApiError } from "../../api/http";
 import { useProject } from "./ProjectShell";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import Sep from "../Sep";
 import Banner from "../Banner";
 

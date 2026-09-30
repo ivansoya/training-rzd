@@ -3,6 +3,7 @@ import { Link, NavLink, matchPath, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthGate";
 import { initials } from "../auth/AccountPage";
 import Sep from "../Sep";
+import ErrorBoundary from "../ErrorBoundary";
 
 /** The workspace shell never transforms its children: editors measure their
  * bitmap and annotation layers in viewport coordinates. */
@@ -67,7 +68,9 @@ export default function MagShell({ children }: { children: ReactNode }) {
           <span>{me.user.display_name}</span>
         </Link>
       </header>
-      <main id="workspace-content" className="workspace-main" tabIndex={-1}>{children}</main>
+      <main id="workspace-content" className="workspace-main" tabIndex={-1}>
+        <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
+      </main>
     </div>
   );
 }

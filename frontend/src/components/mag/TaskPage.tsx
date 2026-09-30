@@ -26,7 +26,7 @@ import { pollJob } from "../../api/jobs";
 import AnnotationEditor from "./AnnotationEditor";
 import ShapeMini from "./ShapeMini";
 import { TaskState } from "./ProjectTasks";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import { SourceCard, VideoCard, buildSources } from "./TaskSources";
 import UploadImagesModal from "./UploadImagesModal";
 import { setImageTags, setVideoTags } from "../../api/tags";

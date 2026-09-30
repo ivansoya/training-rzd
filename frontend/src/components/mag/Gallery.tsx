@@ -15,7 +15,7 @@ import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import type { Box } from "../../auth/api";
 import ShapeMini from "./ShapeMini";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import type { Mode } from "./useGallery";
 import Pager from "../Pager";
 

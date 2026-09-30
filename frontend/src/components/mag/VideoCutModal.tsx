@@ -7,7 +7,7 @@ import {
   videoFileUrl,
 } from "../../auth/api";
 import type { CutEstimate, CutSegment, Segment, TaskVideoItem } from "../../auth/api";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import VideoStrip from "./VideoStrip";
 import Sep from "../Sep";
 import Banner from "../Banner";

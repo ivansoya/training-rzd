@@ -10,7 +10,7 @@ import {
 } from "../../auth/api";
 import type { ImportState, ScannedClass } from "../../auth/api";
 import { formatBytes } from "./ProjectShell";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import Banner from "../Banner";
 
 // Colours offered to classes that arrive without one — the same list the

@@ -19,7 +19,7 @@ import type {
 import ColorPicker, { PALETTE } from "./ColorPicker";
 import { useLive } from "../../live/LiveProvider";
 import { useProject } from "./ProjectShell";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
 import Banner from "../Banner";

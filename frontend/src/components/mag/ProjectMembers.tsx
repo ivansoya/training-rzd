@@ -3,7 +3,7 @@ import type { FormEvent } from "react";
 import { inviteToProject } from "../../auth/api";
 import { initials } from "../auth/AccountPage";
 import { useProject } from "./ProjectShell";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import { useEscape } from "./useEscape";
 import Sep from "../Sep";
 import Banner from "../Banner";

@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from "react";
 import { videoFrameUrl } from "../../auth/api";
-import { plural } from "../mag/ProjectsPage";
+import { plural } from "../ru";
 import { clock } from "./scoutMath";
 
 const WIDTH = 256;

@@ -9,7 +9,7 @@
 
 import { useEffect, useState } from "react";
 import * as api from "../../api/agents";
-import { plural } from "../mag/ProjectsPage";
+import { plural } from "../ru";
 import Sep from "../Sep";
 import { useBackdrop } from "../useBackdrop";
 import FramePeek from "./FramePeek";

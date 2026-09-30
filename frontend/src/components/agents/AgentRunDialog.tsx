@@ -12,7 +12,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import * as api from "../../api/agents";
-import { plural } from "../mag/ProjectsPage";
+import { plural } from "../ru";
 import Sep from "../Sep";
 import { useBackdrop } from "../useBackdrop";
 import ScoutOverview from "./ScoutOverview";

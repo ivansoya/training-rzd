@@ -1,7 +1,7 @@
 import { useState } from "react";
 import TagPicker from "./TagPicker";
 import type { Tag } from "../../api/tags";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import { useEscape } from "./useEscape";
 import { fmtBytes } from "./VideoCutModal";
 import { useBackdrop } from "../useBackdrop";

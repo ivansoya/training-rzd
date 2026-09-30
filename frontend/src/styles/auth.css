@@ -81,7 +81,7 @@
 .mag-route-cap {
   display: flex;
   justify-content: space-between;
-  font: 600 10px ui-monospace, Menlo, monospace;
+  font: 600 10px ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0.1em;
   color: var(--faint);
   text-transform: uppercase;
@@ -378,7 +378,7 @@
 }
 
 .mag-cab th {
-  font: 600 10.5px ui-monospace, Menlo, monospace;
+  font: 600 10.5px ui-monospace, Menlo, Consolas, monospace;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--mag-muted);
@@ -397,7 +397,7 @@
 }
 
 .mag-code {
-  font: 12px ui-monospace, Menlo, monospace;
+  font: 12px ui-monospace, Menlo, Consolas, monospace;
   color: var(--mag-muted);
 }
 
@@ -594,7 +594,7 @@
 
 /* Код — 20 знаков; разрядку убрали, иначе бейдж отъедает строку заголовка. */
 .mag-code-badge {
-  font: 700 10px ui-monospace, Menlo, monospace;
+  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
   background: var(--hair);
   color: #3d4a5c;
   border-radius: 6px;
@@ -910,7 +910,7 @@
 }
 
 .mag-pass-sect {
-  font: 600 10.5px ui-monospace, Menlo, monospace;
+  font: 600 10.5px ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--mag-muted);
@@ -998,7 +998,7 @@
 }
 
 .mag-stat span {
-  font: 600 10.5px ui-monospace, Menlo, monospace;
+  font: 600 10.5px ui-monospace, Menlo, Consolas, monospace;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--mag-muted);

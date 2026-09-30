@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import { fmtBytes, fmtStep, fmtTime, framesIn } from "./VideoCutModal";
 import type {
   PendingObject,

@@ -1,7 +1,7 @@
 import { Link, useSearchParams } from "react-router-dom";
 import ProjectGallery from "./ProjectGallery";
 import { useProject } from "./ProjectShell";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 
 // Обзор: состояние проекта, разметка по классам и все его кадры одной сеткой.
 //

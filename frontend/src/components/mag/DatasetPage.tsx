@@ -16,7 +16,7 @@ import ClassPicker from "./ClassPicker";
 import Gallery from "./Gallery";
 import type { GalleryItem } from "./Gallery";
 import ImageViewer from "./ImageViewer";
-import { plural } from "./ProjectsPage";
+import { plural } from "../ru";
 import { useGallery } from "./useGallery";
 import type { Mode } from "./useGallery";
 
