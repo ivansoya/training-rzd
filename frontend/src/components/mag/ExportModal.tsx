@@ -18,6 +18,7 @@ import { useEscape } from "./useEscape";
 import { listTags } from "../../api/tags";
 import type { Tag } from "../../api/tags";
 import Sep from "../Sep";
+import { count, plural } from "../ru";
 import Banner from "../Banner";
 import { useBackdrop } from "../useBackdrop";
 
@@ -140,7 +141,10 @@ export default function ExportModal({ detail, onClose }: Props) {
     setPhase("packing");
     setProgress(0);
     try {
-      const { job_id } = await startExport(code, options);
+      // Смещение часового пояса — ради даты в имени архива: сервер живёт по
+      // UTC, и ночью по Москве архив назывался вчерашним числом.
+      const body = { ...options, tz_offset: -new Date().getTimezoneOffset() };
+      const { job_id } = await startExport(code, body);
       const res = await pollJob<ExportResult>(job_id, (job) =>
         setProgress(job.total ? job.processed / job.total : 0)
       );
@@ -300,7 +304,9 @@ export default function ExportModal({ detail, onClose }: Props) {
                 key={t.id}
                 type="button"
                 className={t.id === annType ? "on" : ""}
-                disabled={!t.ok}
+                // Во время сборки род разметки заперт, как и остальной выбор:
+                // переключение меняло подпись уже собираемого архива.
+                disabled={!t.ok || phase !== "setup"}
                 title={
                   t.ok
                     ? t.id === "polygon"
@@ -334,11 +340,8 @@ export default function ExportModal({ detail, onClose }: Props) {
               Поделить заново
             </button>
           </div>
-          <p className="mag-exp-hint">
-            {resplit
-              ? "Прежние сплиты игнорируются: делится всё выбранное."
-              : "Берётся сплит кадра; кадры вне сплита делятся в той же пропорции."}
-          </p>
+          {/* «Как в проекте» берёт сплит кадра, а кадры вне сплита делит в той
+              же пропорции; «Поделить заново» не смотрит на прежние сплиты. */}
           {resplit && (
             <div className="mag-exp-slider">
               <input
@@ -380,21 +383,28 @@ export default function ExportModal({ detail, onClose }: Props) {
               </div>
             )}
           </div>
-          {preview &&
-            (preview.dropped > 0 || preview.background > 0 || preview.empty > 0 ||
-             preview.wrong_kind > 0) && (
-              <p className="mag-exp-hint">
-                {preview.dropped > 0 && `Разметка не того рода, не идут: ${preview.dropped}. `}
-                {/* Пропуск по роду разметки называем словами, а не числом:
-                    «пропущено 412» без причины читается как поломка. */}
-                {preview.wrong_kind > 0 &&
-                  (preview.ann_type === "polygon"
-                    ? `Боксов, не идущих в сегментацию: ${preview.wrong_kind}. `
-                    : `Объектов неподходящего вида: ${preview.wrong_kind}. `)}
-                {preview.background > 0 && `Без разметки, идут фоном: ${preview.background}. `}
-                {preview.empty > 0 && `Фоновых кадров «пусто»: ${preview.empty}.`}
-              </p>
-            )}
+          {/* Пропуск по роду разметки называем словами и с единицами:
+              «пропущено 412» без причины читается как поломка. Прежде здесь
+              стояли и «не того рода: 4» (кадры, без единиц), и «боксов: 8»
+              (объекты), и то же третьей строкой в предупреждениях сервера. */}
+          {preview && (preview.wrong_kind > 0 || preview.empty > 0) && (
+            <div className="mag-exp-hint">
+              {preview.wrong_kind > 0 && (
+                <p>
+                  Не идут{" "}
+                  {preview.ann_type === "polygon"
+                    ? `${count(preview.wrong_kind, "бокс", "бокса", "боксов")} — в сегментацию идут только контуры`
+                    : count(preview.wrong_kind, "объект неподходящего вида", "объекта неподходящего вида", "объектов неподходящего вида")}
+                  {preview.dropped > 0 &&
+                    `; ${count(preview.dropped, "кадр", "кадра", "кадров")}, где больше ничего нет, ${plural(preview.dropped, "не идёт", "не идут", "не идут")} целиком`}
+                  .
+                </p>
+              )}
+              {preview.empty > 0 && (
+                <p>Без разметки, фоном: {count(preview.empty, "кадр", "кадра", "кадров")}.</p>
+              )}
+            </div>
+          )}
 
           {preview?.warnings.map((w) => (
             <div key={w} className="mag-exp-warn">
@@ -413,7 +423,7 @@ export default function ExportModal({ detail, onClose }: Props) {
             <div className="mag-exp-done">
               <b>Готово</b>
               <span>
-                {result.images.toLocaleString("ru-RU")} изображений <Sep />{" "}
+                {count(result.images, "изображение", "изображения", "изображений")} <Sep />{" "}
                 {formatBytes(result.size_bytes)}
               </span>
             </div>

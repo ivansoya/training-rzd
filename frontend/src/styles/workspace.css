@@ -454,9 +454,12 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.mag-cls-name b > span { display: inline-block; }
+/* Блочным пролёт становится только на наведении — ради transform бегущей
+   строки. Стоял он таким всегда, и многоточие у <b> не появлялось вовсе:
+   text-overflow режет строчный текст, а не inline-block целиком. */
 .mag-cls:hover .mag-cls-name b { text-overflow: clip; }
 .mag-cls:hover .mag-cls-name b > span {
+  display: inline-block;
   animation: cls-marquee 7s ease-in-out infinite;
 }
 .mag-cls-name > span {
@@ -474,7 +477,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .mag-cls:hover .mag-cls-name b > span { animation: none; }
+  .mag-cls:hover .mag-cls-name b > span { animation: none; display: inline; }
   .mag-cls:hover .mag-cls-name b { text-overflow: ellipsis; }
 }
 .g-insp { padding: 20px; }

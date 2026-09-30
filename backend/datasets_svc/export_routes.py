@@ -34,7 +34,7 @@ import threading
 import time
 import zipfile
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import select
@@ -128,16 +128,11 @@ def _plan(db, project, sel):
             warnings.append("Обучающая часть пуста.")
     if picked.no_size:
         warnings.append(f"Пропущено кадров без размеров: {picked.no_size}.")
-    if picked.wrong_kind:
-        # Называем и число, и причину: «пропущено 412» без объяснения читается
-        # как поломка выгрузки.
-        warnings.append(
-            f"В сегментацию не идут боксы: пропущено объектов "
-            f"{picked.wrong_kind}. Прямоугольник, записанный контуром, учил бы "
-            "модель неверно."
-            if want == "polygon"
-            else f"Пропущено объектов неподходящего вида: {picked.wrong_kind}."
-        )
+    # Разметку не того рода (`wrong_kind`) и выпавшие из-за неё кадры
+    # (`dropped`) окно называет само, числами с единицами. Третьей строкой
+    # здесь она дублировалась: окно показывало одно и то же дважды. Боксы в
+    # сегментацию не идут потому, что прямоугольник, записанный контуром,
+    # учил бы модель неверно.
     idle = [
         c.name for c in picked.classes
         if not per_class[c.id]["annotations"]
@@ -179,10 +174,21 @@ def _plan(db, project, sel):
 # --------------------------------------------------------------------------- #
 # Сборка архива
 # --------------------------------------------------------------------------- #
-def _data_yaml(project, plan):
+def _local_today(offset_min):
+    """Дата у человека, а не у сервера. Сервер живёт по UTC, и ночью по
+    Москве архив назывался вчерашним числом. Смещение присылает браузер
+    (минуты к востоку от UTC); без него — UTC, как прежде."""
+    try:
+        minutes = max(-14 * 60, min(14 * 60, int(offset_min or 0)))
+    except (TypeError, ValueError):
+        minutes = 0
+    return datetime.now(timezone(timedelta(minutes=minutes))).strftime("%Y-%m-%d")
+
+
+def _data_yaml(project, plan, offset_min=0):
     """Ключ `path` намеренно не пишем: без него ultralytics считает пути от
     самого yaml, а с относительным `path` — от своей папки датасетов."""
-    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    stamp = _local_today(offset_min)
     # Вид разметки пишем комментарием, а не ключом: ultralytics выбирает задачу
     # по модели, а не по yaml, и лишний ключ он бы просто не понял. Человеку же
     # по строке labels/ не отличить бокс от контура.
@@ -217,12 +223,12 @@ def _sweep():
         pass
 
 
-def _archive_name(project):
+def _archive_name(project, offset_min=0):
     slug = translit_slug(project.name) or "project"
-    return f"{slug}-{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.zip"
+    return f"{slug}-{_local_today(offset_min)}.zip"
 
 
-def _run_export_job(job_id, project_id, sel, user_id):
+def _run_export_job(job_id, project_id, sel, user_id, offset_min=0):
     db = SessionLocal()
     try:
         project = db.get(Project, project_id)
@@ -241,7 +247,8 @@ def _run_export_job(job_id, project_id, sel, user_id):
         path = config.export_file(job_id)
         part = path + ".part"
         with zipfile.ZipFile(part, "w") as zf:
-            zf.writestr("data.yaml", _data_yaml(project, plan), zipfile.ZIP_DEFLATED)
+            zf.writestr("data.yaml", _data_yaml(project, plan, offset_min),
+                        zipfile.ZIP_DEFLATED)
             # Карта номеров: без неё выгрузка теряет связь с проектом, ведь
             # номера в архиве свои.
             zf.writestr(
@@ -282,7 +289,7 @@ def _run_export_job(job_id, project_id, sel, user_id):
 
         meta = {
             "project_id": str(project.id),
-            "file_name": _archive_name(project),
+            "file_name": _archive_name(project, offset_min),
             "size_bytes": os.path.getsize(path),
             "images": plan["images"],
             "annotations": plan["annotations"],
@@ -343,7 +350,7 @@ def start_export(code):
         user_id = user.id if user is not None else None
         threading.Thread(
             target=_run_export_job,
-            args=(job_id, project.id, sel, user_id),
+            args=(job_id, project.id, sel, user_id, data.get("tz_offset")),
             daemon=True,
         ).start()
         return jsonify({"job_id": job_id}), 202

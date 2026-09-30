@@ -10,7 +10,13 @@ import {
 } from "../../auth/api";
 import type { ImportState, ScannedClass } from "../../auth/api";
 import { formatBytes } from "./ProjectShell";
-import { plural } from "../ru";
+import { plural, ru } from "../ru";
+
+// Подписи фактов согласуются с числом: «1 изображение», а не «1 изображений».
+const IMAGES = ["изображение", "изображения", "изображений"] as const;
+const ANNS = ["разметка", "разметки", "разметок"] as const;
+const says = (n: number, forms: readonly [string, string, string], tail = "") =>
+  plural(n, ...forms) + tail;
 import Banner from "../Banner";
 
 // Colours offered to classes that arrive without one — the same list the
@@ -231,8 +237,8 @@ export default function ImportWizard() {
             { value: formatBytes(state.archive.size_bytes), label: "размер" },
             ...(report
               ? [
-                  { value: report.archive_members.toLocaleString("ru-RU"), label: "файлов в архиве" },
-                  { value: report.images.toLocaleString("ru-RU"), label: "изображений" },
+                  { value: ru(report.archive_members), label: plural(report.archive_members, "файл в архиве", "файла в архиве", "файлов в архиве") },
+                  { value: ru(report.images), label: says(report.images, IMAGES) },
                   { value: splitLine(report.splits), label: "" },
                 ]
               : [{ value: seconds(state.archive.upload_seconds), label: "заняла загрузка" }]),
@@ -262,7 +268,10 @@ export default function ImportWizard() {
                 <button className="mag-btn" onClick={() => fileInput.current?.click()}>
                   {state.upload?.name ? "Выбрать архив снова" : "Выбрать архив"}
                 </button>
-                {state.status === "uploading" && state.upload?.name ? (
+                {/* Архив уходит кусками: обрыв связи не начинает загрузку
+                    заново (upload.py). Говорим это только тогда, когда обрыв
+                    случился, — вместе с тем, что делать. */}
+                {state.status === "uploading" && state.upload?.name && (
                   <p>
                     Загрузка «{state.upload.name}» оборвалась на{" "}
                     {Math.round(
@@ -270,8 +279,6 @@ export default function ImportWizard() {
                     )}{" "}
                     %. Выберите тот же файл — она продолжится с этого места.
                   </p>
-                ) : (
-                  <p>Архив уходит кусками: обрыв связи не начинает загрузку заново.</p>
                 )}
               </div>
             ) : (
@@ -311,17 +318,23 @@ export default function ImportWizard() {
             ) : undefined
           }
           facts={[
-            { value: report.annotations.toLocaleString("ru-RU"), label: "разметок" },
+            { value: ru(report.annotations), label: says(report.annotations, ANNS) },
             {
-              value: report.images_without_labels.toLocaleString("ru-RU"),
-              label: "изображений без разметки",
+              value: ru(report.images_without_labels),
+              label: says(report.images_without_labels, IMAGES, " без разметки"),
             },
+            // Цвет тревоги — только когда есть о чём тревожиться: оранжевый
+            // и красный ноль читались как поломка.
             {
-              value: report.clipped.toLocaleString("ru-RU"),
+              value: ru(report.clipped),
               label: plural(report.clipped, "объект подрезан по кадру", "объекта подрезано по кадру", "объектов подрезано по кадру"),
-              tone: "warn",
+              tone: report.clipped ? "warn" : undefined,
             },
-            { value: report.skipped.toLocaleString("ru-RU"), label: "изображений пропущено", tone: "bad" },
+            {
+              value: ru(report.skipped),
+              label: says(report.skipped, IMAGES, " пропущено"),
+              tone: report.skipped ? "bad" : undefined,
+            },
           ]}
           extra={
             showSkipped && report.skipped_examples.length > 0 ? (
@@ -446,12 +459,12 @@ export default function ImportWizard() {
             </Link>
           }
           facts={[
-            { value: state.result.images.toLocaleString("ru-RU"), label: "изображений записано" },
+            { value: ru(state.result.images), label: says(state.result.images, IMAGES, " записано") },
             ...(state.result.unreadable
-              ? [{ value: String(state.result.unreadable), label: "не открылись при записи", tone: "bad" as const }]
+              ? [{ value: ru(state.result.unreadable), label: plural(state.result.unreadable, "изображение не открылось", "изображения не открылись", "изображений не открылось") + " при записи", tone: "bad" as const }]
               : []),
             ...(state.result.orphan_boxes
-              ? [{ value: String(state.result.orphan_boxes), label: "разметок без класса", tone: "warn" as const }]
+              ? [{ value: ru(state.result.orphan_boxes), label: says(state.result.orphan_boxes, ANNS, " без класса"), tone: "warn" as const }]
               : []),
           ]}
         />
@@ -472,12 +485,10 @@ export default function ImportWizard() {
             </div>
             <Facts
               facts={[
-                { value: report.images.toLocaleString("ru-RU"), label: "изображений" },
-                { value: report.annotations.toLocaleString("ru-RU"), label: "разметок" },
-                {
-                  value: `${report.classes.length} в ${superclasses.length}`,
-                  label: `${plural(report.classes.length, "класс", "класса", "классов")} / ${plural(superclasses.length, "суперклассе", "суперклассах", "суперклассах")}`,
-                },
+                { value: ru(report.images), label: says(report.images, IMAGES) },
+                { value: ru(report.annotations), label: says(report.annotations, ANNS) },
+                { value: ru(report.classes.length), label: plural(report.classes.length, "класс", "класса", "классов") },
+                { value: ru(superclasses.length), label: plural(superclasses.length, "суперкласс", "суперкласса", "суперклассов") },
               ]}
             />
           </div>
@@ -608,17 +619,15 @@ function ClassRow({
         </select>
       </td>
       <td className="mag-cls-count">
-        <div className="mag-cls-bar">
-          <i
-            className={unused ? "zero" : ""}
-            style={{ width: `${Math.round((cls.annotations / maxCount) * 100)}%` }}
-          />
+        <div className="mag-cls-row">
+          <div className="mag-cls-bar">
+            <i
+              className={unused ? "zero" : ""}
+              style={{ width: `${Math.round((cls.annotations / maxCount) * 100)}%` }}
+            />
+          </div>
+          {unused ? <span className="zero">не встречен</span> : ru(cls.annotations)}
         </div>
-        {unused ? (
-          <span className="zero">не встречен</span>
-        ) : (
-          cls.annotations.toLocaleString("ru-RU")
-        )}
       </td>
     </tr>
   );

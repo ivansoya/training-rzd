@@ -125,10 +125,14 @@
   color: var(--mag-muted);
 }
 
+/* width: auto — `.mag-btn` и `.mag-ghost` в auth.css во всю ширину (кнопки
+   форм входа), и в шапке шага «Импортировать» растягивался на 1070 px. */
 .mag-step-h .mag-btn,
 .mag-step-h .mag-ghost,
 .mag-step-h .mag-more {
   margin-left: auto;
+  width: auto;
+  margin-top: 0;
 }
 
 /* Статистика пройденного шага: он не висит пустой, а отчитывается цифрами */
@@ -286,10 +290,8 @@
 
 .mag-classes th {
   text-align: left;
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 12px;
+  font-weight: 600;
   color: var(--mag-muted);
   padding: 0 10px 8px 0;
   border-bottom: 1px solid var(--mag-line);
@@ -346,14 +348,19 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Ячейка остаётся ячейкой: `display: flex` на <td> выбрасывал её из строки
+   таблицы (она вставала ниже соседей). Полоса и число — во вложенном ряду. */
 .mag-cls-count {
   width: 170px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.mag-cls-count > .mag-cls-row {
   display: flex;
   align-items: center;
   gap: 9px;
   justify-content: flex-end;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .mag-cls-bar {
@@ -387,6 +394,11 @@
   gap: 10px;
   margin-top: 14px;
   flex-wrap: wrap;
+}
+
+.mag-sc-add .mag-ghost {
+  width: auto;
+  margin-top: 0;
 }
 
 .mag-sc-add input {

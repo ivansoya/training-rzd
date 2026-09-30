@@ -293,10 +293,13 @@
   border-bottom-color: var(--mag-line);
 }
 
+/* Ширину имени задаёт сетка строки (`minmax(0, 15rem)` в workspace.css).
+   Свои 140 px здесь её перебивали: на 430 px колонка — 94 px, и имя наезжало
+   на полосу. Нулевой минимум оставляет длинному имени многоточие. */
 .mag-cls-name {
   display: flex;
   flex-direction: column;
-  min-width: 140px;
+  min-width: 0;
 }
 
 .mag-cls-name b {

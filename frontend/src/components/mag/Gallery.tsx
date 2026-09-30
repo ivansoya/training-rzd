@@ -15,6 +15,7 @@ import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import type { Box } from "../../auth/api";
 import ShapeMini from "./ShapeMini";
+import { labelAt } from "./tileCrop";
 import { plural } from "../ru";
 import type { Mode } from "./useGallery";
 import Pager from "../Pager";
@@ -205,23 +206,22 @@ function Tile({
     >
       <img src={item.thumb} alt={item.title} loading="lazy" decoding="async" />
       {showBoxes && <ShapeMini boxes={item.boxes} width={w} height={h} />}
-      {/* Подписи — вёрсткой поверх слоя: в SVG под `preserveAspectRatio="none"`
-          текст тянулся бы вместе с кадром. */}
+      {/* Подписи — вёрсткой поверх слоя, но по тому же кадрированию, что у
+          картинки и слоя рамок (`labelAt`): по голым долям они съезжали. */}
       {showBoxes &&
         withLabels &&
-        item.boxes.map((b, i) => (
-          <b
-            key={i}
-            className="mag-tile-lb"
-            style={{
-              left: `${(b.x / w) * 100}%`,
-              top: `${(b.y / h) * 100}%`,
-              background: b.color,
-            }}
-          >
-            {b.name}
-          </b>
-        ))}
+        item.boxes.map((b, i) => {
+          const at = labelAt(b, w, h);
+          return at ? (
+            <b
+              key={i}
+              className="mag-tile-lb"
+              style={{ left: `${at.left}%`, top: `${at.top}%`, background: b.color }}
+            >
+              {b.name}
+            </b>
+          ) : null;
+        })}
       <span className="mag-tile-split">
         {item.split === "other" ? "—" : item.split}
       </span>

@@ -188,6 +188,14 @@
   max-width: 46vw;
 }
 
+/* Узкий экран: шапка в две строки — имя со счётчиком сверху, инструменты
+   ниже. В одну строку имя сжималось в 0 px, а ✕ уходил за край экрана. */
+@media (max-width: 720px) {
+  .mag-v-head { flex-wrap: wrap; row-gap: 8px; }
+  .mag-v-head b { flex: 1 1 60%; max-width: none; min-width: 0; }
+  .mag-v-sp { display: none; }
+}
+
 .mag-v-cnt {
   color: #93a0ac;
   font-variant-numeric: tabular-nums;

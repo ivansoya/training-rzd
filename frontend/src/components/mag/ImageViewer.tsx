@@ -6,7 +6,7 @@ import type { CanvasHandle, CanvasShape } from "./BoxCanvas";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
 import Sep from "../Sep";
-import { ru } from "../ru";
+import { count, ru } from "../ru";
 
 const GREY = { name: "", color: "#9aa4ae" };
 
@@ -185,6 +185,9 @@ export default function ImageViewer({
     function onKey(e: KeyboardEvent) {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Стрелки и цифры в раскрытом (и просто сфокусированном) списке классов
+      // листают сам список — перехватив их, мы листали кадры.
+      if (tag === "SELECT" && e.code !== "Escape") return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       switch (e.code) {
         case "Escape":
@@ -280,7 +283,7 @@ export default function ImageViewer({
             >
               {classes.map((c) => (
                 <option key={c.id} value={c.class_index}>
-                  {c.class_index} <Sep /> {c.name}
+                  {`${c.class_index} — ${c.name}`}
                 </option>
               ))}
             </select>
@@ -367,7 +370,7 @@ export default function ImageViewer({
             <p className="mag-v-empty">
               {editing
                 ? "Выберите класс, нажмите B и протяните рамку."
-                : "Разметки нет — это негативный пример, а не потеря."}
+                : "Разметки нет."}
             </p>
           ) : (
             <>
@@ -391,7 +394,8 @@ export default function ImageViewer({
                   <span className="mag-v-obj-n">{c.count}</span>
                 </button>
               ))}
-              <p className="mag-v-hint">Нажмите на класс, чтобы скрыть его боксы.</p>
+              {/* Щелчок по классу гасит его рамки — подсказку об этом держит
+                  title кнопки, отдельный абзац не нужен. */}
             </>
           )}
 
@@ -414,7 +418,7 @@ export default function ImageViewer({
           width: im.width,
           height: im.height,
           boxes: im.boxes,
-          title: `${im.file_name} — ${im.annotations} объектов`,
+          title: `${im.file_name} — ${count(im.annotations, "объект", "объекта", "объектов")}`,
         }))}
         index={index}
         onPick={(i) => { flush(); onIndex(i); }}

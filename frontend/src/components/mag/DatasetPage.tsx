@@ -129,15 +129,22 @@ export default function DatasetPage() {
           </div>
           <div className="mag-stat">
             <b>{stats.annotations.toLocaleString("ru-RU")}</b>
-            <span>разметок</span>
+            <span>{plural(stats.annotations, "разметка", "разметки", "разметок")}</span>
           </div>
           <div className="mag-stat">
             <b>{stats.per_image.toLocaleString("ru-RU")}</b>
-            <span>объектов на кадр</span>
+            <span>
+              {/* Дробное число согласуется с родительным единственного:
+                  «1,6 объекта», а не «1,6 объектов». */}
+              {Number.isInteger(stats.per_image)
+                ? plural(stats.per_image, "объект", "объекта", "объектов")
+                : "объекта"}{" "}
+              на кадр
+            </span>
           </div>
           <div className={stats.without_annotations ? "mag-stat warn" : "mag-stat"}>
             <b>{stats.without_annotations.toLocaleString("ru-RU")}</b>
-            <span>кадров без разметки</span>
+            <span>{plural(stats.without_annotations, "кадр", "кадра", "кадров")} без разметки</span>
           </div>
           {["train", "val", "test", "other"]
             .filter((s) => stats.splits[s])
