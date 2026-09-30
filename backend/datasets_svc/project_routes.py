@@ -893,6 +893,170 @@ def dataset_detail(code, dataset_id):
         db.close()
 
 
+# --------------------------------------------------------------------------- #
+# Судьба датасета: переименование и удаление
+# --------------------------------------------------------------------------- #
+DATASET_NAME_MAX = 255      # datasets.name — varchar(255)
+
+
+def _own_dataset(db, project, dataset_id):
+    dataset = _get_by_uuid(db, Dataset, dataset_id)
+    if dataset is None or dataset.project_id != project.id:
+        return None
+    return dataset
+
+
+def _dataset_usage(db, project, dataset):
+    """Цена удаления датасета и то, что его держит.
+
+    Держат его только незакрытые таски: те, чьи принятые кадры в нём лежат
+    («изменение» правит их на месте), и те, что сдают в него кадры (без
+    датасета «готово» молча завело бы новый под именем таски). Закрытая таска
+    ничего уже не правит — её кадры такие же данные, как импортированные.
+
+    Собранные наборы не держат: их кадры — жёсткие ссылки на томе, удаление
+    исходного файла снимает одну ссылку, и набор читается по-прежнему.
+    Строки деления (`train_set_splits`) уходят каскадом, но их никто не
+    читает — отчёт набора живёт в его `report.json`. Несобранные наборы,
+    выбравшие этот датасет, называем: собравшись, они недосчитаются кадров.
+    """
+    images = db.execute(
+        select(func.count(Image.id)).where(Image.dataset_id == dataset.id)
+    ).scalar_one()
+    annotations = db.execute(
+        select(func.count(Annotation.id))
+        .join(Image, Annotation.image_id == Image.id)
+        .where(Image.dataset_id == dataset.id)
+    ).scalar_one()
+    holding = db.execute(
+        select(Task.id, Task.name, Task.status)
+        .where(
+            Task.project_id == project.id,
+            Task.status != "closed",
+            or_(
+                Task.target_dataset_id == dataset.id,
+                Task.id.in_(
+                    select(Image.task_id).where(Image.dataset_id == dataset.id)
+                ),
+            ),
+        )
+        .order_by(Task.name)
+    ).all()
+    unbuilt = [
+        tset.name
+        for tset in db.execute(
+            select(TrainSet).where(
+                TrainSet.project_id == project.id,
+                TrainSet.status.in_(UNBUILT_SETS),
+            )
+        ).scalars()
+        if str(dataset.id) in {str(x) for x in ((tset.spec or {}).get("datasets") or [])}
+    ]
+    return {
+        "id": str(dataset.id),
+        "name": dataset.name,
+        "images": images,
+        "annotations": annotations,
+        "tasks": [
+            {"id": str(tid), "name": name, "status": status}
+            for tid, name, status in holding
+        ],
+        "unbuilt_sets": unbuilt,
+    }
+
+
+@bp.patch("/api/projects/<code>/datasets/<dataset_id>")
+def rename_dataset(code, dataset_id):
+    """Имя — подпись для людей, поэтому правит его редактор. Идентификатор не
+    трогаем: он уходит в пути выгрузок и в ссылки, а имя — нет."""
+    db, project, err = _resolve(code, "editor")
+    if err:
+        return err
+    try:
+        dataset = _own_dataset(db, project, dataset_id)
+        if dataset is None:
+            return jsonify({"error": "Датасет не найден."}), 404
+        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        if not name:
+            return jsonify({"error": "Укажите название датасета."}), 400
+        if len(name) > DATASET_NAME_MAX:
+            return jsonify({
+                "error": f"Название длиннее {DATASET_NAME_MAX} символов."
+            }), 400
+        dataset.name = name
+        db.commit()
+        return jsonify({"id": str(dataset.id), "name": dataset.name})
+    finally:
+        db.close()
+
+
+@bp.get("/api/projects/<code>/datasets/<dataset_id>/usage")
+def dataset_usage(code, dataset_id):
+    db, project, err = _resolve(code, "admin")
+    if err:
+        return err
+    try:
+        dataset = _own_dataset(db, project, dataset_id)
+        if dataset is None:
+            return jsonify({"error": "Датасет не найден."}), 404
+        return jsonify(_dataset_usage(db, project, dataset))
+    finally:
+        db.close()
+
+
+def _remove_files(project_id, rows):
+    """Файлы кадров — после записи в базе, отдельным потоком: у датасета на
+    двенадцать тысяч кадров это тридцать шесть тысяч удалений, и ждать их
+    ответом незачем. Не удалился файл — осиротевший файл, а не битая запись."""
+    for image_id, task_id in rows:
+        base = config.image_base_dir(project_id, task_id)
+        for sub in ("images", "thumbs", "preview"):
+            try:
+                os.remove(os.path.join(base, sub, f"{image_id}.jpg"))
+            except OSError:
+                pass
+
+
+@bp.delete("/api/projects/<code>/datasets/<dataset_id>")
+def delete_dataset(code, dataset_id):
+    """Удаление датасета уносит его кадры и их разметку.
+
+    Уровень владельца: это необратимо и трогает работу всех разметчиков.
+    Держащие таски дают 409 с их именами, а не молчаливый отказ: интерфейс
+    называет их заранее, но ходить в API можно и мимо него. Кадры не
+    отвязываем, а удаляем: кадр без датасета — черновик таски, и превращать
+    данные в черновики значило бы оставить мусор, которого никто не увидит.
+    """
+    db, project, err = _resolve(code, "admin")
+    if err:
+        return err
+    try:
+        dataset = _own_dataset(db, project, dataset_id)
+        if dataset is None:
+            return jsonify({"error": "Датасет не найден."}), 404
+        usage = _dataset_usage(db, project, dataset)
+        if usage["tasks"]:
+            names = ", ".join(t["name"] for t in usage["tasks"])
+            return jsonify({
+                "error": f"Датасет держат незакрытые таски: {names}. Закройте их.",
+                "code": "dataset_held",
+                **usage,
+            }), 409
+        rows = db.execute(
+            select(Image.id, Image.task_id).where(Image.dataset_id == dataset.id)
+        ).all()
+        # Кадры и всё, что на них висит (разметка, таги, векторы, деления
+        # наборов), уходят каскадом от датасета — одним запросом базы.
+        db.delete(dataset)
+        db.commit()
+        threading.Thread(
+            target=_remove_files, args=(project.id, rows), daemon=True
+        ).start()
+        return jsonify({"ok": True, **{k: usage[k] for k in ("images", "annotations")}})
+    finally:
+        db.close()
+
+
 _PREVIEW_LOCKS = {}
 _PREVIEW_GUARD = threading.Lock()
 

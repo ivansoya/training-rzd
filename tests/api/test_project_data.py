@@ -99,3 +99,40 @@ def test_чужой_датасет_в_счёте_классов_404(api, project
     res = api.get(url(project, "/classes"),
                   params={"dataset": "00000000-0000-0000-0000-000000000000"})
     assert res.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# К4: переименование и удаление датасета
+# --------------------------------------------------------------------------- #
+def test_переименование_датасета(api, project, imported):
+    res = api.patch(url(project, f"/datasets/{imported}"), json={"name": "  Второй  "})
+    assert res.status_code == 200, res.text
+    names = [d["name"] for d in api.get(url(project, "/datasets")).json()["datasets"]]
+    assert names == ["Второй"]
+    assert api.patch(url(project, f"/datasets/{imported}"), json={"name": " "}).status_code == 400
+    assert api.patch(url(project, f"/datasets/{imported}"),
+                     json={"name": "я" * 256}).status_code == 400
+
+
+def test_цена_и_удаление_датасета(api, project, imported, db):
+    usage = api.get(url(project, f"/datasets/{imported}/usage")).json()
+    assert (usage["images"], usage["annotations"], usage["tasks"]) == (2, 2, [])
+    res = api.delete(url(project, f"/datasets/{imported}"))
+    assert res.status_code == 200, res.text
+    assert (res.json()["images"], res.json()["annotations"]) == (2, 2)
+    with db.cursor() as cur:
+        cur.execute("SELECT count(*) FROM images WHERE dataset_id = %s", (imported,))
+        assert cur.fetchone()[0] == 0
+    assert api.get(url(project, "/images")).json()["total"] == 0
+    assert api.get(url(project, f"/datasets/{imported}")).status_code == 404
+
+
+def test_датасет_под_таской_не_удаляется(api, project, imported):
+    res = api.post(url(project, "/tasks"),
+                   json={"name": "test-держит", "target_dataset_id": imported})
+    assert res.status_code in (200, 201), res.text
+    res = api.delete(url(project, f"/datasets/{imported}"))
+    assert res.status_code == 409
+    assert res.json()["code"] == "dataset_held"
+    assert [t["name"] for t in res.json()["tasks"]] == ["test-держит"]
+    assert api.get(url(project, "/images")).json()["total"] == 2
