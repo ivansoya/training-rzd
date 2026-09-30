@@ -65,6 +65,26 @@ const MARK: Partial<Record<ImageTaskStatus, string>> = {
  */
 type Tab = "frames" | "videos" | "progress" | "log";
 
+/** Все кадры выборки. Сервер отдаёт не больше 200 за раз, и прежде всё, что
+ *  дальше двухсотого, было недоступно: редактор писал «1 из 200» у таски на
+ *  205 кадров. Добираем страницами до `matched`.
+ *  ponytail: грузим разом — таски здесь на сотни кадров; на десятках тысяч
+ *  понадобится лента, догружающая страницы по мере прокрутки. */
+async function allImages(
+  taskId: string,
+  params: { status?: string; source?: string }
+): Promise<TaskImage[]> {
+  const PAGE = 200;
+  const first = await getTaskImages(taskId, { ...params, limit: PAGE });
+  const out = [...first.images];
+  while (out.length < first.matched) {
+    const next = await getTaskImages(taskId, { ...params, limit: PAGE, offset: out.length });
+    if (!next.images.length) break;
+    out.push(...next.images);
+  }
+  return out;
+}
+
 const TABS: { id: Tab; label: string }[] = [
   { id: "frames", label: "Кадры" },
   { id: "videos", label: "Видео" },
@@ -119,12 +139,14 @@ export default function TaskPage() {
       // Редактор мог только что закрыться, отправив последнюю правку: читаем
       // после неё, иначе перечитанный кадр покажет разметку до правки.
       await saveSettled();
+      // Странице нужны только размеченные — их сетка во вкладке «Прогресс».
+      // Все кадры подряд уходят в редактор по «Размечать», каждый раз свежими.
       const [t, imgs] = await Promise.all([
         getTask(taskId),
-        getTaskImages(taskId, { limit: 200 }),
+        allImages(taskId, { status: "annotated" }),
       ]);
       setTask(t);
-      setImages(imgs.images);
+      setImages(imgs);
       setTags(t.tags);
       // Пустая таска открывается на «Кадрах»: и загрузка изображений, и
       // добавление ролика под нарезку теперь там. Исключение — когда уже есть
@@ -355,12 +377,12 @@ export default function TaskPage() {
   async function openSource(sourceKey: string) {
     if (!taskId) return;
     await guard(async () => {
-      const res = await getTaskImages(taskId, { limit: 200, source: sourceKey });
-      if (!res.images.length) return;
-      const first = res.images.findIndex(
+      const list = await allImages(taskId, { source: sourceKey });
+      if (!list.length) return;
+      const first = list.findIndex(
         (i) => i.task_status === "new" || i.task_status === "skipped"
       );
-      setEditing({ list: res.images, index: first >= 0 ? first : 0 });
+      setEditing({ list, index: first >= 0 ? first : 0 });
     });
   }
 
@@ -408,9 +430,15 @@ export default function TaskPage() {
   // Во вкладке «Видео» только размечаемые: нарезка живёт в «Кадрах» как
   // источник, а здесь — своя работа со своим редактором.
   const annotateVideos = task.videos.filter((v) => v.mode === "annotate");
-  const annotated = images.filter((i) => i.annotations > 0);
+  // Размеченные — ровно те, что «размечено» в шапке: состояние кадра, а не
+  // наличие рамок. По рамкам сюда попадали забракованные и кадры агента,
+  // которые никто не принял, и вкладка расходилась с шапкой.
+  const annotated = images.filter((i) => i.task_status === "annotated");
   const total = Math.max(1, task.counts.total);
-  const percent = Math.round((task.counts.annotated / total) * 100);
+  // Готово — размеченные и фоновые: фон тоже решение по кадру, и без него
+  // таска, где пройдено всё, показывала 83 %. Вниз, а не к ближайшему:
+  // 100 % при одном непройденном кадре из трёхсот было бы неправдой.
+  const percent = Math.floor(((task.counts.annotated + task.counts.empty) / total) * 100);
   const counts: Record<Tab, string> = {
     frames: String(task.counts.total),
     videos: String(annotateVideos.length),
