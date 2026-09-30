@@ -31,6 +31,27 @@ export type AutoState = "off" | "starting" | "ready" | "error";
 // живую сессию сервер вернёт её же.
 const PING_EVERY = 60_000;
 
+/** Прощание с сессией, которое ещё в пути. Сессия у человека одна, и сервер
+ *  на открытие отдаёт ту же самую: закрыли редактор и сразу открыли снова —
+ *  новый монтаж получал прежний id, а следом долетал DELETE от старого и
+ *  убивал её. Первый прогрев отвечал 404, хук поднимал сессию заново.
+ *  Открытие ждёт, пока прощание дойдёт. */
+let closing: Promise<void> = Promise.resolve();
+
+function close(sessionId: string) {
+  closing = closeAutoSession(sessionId).catch(() => undefined);
+}
+
+const open = () => closing.then(() => openAutoSession());
+
+/** Сколько эффектов сессии сейчас «живы» — на всю страницу, а не на экземпляр.
+ *  В строгом режиме React монтирует дважды, и уборка первого монтажа закрывала
+ *  бы сессию, которую уже взял второй. Счётчик был своим у каждого редактора, и
+ *  этого не хватало: открытие сессии идёт секунды, закрыли редактор и открыли
+ *  снова — ответ старому экземпляру приходил позже, тот видел у себя ноль и
+ *  закрывал сессию, которую сервер уже отдал новому (она у человека одна). */
+let mounted = 0;
+
 export function useAutoLabel(
   frame: AutoFrameRef | null,
   nextFrame?: AutoFrameRef | null,
@@ -48,10 +69,6 @@ export function useAutoLabel(
   const [busy, setBusy] = useState(false);
   const session = useRef<string | null>(null);
   const warmed = useRef<Set<string>>(new Set());
-  // Сколько раз эффект сессии сейчас «жив». В строгом режиме React монтирует
-  // дважды, и без этого счётчика уборка первого монтажа закрывала бы сессию,
-  // которую уже взял второй.
-  const mounted = useRef(0);
 
   const key = useMemo(() => autoFrameKey(frame), [frame]);
   const nextKey = useMemo(() => autoFrameKey(nextFrame ?? null), [nextFrame]);
@@ -67,10 +84,10 @@ export function useAutoLabel(
   spaceRef.current = space ?? null;
 
   useEffect(() => {
-    mounted.current += 1;
+    mounted += 1;
     let alive = true;
     setState("starting");
-    openAutoSession()
+    open()
       .then(({ session_id }) => {
         // Сессия у пользователя одна на модель, и сервер на повторный запрос
         // отдаёт ту же самую. Поэтому закрывать её из устаревшего вызова
@@ -81,10 +98,10 @@ export function useAutoLabel(
         session.current = session_id;
         if (alive) {
           setState("ready");
-        } else if (mounted.current === 0) {
+        } else if (mounted === 0) {
           // А вот если редактор и правда закрыли, пока сессия открывалась —
           // прощаемся: держать кодировщик ради ушедшего незачем.
-          closeAutoSession(session_id);
+          close(session_id);
           session.current = null;
         }
       })
@@ -95,11 +112,11 @@ export function useAutoLabel(
       });
     return () => {
       alive = false;
-      mounted.current -= 1;
+      mounted -= 1;
       // Строгий режим сейчас смонтирует заново — сессия ещё пригодится.
-      if (mounted.current > 0) return;
+      if (mounted > 0) return;
       // Прощаемся явно; закрытую вкладку добьёт TTL на сервере.
-      if (session.current) closeAutoSession(session.current);
+      if (session.current) close(session.current);
       session.current = null;
     };
   }, []);
@@ -107,7 +124,7 @@ export function useAutoLabel(
   /** Новая сессия взамен потерянной. Кэш прогретых кадров при этом обнуляется:
    *  эмбеддинги жили в том процессе, которого больше нет. */
   const reopen = useCallback(async () => {
-    const { session_id } = await openAutoSession();
+    const { session_id } = await open();
     session.current = session_id;
     warmed.current.clear();
     return session_id;
@@ -171,7 +188,7 @@ export function useAutoLabel(
   useEffect(() => {
     if (state !== "ready") return;
     const id = window.setInterval(() => {
-      openAutoSession()
+      open()
         .then(({ session_id }) => {
           // Сервер перезапустили — сессия новая, прогрев придётся повторить.
           if (session_id !== session.current) {

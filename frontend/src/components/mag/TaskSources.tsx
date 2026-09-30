@@ -488,11 +488,7 @@ export function VideoCard({
   // Прежние кадры считает сводка тем же счётом, что и отказ в закрытии: в
   // него входят и забракованные, которых нет в `video.frames`, — иначе при
   // одних забракованных ссылка «уберите их» пропадала, а закрыть было нельзя.
-  // Поле пока не описано в PendingVideo (auth/api.ts).
-  const inTask = Math.max(
-    video.frames,
-    (pending as (PendingVideo & { frames_in_task?: number }) | undefined)?.frames_in_task ?? 0
-  );
+  const inTask = Math.max(video.frames, pending?.frames_in_task ?? 0);
   const scouts = useScouts(taskId);
   const [statsOpen, setStatsOpen] = useState(false);
   const lastFrame = Math.max(1, (video.frame_count || 1) - 1);

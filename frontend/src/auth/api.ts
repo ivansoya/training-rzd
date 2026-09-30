@@ -871,6 +871,9 @@ export interface PendingVideo {
   objects?: PendingObject[];
   /** План целиком не считается: закрыть разметку не выйдет, пока не поправят. */
   error?: string;
+  /** Ролик открыт заново, а его прежние кадры ещё в таске: закрыть нельзя,
+   *  пока их не уберут. Тот же счёт, что у отказа в закрытии. */
+  frames_in_task?: number;
 }
 
 export interface TaskDetail extends TaskSummary {

@@ -16,6 +16,7 @@ import {
 } from "../../auth/api";
 import type {
   ImageTaskStatus,
+  PendingVideo,
   TaskDetail,
   TaskEventItem,
   TaskImage,
@@ -284,9 +285,7 @@ export default function TaskPage() {
     // Незакрытый ролик — это работа, которой ещё нет в кадрах. Молча сдать
     // таску мимо неё значило бы потерять разметку целого видео.
     if (to === "done" && task.pending_videos.length) {
-      const list = task.pending_videos
-        .map((v) => `«${v.file_name}» — ${v.frames} ${plural(v.frames, "кадр", "кадра", "кадров")}`)
-        .join(", ");
+      const list = task.pending_videos.map(pendingLabel).join(", ");
       if (!window.confirm(
         `Разметка не закрыта у ${task.pending_videos.length} ` +
         `${plural(task.pending_videos.length, "ролика", "роликов", "роликов")}: ${list}. ` +
@@ -794,10 +793,14 @@ export default function TaskPage() {
               <b>Набор не окончательный.</b> У{" "}
               {task.pending_videos.length}{" "}
               {plural(task.pending_videos.length, "ролика", "роликов", "роликов")} разметка
-              ещё не закрыта, и их кадров здесь нет:{" "}
-              {task.pending_videos.map((v) => `«${v.file_name}» (${v.frames})`).join(", ")}.{" "}
-              Всего {pending.frames} {plural(pending.frames, "кадр", "кадра", "кадров")}
-              {pending.empty > 0 && `, из них ${pending.empty} фоновых`}.{" "}
+              ещё не закрыта, и {task.pending_videos.length === 1 ? "его" : "их"} кадров здесь нет:{" "}
+              {task.pending_videos.map(pendingLabel).join(", ")}.{" "}
+              {pending.frames > 0 && (
+                <>
+                  Всего {count(pending.frames, "кадр", "кадра", "кадров")}
+                  {pending.empty > 0 && `, из них ${pending.empty} фоновых`}.{" "}
+                </>
+              )}
               <button className="mag-link" type="button" onClick={() => setTab("videos")}>
                 Закрыть разметку
               </button>
@@ -949,6 +952,14 @@ const STATUS_WORD: Record<string, string> = {
   updating: "изменение",
   closed: "закрыто",
 };
+
+/** Незакрытый ролик одной строкой. Ролик с ошибкой плана или с прежними
+ *  кадрами в таске читался как «x» (0) — будто размечать там нечего. */
+function pendingLabel(v: PendingVideo): string {
+  if (v.error) return `«${v.file_name}» — не закрыть: ${v.error.replace(/\.$/, "")}`;
+  if (v.frames_in_task) return `«${v.file_name}» — прежние кадры ролика ещё в таске (${v.frames_in_task})`;
+  return `«${v.file_name}» — ${count(v.frames, "кадр", "кадра", "кадров")}`;
+}
 
 /** Глагол прошедшего времени по числу: «принят 1 кадр», «принято 5 кадров». */
 const did = (n: number, one: string, many: string) => plural(n, one, many, many);

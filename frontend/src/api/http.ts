@@ -6,6 +6,8 @@
 
 // Бросается на любой неуспешный ответ. `code` — машинная причина
 // («email_unconfirmed»), `fields` — сообщения по полям формы.
+import { UNAUTHORIZED_EVENT } from "../auth/api";
+
 export class ApiError extends Error {
   code?: string;
   status: number;
@@ -40,6 +42,10 @@ export async function asJson<T>(res: Response): Promise<T> {
       err.error ||
       (err.errors && Object.values(err.errors)[0]) ||
       `HTTP ${res.status}`;
+    // Тот же сигнал, что у auth/api.ts: запросы разделов (графы, наборы,
+    // обучение, агенты) идут через этот клиент, и без него отозванную сессию
+    // здесь замечал только пульс AuthGate — раз в минуту.
+    if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
     throw new ApiError(message, res.status, err.code, err.errors, data);
   }
   return data as T;
