@@ -96,3 +96,50 @@ def test_delete_refused_while_busy(api, db, project):
     with db.cursor() as cur:
         cur.execute("UPDATE projects SET status = 'ready' WHERE code = %s", (code,))
     assert api.delete(f"{BASE_URL}/api/projects/{code}").status_code == 200
+
+
+# ----------------------------------------------------------- участники --- #
+
+def test_member_roles_and_last_admin(api, db, project):
+    code = project["code"]
+    me_id = api.get(f"{BASE_URL}/api/auth/me").json()["user"]["id"]
+    other = person(db)
+    join(api, other, code, "viewer")
+    other_id = other.get(f"{BASE_URL}/api/auth/me").json()["user"]["id"]
+    url = f"{BASE_URL}/api/projects/{code}/members"
+
+    # Не-админ роли не меняет и чужих не исключает.
+    assert other.patch(f"{url}/{me_id}", json={"role": "viewer"}).status_code == 403
+    assert other.delete(f"{url}/{me_id}").status_code == 403
+    # Единственный админ не может ни понизить себя, ни выйти.
+    assert api.patch(f"{url}/{me_id}", json={"role": "editor"}).status_code == 409
+    assert api.delete(f"{url}/{me_id}").status_code == 409
+    assert api.patch(f"{url}/{other_id}", json={"role": "boss"}).status_code == 400
+
+    res = api.patch(f"{url}/{other_id}", json={"role": "admin"})
+    assert res.status_code == 200, res.text
+    # Админов двое — теперь первый может уйти, а второй остаётся последним.
+    assert api.delete(f"{url}/{me_id}").status_code == 200
+    assert code not in [p["code"] for p in api.get(f"{BASE_URL}/api/auth/me").json()["projects"]]
+    assert other.delete(f"{url}/{other_id}").status_code == 409
+
+
+def test_remove_member_and_revoke_invitation(api, db, project):
+    code = project["code"]
+    other = person(db)
+    join(api, other, code, "editor")
+    other_id = other.get(f"{BASE_URL}/api/auth/me").json()["user"]["id"]
+    res = api.delete(f"{BASE_URL}/api/projects/{code}/members/{other_id}")
+    assert res.status_code == 200, res.text
+    assert other.get(f"{BASE_URL}/api/projects/{code}").status_code == 403
+
+    third = person(db)
+    api.post(f"{BASE_URL}/api/projects/{code}/invite",
+             json={"identity": third.login_name, "role": "viewer"})
+    pending = api.get(f"{BASE_URL}/api/projects/{code}").json()["pending_invitations"]
+    iid = pending[0]["id"]
+    assert third.delete(f"{BASE_URL}/api/projects/{code}/invitations/{iid}").status_code == 404
+    res = api.delete(f"{BASE_URL}/api/projects/{code}/invitations/{iid}")
+    assert res.status_code == 200, res.text
+    assert third.get(f"{BASE_URL}/api/invitations").json()["invitations"] == []
+    assert third.post(f"{BASE_URL}/api/invitations/{iid}/accept").status_code == 404

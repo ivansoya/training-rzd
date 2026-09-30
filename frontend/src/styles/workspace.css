@@ -113,6 +113,11 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .workspace-code { flex: 0 0 25px; font: 10px var(--mono); color: var(--faint); }
 .workspace-link.on .workspace-code { color: var(--accent-text); }
 .workspace-sidebar-foot { margin-top: auto; padding: 20px 10px 0; color: var(--faint); font-size: 11px; }
+/* Правка состава у администратора — второй строкой карточки: в карточку шириной
+   280 px имя, выбор роли и кнопка в одну строку не помещаются. */
+.mag-mem:has(> .mag-mem-admin) { flex-wrap: wrap; }
+.mag-mem-admin { flex: 1 0 100%; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+.mag-mem-admin select { width: auto; min-height: 30px; padding-block: 4px; font-size: 12px; }
 .mag-topbar.workspace-topbar { position: fixed; top: 0; left: var(--workspace-width); right: 0; height: var(--workspace-header); min-height: var(--workspace-header); padding: 0 32px; z-index: 35; background: var(--paper); border-bottom: 1px solid var(--rule); gap: 20px; box-shadow: none; }
 .workspace-project { color: var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; padding-right: 20px; border-right: 1px solid var(--rule); }
 .workspace-breadcrumb { color: var(--dim); font-size: 12px; }

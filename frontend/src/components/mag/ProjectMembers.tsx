@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { deleteProject, getProjectCost, inviteToProject } from "../../auth/api";
+import {
+  deleteProject,
+  getProjectCost,
+  inviteToProject,
+  removeMember,
+  revokeInvitation,
+  setMemberRole,
+} from "../../auth/api";
 import type { ProjectCost } from "../../auth/api";
 import { useAuth } from "../auth/AuthGate";
 import { useDialog } from "../useDialog";
@@ -30,14 +37,41 @@ function lastSeenLabel(iso: string | null | undefined): string {
 
 export default function ProjectMembers() {
   const { detail, refresh } = useProject();
+  const { me, refresh: refreshMe } = useAuth();
+  const navigate = useNavigate();
   const { project, members, my_role, pending_invitations } = detail;
   const [showInvite, setShowInvite] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [confirmLeave, setConfirmLeave] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const isAdmin = my_role === "admin";
   const online = members.filter((m) => m.online).length;
 
+  // Одна обёртка на все правки состава: кнопки гаснут на время запроса
+  // (двойной щелчок не шлёт второй), ошибка сервера — словами над списком.
+  async function act(action: () => Promise<unknown>, after: () => Promise<unknown> = refresh) {
+    setBusy(true);
+    setError(null);
+    try {
+      await action();
+      await after();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const leave = () =>
+    act(() => removeMember(project.code, me.user.id), async () => {
+      await refreshMe();
+      navigate("/", { replace: true });
+    });
+
   return (
     <>
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
       <div className="mag-card">
         <div className="mag-card-h">
           <h4>Участники <Sep /> {members.length}</h4>
@@ -63,17 +97,42 @@ export default function ProjectMembers() {
         </div>
 
         <div className="mag-members">
-          {members.map((m) => (
-            <div key={m.id} className="mag-mem">
-              <span className={m.online ? "mag-dot on" : "mag-dot"} />
-              <span className="mag-ava">{initials(m.display_name)}</span>
-              <span className="mag-mem-name">
-                <b>{m.display_name}</b>
-                <span>{m.online ? "в сети" : lastSeenLabel(m.last_seen_at)}</span>
-              </span>
-              <span className={`mag-role ${m.role}`}>{m.role_label}</span>
-            </div>
-          ))}
+          {members.map((m) => {
+            const itself = m.id === me.user.id;
+            return (
+              <div key={m.id} className="mag-mem">
+                <span className={m.online ? "mag-dot on" : "mag-dot"} />
+                <span className="mag-ava">{initials(m.display_name)}</span>
+                <span className="mag-mem-name">
+                  <b>{m.display_name}{itself ? " (вы)" : ""}</b>
+                  <span>{m.online ? "в сети" : lastSeenLabel(m.last_seen_at)}</span>
+                </span>
+                {/* Роль у админа — выбор прямо на карточке, а не отдельное
+                    окно: правка в одно действие, как и в окне приглашения. */}
+                {isAdmin ? (
+                  <span className="mag-mem-admin">
+                    <select
+                      aria-label={`Роль: ${m.display_name}`}
+                      value={m.role}
+                      disabled={busy}
+                      onChange={(e) => act(() => setMemberRole(project.code, m.id, e.target.value),
+                        itself ? async () => { await refresh(); await refreshMe(); } : refresh)}
+                    >
+                      {ROLES.map((r) => <option key={r.value} value={r.value}>{r.label}</option>)}
+                    </select>
+                    {!itself && (
+                      <button className="mag-ghost mag-ghost-sm" type="button" disabled={busy}
+                        onClick={() => act(() => removeMember(project.code, m.id))}>
+                        Исключить
+                      </button>
+                    )}
+                  </span>
+                ) : (
+                  <span className={`mag-role ${m.role}`}>{m.role_label}</span>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
 
@@ -91,24 +150,46 @@ export default function ProjectMembers() {
                   <b>{i.user.display_name}</b>
                   <span>приглашение отправлено</span>
                 </span>
-                <span className="mag-role">{i.role_label}</span>
+                <span className="mag-mem-admin">
+                  <span className="mag-role">{i.role_label}</span>
+                  <button className="mag-ghost mag-ghost-sm" type="button" disabled={busy}
+                    onClick={() => act(() => revokeInvitation(project.code, i.id))}>
+                    Отозвать
+                  </button>
+                </span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {isAdmin && (
-        <div className="mag-card">
-          <div className="mag-card-h">
-            <h4>Удаление проекта</h4>
-            <button className="mag-ghost mag-danger mag-ghost-inline" type="button"
-              onClick={() => setDeleting(true)}>
-              Удалить проект
-            </button>
-          </div>
+      <div className="mag-card">
+        <div className="mag-card-h">
+          <h4>{isAdmin ? "Выход и удаление" : "Выход из проекта"}</h4>
+          <span className="mag-invite-actions">
+            {confirmLeave ? (
+              <>
+                <button className="mag-ghost mag-danger mag-ghost-inline" type="button" disabled={busy} onClick={leave}>
+                  Подтвердить выход
+                </button>
+                <button className="mag-ghost mag-ghost-inline" type="button" onClick={() => setConfirmLeave(false)}>
+                  Отмена
+                </button>
+              </>
+            ) : (
+              <button className="mag-ghost mag-ghost-inline" type="button" onClick={() => setConfirmLeave(true)}>
+                Выйти из проекта
+              </button>
+            )}
+            {isAdmin && (
+              <button className="mag-ghost mag-danger mag-ghost-inline" type="button"
+                onClick={() => setDeleting(true)}>
+                Удалить проект
+              </button>
+            )}
+          </span>
         </div>
-      )}
+      </div>
 
       {deleting && (
         <DeleteProjectModal code={project.code} name={project.name}

@@ -671,3 +671,98 @@ def delete_project(code):
         db.execute(delete(Project).where(Project.id == pid))
         db.commit()
     return jsonify({"ok": True, "files_removed": _drop_project_files(pid)})
+
+
+# ---------------------------------------------------------------- members ---
+
+def _admin_count_locked(db, project_id) -> int:
+    """Число администраторов под блокировкой их строк: два админа, снимающие
+    друг друга одновременно, иначе оба увидели бы «админов двое» и оставили
+    проект без хозяина."""
+    return len(db.execute(
+        select(ProjectMember.id).where(
+            ProjectMember.project_id == project_id, ProjectMember.role == "admin"
+        ).with_for_update()
+    ).all())
+
+
+def _member_by_user(db, project, user_id):
+    uid = _parse_uuid(user_id)
+    if uid is None:
+        return None
+    return db.execute(select(ProjectMember).where(
+        ProjectMember.project_id == project.id, ProjectMember.user_id == uid
+    )).scalar_one_or_none()
+
+
+@bp.patch("/projects/<code>/members/<user_id>")
+def change_member_role(code, user_id):
+    role = (request.get_json(silent=True) or {}).get("role")
+    with SessionLocal() as db:
+        _, user = current_session(db)
+        if user is None:
+            return jsonify({"error": "Не выполнен вход."}), 401
+        project, my = _project_as_member(db, user, code)
+        if project is None:
+            return jsonify({"error": "Проект не найден."}), 404
+        if my.role != "admin":
+            return jsonify({"error": "Менять роли может только администратор проекта."}), 403
+        if role not in ROLES:
+            return jsonify({"error": "Укажите роль: администратор, редактор или просмотр."}), 400
+        target = _member_by_user(db, project, user_id)
+        if target is None:
+            return jsonify({"error": "Участник не найден."}), 404
+        if target.role == "admin" and role != "admin" and _admin_count_locked(db, project.id) < 2:
+            return jsonify({"error": "В проекте должен остаться хотя бы один администратор."}), 409
+        target.role = role
+        db.commit()
+        return jsonify({"ok": True, "role": role, "role_label": ROLE_LABELS[role]})
+
+
+@bp.delete("/projects/<code>/members/<user_id>")
+def remove_member(code, user_id):
+    """Исключить участника; себя — значит выйти из проекта. Выйти может
+    каждый, исключать других — только администратор."""
+    with SessionLocal() as db:
+        _, user = current_session(db)
+        if user is None:
+            return jsonify({"error": "Не выполнен вход."}), 401
+        project, my = _project_as_member(db, user, code)
+        if project is None:
+            return jsonify({"error": "Проект не найден."}), 404
+        target = _member_by_user(db, project, user_id)
+        if target is None:
+            return jsonify({"error": "Участник не найден."}), 404
+        itself = target.user_id == user.id
+        if not itself and my.role != "admin":
+            return jsonify({"error": "Исключать участников может только администратор проекта."}), 403
+        if target.role == "admin" and _admin_count_locked(db, project.id) < 2:
+            return jsonify({"error": (
+                "Вы последний администратор: назначьте администратором другого участника или удалите проект."
+                if itself else "В проекте должен остаться хотя бы один администратор."
+            )}), 409
+        db.delete(target)
+        db.commit()
+        return jsonify({"ok": True})
+
+
+@bp.delete("/projects/<code>/invitations/<iid>")
+def revoke_invitation(code, iid):
+    with SessionLocal() as db:
+        _, user = current_session(db)
+        if user is None:
+            return jsonify({"error": "Не выполнен вход."}), 401
+        project, my = _project_as_member(db, user, code)
+        if project is None:
+            return jsonify({"error": "Проект не найден."}), 404
+        if my.role != "admin":
+            return jsonify({"error": "Отзывать приглашения может только администратор проекта."}), 403
+        iuuid = _parse_uuid(iid)
+        inv = db.get(ProjectInvitation, iuuid) if iuuid else None
+        if inv is None or inv.project_id != project.id or inv.status != "pending":
+            return jsonify({"error": "Приглашение не найдено."}), 404
+        # Строку удаляем, а не помечаем: повторное приглашение того же
+        # человека всё равно начинается с чистого листа.
+        db.delete(inv)
+        db.commit()
+        return jsonify({"ok": True})

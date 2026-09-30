@@ -267,6 +267,19 @@ export async function deleteProject(code: string): Promise<void> {
   await asJson(await del(`projects/${encodeURIComponent(code)}`));
 }
 
+export async function setMemberRole(code: string, userId: string, role: string): Promise<void> {
+  await asJson(await patch(`projects/${encodeURIComponent(code)}/members/${userId}`, { role }));
+}
+
+// Себя — значит выйти из проекта.
+export async function removeMember(code: string, userId: string): Promise<void> {
+  await asJson(await del(`projects/${encodeURIComponent(code)}/members/${userId}`));
+}
+
+export async function revokeInvitation(code: string, invitationId: string): Promise<void> {
+  await asJson(await del(`projects/${encodeURIComponent(code)}/invitations/${invitationId}`));
+}
+
 export async function inviteToProject(
   code: string,
   identity: string,
