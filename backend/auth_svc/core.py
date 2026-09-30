@@ -9,7 +9,7 @@ import time
 import uuid
 
 from flask import Blueprint, jsonify, request
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import and_, delete, func, or_, select
 
 from auth_svc.routes import ROLE_LABELS
 from auth_svc.sessions import current_session, is_online
@@ -371,13 +371,17 @@ def project_detail(code):
                 LabelClass.name,
                 LabelClass.color,
                 Superclass.name.label("superclass"),
-                func.count(Annotation.id).label("cnt"),
+                func.count(Image.id).label("cnt"),
             )
             .outerjoin(Annotation, Annotation.class_id == LabelClass.id)
+            # Полосы классов считают то же множество, что паспорт: разметку на
+            # кадрах датасетов. Черновики и брак таски сюда не идут — иначе
+            # сумма полос (887) расходилась с «878 разметок» рядом.
+            .outerjoin(Image, and_(Image.id == Annotation.image_id, Image.dataset_id.isnot(None)))
             .outerjoin(Superclass, Superclass.id == LabelClass.superclass_id)
             .where(LabelClass.project_id == project.id)
             .group_by(LabelClass.id, Superclass.name)
-            .order_by(func.count(Annotation.id).desc())
+            .order_by(func.count(Image.id).desc())
         ).all()
         classes_json = [
             {
