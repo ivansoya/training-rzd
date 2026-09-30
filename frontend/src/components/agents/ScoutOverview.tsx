@@ -11,10 +11,12 @@ import { useEffect, useState } from "react";
 import * as api from "../../api/agents";
 import { plural } from "../ru";
 import Sep from "../Sep";
+import { useEscape } from "../mag/useEscape";
 import { useBackdrop } from "../useBackdrop";
+import { useDialog } from "../useDialog";
 import FramePeek from "./FramePeek";
 import { ScoutBody } from "./ScoutStats";
-import { taskColors, useScouts } from "./scout";
+import { scoutsPending, taskColors, useScouts } from "./scout";
 import { clock, nearest } from "./scoutMath";
 
 type Loaded = { id: string; stats: api.ScoutStats };
@@ -154,29 +156,33 @@ export default function ScoutOverview({ taskId, onClose }: { taskId: string; onC
   const [error, setError] = useState<string | null>(null);
   const [picked, setPicked] = useState<string>("all");
   const ids = Object.keys(scouts).sort().join(",");
+  const pending = scoutsPending(scouts);
 
   // Все ролики разом: список слева и сводке нужны числа каждого. Ролик —
   // десятки килобайт даже у часового, запросов столько, сколько роликов.
   useEffect(() => {
-    if (!ids) return;
+    if (!ids) {
+      // Разведок нет (ролики удалили) — пустое окно, а не вечное «Считаю…».
+      if (!pending) setLoaded([]);
+      return;
+    }
     let alive = true;
     Promise.all(ids.split(",").map((id) => api.scoutStats(taskId, id).then((stats) => ({ id, stats }))))
       .then((all) => alive && setLoaded(all.sort((a, b) => a.stats.file_name.localeCompare(b.stats.file_name, "ru"))))
       .catch((e) => alive && setError((e as Error).message));
     return () => { alive = false; };
-  }, [taskId, ids]);
+  }, [taskId, ids, pending]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Слоем, а не своим слушателем окна: иначе Esc перехватывал слой под окном
+  // (редактор, модалка таски) и закрывал его, а окно оставалось.
+  useEscape(onClose);
+  const box = useDialog();
 
   const current = loaded?.find((v) => v.id === picked);
   const total = loaded?.reduce((s, v) => s + v.stats.boxes, 0) ?? 0;
   return (
     <div className="mag-backdrop" {...useBackdrop(onClose)}>
-      <div className="mag-modal ag-ov" role="dialog" aria-label="Статистика разведки таски">
+      <div ref={box} className="mag-modal ag-ov" role="dialog" aria-modal="true" aria-label="Статистика разведки таски" tabIndex={-1}>
         <aside className="ag-ov-list">
           <h5>Разведка таски</h5>
           <button type="button" className="ag-ov-item" aria-current={picked === "all"} onClick={() => setPicked("all")}>
@@ -201,7 +207,8 @@ export default function ScoutOverview({ taskId, onClose }: { taskId: string; onC
           <button className="ag-stats-x ag-ov-x" type="button" aria-label="Закрыть" onClick={onClose}>✕</button>
           {error && <div className="mag-error">{error}</div>}
           {!loaded && !error && <p className="ag-muted">Считаю…</p>}
-          {loaded && picked === "all" && (
+          {loaded?.length === 0 && <p className="ag-muted">В таске нет разведанных роликов.</p>}
+          {loaded && loaded.length > 0 && picked === "all" && (
             <AllVideos taskId={taskId} loaded={loaded} colors={colors} onPick={setPicked} />
           )}
           {current && (

@@ -37,8 +37,13 @@ export function scoutLanes(scout: api.Scout | undefined, colors: Map<string, str
 /** Разведка роликов таски: {ролик: разведка}. Пусто, пока агент не смотрел.
  *  Прогон кончился — перечитываем: кнопка у ролика не должна ждать
  *  перезагрузки страницы. */
+// Метка «ещё не пришло»: пустой ответ сервера — другой объект, и по нему
+// окно общей статистики отличает «разведок нет» от «загружаю».
+const PENDING: Record<string, api.Scout> = {};
+export const scoutsPending = (scouts: Record<string, api.Scout>) => scouts === PENDING;
+
 export function useScouts(taskId: string) {
-  const [scouts, setScouts] = useState<Record<string, api.Scout>>({});
+  const [scouts, setScouts] = useState<Record<string, api.Scout>>(PENDING);
   const [tick, setTick] = useState(0);
   useLive("agent", (event) => {
     if (event.s === "done") setTick((t) => t + 1);

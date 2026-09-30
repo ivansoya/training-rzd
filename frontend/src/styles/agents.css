@@ -7,6 +7,25 @@
  */
 
 .g-ged.ag-ged { grid-template-columns: 180px minmax(0, 1fr) 380px; }
+/* Узкие окна. Правило выше специфичнее медиазапросов .g-ged в workspace.css,
+   поэтому узкие колонки агента — здесь: иначе на 430 px холст и превью
+   сжимались в 0 (React Flow #004), а правая колонка 380 px вылезала за край.
+   Ниже 760 px три колонки не живут — стопкой, холст своей высоты. */
+@media (max-width: 1250px) { .g-ged.ag-ged { grid-template-columns: 160px minmax(0, 1fr) 320px; } }
+@media (max-width: 1000px) { .g-ged.ag-ged { grid-template-columns: 136px minmax(0, 1fr) 280px; } }
+@media (max-width: 760px) {
+  /* Вместе с .workspace-graph — сильнее высоты редактора графов из timeline.css. */
+  .workspace-graph .g-ged.ag-ged {
+    position: relative; inset: auto; height: auto; min-height: 0; overflow: visible;
+    grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto auto;
+  }
+  .ag-ged .g-pal { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px; border-right: 0; border-bottom: 1px solid var(--hair); }
+  .ag-ged .g-pal h4 { flex-basis: 100%; margin: 0; }
+  .ag-ged .g-pal-item { width: auto; padding: 7px 10px; }
+  .ag-ged .g-canvas-top .ttl { min-width: 0; max-width: 100%; }
+  .ag-ged .g-canvas-body { flex: none; height: 60dvh; min-height: 320px; }
+  .ag-side { border-left: 0; border-top: 1px solid var(--hair); }
+}
 
 .ag-side {
   display: grid;
@@ -35,6 +54,8 @@
 .ag-two { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .ag-num { margin: 0; }
 .ag-num input { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+/* Число вне пределов сервера (agent_graph.LIMITS) — версию с ним не сохранить. */
+.mag .ag-side input[aria-invalid="true"] { border-color: var(--red); color: var(--red-hi); }
 .ag-dot { width: 9px; height: 9px; border-radius: 2px; flex: none; display: inline-block; }
 .ag-merge { font: 600 11px var(--mono); color: var(--null); white-space: nowrap; }
 
@@ -240,7 +261,7 @@
 .ag-pv-frame svg rect, .ag-pv-frame svg polygon { stroke-width: 2px; vector-effect: non-scaling-stroke; }
 .ag-pv-frame svg text {
   stroke: var(--paper);
-  stroke-width: 3px;
+  stroke-width: var(--ag-halo, 3px);
   paint-order: stroke;
   font-family: var(--mono);
   font-weight: 600;
@@ -532,3 +553,26 @@
 .ag-exnote { margin: 0; color: var(--dim); font-size: 13px; }
 .ag-exdlg .ag-foot { justify-content: flex-start; align-items: center; margin-top: 0; }
 @media (max-width: 560px) { .ag-three { grid-template-columns: 1fr; } }
+
+/* «В архив?» на карточке агента — вопрос прижат к кнопкам справа. */
+.g-graph-card .ag-ask { margin-left: auto; font-size: 11.5px; }
+.g-graph-card .ag-ask + .g-graph-del { margin-left: 0; }
+
+/* Окна разведки на телефоне: общая статистика — стопкой (ролики лентой над
+   числами; две колонки давали правой 126 px), у окна ролика — узкая колонка
+   имён и шапка шкалы без подсказки: иначе окно шире экрана и кнопка «Весь
+   ролик» и подписи оси уезжали за край. */
+@media (max-width: 760px) {
+  .mag-modal.ag-ov { position: relative; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); max-height: calc(100dvh - 24px); }
+  .ag-ov-list { flex-direction: row; overflow-x: auto; overflow-y: hidden; padding: 10px 56px 10px 10px; border-right: 0; border-bottom: 1px solid var(--hair); }
+  .ag-ov-list h5 { display: none; }
+  .ag-ov-item { flex: 0 0 170px; }
+  /* Крестик — в углу окна над лентой роликов, а не на заголовке ролика. */
+  .ag-ov-pane { position: static; padding: 16px; }
+  .ag-ov-pane > .ag-stats-h { padding-right: 0; }
+  .ag-ov-x { top: 12px; right: 12px; z-index: 2; background: var(--sunk); }
+  .ag-stats-row, .ag-stats-axis { grid-template-columns: 76px minmax(0, 1fr) 34px; gap: 8px; }
+  .ag-tl-h { gap: 8px; }
+  .ag-tl-hint { display: none; }
+  .ag-tl-win { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

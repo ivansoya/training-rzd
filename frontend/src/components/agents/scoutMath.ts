@@ -55,3 +55,10 @@ export function scoutColors(names: Iterable<string>): Map<string, string> {
   const sorted = [...new Set(names)].sort((x, y) => x.localeCompare(y, "ru"));
   return new Map(sorted.map((n, i) => [n, PALETTE[i % PALETTE.length]]));
 }
+
+/** Сколько кадров агент посмотрит в ролике из `frames` кадров при шаге
+ *  `step` — как agent_graph.sampled: 0, step, … до последнего включительно,
+ *  то есть ⌈frames / step⌉. Прежнее ⌊frames / step⌋ + 1 обещало на кадр
+ *  больше, когда длина делится на шаг (1181 при 1180 на сервере). */
+export const sampledCount = (frames: number, step: number) =>
+  frames > 0 ? Math.ceil(frames / Math.max(1, Math.floor(step))) : 0;

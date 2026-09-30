@@ -15,7 +15,9 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import * as api from "../../api/agents";
 import { plural } from "../ru";
 import Sep from "../Sep";
+import { useEscape } from "../mag/useEscape";
 import { useBackdrop } from "../useBackdrop";
+import { useDialog } from "../useDialog";
 import FramePeek from "./FramePeek";
 import { taskColors, useScouts } from "./scout";
 import { clampView, clock, nearest, timeTicks } from "./scoutMath";
@@ -313,15 +315,13 @@ export default function ScoutStats({ taskId, videoId, onClose }: {
     return () => { alive = false; };
   }, [taskId, videoId]);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  // Слоем, как у прочих окон: свой слушатель окна проигрывал слою под ним.
+  useEscape(onClose);
+  const box = useDialog();
 
   return (
     <div className="mag-backdrop" {...useBackdrop(onClose)}>
-      <div className="mag-modal ag-stats" role="dialog" aria-label="Статистика разведки">
+      <div ref={box} className="mag-modal ag-stats" role="dialog" aria-modal="true" aria-label="Статистика разведки" tabIndex={-1}>
         <div className="ag-stats-h">
           <h1>Разведка</h1>
           <span className="ag-stats-video" title={stats?.file_name}>{stats?.file_name}</span>

@@ -5,8 +5,10 @@
 
 import { useEffect, useState } from "react";
 import * as api from "../../api/agents";
+import { useEscape } from "../mag/useEscape";
 import Sep from "../Sep";
 import { useBackdrop } from "../useBackdrop";
+import { useDialog } from "../useDialog";
 
 const mb = (bytes: number | null | undefined) =>
   bytes ? `${(bytes / (1 << 20)).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} МБ` : "—";
@@ -25,6 +27,8 @@ export default function WeightsPicker({
   const [runs, setRuns] = useState<api.TrainedRun[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const box = useDialog();
+  useEscape(onClose);
 
   const load = () =>
     api.listWeights().then((r) => setShelf(r.weights)).catch((e) => setError(e.message));
@@ -60,8 +64,9 @@ export default function WeightsPicker({
 
   return (
     <div className="mag-backdrop" {...useBackdrop(onClose)}>
-      <div className="mag-modal ag-picker" onClick={(e) => e.stopPropagation()}>
-        <h1>Веса для сети</h1>
+      <div ref={box} className="mag-modal ag-picker" role="dialog" aria-modal="true" aria-labelledby="ag-picker-title"
+        tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+        <h1 id="ag-picker-title">Веса для сети</h1>
         <div className="ag-tabs" role="tablist">
           <button type="button" role="tab" aria-selected={tab === "shelf"} onClick={() => setTab("shelf")}>
             Моя полка {shelf ? <span className="mono">{shelf.length}</span> : null}

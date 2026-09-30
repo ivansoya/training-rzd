@@ -12,10 +12,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import * as api from "../../api/agents";
-import { plural } from "../ru";
+import { useEscape } from "../mag/useEscape";
+import { NumInput } from "../NumInput";
+import { count, plural, ru } from "../ru";
 import Sep from "../Sep";
 import { useBackdrop } from "../useBackdrop";
+import { useDialog } from "../useDialog";
 import ScoutOverview from "./ScoutOverview";
+import { sampledCount } from "./scoutMath";
 
 const SOURCE_TITLE: Record<"files" | "videos", string> = {
   files: "Загружено файлами",
@@ -60,6 +64,8 @@ export default function AgentRunDialog({
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const box = useDialog();
+  useEscape(onClose);
 
   useEffect(() => {
     api
@@ -97,7 +103,7 @@ export default function AgentRunDialog({
   const total =
     mode === "frames"
       ? ctx ? [...sources].reduce((sum, s) => sum + ctx.sources[s].new, 0) : 0
-      : chosen.reduce((sum, v) => sum + Math.floor((v.frames ?? 0) / Math.max(1, step)) + 1, 0);
+      : chosen.reduce((sum, v) => sum + sampledCount(v.frames ?? 0, step), 0);
   const mapped = Object.values(mapping).filter(Boolean).length;
   const replacing = ctx ? [...sources].reduce((sum, s) => sum + ctx.sources[s].agent, 0) : 0;
 
@@ -126,8 +132,9 @@ export default function AgentRunDialog({
 
   return (
     <div className="mag-backdrop" {...useBackdrop(onClose)}>
-      <div className="mag-modal ag-run" onClick={(e) => e.stopPropagation()}>
-        <h1>Разметить агентом</h1>
+      <div ref={box} className="mag-modal ag-run" role="dialog" aria-modal="true" aria-labelledby="ag-run-title"
+        tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+        <h1 id="ag-run-title">Разметить агентом</h1>
         {error && <div className="mag-error">{error}</div>}
         {!ctx && !error && <p className="ag-muted">Загружаю…</p>}
 
@@ -206,8 +213,8 @@ export default function AgentRunDialog({
                     />
                     <span>{SOURCE_TITLE[s]}</span>
                     <span className="n">
-                      {ctx.sources[s].new}
-                      <small>новых кадров</small>
+                      {ru(ctx.sources[s].new)}
+                      <small>{plural(ctx.sources[s].new, "новый кадр", "новых кадра", "новых кадров")}</small>
                     </span>
                   </label>
                 ))}
@@ -232,22 +239,25 @@ export default function AgentRunDialog({
                     />
                     <span className="mono ag-vname" title={v.file_name}>{v.file_name}</span>
                     <span className="n">
-                      {v.frames ?? "—"}
-                      <small>{v.mode === "cut" ? "кадров · нарезка" : "кадров · разметка"}</small>
+                      {v.frames == null ? "—" : ru(v.frames)}
+                      <small>
+                        {v.frames == null ? "кадров" : plural(v.frames, "кадр", "кадра", "кадров")} <Sep />{" "}
+                        {v.mode === "cut" ? "нарезка" : "разметка"}
+                      </small>
                     </span>
                   </label>
                 ))}
                 <div className="ag-two">
                   <div className="mag-field ag-num">
                     <label htmlFor="ag-step">Каждый N-й кадр</label>
-                    <input id="ag-step" type="number" min={1} step={1} value={step}
-                      onChange={(e) => setStep(Math.max(1, Number(e.target.value) || 1))} />
+                    <NumInput id="ag-step" min={1} max={10000} integer value={step}
+                      onValue={(v) => v !== undefined && setStep(v)} />
                   </div>
                   {mode === "scout" && (
                     <div className="mag-field ag-num">
                       <label htmlFor="ag-gap">Склеивать разрывы до, с</label>
-                      <input id="ag-gap" type="number" min={0} step={0.5} value={gap}
-                        onChange={(e) => setGap(Math.max(0, Number(e.target.value) || 0))} />
+                      <NumInput id="ag-gap" min={0} max={60} step={0.5} value={gap}
+                        onValue={(v) => v !== undefined && setGap(v)} />
                     </div>
                   )}
                 </div>
@@ -292,7 +302,7 @@ export default function AgentRunDialog({
 
             {mode === "frames" && replacing > 0 && (
               <p className="mag-note">
-                На {replacing} {plural(replacing, "кадре", "кадрах", "кадрах")} уже есть непроверенная разметка агента — она будет заменена.
+                На {ru(replacing)} {plural(replacing, "кадре", "кадрах", "кадрах")} уже есть непроверенная разметка агента — она будет заменена.
                 Разметку людей агент не трогает.
               </p>
             )}
@@ -312,8 +322,8 @@ export default function AgentRunDialog({
               onClick={start}
             >
               {mode === "scout"
-                ? `Разведать ${chosen.length} ${plural(chosen.length, "ролик", "ролика", "роликов")}`
-                : `Разметить ${mode === "annotate" ? "до " : ""}${total} ${plural(total, "кадр", "кадра", "кадров")}`}
+                ? `Разведать ${count(chosen.length, "ролик", "ролика", "роликов")}`
+                : `Разметить ${mode === "annotate" ? "до " : ""}${count(total, "кадр", "кадра", "кадров")}`}
             </button>
           )}
         </div>
@@ -346,6 +356,7 @@ export function AgentRunBar({
 }) {
   const active = run ? api.ACTIVE.includes(run.status) : false;
   const [statsOpen, setStatsOpen] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
   const poll = useCallback(async () => {
     try {
       const got = await api.runContext(taskId);
@@ -371,17 +382,17 @@ export function AgentRunBar({
         {run.agent ?? "агент"} v{run.version}
       </span>
       <span className="mono">
-        {run.processed} / {run.total ?? "—"}
+        {ru(run.processed)} / {run.total == null ? "—" : ru(run.total)}
       </span>
       <Sep />
-      <span>{STATUS[run.status]}</span>
+      <span>{run.status === "running" && run.mode === "scout" ? "разведывает" : STATUS[run.status]}</span>
       {run.status === "done" && (
         <>
           <Sep />
           <span>
             {run.mode === "scout"
-              ? `разведано роликов: ${run.stats.videos ?? 0}, находки на ${run.stats.frames ?? 0} кадрах`
-              : `${run.stats.boxes ?? 0} рамок на ${run.stats.frames ?? 0} кадрах`}
+              ? `разведано роликов: ${ru(run.stats.videos ?? 0)}, находки на ${ru(run.stats.frames ?? 0)} ${plural(run.stats.frames ?? 0, "кадре", "кадрах", "кадрах")}`
+              : `${count(run.stats.boxes ?? 0, "рамка", "рамки", "рамок")} на ${ru(run.stats.frames ?? 0)} ${plural(run.stats.frames ?? 0, "кадре", "кадрах", "кадрах")}`}
           </span>
           {run.mode === "scout" && run.videos.length > 0 && (
             <button type="button" className="mag-ghost mag-ghost-inline" onClick={() => setStatsOpen(true)}>
@@ -391,6 +402,7 @@ export function AgentRunBar({
         </>
       )}
       {run.error && <span className="ag-warn-text">{run.error}</span>}
+      {stopError && <span className="ag-warn-text">Не остановился: {stopError}</span>}
       {run.queue_reason && run.status === "waiting_gpu" && <span className="ag-muted">{run.queue_reason}</span>}
       {active && (
         <span className="bar">
@@ -398,7 +410,12 @@ export function AgentRunBar({
         </span>
       )}
       {active && (
-        <button type="button" className="mag-ghost mag-ghost-inline" onClick={() => api.stopRun(run.id).then(onRun)}>
+        <button type="button" className="mag-ghost mag-ghost-inline" onClick={() => {
+          setStopError(null);
+          // Без catch отказ сервера уходил в pageerror, а человек видел
+          // кнопку, которая «ничего не делает».
+          api.stopRun(run.id).then(onRun, (e: Error) => setStopError(e.message));
+        }}>
           Остановить
         </button>
       )}

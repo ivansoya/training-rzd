@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { clampView, clock, nearest, scoutColors, timeTicks } from "./scoutMath";
+import { clampView, clock, nearest, sampledCount, scoutColors, timeTicks } from "./scoutMath";
 
 describe("счёт окон разведки", () => {
   it("время ролика", () => {
@@ -33,5 +33,14 @@ describe("счёт окон разведки", () => {
     const c = scoutColors(["Человек", "металл", "Человек", "Инструмент"]);
     expect([...c.keys()]).toEqual(["Инструмент", "металл", "Человек"]);
     expect(c.get("Человек")).not.toBe(c.get("металл"));
+  });
+
+  it("кадров к разметке — как agent_graph.sampled", () => {
+    // sampled(last=29499, 25) — кадры 0, 25, …, 29475: 1180 штук
+    expect(sampledCount(29500, 25)).toBe(1180);
+    expect(sampledCount(29501, 25)).toBe(1181);   // кадр 29500 — тоже
+    expect(sampledCount(1, 25)).toBe(1);
+    expect(sampledCount(0, 25)).toBe(0);
+    expect(sampledCount(10, 1)).toBe(10);
   });
 });

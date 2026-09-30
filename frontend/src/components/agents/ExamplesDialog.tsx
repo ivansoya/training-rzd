@@ -7,8 +7,12 @@
 
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 import * as api from "../../api/agents";
+import { useEscape } from "../mag/useEscape";
+import { NumInput } from "../NumInput";
+import { count, plural, ru } from "../ru";
 import Sep from "../Sep";
 import { useBackdrop } from "../useBackdrop";
+import { useDialog } from "../useDialog";
 
 const COLLAGE_MAX = 8;
 
@@ -48,6 +52,9 @@ export function ExamplesDialog({
     }).catch((e) => setError(e.message));
   }, [project]);
 
+  const box = useDialog();
+  // Пока собирается, окно не закрывается ничем: сборка уже идёт на сервере.
+  useEscape(busy ? () => undefined : onClose);
   const cls = src?.classes.find((c) => c.id === classId);
   const got = cls ? usable(cls, off) : { usable: 0, frames: 0 };
   const name = agent ?? cls?.name ?? "";
@@ -72,8 +79,9 @@ export function ExamplesDialog({
 
   return (
     <div className="mag-backdrop" {...useBackdrop(busy ? () => undefined : onClose)}>
-      <div className="mag-modal ag-exdlg" onClick={(e) => e.stopPropagation()}>
-        <h1>Образцы из разметки</h1>
+      <div ref={box} className="mag-modal ag-exdlg" role="dialog" aria-modal="true" aria-labelledby="ex-title" tabIndex={-1}
+        onClick={(e) => e.stopPropagation()}>
+        <h1 id="ex-title">Образцы из разметки</h1>
         {error && <div className="mag-error">{error}</div>}
         <div className="ag-two">
           <div className="mag-field">
@@ -88,7 +96,7 @@ export function ExamplesDialog({
             <select id="ex-class" value={classId} disabled={busy || !src}
               onChange={(e) => { setClassId(e.target.value); setAgent(null); }}>
               {src?.classes.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} — {usable(c, off).usable} рамок</option>
+                <option key={c.id} value={c.id}>{c.name} — {count(usable(c, off).usable, "рамка", "рамки", "рамок")}</option>
               ))}
             </select>
           </div>
@@ -105,7 +113,7 @@ export function ExamplesDialog({
                     return next;
                   })} />
                 {d.name}
-                <span className="mono">{d.frames} кадров</span>
+                <span className="mono">{count(d.frames, "кадр", "кадра", "кадров")}</span>
               </label>
             ))}
           </div>
@@ -113,18 +121,18 @@ export function ExamplesDialog({
         <div className="ag-three">
           <div className="mag-field ag-num">
             <label htmlFor="ex-n">Образцов</label>
-            <input id="ex-n" type="number" min={1} max={256} value={n} disabled={busy}
-              onChange={(e) => setN(Math.max(1, Number(e.target.value) || 1))} />
+            <NumInput id="ex-n" min={1} max={256} integer value={n} disabled={busy}
+              onValue={(v) => v !== undefined && setN(v)} />
           </div>
           <div className="mag-field ag-num">
             <label htmlFor="ex-collage">В коллаже SAM 3</label>
-            <input id="ex-collage" type="number" min={1} max={COLLAGE_MAX} value={collage} disabled={busy}
-              onChange={(e) => setCollage(Math.min(COLLAGE_MAX, Math.max(1, Number(e.target.value) || 1)))} />
+            <NumInput id="ex-collage" min={1} max={COLLAGE_MAX} integer value={collage} disabled={busy}
+              onValue={(v) => v !== undefined && setCollage(v)} />
           </div>
           <div className="mag-field ag-num">
             <label htmlFor="ex-ctx">Вырезка, ×</label>
-            <input id="ex-ctx" type="number" min={1} max={16} step={0.5} value={ctx} disabled={busy}
-              onChange={(e) => setCtx(Math.min(16, Math.max(1, Number(e.target.value) || 1)))} />
+            <NumInput id="ex-ctx" min={1} max={16} step={0.5} value={ctx} disabled={busy}
+              onValue={(v) => v !== undefined && setCtx(v)} />
           </div>
         </div>
         <div className="mag-field">
@@ -133,11 +141,12 @@ export function ExamplesDialog({
         </div>
         {cls && (
           <p className="ag-exnote">
-            Годится <b className="mono">{got.usable}</b> ручных рамок на <b className="mono">{got.frames}</b> кадрах
+            Годится <b className="mono">{ru(got.usable)}</b> {plural(got.usable, "ручная рамка", "ручные рамки", "ручных рамок")}{" "}
+            на <b className="mono">{ru(got.frames)}</b> {plural(got.frames, "кадре", "кадрах", "кадрах")}
             {got.usable === 0 ? null : n > got.usable
-              ? <span className="ag-warn-text"> — возьмём все {got.usable}</span>
-              : n > got.frames ? ` — ${n - got.frames} придётся брать вторыми с тех же кадров`
-                : ` — по одной с ${n} разных кадров`}
+              ? <span className="ag-warn-text"> — возьмём все {ru(got.usable)}</span>
+              : n > got.frames ? ` — ${ru(n - got.frames)} придётся брать вторыми с тех же кадров`
+                : ` — по одной с ${ru(n)} ${plural(n, "кадра", "разных кадров", "разных кадров")}`}
           </p>
         )}
         <div className="ag-foot">
@@ -213,7 +222,7 @@ export function ExampleStrip({
             key={it.uid}
             className={`ag-th${k < collage ? " col" : ""}${drag === k ? " drag" : ""}${over === k ? " over" : ""}`}
             draggable={!readOnly && !busy}
-            title={`${it.file_name} · ${it.side} px`}
+            title={`${it.file_name} — ${it.side} px`}
             onDragStart={() => setDrag(k)}
             onDragOver={(e) => { if (drag !== null) { e.preventDefault(); setOver(k); } }}
             onDragLeave={() => setOver((o) => (o === k ? null : o))}
@@ -232,7 +241,8 @@ export function ExampleStrip({
       {error && <div className="mag-error">{error}</div>}
       <div className="ag-strip-foot">
         <span className="ag-strip-src">
-          {set.project} <Sep /> {set.items.length} рамок с {set.frames} кадров <Sep /> ×{String(set.params.ctx).replace(".", ",")}
+          {set.project} <Sep /> {count(set.items.length, "рамка", "рамки", "рамок")} с {ru(set.frames)}{" "}
+          {plural(set.frames, "кадра", "кадров", "кадров")} <Sep /> ×{String(set.params.ctx).replace(".", ",")}
         </span>
         <span className="ag-lg"><i />в коллаже SAM 3: {collage} из {set.items.length}</span>
         <span className="ag-grow" />
