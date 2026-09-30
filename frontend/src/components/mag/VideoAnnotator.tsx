@@ -49,6 +49,9 @@ import {
   trackEnd,
 } from "./trackMath";
 import Sep from "../Sep";
+import { NumInput } from "../NumInput";
+import { count, plural, ru } from "../ru";
+import { useEscape } from "./useEscape";
 import { scoutLanes, taskColors, useScouts } from "../agents/scout";
 
 /** Управление редактором: клавиша и что она делает.
@@ -211,6 +214,7 @@ export default function VideoAnnotator({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [plan, setPlan] = useState<{ frames: number; boxes: number; empty: number } | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ i: number | null; x: number; y: number } | null>(null);
   const [laneMenu, setLaneMenu] = useState<LaneAction | null>(null);
   const [scale, setScale] = useState(1);
@@ -238,6 +242,21 @@ export default function VideoAnnotator({
   const [qualityOpen, setQualityOpen] = useState(false);
   const [help, setHelp] = useState(false);
   const [objectsOpen, setObjectsOpen] = useState(false);
+
+  // Меню качества и справка — слои над редактором: Esc закрывает их, а не
+  // весь редактор (раньше он уходил вместе с открытым меню).
+  useEscape(() => setQualityOpen(false), qualityOpen);
+  useEscape(() => setHelp(false), help);
+  // Меню качества закрывается и щелчком мимо — как любое выпадающее меню.
+  // Слушаем на погружении: дорожки и холст гасят всплытие своих нажатий.
+  useEffect(() => {
+    if (!qualityOpen) return undefined;
+    const away = (e: PointerEvent) => {
+      if (!(e.target as Element | null)?.closest?.(".mag-ved-quality")) setQualityOpen(false);
+    };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [qualityOpen]);
 
   useEffect(() => {
     if (clip.manifest && !quality) setQuality(clip.manifest.quality);
@@ -286,9 +305,17 @@ export default function VideoAnnotator({
   useEffect(() => {
     if (!data) return;
     const h = window.setTimeout(() => {
+      // Отказ плана — не «плана нет»: строка в шапке пропадала молча, а
+      // закрыть разметку потом не выходило. Причину показываем, как карточка.
       previewMaterialize(taskId, video.id)
-        .then((p) => setPlan({ frames: p.frames, boxes: p.boxes, empty: p.empty }))
-        .catch(() => setPlan(null));
+        .then((p) => {
+          setPlan({ frames: p.frames, boxes: p.boxes, empty: p.empty });
+          setPlanError(null);
+        })
+        .catch((e) => {
+          setPlan(null);
+          setPlanError((e as Error).message);
+        });
     }, 500);
     return () => window.clearTimeout(h);
   }, [data, taskId, video.id]);
@@ -745,8 +772,12 @@ export default function VideoAnnotator({
   // --- клавиши ------------------------------------------------------------- #
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      const tag = (e.target as HTMLElement)?.tagName;
-      if (tag === "INPUT" || tag === "TEXTAREA") return;
+      // Клавиши молчат, только пока человек печатает. Галочка — не поле
+      // ввода: после щелчка по «Интерполяции» фокус оставался на ней, и
+      // пробел переключал её снова вместо проигрывания.
+      const el = e.target as HTMLInputElement | null;
+      const tag = el?.tagName;
+      if ((tag === "INPUT" && el?.type !== "checkbox") || tag === "TEXTAREA") return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const step = e.shiftKey ? 10 : 1;
       switch (e.code) {
@@ -896,7 +927,7 @@ export default function VideoAnnotator({
       <div className="mag-ed-head">
         <b>{taskName}</b>
         <span className="mag-ed-cnt">
-          кадр {String(frame).padStart(String(lastFrame).length, " ")} / {lastFrame}
+          кадр {String(frame).padStart(String(lastFrame).length, " ")} / {lastFrame}
           <Sep />
           {fmtFrameTime(timeMs)}
         </span>
@@ -933,8 +964,14 @@ export default function VideoAnnotator({
         )}
         {plan && (
           <span className="mag-ved-plan">
-            в таску: <b>{plan.frames}</b> кадров <Sep /> {plan.boxes} объектов
-            {plan.empty > 0 && <><Sep /> <b>{plan.empty}</b> фоновых</>}
+            в таску: <b>{ru(plan.frames)}</b> {plural(plan.frames, "кадр", "кадра", "кадров")}{" "}
+            <Sep /> {count(plan.boxes, "объект", "объекта", "объектов")}
+            {plan.empty > 0 && <><Sep /> <b>{ru(plan.empty)}</b> {plural(plan.empty, "фоновый", "фоновых", "фоновых")}</>}
+          </span>
+        )}
+        {planError && (
+          <span className="mag-ved-plan bad" title={planError}>
+            Разметку не закрыть: {planError}
           </span>
         )}
         <span className={busy ? "mag-ed-saving" : "mag-ed-saved"}>
@@ -1106,17 +1143,21 @@ export default function VideoAnnotator({
                   aria-pressed={on} onClick={() => setPickedTrack(track.id)}>
                   <span className="mag-ved-obj-head"><i style={{ background: label.color }} />
                     <span className="mag-ved-obj-name">{track.label || label.name || "Объект"}</span>
-                    <span className="mag-ved-obj-n">{exportCount(track)} кадров</span>
+                    <span className="mag-ved-obj-n">{count(exportCount(track), "кадр", "кадра", "кадров")}</span>
                   </span>
-                  <span className="mag-ved-note">{track.keys.length} ключей <Sep /> кадры {track.start_frame}—{trackEnd(track)}</span>
+                  <span className="mag-ved-note">{count(track.keys.length, "ключ", "ключа", "ключей")} <Sep /> кадры {track.start_frame}—{trackEnd(track)}</span>
                 </button>;
               })}
             </div>
             {currentTrack && <div className="vt-properties" aria-label="Свойства выбранного трека">
               <label><input type="checkbox" checked={currentTrack.interpolate} disabled={frozen}
                 onChange={(e) => patchTrack(currentTrack, { interpolate: e.target.checked })} />Интерполяция</label>
-              <label>Шаг выгрузки<input type="number" min={1} value={currentTrack.export_step} disabled={frozen}
-                onChange={(e) => patchTrack(currentTrack, { export_step: Math.max(1, Number(e.target.value)) })} /></label>
+              {/* Число уходит на сервер только на уходе из поля: раньше PATCH
+                  летел на каждую букву, пустое поле тут же становилось 1, и
+                  набор «5» давал «15». */}
+              <label>Шаг выгрузки<NumInput className="vt-step" value={currentTrack.export_step}
+                min={1} integer lazy disabled={frozen}
+                onValue={(n) => { if (n !== undefined) patchTrack(currentTrack, { export_step: n }); }} /></label>
               <button type="button" className="vt-drop-track" disabled={frozen}
                 onClick={() => onLane({ kind: "drop", trackId: currentTrack.id, frame })}>
                 Удалить объект
@@ -1250,7 +1291,9 @@ export default function VideoAnnotator({
                       }}
                     >
                       <span>{q.label}</span>
-                      <em>{q.height ? `${q.height}p` : ""}</em>
+                      {/* У ступеней лестницы подпись и есть высота («720p») — второй раз
+                          её не пишем; у «Исходного» высота говорит новое. */}
+                      <em>{q.height && q.label !== `${q.height}p` ? `${q.height}p` : ""}</em>
                     </button>
                   ))}
                 {(clip.manifest?.qualities || [])

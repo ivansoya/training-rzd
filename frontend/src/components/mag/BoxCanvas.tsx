@@ -164,19 +164,25 @@ function BitmapView({
   useEffect(() => {
     const canvas = ref.current;
     if (!canvas || !bitmap) return;
-    if (canvas.width !== bitmap.width || canvas.height !== bitmap.height) {
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
+    // Холст всегда размером исходного кадра, а ступень качества растягивается
+    // на него. Раньше холст брал размер картинки ступени, и на 480p кадр на
+    // экране становился меньше (852×480 против 1920×1080) при том же «100%»
+    // зума. Рамки считаются от размеров холста на экране, им всё равно.
+    const w = width > 1 ? width : bitmap.width;
+    const h = height > 1 ? height : bitmap.height;
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w;
+      canvas.height = h;
     }
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
     try {
-      ctx.drawImage(bitmap, 0, 0);
+      ctx.drawImage(bitmap, 0, 0, w, h);
     } catch {
       // Картинку успели закрыть, пока мы до неё добирались: следующий кадр
       // приедет и перерисует. Ронять отрисовку из-за этого незачем.
     }
-  }, [bitmap]);
+  }, [bitmap, width, height]);
 
   // До первого кадра размер берётся у исходника: иначе холст встанет в свои
   // стандартные 300×150 и вся вёрстка дёрнется, когда приедет картинка.

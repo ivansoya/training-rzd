@@ -264,6 +264,15 @@
 
 .mag-ved-plan b { color: var(--ed-ink); font-variant-numeric: tabular-nums; }
 
+/* Отказ плана — длинная фраза сервера; в шапке ей одна строка, целиком — в title. */
+.mag-ved-plan.bad {
+  color: var(--danger);
+  min-width: 0;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .mag-ved-transport .mag-ed-keys {
   margin: 0;
   white-space: nowrap;
