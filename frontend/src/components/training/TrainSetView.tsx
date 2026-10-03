@@ -264,9 +264,10 @@ export default function TrainSetView() {
                 <tr>
                   <th>№</th>
                   <th>Класс</th>
-                  <th className="num">Обучение</th>
-                  <th className="num">Проверка</th>
-                  <th className="num">Разметок</th>
+                  {/* Объекты в собранных файлах вместе с копиями; мастер считал кадры. */}
+                  <th className="num" title="объектов в файлах разметки">Обучение, объектов</th>
+                  <th className="num" title="объектов в файлах разметки">Проверка, объектов</th>
+                  <th className="num">Объектов</th>
                 </tr>
               </thead>
               <tbody>
