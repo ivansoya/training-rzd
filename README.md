@@ -614,10 +614,11 @@ docker run --rm -v training-rzd_yolo-data:/data -v "$PWD":/out alpine \
 ### Два композа: GPU и Mac
 
 `docker-compose.yml` — основной, для машины с NVIDIA. Сервисы `training` и
-`autolabel` собираются с CUDA-сборкой torch (cu121 и cu128) и резервируют все
-GPU через `deploy.resources.reservations.devices`. Требования на хосте:
+`autolabel` собираются с одной CUDA-сборкой torch 2.7.1+cu128 (RTX 30, 40 и 50
+серий) и резервируют все GPU через `deploy.resources.reservations.devices`.
+Требования на хосте:
 
-- NVIDIA GPU и свежий драйвер;
+- NVIDIA GPU и драйвер не ниже 570 (CUDA 12.8);
 - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
   (чтобы Docker мог отдать GPU контейнеру).
 

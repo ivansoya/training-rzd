@@ -1,7 +1,5 @@
 # Сервис полуавтоматической разметки: SAM2 на GPU. Контекст сборки — backend/.
-#
-# Торч тут свежее, чем в training_svc (2.3.1+cu121): карты Blackwell (RTX 50xx,
-# sm_120) не поддерживаются колёсами cu121 — на них ядра просто не запускаются.
+# Инструкции до слоя торча совпадают с training_svc/Dockerfile дословно: слой собирается один раз на оба образа.
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -12,7 +10,7 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 git \
     && rm -rf /var/lib/apt/lists/*
 
-# GPU обязателен: CPU-пути у полуавтоматической разметки нет.
+# cu128: RTX 30 (sm_86, им же исполняется sm_89 у RTX 40) и RTX 50 (sm_120); драйвер от 570.
 ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
 RUN pip install --no-cache-dir torch==2.7.1 torchvision==0.22.1 \
     --index-url ${TORCH_INDEX_URL}

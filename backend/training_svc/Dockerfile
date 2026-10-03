@@ -1,19 +1,16 @@
-# Training + inference service (torch / ultralytics / ffmpeg). The leading
-# instructions are kept identical to the previous monolith Dockerfile so the
-# heavy torch layer is reused from the build cache. Build context is backend/.
+# Обучение и агенты разметки (torch / ultralytics / ffmpeg). Контекст сборки — backend/.
+# Инструкции до слоя торча совпадают с autolabel_svc/Dockerfile дословно: слой собирается один раз на оба образа.
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# opencv-python-headless still needs libGL/libglib at runtime
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 \
+    && apt-get install -y --no-install-recommends libgl1 libglib2.0-0 git \
     && rm -rf /var/lib/apt/lists/*
 
-# torch build is selected at build time. Default is the CPU wheel; for GPU pass
-#   --build-arg TORCH_INDEX_URL=https://download.pytorch.org/whl/cu121
-ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cpu
-RUN pip install --no-cache-dir torch==2.3.1 torchvision==0.18.1 \
+# cu128: RTX 30 (sm_86, им же исполняется sm_89 у RTX 40) и RTX 50 (sm_120); драйвер от 570.
+ARG TORCH_INDEX_URL=https://download.pytorch.org/whl/cu128
+RUN pip install --no-cache-dir torch==2.7.1 torchvision==0.22.1 \
     --index-url ${TORCH_INDEX_URL}
 
 # Веса «Сети по тексту» агента: YOLOE-26 s/m/l/x и кодировщик промтов, ~0,6 ГБ.
@@ -26,15 +23,12 @@ RUN python /tmp/fetch_yoloe.py /opt/yoloe && rm /tmp/fetch_yoloe.py
 COPY training_svc/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Токенизатор промтов YOLOE и SAM 3 — пакет clip из форка ultralytics. Сам
-# ultralytics ставит его через git, а git в образе нет, поэтому архивом.
+# Токенизатор промтов YOLOE и SAM 3 — пакет clip из форка ultralytics, архивом, без клона репозитория.
 RUN pip install --no-cache-dir --no-deps https://github.com/ultralytics/CLIP/archive/refs/heads/main.zip
 
 # SAM2 для узла «Уточнение SAM» агента разметки — тот же пакет, что у
-# полуавтомата, чтобы одна рамка давала один контур. Пакет просит torch 2.5+,
-# но с 2.3.1 этого образа предсказание по рамке совпадает до знака (сверено
-# 23.09.2026 на одном кадре в обоих контейнерах), поэтому без зависимостей и
-# без изолированной сборки — иначе pip качает второй torch на гигабайты.
+# полуавтомата, чтобы одна рамка давала один контур. Без зависимостей и без
+# изолированной сборки — иначе pip качает второй torch на гигабайты.
 # CUDA-расширение sam2 нужно только для заливки дыр внутри самой модели, а
 # SAM2ImagePredictor по умолчанию её не делает (max_hole_area=0).
 RUN pip install --no-cache-dir setuptools wheel tqdm "hydra-core>=1.3.2" "iopath>=0.1.10" \

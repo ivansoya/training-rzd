@@ -184,7 +184,7 @@ services:
       context: ./backend
       dockerfile: training_svc/Dockerfile
       args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
     image: yolo-training
     container_name: yolo-training
     restart: unless-stopped
@@ -211,7 +211,7 @@ services:
       context: ./backend
       dockerfile: training_svc/Dockerfile
       args:
-        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu121
+        TORCH_INDEX_URL: https://download.pytorch.org/whl/cu128
     image: yolo-training
     container_name: yolo-training-worker
     command: ["python", "-m", "training_svc.worker"]
