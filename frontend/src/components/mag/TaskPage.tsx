@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   acceptAgentFrames,
+  assignTask,
+  getProject,
   closeVideoAnnotation,
   dropVideoFrames,
   getTask,
@@ -16,6 +18,7 @@ import {
 } from "../../auth/api";
 import type {
   ImageTaskStatus,
+  ProjectMemberInfo,
   PendingVideo,
   TaskDetail,
   TaskEventItem,
@@ -98,6 +101,8 @@ export default function TaskPage() {
   const navigate = useNavigate();
 
   const [task, setTask] = useState<TaskDetail | null>(null);
+  // Кому админ может отдать таску: зритель размечать не может, его в списке нет.
+  const [workers, setWorkers] = useState<ProjectMemberInfo[]>([]);
   const [images, setImages] = useState<TaskImage[]>([]);
   const [events, setEvents] = useState<TaskEventItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +198,24 @@ export default function TaskPage() {
       setError((e as Error).message);
     }
   }, [taskId]);
+
+  const adminOf = task?.is_admin ? task.project.code : null;
+  useEffect(() => {
+    if (!adminOf) return;
+    getProject(adminOf)
+      .then((d) => setWorkers(d.members.filter((m) => m.role !== "viewer")))
+      .catch(() => setWorkers([]));
+  }, [adminOf]);
+
+  const reassign = useCallback(async (id: string) => {
+    if (!task) return;
+    try {
+      await assignTask(task.id, id || null);
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [task, load]);
 
   useEffect(() => { load(); }, [load]);
 
@@ -552,7 +575,15 @@ export default function TaskPage() {
             <TaskState status={task.status} label={task.status_label} />
           </div>
           <p>
-            {task.assignee ? task.assignee.display_name : "без исполнителя"}
+            {task.is_admin && task.status !== "closed" && workers.length ? (
+              <select className="mag-task-assignee" aria-label="Исполнитель"
+                value={task.assignee?.id ?? ""} onChange={(e) => void reassign(e.target.value)}>
+                <option value="">без исполнителя</option>
+                {workers.map((m) => (
+                  <option key={m.id} value={m.id}>{`${m.display_name} — ${m.role_label}`}</option>
+                ))}
+              </select>
+            ) : task.assignee ? task.assignee.display_name : "без исполнителя"}
             {task.target_dataset ? ` — в датасет «${task.target_dataset.name}»` : ""}
           </p>
         </div>

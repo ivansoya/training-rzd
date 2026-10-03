@@ -20,6 +20,14 @@
   color: var(--mag-muted);
 }
 
+.mag-task-assignee {
+  font: inherit;
+  padding: 1px 6px;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  max-width: 280px;
+}
+
 .mag-task-nums {
   display: flex;
   gap: 20px;

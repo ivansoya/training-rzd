@@ -184,3 +184,15 @@ def test_new_password_must_differ(api):
                    json={"current": "Test-Passw0rd", "new": "Test-Passw0rd"})
     assert res.status_code == 400, res.text
     assert "совпадает" in res.json()["error"]
+
+
+def test_зритель_не_становится_исполнителем(api, db, project, task):
+    viewer = person(db)
+    join(api, viewer, project["code"], "viewer")
+    me = viewer.get(f"{BASE_URL}/api/auth/me").json()
+    vid = (me.get("user") or me)["id"]
+    res = api.patch(f"{BASE_URL}/api/tasks/{task['id']}", json={"assignee_id": vid})
+    assert res.status_code == 400, res.text
+    res = api.post(f"{BASE_URL}/api/projects/{project['code']}/tasks",
+                   json={"name": tag(), "assignee_id": vid})
+    assert res.status_code == 400, res.text

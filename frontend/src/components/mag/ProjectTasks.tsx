@@ -215,7 +215,7 @@ function CreateTaskModal({
           >
             <option value="">Я сам</option>
             {isAdmin &&
-              detail.members.map((m) => (
+              detail.members.filter((m) => m.role !== "viewer").map((m) => (
                 <option key={m.id} value={m.id}>
                   {/* Тире, а не <Sep />: <option> держит только текст, разметка
                       в нём не рисуется, и имя слипалось с ролью. */}

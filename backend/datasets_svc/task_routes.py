@@ -137,9 +137,15 @@ def _resolve_task(task_id, needed="viewer"):
 NAME_MAX = 255
 
 
+NOT_WORKER = "Исполнителем может быть редактор или администратор, зритель размечать не может."
+
+
 def _may_work(task, user, role):
-    """Админ может всё; исполнитель — всё в своей таске, кроме переназначения."""
-    return role == "admin" or task.assignee_id == user.id
+    """Админ может всё; исполнитель-редактор — всё в своей таске, кроме переназначения.
+
+    Роль проверяется и здесь: зритель, ставший исполнителем раньше, получал
+    `can_work` и живые кнопки, каждая из которых отвечала 403."""
+    return role == "admin" or (task.assignee_id == user.id and has_role(role, "editor"))
 
 
 def _log(db, task, user, kind, **payload):
@@ -258,6 +264,8 @@ def create_task(code):
             ).scalar_one_or_none()
             if member is None:
                 return jsonify({"error": "Исполнитель не состоит в проекте."}), 400
+            if not has_role(member.role, "editor"):
+                return jsonify({"error": NOT_WORKER}), 400
             assignee_id = target
 
         dataset_id = _uuid_or_none(data.get("target_dataset_id"))
@@ -440,6 +448,8 @@ def update_task(task_id):
                 ).scalar_one_or_none()
                 if member is None:
                     return jsonify({"error": "Исполнитель не состоит в проекте."}), 400
+                if not has_role(member.role, "editor"):
+                    return jsonify({"error": NOT_WORKER}), 400
             task.assignee_id = target
             who = db.get(User, target) if target else None
             _log(db, task, user, "assigned",
