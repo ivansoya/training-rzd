@@ -2,6 +2,7 @@
 import json
 import os
 import re
+import tempfile
 
 
 # Управляющие символы и переводы строк Юникода: в однострочном поле они ломают
@@ -29,10 +30,19 @@ def load_json(path, default):
 
 
 def save_json(path, data):
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    # Свой временный файл на каждую запись: общий «.tmp» ронял параллельные записи.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path) or ".", suffix=".tmp")
+    try:
+        os.chmod(tmp, 0o644)  # mkstemp даёт 0600
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def safe_name(name):
