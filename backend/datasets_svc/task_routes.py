@@ -1411,8 +1411,8 @@ def set_image_status(image_id):
 
     «deleted» снимает `dataset_id`: забракованный кадр перестаёт быть данными
     проекта сразу, а файлы за ним уберёт `_close` — он и так чистит всё, у чего
-    нет датасета. Возврат `dataset_id` не восстанавливает: кадр заново поедет
-    в датасет на следующем «Готово».
+    нет датасета. Возврат восстанавливает статус и датасет, которые были до
+    брака; присланный статус при этом не важен.
     """
     db = SessionLocal()
     try:
@@ -1430,21 +1430,43 @@ def set_image_status(image_id):
             return jsonify({"error": "Недостаточно прав."}), 403
         if task.status == "closed":
             return jsonify({"error": "Таска закрыта, кадры заморожены."}), 409
-        status = (request.get_json(silent=True) or {}).get("status")
+        status = json_body().get("status")
         if status not in ("new", "skipped", "annotated", "empty", "deleted"):
             return jsonify({"error": "Неизвестное состояние кадра."}), 400
 
         was = image.task_status
         if status == "deleted":
-            image.dataset_id = None
-            _log(db, task, user, "image_deleted", file=image.file_name)
+            _soft_delete(db, task, user, image)
         elif was == "deleted":
+            _restore(db, image, status)
             _log(db, task, user, "image_restored", file=image.file_name)
-        image.task_status = status
+        else:
+            image.task_status = status
         db.commit()
-        return jsonify({"task_status": status, "counts": _counts(db, task.id)})
+        return jsonify({"task_status": image.task_status, "counts": _counts(db, task.id)})
     finally:
         db.close()
+
+
+def _soft_delete(db, task, user, image):
+    """Брак в живой таске: кадр выходит из данных, но помнит, кем был."""
+    if image.task_status != "deleted":
+        image.status_before_delete = image.task_status
+        image.dataset_before_delete = image.dataset_id
+        _log(db, task, user, "image_deleted", file=image.file_name)
+    image.task_status = "deleted"
+    image.dataset_id = None
+
+
+def _restore(db, image, asked):
+    """«Вернуть»: прежний статус и датасет, если он жив; без памяти — присланный."""
+    before = image.status_before_delete or asked
+    image.task_status = before
+    if before in ("annotated", "empty") and image.dataset_before_delete \
+            and db.get(Dataset, image.dataset_before_delete) is not None:
+        image.dataset_id = image.dataset_before_delete
+    image.status_before_delete = None
+    image.dataset_before_delete = None
 
 
 @bp.put("/api/images/<image_id>/tags")
@@ -1533,9 +1555,7 @@ def delete_image(image_id):
             return jsonify({"error": "Это не ваша таска."}), 403
 
         if task is not None and task.status != "closed":
-            image.task_status = "deleted"
-            image.dataset_id = None
-            _log(db, task, user, "image_deleted", file=image.file_name)
+            _soft_delete(db, task, user, image)
             db.commit()
             return jsonify({"ok": True, "soft": True,
                             "counts": _counts(db, task.id)})

@@ -293,6 +293,14 @@ class Image(Base, AuditMixin):
     annotations_rev: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default="0"
     )
+    # Что было до брака: «Вернуть» восстанавливает статус и датасет, а не
+    # гадает по разметке (принятый фоновый кадр иначе становился «new»).
+    status_before_delete: Mapped[str | None] = mapped_column(
+        IMAGE_TASK_STATUS_ENUM, nullable=True
+    )
+    dataset_before_delete: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("datasets.id", ondelete="SET NULL"), nullable=True
+    )
     # Кадр из видео помнит источник и секунду: по одному кадру не всегда
     # понятно, что происходит, а «2:14 такого-то ролика» объясняет.
     source_video_id: Mapped[uuid.UUID | None] = mapped_column(

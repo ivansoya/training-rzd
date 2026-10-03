@@ -343,3 +343,26 @@ def test_битое_тело_не_стирает_разметку(api, task, ima
         assert res.status_code == 400, (body, res.status_code, res.text)
         assert res.json()["error"]
     assert len(read_back(api, task["id"], image["id"])) == 1
+
+
+def test_вернуть_после_брака_восстанавливает_принятый_фон(api, db, task, image):
+    url = f"{BASE_URL}/api/images/{image['id']}/task-status"
+    assert api.patch(url, json={"status": "empty"}).status_code == 200
+    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
+    assert res.status_code == 200, res.text
+
+    def row():
+        with db.cursor() as cur:
+            cur.execute("SELECT task_status, dataset_id FROM images WHERE id = %s", (image["id"],))
+            return cur.fetchone()
+
+    status, dataset = row()
+    assert status == "empty" and dataset is not None
+    assert api.post(f"{BASE_URL}/api/tasks/{task['id']}/status",
+                    json={"status": "updating"}).status_code == 200
+    assert api.delete(f"{BASE_URL}/api/images/{image['id']}").status_code == 200
+    assert row() == ("deleted", None)
+    # Клиент шлёт «new» по пустой разметке — сервер помнит, что кадр был фоном.
+    res = api.patch(url, json={"status": "new"})
+    assert res.status_code == 200 and res.json()["task_status"] == "empty"
+    assert row() == ("empty", dataset)

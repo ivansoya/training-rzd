@@ -506,7 +506,7 @@ export default function AnnotationEditor({
 
   const trash = useCallback(async () => {
     if (!image || readOnly) return;
-    // Возврат отдаёт кадру то состояние, которое отвечает его содержимому.
+    // Прежнее состояние и датасет восстановит сервер; присланное — запасное.
     if (image.task_status === "deleted") {
       return verdict(image.annotations > 0 ? "annotated" : "new", false);
     }
