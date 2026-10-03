@@ -366,3 +366,15 @@ def test_вернуть_после_брака_восстанавливает_п�
     res = api.patch(url, json={"status": "new"})
     assert res.status_code == 200 and res.json()["task_status"] == "empty"
     assert row() == ("empty", dataset)
+
+
+def test_рамка_модели_остаётся_её_пока_не_поправили(api, image, label_class):
+    box = {"class_index": label_class["class_index"], "x": 10, "y": 10, "w": 50, "h": 50,
+           "source": "model"}
+    got = save(api, image["id"], [box, {**box, "w": 0}])
+    first, dropped = got["shapes"]
+    assert dropped is None and first["source"] == "model" and first["id"]
+    again = save(api, image["id"], [{**box, "id": first["id"]}])["shapes"][0]
+    assert again == first, "нетронутая рамка сохраняет и id, и автора"
+    moved = save(api, image["id"], [{**box, "id": first["id"], "x": 20}])["shapes"][0]
+    assert moved == {"id": first["id"], "source": "human"}

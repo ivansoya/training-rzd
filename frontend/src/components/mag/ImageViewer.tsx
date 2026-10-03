@@ -8,6 +8,7 @@ import FilmStrip from "./FilmStrip";
 import Sep from "../Sep";
 import { count, ru } from "../ru";
 import { useAutosave } from "./useAutosave";
+import { withSavedIds } from "./savedIds";
 
 const GREY = { name: "", color: "#9aa4ae" };
 
@@ -116,16 +117,18 @@ export default function ImageViewer({
     const { image: img, labelOf: lo, onSaved: saved, boxes: snap } = live.current;
     if (!img) return rev;
     const res = await saveAnnotations(img.id, snap, rev);
+    // id новых рамок — с сервера: без них каждая запись делала бы их заново.
+    setBoxes((cur) => withSavedIds(snap, res.shapes, cur));
     saved?.({
       ...img,
       annotations: res.saved,
       rev: res.rev,
-      boxes: snap.map((b, i) => ({
+      boxes: withSavedIds(snap, res.shapes, snap).map((b, i) => ({
         ...b,
         id: b.id ?? `new-${i}`,
         name: lo(b.class_index).name,
         color: lo(b.class_index).color,
-        source: "human",
+        source: b.source ?? "human",
       })),
     });
     return res.rev;

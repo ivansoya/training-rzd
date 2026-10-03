@@ -21,6 +21,7 @@ import { empty, type History } from "./editHistory";
 import TagPicker from "./TagPicker";
 import { useEscape } from "./useEscape";
 import { useAutosave } from "./useAutosave";
+import { withSavedIds } from "./savedIds";
 import type { Tag } from "../../api/tags";
 import { useAutoLabel } from "./useAutoLabel";
 import { useLive } from "../../live/LiveProvider";
@@ -321,6 +322,13 @@ export default function AnnotationEditor({
     if (!img) return rev;
     const snap = boxesRef.current;
     const res = await saveAnnotations(img.id, snap, rev);
+    // id новых рамок — с сервера, к тем же объектам: иначе каждая запись делала бы их заново.
+    const now = withSavedIds(snap, res.shapes, boxesRef.current);
+    if (now !== boxesRef.current) {
+      boxesRef.current = now;
+      setBoxes(now);
+    }
+    const sent = withSavedIds(snap, res.shapes, snap);
     const { labelOf: lo, meta: mt, onChanged: changed } = live.current;
     changed(img.id, {
       annotations: res.saved,
@@ -328,7 +336,7 @@ export default function AnnotationEditor({
       rev: res.rev,
       // Номер рамки — настоящий, если он был: по нему сервер узнаёт
       // нетронутую рамку агента при следующем сохранении этого кадра.
-      boxes: snap.map((b, i) => ({
+      boxes: sent.map((b, i) => ({
         ...(mt.get(b.id ?? "") ?? { source: "human" }),
         ...b,
         id: b.id ?? `new-${i}`,
@@ -590,13 +598,22 @@ export default function AnnotationEditor({
             kind: "polygon",
             parts: rings as Ring[],
             ...(poly.bounds(rings as Ring[]) || autoPrev),
+            source: "model",
           }
         : {
             class_index: active,
             x: autoPrev.x, y: autoPrev.y, w: autoPrev.w, h: autoPrev.h,
+            source: "model",
           };
     if (replacing !== null && boxes[replacing]) {
-      edit(boxes.map((b, i) => (i === replacing ? shape : b)));
+      // Доуточнение меняет только форму: класс, id и авторство агента — прежние.
+      const base = boxes[replacing];
+      const refined: CanvasShape = {
+        ...base,
+        kind: shape.kind, parts: shape.parts,
+        x: shape.x, y: shape.y, w: shape.w, h: shape.h,
+      };
+      edit(boxes.map((b, i) => (i === replacing ? refined : b)));
       setSelected(replacing);
     } else {
       edit([...boxes, shape]);

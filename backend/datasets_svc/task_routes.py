@@ -1300,11 +1300,13 @@ def _save_annotations(db, image_id):
     }
     # Ключ запроса остался «boxes»: он давно в клиенте и в тестах, а под
     # ним теперь идут обе фигуры. Что именно пришло, говорит `kind`.
-    for raw in data.get("boxes") or []:
+    positions = []  # номер присланной фигуры для каждой записанной
+    for pos, raw in enumerate(data["boxes"]):
         cls = by_index[raw.get("class_index")]
         parsed = shapes.from_wire(raw, width, height)
         if parsed is None:
             continue
+        positions.append(pos)
         ann_type, geometry, area = parsed
         # Подрезку считаем только у боксов: у контура «сдвинулось ли что-то
         # при подрезке» — вопрос к каждой точке, и складывать их в одно
@@ -1326,12 +1328,15 @@ def _save_annotations(db, image_id):
     db.execute(
         Annotation.__table__.delete().where(Annotation.image_id == image.id)
     )
+    written = []
     for item, row in zip(fresh, settled):
         # Номер рамки прежний, если она пришла со своим: по нему редактор
         # узнаёт её при следующем сохранении.
         ann_id = _uuid_or_none(row.pop("id"))
-        db.add(Annotation(image_id=image.id, area=item["area"], **row,
-                          **({"id": ann_id} if ann_id else {})))
+        ann = Annotation(image_id=image.id, area=item["area"], **row,
+                         **({"id": ann_id} if ann_id else {}))
+        db.add(ann)
+        written.append(ann)
 
     # Статус кадра идёт за содержимым: появились боксы — размечен, стёрли
     # все — снова нетронутый, если его не откладывали осознанно. У
@@ -1343,7 +1348,12 @@ def _save_annotations(db, image_id):
             image.task_status = "new"
     image.annotations_rev += 1
     db.commit()
-    return jsonify({"saved": len(fresh), "clamped": clamped,
+    # id и автор — по порядку присланного (null — фигура отброшена): без id
+    # клиента каждая запись считалась бы новой рамкой, и settle не работал.
+    saved = [None] * len(data["boxes"])
+    for pos, ann in zip(positions, written):
+        saved[pos] = {"id": str(ann.id), "source": ann.source}
+    return jsonify({"saved": len(fresh), "clamped": clamped, "shapes": saved,
                     "task_status": image.task_status, "rev": image.annotations_rev})
 
 

@@ -1,6 +1,8 @@
 // API client for auth, friends, projects and invitations. Sessions live in an
 // httpOnly cookie, so every call is a plain same-origin fetch.
 
+import type { SavedShape } from "../components/mag/savedIds";
+
 export interface AuthUser {
   id: string;
   email: string;
@@ -1560,10 +1562,15 @@ export async function saveAnnotations(
     x: number; y: number; w: number; h: number;
     kind?: "bbox" | "polygon";
     parts?: [number, number][][];
+    source?: "human" | "model";
   }[],
   /** Версия, которую видел клиент; без неё сервер не сверяет. */
   rev?: number
-): Promise<{ saved: number; clamped: number; task_status: string; rev: number }> {
+): Promise<{
+  saved: number; clamped: number; task_status: string; rev: number;
+  /** id и автор каждой присланной фигуры по порядку, null — отброшена. */
+  shapes?: SavedShape[];
+}> {
   return asJson(
     await fetch(`/api/images/${imageId}/annotations`, {
       method: "PUT",
