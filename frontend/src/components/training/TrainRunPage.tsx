@@ -1,7 +1,7 @@
 // Экран одного обучения: что идёт прямо сейчас и что вышло в конце.
 
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import * as runsApi from "../../api/runs";
 import type { EpochRow, Run } from "../../api/runs";
 import { isFinalCheck, left, progress, stageText, trainedEpochs } from "./runMath";
@@ -90,6 +90,7 @@ const LOOK: Record<string, [string, string]> = {
 
 export default function TrainRunPage() {
   const { code, runId } = useParams<{ code: string; runId: string }>();
+  const navigate = useNavigate();
   const [run, setRun] = useState<Run | null>(null);
   const [epochs, setEpochs] = useState<EpochRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -153,7 +154,54 @@ export default function TrainRunPage() {
             {label}
             {busy && ` — ${stageText(run)}`}
           </span>
+          {/* Действия — в шапке: под тридцатью строками настроек их не находили. */}
+          <span className="t-run-actions">
+            {run.can_manage !== false && (busy || run.status === "queued" || run.status === "waiting_gpu") && (
+              <button
+                type="button"
+                className="mag-ghost"
+                disabled={stopping || run.status === "stopping"}
+                onClick={() => {
+                  if (!code || !runId) return;
+                  const keep = run.best_epoch
+                    ? `Сохранятся лучшие веса — с эпохи ${run.best_epoch}.`
+                    : "Эпох ещё не было — весов не останется.";
+                  if (!window.confirm(`Остановить обучение «${run.name}»? ${keep}`)) return;
+                  setStopping(true);
+                  setStopError(null);
+                  runsApi
+                    .stopRun(code, runId)
+                    .catch((e) => setStopError((e as Error).message))
+                    .then(refresh)
+                    .finally(() => setStopping(false));
+                }}
+              >
+                Остановить
+              </button>
+            )}
+            {run.has_weights && code && runId && (
+              <a className="mag-btn mag-btn-inline" href={runsApi.weightsUrl(code, runId)}>
+                Скачать веса
+              </a>
+            )}
+            {run.can_manage !== false && !busy && code && runId && (
+              <button
+                type="button"
+                className="mag-ghost mag-danger"
+                onClick={() => {
+                  if (!window.confirm(`Удалить обучение «${run.name}» вместе с весами и графиками?`)) return;
+                  runsApi
+                    .deleteRun(code, runId)
+                    .then(() => navigate(`/projects/${code}/training?tab=runs`))
+                    .catch((e) => setStopError((e as Error).message));
+                }}
+              >
+                Удалить
+              </button>
+            )}
+          </span>
         </div>
+        {stopError && <div className="mag-error">{stopError}</div>}
 
         <div className="t-run-sub">
           {run.base_model} <Sep /> набор <b>{run.set?.name ?? "удалён"}</b><Sep />{" "}
@@ -339,38 +387,6 @@ export default function TrainRunPage() {
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          {run.can_manage !== false && (busy || run.status === "queued" || run.status === "waiting_gpu") ? (
-            <button
-              type="button"
-              className="mag-ghost"
-              style={{ flex: 1 }}
-              disabled={stopping || run.status === "stopping"}
-              onClick={() => {
-                if (!code || !runId) return;
-                setStopping(true);
-                setStopError(null);
-                runsApi
-                  .stopRun(code, runId)
-                  .catch((e) => setStopError((e as Error).message))
-                  .then(refresh)
-                  .finally(() => setStopping(false));
-              }}
-            >
-              Остановить
-            </button>
-          ) : null}
-          {run.has_weights && code && runId && (
-            <a
-              className="mag-btn"
-              style={{ flex: 1, textAlign: "center" }}
-              href={runsApi.weightsUrl(code, runId)}
-            >
-              Скачать веса
-            </a>
-          )}
-        </div>
-        {stopError && <div className="mag-error">{stopError}</div>}
       </aside>
     </div>
   );

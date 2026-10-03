@@ -431,6 +431,8 @@ table.t-cls tr.thin td { color: var(--skip); }
   flex-wrap: wrap;
 }
 .t-run-head h2 { margin: 0; font-size: 18px; }
+.t-run-actions { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.t-run-actions > * { width: auto; margin: 0; }
 
 .t-run-sub {
   color: var(--faint);

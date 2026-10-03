@@ -448,6 +448,9 @@ def delete_run(code, run_id):
             }), 409
         import shutil
 
+        # Из очереди: бронь карты снимаем, иначе она висела бы без хозяина.
+        if run.gpu_lease_id:
+            gpu.cancel(db, run.gpu_lease_id, "Обучение удалено")
         shutil.rmtree(config.run_dir(project.id, run.id), ignore_errors=True)
         db.delete(run)
         db.commit()
