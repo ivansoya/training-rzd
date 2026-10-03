@@ -593,11 +593,6 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
     graph = db.get(AugGraph, version.graph_id) if version else None
     stats = {"videos": 0, "boxes": 0, "frames": 0}
     for video, wanted in plan:
-        if mode == "annotate":
-            db.execute(VideoAnnotation.__table__.delete().where(
-                VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
-                VideoAnnotation.source == "model", VideoAnnotation.agent_version_id.isnot(None)))
-            db.commit()
         hits, seen = {}, {}
 
         def on_frame(frame_no, _time_ms, picture):
@@ -620,6 +615,9 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
             # Номера — по таблице кадров ролика, как у разметки и закрытия.
             video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted,
                                         on_frame, pts=video_frames.unpack_pts(video.frame_index))
+        if mode == "annotate":
+            # Ролик пройден целиком: прежние рамки агента вне плана больше не нужны.
+            db.execute(_agent_rows(video).where(VideoAnnotation.frame_no.notin_(wanted or [-1])))
         if mode == "scout":
             last = _last_frame(video)
             db.execute(VideoScout.__table__.delete().where(VideoScout.video_id == video.id))
@@ -634,7 +632,16 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
         db.commit()
 
 
+def _agent_rows(video):
+    """Одиночные рамки агентов на ролике — то, что повторный прогон заменяет."""
+    return VideoAnnotation.__table__.delete().where(
+        VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
+        VideoAnnotation.source == "model", VideoAnnotation.agent_version_id.isnot(None))
+
+
 def _write_video(db, run, video, frame_no, found, mapping):
+    # Замена по кадру в одной транзакции: остановка на середине не теряет прежние рамки.
+    db.execute(_agent_rows(video).where(VideoAnnotation.frame_no == frame_no))
     put = 0
     for det in found:
         class_id = mapping.get(det["cls"])
