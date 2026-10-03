@@ -7,7 +7,8 @@
 from collections import Counter
 
 from common.splitting import (
-    by_clusters, by_groups, bucket_key, pinned_split, pinned_warnings,
+    by_clusters, by_groups, bucket_key, coverage_warnings, pinned_split,
+    pinned_warnings,
 )
 
 
@@ -227,3 +228,9 @@ def test_обе_половины_заполнены_молчание_про_пу
     forced, free = pinned_split(rows, {"ds-a": "train", "ds-b": "val"})
     said = pinned_warnings(forced, free, forced)
     assert not any("не осталось" in w for w in said)
+
+
+def test_покрытие_с_генератором_видит_и_тонкую_проверку():
+    rows = (r for r in [("a", 5, 0), ("b", 4, 1)])
+    out = coverage_warnings(rows)
+    assert len(out) == 2 and "b" in out[1]

@@ -170,6 +170,7 @@ def coverage_warnings(rows):
     менять ли зерно или долю, — человеку; но узнать он должен до обучения,
     а не по прочерку в таблице через два часа.
     """
+    rows = list(rows)  # обходим дважды, а сборщик передаёт генератор
     absent = sorted(name for name, train, val in rows if train > 0 and val == 0)
     thin = sorted(name for name, _train, val in rows if 0 < val <= 2)
     out = []
