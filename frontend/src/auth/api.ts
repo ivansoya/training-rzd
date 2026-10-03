@@ -653,6 +653,17 @@ export async function createClass(
   return asJson(await post(`projects/${encodeURIComponent(code)}/classes`, body));
 }
 
+/** Класс по имени из поиска редактора: создать, а такой уже есть — взять его. */
+export async function ensureClass(code: string, name: string): Promise<LabelClass> {
+  try {
+    return await createClass(code, { name });
+  } catch (e) {
+    const found = (e as ApiError).data as { class?: LabelClass } | undefined;
+    if ((e as ApiError).code === "name_taken" && found?.class) return found.class;
+    throw e;
+  }
+}
+
 export async function updateClass(
   code: string,
   id: string,

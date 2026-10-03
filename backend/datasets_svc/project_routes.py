@@ -1231,6 +1231,15 @@ def _class_json(row, annotations, superclass):
 NAME_MAX = 128
 
 
+def _name_taken(db, model, project_id, name, exclude=None):
+    """Строка с тем же именем без учёта регистра: «Night» и «night» — один таг."""
+    q = select(model).where(model.project_id == project_id,
+                            func.lower(model.name) == name.lower())
+    if exclude is not None:
+        q = q.where(model.id != exclude)
+    return db.execute(q).scalars().first()
+
+
 def _long_name(name):
     """Ответ 400 на слишком длинное имя, или None."""
     if len(name) > NAME_MAX:
@@ -1314,6 +1323,12 @@ def create_class(code):
             return jsonify({"error": "Укажите название класса."}), 400
         if _long_name(name):
             return _long_name(name)
+        # Дубль по имени неразличим в списках и в data.yaml; отдаём существующий.
+        taken = _name_taken(db, LabelClass, project.id, name)
+        if taken is not None:
+            sc = db.get(Superclass, taken.superclass_id) if taken.superclass_id else None
+            return jsonify({"error": f"Класс «{taken.name}» уже есть.", "code": "name_taken",
+                            "class": _class_json(taken, 0, sc)}), 409
         # Номер выдаём сами и НИКОГДА не переиспользуем освободившийся:
         # `class_index` уходит в мету выгрузки, и «3 = Шпала» из прошлого
         # экспорта не должно однажды означать «3 = Опора». Дырки в нумерации
@@ -1379,6 +1394,8 @@ def update_class(code, class_id):
                 return jsonify({"error": "Название не может быть пустым."}), 400
             if _long_name(name):
                 return _long_name(name)
+            if _name_taken(db, LabelClass, project.id, name, exclude=row.id):
+                return jsonify({"error": "Класс с таким названием уже есть."}), 409
             row.name = name
         if color:
             row.color = color
@@ -1737,9 +1754,7 @@ def create_tag(code):
             return jsonify({"error": "Название тага длиннее 64 символов."}), 400
         # Тот же таг, заведённый дважды из двух окон, — обычное дело: чип-пикер
         # создаёт таг по ходу разметки. Отдаём существующий, а не ошибку.
-        row = db.execute(
-            select(Tag).where(Tag.project_id == project.id, Tag.name == name)
-        ).scalar_one_or_none()
+        row = _name_taken(db, Tag, project.id, name)
         if row is None:
             row = Tag(project_id=project.id, name=name,
                       created_by=current_user(db).id)
@@ -1771,10 +1786,7 @@ def rename_tag(code, tag_id):
             return jsonify({"error": "Укажите название тага."}), 400
         if len(name) > 64:
             return jsonify({"error": "Название тага длиннее 64 символов."}), 400
-        if db.execute(
-            select(Tag.id).where(Tag.project_id == project.id, Tag.name == name,
-                                 Tag.id != row.id)
-        ).first():
+        if _name_taken(db, Tag, project.id, name, exclude=row.id):
             return jsonify({"error": "Таг с таким названием уже есть."}), 409
         row.name = name
         db.commit()
@@ -1840,11 +1852,7 @@ def create_superclass(code):
             return jsonify({"error": "Укажите название суперкласса."}), 400
         if _long_name(name):
             return _long_name(name)
-        if db.execute(
-            select(Superclass.id).where(
-                Superclass.project_id == project.id, Superclass.name == name
-            )
-        ).first():
+        if _name_taken(db, Superclass, project.id, name):
             return jsonify({"error": "Такой суперкласс уже есть."}), 409
         taken = db.execute(
             select(func.count()).select_from(Superclass)
@@ -1881,6 +1889,8 @@ def update_superclass(code, sc_id):
                 return jsonify({"error": "Название не может быть пустым."}), 400
             if _long_name(name):
                 return _long_name(name)
+            if _name_taken(db, Superclass, project.id, name, exclude=row.id):
+                return jsonify({"error": "Такой суперкласс уже есть."}), 409
             row.name = name
         if color:
             row.color = color

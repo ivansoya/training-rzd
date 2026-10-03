@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
-  createClass,
+  ensureClass,
   createTrack,
   deleteTrack,
   deleteTrackKey,
@@ -1079,9 +1079,9 @@ export default function VideoAnnotator({
           {query.trim() && visibleClasses.length === 0 && !frozen && (
             <button className="mag-ed-newcls" type="button"
               onClick={() => {
-                createClass(code, { name: query.trim() })
+                ensureClass(code, query.trim())
                   .then((c) => {
-                    setClasses((prev) => [...prev, c]);
+                    setClasses((prev) => (prev.some((p) => p.id === c.id) ? prev : [...prev, c]));
                     setActive(c.class_index);
                     setQuery("");
                   })

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  createClass,
+  ensureClass,
   deleteImage,
   getClasses,
   saveAnnotations,
@@ -1440,9 +1440,9 @@ export default function AnnotationEditor({
           {query.trim() && visible.length === 0 && !frozen && (
             <button className="mag-ed-newcls" type="button"
               onClick={() => {
-                createClass(code, { name: query.trim() })
+                ensureClass(code, query.trim())
                   .then((c) => {
-                    setClasses((prev) => [...prev, c]);
+                    setClasses((prev) => (prev.some((p) => p.id === c.id) ? prev : [...prev, c]));
                     pickClass(c.class_index);
                     setQuery("");
                   })

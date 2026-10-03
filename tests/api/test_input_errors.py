@@ -54,3 +54,16 @@ def test_граф_с_негодной_версией_не_остаётся_си�
     listing = api.get(f"{BASE_URL}/api/aug/graphs").json()
     rows = listing.get("graphs", listing) if isinstance(listing, dict) else listing
     assert all(g["name"] != name for g in rows)
+
+
+def test_имена_уникальны_без_учёта_регистра(api, project):
+    base = f"{BASE_URL}/api/projects/{project['code']}"
+    first = api.post(f"{base}/classes", json={"name": "Горыныч"}).json()
+    res = api.post(f"{base}/classes", json={"name": "горыныч"})
+    assert res.status_code == 409 and res.json()["class"]["id"] == first["id"]
+    night = api.post(f"{base}/tags", json={"name": "Night"}).json()
+    assert api.post(f"{base}/tags", json={"name": "night"}).json()["id"] == night["id"]
+    a = api.post(f"{base}/superclasses", json={"name": "Опасность"}).json()
+    b = api.post(f"{base}/superclasses", json={"name": "Прочее"}).json()
+    assert api.patch(f"{base}/superclasses/{b['id']}", json={"name": "опасность"}).status_code == 409
+    assert a["id"] != b["id"]
