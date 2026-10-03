@@ -180,3 +180,15 @@ def test_ответ_шлёт_общий_вход_один_раз():
     assert len(view["pics"]) == 4
     assert {s["before"]["pic"] for s in view["samples"]} == {view["original"]["pic"]}
     assert view["pics"][0]["w"] == testframe.W
+
+
+def test_класс_после_трансформа_остаётся_целым():
+    doc = {"nodes": [
+        {"id": "s", "type": "source"},
+        {"id": "a", "type": "aug", "params": BRIGHT},
+        {"id": "o", "type": "output"},
+    ], "edges": [e("s", "a"), e("a", "o")]}
+    made = engine.run_frame(engine.compile_graph(doc), testframe.sample(), "t", "img")
+    item = made[0][1]
+    # float дал бы в файле метки «6.0» вместо «6»
+    assert item.boxes and all(type(b[0]) is int for b in item.boxes)

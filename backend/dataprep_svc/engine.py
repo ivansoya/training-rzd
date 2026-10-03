@@ -176,8 +176,9 @@ def apply(compiled, node, sample, seed):
 
     done = pipeline(**payload)
 
+    # albumentations отдаёт метки float: без int в файл ушло бы «6.0».
     boxes = [
-        (cls, *tuple(box))
+        (int(cls), *tuple(box))
         for cls, box in zip(done.get("class_labels", []), done.get("bboxes", []))
     ]
     polys = []
