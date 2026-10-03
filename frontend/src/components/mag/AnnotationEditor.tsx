@@ -432,13 +432,15 @@ export default function AnnotationEditor({
 
   // Выбор класса при выделенном боксе перекрашивает его: чаще всего класс
   // выбирают именно затем, чтобы исправить уже нарисованное.
+  // В инструментах рисования класс задаёт следующий объект: иначе закреплённый
+  // только что (он остаётся выделенным) молча перекрашивался бы.
   const pickClass = useCallback(
-    (ci: number, target: number | null = selected) => {
+    (ci: number, target: number | null = tool === "select" ? selected : null) => {
       setActive(ci);
       if (target === null || frozen) return;
       edit(boxesRef.current.map((b, i) => (i === target ? { ...b, class_index: ci } : b)));
     },
-    [selected, frozen, edit]
+    [selected, frozen, edit, tool]
   );
 
   /** Уйти с кадра можно только записав его: при сбое остаёмся, и на экране
