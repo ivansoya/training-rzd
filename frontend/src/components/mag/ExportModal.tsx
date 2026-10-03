@@ -60,6 +60,8 @@ export default function ExportModal({ detail, onClose }: Props) {
   const [annType, setAnnType] = useState<"bbox" | "polygon">("bbox");
   const [valRatio, setValRatio] = useState(0.2);
   const [preview, setPreview] = useState<ExportPreview | null>(null);
+  // Для какого выбора посчитан предпросмотр: после ошибки на экране старые числа.
+  const [previewKey, setPreviewKey] = useState("");
   const [pending, setPending] = useState(false);
   const [phase, setPhase] = useState<Phase>("setup");
   const [progress, setProgress] = useState(0);
@@ -112,6 +114,7 @@ export default function ExportModal({ detail, onClose }: Props) {
         .then((p) => {
           if (seq.current !== mine) return;
           setPreview(p);
+          setPreviewKey(JSON.stringify(options));
           setError(null);
         })
         .catch((e) => {
@@ -159,6 +162,7 @@ export default function ExportModal({ detail, onClose }: Props) {
   const rows = preview?.classes ?? [];
   const byId = new Map(rows.map((r) => [r.class_index, r]));
   const canRun =
+    previewKey === JSON.stringify(options) &&
     options.datasets.length > 0 &&
     options.classes.length > 0 &&
     (preview?.images ?? 0) > 0;
