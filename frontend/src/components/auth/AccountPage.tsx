@@ -335,7 +335,7 @@ export default function AccountPage() {
                 <span className="mag-ava">{initials(f.user.display_name)}</span>
                 <span className="mag-member-name">
                   <b>{f.user.display_name}</b>
-                  <span>{f.user.login} <Sep /> заявка отправлена</span>
+                  <span>{f.user.login ? <>{f.user.login} <Sep /> </> : null}заявка отправлена</span>
                 </span>
                 <button
                   className="mag-ghost mag-ghost-sm"

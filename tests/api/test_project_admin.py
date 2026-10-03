@@ -229,3 +229,13 @@ def test_таги_кадра_правит_исполнитель_а_не_люб�
     url = f"{BASE_URL}/api/images/{image_id}/tags"
     assert editor.put(url, json={"tags": []}).status_code == 403
     assert api.put(url, json={"tags": []}).status_code == 200
+
+
+def test_заявка_по_почте_не_раскрывает_логин_и_присутствие(api, db):
+    other = person(db)
+    res = api.post(f"{BASE_URL}/api/friends",
+                   json={"identity": f"{other.login_name}@example.test"})
+    assert res.status_code == 201, res.text
+    assert res.json()["user"]["login"] == ""
+    [sent] = api.get(f"{BASE_URL}/api/friends").json()["outgoing"]
+    assert sent["user"]["login"] == "" and "online" not in sent["user"]

@@ -57,10 +57,11 @@ def new_project_code(db) -> str:
     raise RuntimeError("cannot allocate a free project code")
 
 
-def _person(user: User, online: bool | None = None) -> dict:
+def _person(user: User, online: bool | None = None, show_login: bool = True) -> dict:
+    # Логин не раскрываем тому, кто нашёл человека по почте и ещё не получил ответа.
     data = {
         "id": str(user.id),
-        "login": user.login,
+        "login": user.login if show_login else "",
         "display_name": user.display_name,
     }
     if online is not None:
@@ -105,7 +106,13 @@ def list_friends():
         friends, incoming, outgoing = [], [], []
         for f in rows:
             other = f.addressee if f.requester_id == user.id else f.requester
-            item = {"friendship_id": str(f.id), "user": _person(other, is_online(other))}
+            # Присутствие — только у друзей: заявка без ответа не даёт следить за человеком.
+            accepted = f.status == "accepted"
+            mine = f.requester_id == user.id
+            item = {"friendship_id": str(f.id), "user": _person(
+                other, is_online(other) if accepted else None,
+                show_login=accepted or not mine,
+            )}
             if f.status == "accepted":
                 friends.append(item)
             elif f.requester_id == user.id:
@@ -122,9 +129,11 @@ def add_friend():
         _, user = current_session(db)
         if user is None:
             return jsonify({"error": "Не выполнен вход."}), 401
-        target = _find_user(db, str_field(data, "identity", max_len=255))
+        identity = str_field(data, "identity", max_len=255)
+        target = _find_user(db, identity)
         if target is None:
             return jsonify({"error": "Пользователь с таким логином или почтой не найден."}), 404
+        by_login = identity.lower() == target.login.lower()
         if target.id == user.id:
             return jsonify({"error": "Нельзя добавить в друзья самого себя."}), 400
         existing = db.execute(
@@ -146,7 +155,7 @@ def add_friend():
             return jsonify({"accepted": True, "user": _person(target)})
         db.add(Friendship(requester_id=user.id, addressee_id=target.id, status="pending"))
         db.commit()
-        return jsonify({"requested": True, "user": _person(target)}), 201
+        return jsonify({"requested": True, "user": _person(target, show_login=by_login)}), 201
 
 
 @bp.post("/friends/<fid>/accept")
@@ -440,7 +449,7 @@ def project_detail(code):
             payload["pending_invitations"] = [
                 {
                     "id": str(i.id),
-                    "user": _person(i.user),
+                    "user": _person(i.user, show_login=False),
                     "role_label": ROLE_LABELS.get(i.role, i.role),
                 }
                 for i in pending
@@ -466,9 +475,11 @@ def invite_to_project(code):
             return jsonify({"error": "Приглашать может только администратор проекта."}), 403
         if role not in ROLES:
             return jsonify({"error": "Укажите роль: администратор, редактор или просмотр."}), 400
-        target = _find_user(db, str_field(data, "identity", max_len=255))
+        identity = str_field(data, "identity", max_len=255)
+        target = _find_user(db, identity)
         if target is None:
             return jsonify({"error": "Пользователь с таким логином или почтой не найден."}), 404
+        by_login = identity.lower() == target.login.lower()
         if _membership(db, target, project) is not None:
             return jsonify({"error": f"{target.display_name} уже участник проекта."}), 409
         existing = db.execute(
@@ -485,7 +496,7 @@ def invite_to_project(code):
             existing.role = role
             existing.created_by = user.id
             db.commit()
-            return jsonify({"ok": True, "user": _person(target)})
+            return jsonify({"ok": True, "user": _person(target, show_login=by_login)})
         db.add(
             ProjectInvitation(
                 project_id=project.id,
@@ -496,7 +507,7 @@ def invite_to_project(code):
             )
         )
         db.commit()
-        return jsonify({"ok": True, "user": _person(target)}), 201
+        return jsonify({"ok": True, "user": _person(target, show_login=by_login)}), 201
 
 
 # ------------------------------------------------------------ invitations ---
