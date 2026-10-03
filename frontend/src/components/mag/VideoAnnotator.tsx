@@ -203,8 +203,10 @@ export default function VideoAnnotator({
   const [classes, setClasses] = useState<LabelClass[]>([]);
   const [active, setActive] = useState<number | null>(null);
   const [frame, setFrame] = useState(0);
-  const [tool, setTool] =
-    useState<"select" | "box" | "polygon" | "track" | "auto">("select");
+  const [tool, setTool] = useState<"select" | "box" | "polygon" | "track">("select");
+  // Полуавтомат — флаг поверх инструмента, как в редакторе кадров: «Трек» с ним
+  // ставит ключ трека, «Бокс» и «Контур» — одиночную фигуру.
+  const [autoOn, setAutoOn] = useState(false);
   // Часть выбранного контура. Раздельного переноса частей в ролике нет: там
   // правят кадр за кадром, и лишний тумблер в тесной панели дороже пользы.
   const [selPart, setSelPart] = useState<number | null>(null);
@@ -694,6 +696,17 @@ export default function VideoAnnotator({
     setAutoPrev(null);
   }, []);
 
+  /** Работает ли полуавтомат прямо сейчас: в «выборе» рисовать нечем. */
+  const autoLive = autoOn && tool !== "select" && auto.state === "ready";
+
+  const pickAuto = useCallback(() => {
+    setAutoOn((v) => {
+      if (!v) setTool((t) => (t === "select" ? "box" : t));
+      return !v;
+    });
+    clearAuto();
+  }, [clearAuto]);
+
   useEffect(() => { clearAuto(); }, [frame, clearAuto]);
 
   const ask = useCallback(
@@ -711,6 +724,12 @@ export default function VideoAnnotator({
   const commitAuto = useCallback(() => {
     if (!autoPrev || active === null) return;
     const geometry = { x: autoPrev.x, y: autoPrev.y, w: autoPrev.w, h: autoPrev.h };
+    const rings = (autoPrev.polygons || []).filter((r) => r.length >= poly.MIN_POINTS) as Ring[];
+    const single: SingleWire & { source: "model" } =
+      tool === "polygon" && rings.length
+        ? { class_index: active, kind: "polygon", parts: rings,
+            ...(poly.bounds(rings) || geometry), source: "model" }
+        : { class_index: active, ...geometry, source: "model" };
     guard(async () => {
       if (currentTrack && tool === "track") {
         await putTrackKey(currentTrack.id, frame, { geometry, source: "model" });
@@ -720,9 +739,7 @@ export default function VideoAnnotator({
         });
         setPickedTrack(track.id);
       } else {
-        await saveFrameBoxes(taskId, video.id, frame, [
-          ...singlesAsList(), { class_index: active, ...geometry },
-        ]);
+        await saveFrameBoxes(taskId, video.id, frame, [...singlesAsList(), single]);
       }
       await load();
     });
@@ -799,7 +816,7 @@ export default function VideoAnnotator({
         case "KeyB": if (!frozen) setTool("box"); break;
         case "KeyP": if (!frozen) setTool("polygon"); break;
         case "KeyT": if (!frozen) setTool("track"); break;
-        case "KeyA": if (!frozen && auto.state === "ready") setTool("auto"); break;
+        case "KeyA": if (!frozen && auto.state === "ready") pickAuto(); break;
         case "KeyE": toggleEmpty(); break;
         case "KeyR": if (scout.length) toggleScout(); break;
         case "KeyK":
@@ -834,7 +851,7 @@ export default function VideoAnnotator({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [tool, frozen, autoPrev, autoPts, clearAuto, onClose, togglePlay, go, auto.state,
+  }, [tool, frozen, autoPrev, autoPts, clearAuto, onClose, togglePlay, go, auto.state, pickAuto,
       currentTrack, selected, items, removeTrackBox, saveSingles, singlesHere,
       visibleClasses, commitAuto, frame, guard, load, laneMenu, scout.length, toggleScout]);
 
@@ -935,7 +952,7 @@ export default function VideoAnnotator({
         </span>
         {active !== null && (
           <button type="button"
-            className={tool === "auto" ? "mag-ed-active on" : "mag-ed-active"}
+            className={autoOn ? "mag-ed-active on" : "mag-ed-active"}
             {...hk("cls")}
             onClick={(e) => {
               const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -1040,10 +1057,10 @@ export default function VideoAnnotator({
             disabled={frozen} onClick={() => setTool("track")}
             {...hk("track")}><span>T</span><small>Трек</small></button>
           <button
-            className={(tool === "auto" ? "mag-tool on" : "mag-tool") +
+            className={(autoOn ? "mag-tool on" : "mag-tool") +
               (auto.state === "starting" ? " warming" : "")}
             type="button" disabled={frozen || auto.state !== "ready"}
-            onClick={() => { setTool("auto"); clearAuto(); }}
+            onClick={pickAuto}
             {...hk("auto")}
             data-ht={
               auto.state === "ready"
@@ -1195,7 +1212,7 @@ export default function VideoAnnotator({
             tool={
               tool === "select" ? "select" : tool === "polygon" ? "polygon" : "box"
             }
-            auto={tool === "auto"}
+            auto={autoLive}
             selectedPart={selPart}
             onPolygon={onPolygon}
             autoMode="points"

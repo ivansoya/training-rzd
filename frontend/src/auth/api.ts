@@ -1403,6 +1403,8 @@ export interface SingleWire {
   h: number;
   kind?: "bbox" | "polygon";
   parts?: [number, number][][];
+  /** Новая фигура полуавтомата — «model»; у прежних авторство сверяет сервер по id. */
+  source?: "human" | "model";
 }
 
 export async function saveFrameBoxes(
