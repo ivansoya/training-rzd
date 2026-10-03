@@ -73,12 +73,6 @@ const FLOW: Item[] = [
     klass: "k-flow",
     params: { label: "Порядок", inputs: 2 },
   },
-  {
-    kind: "flow",
-    label: "Поток",
-    klass: "k-flow",
-    params: { label: "Поток", ops: [] },
-  },
 ];
 
 export default function NodePalette({

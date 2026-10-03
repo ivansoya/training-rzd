@@ -54,6 +54,23 @@ const freshId = (kind: string, taken: Set<string>) => {
 // придумывать номера сама, но свои — и тогда число с провода, посчитанное по
 // «откуда:гнездо->куда:гнездо», к нему не привязывалось бы: на всяком только
 // что протянутом проводе стоял бы прочерк.
+// Узлы с одним входом и одним выходом: их можно встроить в провод.
+const SPLICE = new Set(["aug", "multiply"]);
+const GAP = 260;
+
+/** Куда встроить новый узел: выделенный провод, провод после выделенного узла, провод в «Выход». */
+function spliceWire(nodes: Node[], edges: Edge[]): Edge | null {
+  const picked = nodes.find((n) => n.selected)?.id;
+  const kindOf = (id: string) => (nodes.find((n) => n.id === id)?.data as NodeData | undefined)?.kind;
+  return (
+    edges.find((e) => e.selected) ??
+    edges.find((e) => picked && e.source === picked) ??
+    edges.find((e) => picked && e.target === picked) ??
+    edges.find((e) => kindOf(e.target) === "output") ??
+    null
+  );
+}
+
 const wireId = (c: {
   source?: string | null;
   sourceHandle?: string | null;
@@ -351,13 +368,36 @@ function Editor() {
     (kind: string, params: Record<string, unknown>, at?: { x: number; y: number }) => {
       const id = freshId(kind, new Set(live.current.nodes.map((n) => n.id)));
       const box = wrap.current?.getBoundingClientRect();
+      // Узел по клику встаёт в цепочку: висящий сам по себе узел не сохранить.
+      const wire = at || !SPLICE.has(kind) ? null : spliceWire(live.current.nodes, live.current.edges);
+      const ends = wire && [wire.source, wire.target].map(
+        (end) => live.current.nodes.find((n) => n.id === end)?.position
+      );
+      const room = ends && ends[0] && ends[1] && ends[1].x - ends[0].x < 2 * GAP ? GAP : 0;
       const point =
         at ??
-        screenToFlowPosition({
-          x: (box?.left ?? 0) + (box?.width ?? 600) / 2,
-          y: (box?.top ?? 0) + 160,
-        });
-      setNodes((old) => {
+        (ends && ends[0] && ends[1]
+          ? { x: ends[0].x + GAP, y: ends[0].y }
+          : screenToFlowPosition({
+              x: (box?.left ?? 0) + (box?.width ?? 600) / 2,
+              y: (box?.top ?? 0) + 160,
+            }));
+      if (wire) {
+        setEdges((old) => [
+          ...old.filter((e) => e.id !== wire.id),
+          ...[
+            { source: wire.source, sourceHandle: wire.sourceHandle, target: id, targetHandle: "in" },
+            { source: id, sourceHandle: "out", target: wire.target, targetHandle: wire.targetHandle },
+          ].map((c) => ({ ...c, id: wireId(c), type: "volume" }) as Edge),
+        ]);
+      }
+      setNodes((old0) => {
+        // Тесно — сдвигаем всё правее точки вставки, чтобы узлы не легли друг на друга.
+        const old = room
+          ? old0.map((n) =>
+              n.position.x >= point.x ? { ...n, position: { ...n.position, x: n.position.x + room } } : n
+            )
+          : old0;
         // Второй «Источник» получает свободный номер в подписи. Сервер не
         // примет два одинаково подписанных — при сборке источник выбирают
         // именно по подписи, — и упереться в это после десяти минут работы
@@ -396,7 +436,7 @@ function Editor() {
       });
       setSelected(id);
     },
-    [byOp, screenToFlowPosition, setNodes]
+    [byOp, screenToFlowPosition, setNodes, setEdges]
   );
 
   const patchParams = useCallback(
