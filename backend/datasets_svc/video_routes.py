@@ -23,6 +23,7 @@ from sqlalchemy import select
 from common import attribution, config, jobs
 from common.db import SessionLocal
 from common.models import (
+    AgentRun,
     Image,
     LabelClass,
     Task,
@@ -1326,6 +1327,18 @@ def close_annotation(task_id, video_id):
         denied = _writable(task, user, role, video, edit=False)
         if denied:
             return denied
+        # Агент, идущий по ролику, писал бы рамки уже после закрытия — мимо таски.
+        running = [r for r in db.execute(
+            select(AgentRun).where(
+                AgentRun.task_id == task.id,
+                AgentRun.status.in_(("queued", "waiting_gpu", "running")),
+            )
+        ).scalars() if str(video.id) in [str(v) for v in (r.params or {}).get("videos") or []]]
+        if running:
+            return jsonify({
+                "error": "По ролику идёт прогон агента — дождитесь его конца или остановите.",
+                "code": "agent_running",
+            }), 409
         existing = materialize.frames_in_task(db, video)
         if existing:
             # Число в скобках, а не перед словом: «382 кадров» резало глаз,
