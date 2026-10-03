@@ -44,7 +44,7 @@ from datasets_svc import materialize
 from common import shapes
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
-from datasets_svc import video_busy, video_index
+from datasets_svc import upload, video_busy, video_index
 from common.video_frames import FrameClock
 from datasets_svc import video_queue as queue
 
@@ -842,6 +842,9 @@ def upload_images(task_id):
             return jsonify({"error": "Это не ваша таска."}), 403
         if task.status == "closed":
             return jsonify({"error": "Таска закрыта — загружать в неё нечего."}), 409
+        full = upload.room_error(request.content_length or 0)
+        if full:
+            return jsonify({"error": full, "code": "no_space"}), 507
         files = request.files.getlist("files")
         if not files:
             return jsonify({"error": "Файлы не переданы."}), 400
@@ -889,6 +892,9 @@ def upload_video(task_id):
             return jsonify({"error": "Это не ваша таска."}), 403
         if task.status == "closed":
             return jsonify({"error": "Таска закрыта — загружать в неё нельзя."}), 409
+        full = upload.room_error(request.content_length or 0)
+        if full:
+            return jsonify({"error": full, "code": "no_space"}), 507
         file = request.files.get("file")
         if not file or not file.filename:
             return jsonify({"error": "Файл не передан."}), 400

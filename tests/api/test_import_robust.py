@@ -60,3 +60,8 @@ def test_отмена_на_шаге_классов_освобождает_про
     assert api.get(url(project)).json()["project"]["status"] == "ready"
     assert api.get(url(project, "/import")).json()["status"] == "none"
     scan(api, project)  # второй архив в тот же проект принимается
+
+
+def test_загрузка_больше_свободного_места_получает_507(api, project):
+    res = api.post(url(project, "/import/upload"), json={"name": "huge.zip", "size": 50 << 40})
+    assert res.status_code == 507, res.text

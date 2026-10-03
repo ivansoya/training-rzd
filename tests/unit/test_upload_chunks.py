@@ -121,3 +121,17 @@ def test_потерянный_файл_это_410_а_не_повтор():
     with pytest.raises(upload.UploadError) as caught:
         upload.receive(up, 0, io.BytesIO(b"v" * 100))
     assert caught.value.status == 410
+
+
+def test_кусок_больше_допустимого_не_ложится_на_диск(monkeypatch):
+    monkeypatch.setattr(upload, "CHUNK_BYTES", 1_000)
+    up = upload.begin(None, "a.zip", 5_000)
+    with pytest.raises(upload.UploadError) as err:
+        upload.receive(up, 0, io.BytesIO(b"y" * 3_000))
+    assert err.value.status == 413
+    assert os.path.getsize(upload.part_path(up["id"])) == 1_000
+
+
+def test_больше_места_чем_есть_не_берём():
+    assert upload.room_error(1 << 60)
+    assert upload.room_error(0) is None

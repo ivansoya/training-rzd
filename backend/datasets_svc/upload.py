@@ -20,6 +20,23 @@ import uuid
 from common import config
 
 CHUNK_BYTES = int(os.environ.get("IMPORT_CHUNK_BYTES", str(16 << 20)))
+# Сколько места оставлять на диске сверх любой загрузки: том общий с Postgres,
+# и забитый до нуля диск роняет базу всем, а не только загрузившему.
+DISK_RESERVE = int(float(os.environ.get("DISK_RESERVE_GB", "10")) * (1 << 30))
+
+
+def room_error(size):
+    """Текст отказа, если загрузка размером ``size`` не влезет; иначе None."""
+    import shutil
+
+    from common.config import DATA_DIR, HOST_STAT_PATH
+
+    where = HOST_STAT_PATH if HOST_STAT_PATH and os.path.isdir(HOST_STAT_PATH) else DATA_DIR
+    free = shutil.disk_usage(where).free - DISK_RESERVE
+    if size and size > free:
+        gb = lambda n: f"{max(n, 0) / (1 << 30):.1f} ГБ".replace(".", ",")  # noqa: E731
+        return f"Не хватит места: файл {gb(size)}, а свободно {gb(free)} с учётом запаса."
+    return None
 _lock = threading.Lock()
 
 
@@ -98,21 +115,24 @@ def receive(upload, offset, stream):
             while stream.read(1 << 20):
                 pass
             return have
+        # Не больше куска и не дальше объявленного конца: раньше лишнее
+        # сперва ложилось на диск и только потом отвергалось.
+        limit = min(CHUNK_BYTES, int(upload["size"]) - have)
         written = 0
         with open(path, "ab") as fh:
             while True:
-                buf = stream.read(1 << 20)
+                buf = stream.read(min(1 << 20, limit - written + 1))
                 if not buf:
                     break
+                if written + len(buf) > limit:
+                    fh.write(buf[: limit - written])
+                    written = limit
+                    raise UploadError(
+                        f"Кусок больше допустимого ({limit} байт).", have + written, 413
+                    )
                 fh.write(buf)
                 written += len(buf)
-        total = have + written
-        if total > int(upload["size"]):
-            fh_size = int(upload["size"])
-            raise UploadError(
-                f"Прислано больше, чем объявлено: {total} > {fh_size}.", total, 413
-            )
-        return total
+        return have + written
 
 
 def finish(upload):

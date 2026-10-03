@@ -254,6 +254,9 @@ def start_import(code):
         blocked = _import_blocked(db, project)
         if blocked:
             return blocked
+        full = upload.room_error(request.content_length or 0)
+        if full:
+            return jsonify({"error": full, "code": "no_space"}), 507
 
         os.makedirs(config.TMP_DIR, exist_ok=True)
         fd, zip_path = tempfile.mkstemp(suffix=".zip", dir=config.TMP_DIR)
@@ -355,6 +358,9 @@ def begin_upload(code):
             size = 0
         if not name.lower().endswith(".zip") or size <= 0:
             return jsonify({"error": "Нужен .zip архив."}), 400
+        full = upload.room_error(size)
+        if full:
+            return jsonify({"error": full, "code": "no_space"}), 507
         up = upload.begin(_state(project.id), name, size)
         _save_state(project.id, {
             "status": "uploading",
