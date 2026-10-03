@@ -8,7 +8,7 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, make_response
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select
 
 from auth_svc import mailer
 from auth_svc.security import hash_password, hash_token, new_session_token, verify_password
@@ -94,6 +94,7 @@ def register():
         return jsonify({"errors": errors}), 400
 
     with SessionLocal() as db:
+        _free_stale(db, email=email, login=login)
         if db.execute(select(User.id).where(func.lower(User.email) == email)).first():
             return jsonify({"errors": {"email": "Эта почта уже зарегистрирована."}}), 409
         if db.execute(select(User.id).where(func.lower(User.login) == login)).first():
@@ -142,6 +143,56 @@ def confirm_email():
         db.commit()
         # Без входа: чужая ссылка иначе молча подменила бы сессию того, кто её открыл.
         return jsonify({"confirmed": True, "login": user.login})
+
+
+def _free_stale(db, *, email=None, login=None):
+    """Неподтверждённый аккаунт с истёкшей ссылкой не держит ни логин, ни почту:
+    иначе опечатка в адресе занимала бы логин навсегда."""
+    taken = []
+    if email:
+        taken.append(func.lower(User.email) == email)
+    if login:
+        taken.append(func.lower(User.login) == login)
+    alive = select(EmailConfirmation.id).where(
+        EmailConfirmation.user_id == User.id, EmailConfirmation.expires_at > utcnow()
+    ).exists()
+    stale = db.execute(
+        select(User.id).where(User.email_confirmed_at.is_(None), or_(*taken), ~alive)
+    ).scalars().all()
+    if stale:
+        db.execute(delete(User).where(User.id.in_(stale)))
+        db.flush()
+
+
+@bp.post("/change-email")
+def change_pending_email():
+    """Опечатка в почте: неподтверждённый аккаунт меняет адрес по логину и паролю."""
+    data = json_body()
+    identity = str_field(data, "identity", max_len=4096).lower()
+    password = str_field(data, "password", max_len=4096, strip=False)
+    email = str_field(data, "email", max_len=4096).lower()
+    if not EMAIL_RE.match(email) or len(email) > EMAIL_MAX:
+        return jsonify({"errors": {"email": "Укажите корректную почту."}}), 400
+    with SessionLocal() as db:
+        user = db.execute(
+            select(User).where(
+                (func.lower(User.login) == identity) | (func.lower(User.email) == identity)
+            )
+        ).scalar_one_or_none()
+        if user is None or not verify_password(user.password_hash, password):
+            return jsonify({"error": "Неверный логин или пароль."}), 401
+        if user.email_confirmed_at is not None:
+            return jsonify({"error": "Почта уже подтверждена."}), 409
+        _free_stale(db, email=email)
+        if db.execute(
+            select(User.id).where(func.lower(User.email) == email, User.id != user.id)
+        ).first():
+            return jsonify({"errors": {"email": "Эта почта уже зарегистрирована."}}), 409
+        user.email = email
+        db.execute(delete(EmailConfirmation).where(EmailConfirmation.user_id == user.id))
+        sent = _issue_confirmation(db, user)
+        db.commit()
+        return jsonify({"email": user.email, "mail_sent": sent})
 
 
 @bp.post("/resend")

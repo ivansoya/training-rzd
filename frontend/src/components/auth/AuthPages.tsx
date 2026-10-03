@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { ApiError, login, register, resendConfirmation } from "../../auth/api";
+import { ApiError, changePendingEmail, login, register, resendConfirmation } from "../../auth/api";
 import Banner from "../Banner";
 
 interface Props {
@@ -86,6 +86,9 @@ export default function AuthPages({ onSignedIn }: Props) {
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   // Set when the account exists but the emailed link hasn't been opened yet.
   const [pendingEmail, setPendingEmail] = useState<string | null>(null);
+  // Чем вошли, когда узнали про неподтверждённую почту: по ним и меняется адрес.
+  const [pendingAuth, setPendingAuth] = useState<{ identity: string; password: string } | null>(null);
+  const [fixEmail, setFixEmail] = useState<string | null>(null);
   const [resent, setResent] = useState(false);
 
   // login form
@@ -129,6 +132,7 @@ export default function AuthPages({ onSignedIn }: Props) {
     } catch (err) {
       if (err instanceof ApiError && err.code === "email_unconfirmed") {
         setPendingEmail(err.email || identity);
+        setPendingAuth({ identity, password });
       } else {
         setError((err as Error).message);
       }
@@ -142,6 +146,23 @@ export default function AuthPages({ onSignedIn }: Props) {
     setBusy(true);
     try {
       await resendConfirmation(pendingEmail);
+      setResent(true);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleFixEmail(e: FormEvent) {
+    e.preventDefault();
+    if (!pendingAuth || !fixEmail) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await changePendingEmail(pendingAuth.identity, pendingAuth.password, fixEmail);
+      setPendingEmail(r.email);
+      setFixEmail(null);
       setResent(true);
     } catch (err) {
       setError((err as Error).message);
@@ -167,6 +188,7 @@ export default function AuthPages({ onSignedIn }: Props) {
         password: regPassword,
       });
       setPendingEmail(email); // сессии ещё нет: сначала подтверждение почты
+      setPendingAuth({ identity: regLogin, password: regPassword });
     } catch (err) {
       if (err instanceof ApiError && err.fields) {
         setFieldErrors(err.fields);
@@ -212,8 +234,8 @@ export default function AuthPages({ onSignedIn }: Props) {
               <h1>Подтвердите почту</h1>
               <p className="mag-sub">
                 Письмо со ссылкой отправлено на <b>{pendingEmail}</b>. Откройте
-                его и перейдите по ссылке — вход выполнится автоматически.
-                Ссылка действует 24 часа.
+                его и перейдите по ссылке, а затем войдите. Ссылка действует
+                24 часа.
               </p>
               {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
               {resent && <Banner onClose={() => setResent(false)}>Письмо отправлено ещё раз.</Banner>}
@@ -225,21 +247,42 @@ export default function AuthPages({ onSignedIn }: Props) {
               >
                 {busy ? "Отправляем…" : "Отправить письмо ещё раз"}
               </button>
-              <div className="mag-aux">
-                <span>Не та почта?</span>
-                <button
-                  type="button"
-                  className="mag-link"
-                  onClick={() => {
-                    setPendingEmail(null);
-                    setResent(false);
-                    setError(null);
-                    switchMode("register");
-                  }}
-                >
-                  Зарегистрироваться заново
-                </button>
-              </div>
+              {fixEmail !== null ? (
+                <form onSubmit={handleFixEmail} style={{ marginTop: 16 }}>
+                  <Field
+                    id="fx-email"
+                    label="Правильная почта"
+                    type="email"
+                    value={fixEmail}
+                    onChange={setFixEmail}
+                    autoComplete="email"
+                  />
+                  <button className="mag-btn" type="submit" disabled={busy || !fixEmail.trim()}>
+                    {busy ? "Меняем…" : "Отправить письмо на эту почту"}
+                  </button>
+                </form>
+              ) : (
+                <div className="mag-aux">
+                  <span>Не та почта?</span>
+                  <button
+                    type="button"
+                    className="mag-link"
+                    onClick={() => {
+                      setResent(false);
+                      setError(null);
+                      // Логин и пароль под рукой — сменить адрес, не теряя логин.
+                      if (pendingAuth) {
+                        setFixEmail("");
+                        return;
+                      }
+                      setPendingEmail(null);
+                      switchMode("register");
+                    }}
+                  >
+                    {pendingAuth ? "Исправить почту" : "Зарегистрироваться заново"}
+                  </button>
+                </div>
+              )}
             </div>
           ) : mode === "login" ? (
             <form onSubmit={handleLogin}>

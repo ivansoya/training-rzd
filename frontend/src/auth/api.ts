@@ -218,6 +218,13 @@ export async function confirmEmail(token: string): Promise<{ login: string }> {
   return asJson<{ confirmed: boolean; login: string }>(await post("auth/confirm", { token }));
 }
 
+/** Опечатка в почте до подтверждения: тот же логин и пароль, новый адрес. */
+export async function changePendingEmail(
+  identity: string, password: string, email: string
+): Promise<{ email: string }> {
+  return asJson(await post("auth/change-email", { identity, password, email }));
+}
+
 export async function resendConfirmation(email: string): Promise<void> {
   await asJson(await post("auth/resend", { email }));
 }

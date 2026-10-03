@@ -27,3 +27,31 @@ def test_подтверждение_не_ставит_куку(db):
     assert res.status_code == 200, res.text
     assert res.json()["login"] == login
     assert "session" not in res.headers.get("Set-Cookie", "")
+
+
+def _register(login, email):
+    return requests.post(f"{BASE_URL}/api/auth/register", json={
+        "email": email, "login": login, "display_name": "Тестовый", "password": "Test-Passw0rd",
+    })
+
+
+def test_опечатку_в_почте_можно_исправить(db):
+    login = tag()
+    assert _register(login, f"{login}@exmaple.test").status_code == 201
+    res = requests.post(f"{BASE_URL}/api/auth/change-email", json={
+        "identity": login, "password": "Test-Passw0rd", "email": f"{login}@example.test",
+    })
+    assert res.status_code == 200, res.text
+    with db.cursor() as cur:
+        cur.execute("SELECT email FROM users WHERE login = %s", (login,))
+        assert cur.fetchone()[0] == f"{login}@example.test"
+
+
+def test_логин_с_истёкшей_ссылкой_свободен(db):
+    login = tag()
+    assert _register(login, f"{login}@exmaple.test").status_code == 201
+    with db.cursor() as cur:
+        cur.execute(
+            "UPDATE email_confirmations SET expires_at = now() - interval '1 day'"
+            " WHERE user_id = (SELECT id FROM users WHERE login = %s)", (login,))
+    assert _register(login, f"{login}@example.test").status_code == 201
