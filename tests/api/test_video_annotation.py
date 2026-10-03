@@ -365,6 +365,20 @@ def test_принятые_кадры_уборка_не_трогает(api, task,
     assert res.json() == {"removed": 0, "kept_accepted": 1}
 
 
+def test_после_принятия_ролик_закрывается_снова_новыми_кадрами(api, task, video, label_class):
+    """Принятые кадры не запирают ролик: повторное закрытие создаёт только новые."""
+    track = make_track(api, task, video, label_class)
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "updating"})
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/reopen-annotation")
+    api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20", json={})
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 20})
+    done = wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    assert done["status"] == "done", done
+    assert done["result"]["created"] == 1 and done["result"]["kept_accepted"] == 1
+
 def test_сдача_принимает_кадры_ролика_как_обычные(api, task, video, label_class):
     track = make_track(api, task, video, label_class)
     api.put(f"{BASE_URL}/api/video-tracks/{track['id']}/keys/20", json={})

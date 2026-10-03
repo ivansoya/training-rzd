@@ -66,17 +66,28 @@ def frame_is_free(db, video, frame_no):
 
 
 def frames_in_task(db, video):
-    """Сколько кадров ролик уже дал прежним закрытием.
+    """Сколько черновых кадров ролик дал прежним закрытием.
 
-    Пока они есть, закрыть разметку заново нельзя. Один счёт на отказ в
-    закрытии и на сводку: разойдись они, карточка звала бы закрыть ролик,
-    который сервер тут же отвергнет.
+    Пока они есть, закрыть разметку заново нельзя — их убирают. Принятые в
+    датасет не в счёт: убрать их нечем, и раньше они запирали ролик навсегда.
+    Один счёт на отказ в закрытии и на сводку.
     """
     return db.execute(
         select(func.count(Image.id)).where(
-            Image.source_video_id == video.id, Image.source_frame_no.isnot(None)
+            Image.source_video_id == video.id, Image.source_frame_no.isnot(None),
+            Image.dataset_id.is_(None),
         )
     ).scalar_one()
+
+
+def accepted_frames(db, video):
+    """Номера кадров ролика, уже принятых в датасет: повторное закрытие их не трогает."""
+    return set(db.execute(
+        select(Image.source_frame_no).where(
+            Image.source_video_id == video.id, Image.source_frame_no.isnot(None),
+            Image.dataset_id.isnot(None),
+        )
+    ).scalars())
 
 
 def open_videos(db, task):
@@ -246,6 +257,10 @@ def run_video(db, task, video, user_id, progress=None):
 
     # Одним проходом декодера: фоновые кадры перемешаны с размеченными, и
     # второй проход по тому же ролику стоил бы столько же, сколько первый.
+    # Принятые кадры — уже данные проекта: создаём только недостающие номера.
+    kept = accepted_frames(db, video)
+    by_frame = {f: items for f, items in by_frame.items() if f not in kept}
+    empty_set = empty_set - kept
     wanted = set(by_frame) | empty_set
     videolib.extract_frames(source, sorted(wanted), on_frame, pts=index["pts"])
     missing = sorted(wanted - set(created))
@@ -296,4 +311,5 @@ def run_video(db, task, video, user_id, progress=None):
         "created": len(created),
         "boxes": boxes,
         "empty": len([f for f in empty_set if f in created]),
+        "kept_accepted": len(kept),
     }

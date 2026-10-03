@@ -1205,20 +1205,17 @@ def preview_materialize(task_id, video_id):
             by_frame, empty = collect(db, video)
         except tracklib.TrackError as exc:
             return jsonify({"error": str(exc)}), 400
-        already = set(db.execute(
-            select(Image.source_frame_no).where(
-                Image.source_video_id == video.id,
-                Image.source_frame_no.isnot(None),
-            )
-        ).scalars())
+        # Принятые кадры закрытие не обновляет — их номера пропускаются.
+        kept = materialize.accepted_frames(db, video)
         # Фоновые кадры — такие же кадры таски и считаются вместе со всеми.
         frames = sorted(set(by_frame) | set(empty))
         return jsonify({
             "frames": len(frames),
             "boxes": sum(len(v) for v in by_frame.values()),
             "empty": len(empty),
-            "new_frames": len([f for f in frames if f not in already]),
-            "updated_frames": len([f for f in frames if f in already]),
+            "new_frames": len([f for f in frames if f not in kept]),
+            "updated_frames": 0,
+            "kept_accepted": len([f for f in frames if f in kept]),
             "first_frames": frames[:50],
         })
     finally:
