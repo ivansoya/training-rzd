@@ -615,23 +615,44 @@ def _busy_reason(db, project) -> str | None:
     return ", ".join(found) or None
 
 
-def _drop_project_files(project_id) -> bool:
+TRASH_KEEP_SECONDS = 3600
+
+
+def _trash_dir():
+    return os.path.join(config.TMP_DIR, "deleted-projects")
+
+
+def _stage_project_files(project_id):
     """Папка проекта (кадры, ролики, наборы, обучения, проверки — всё лежит
-    под ней, см. common/config.py) уезжает в _tmp одним переименованием и
-    стирается в фоне. Стирать прямо в запросе нельзя: у больших проектов это
-    десятки тысяч файлов и минуты — дольше таймаута gunicorn."""
+    под ней, см. common/config.py) уезжает в корзину одним переименованием —
+    до удаления строк: не вышло переименовать — проект остаётся целым.
+    Возвращает путь в корзине или None, если папки нет."""
     src = config.project_dir(project_id)
     if not os.path.isdir(src):
-        return False
-    trash = os.path.join(config.TMP_DIR, "deleted-projects")
-    os.makedirs(trash, exist_ok=True)
-    dst = os.path.join(trash, f"{project_id}-{int(time.time())}")
+        return None
+    os.makedirs(_trash_dir(), exist_ok=True)
+    dst = os.path.join(_trash_dir(), f"{project_id}-{int(time.time())}")
     os.rename(src, dst)
-    # ponytail: поток внутри воркера gunicorn прервётся с перезапуском
-    # контейнера, и хвост останется в _tmp/deleted-projects; уборщик по
-    # возрасту понадобится, если такие хвосты начнут копиться.
-    threading.Thread(target=shutil.rmtree, args=(dst, True), daemon=True).start()
-    return True
+    return dst
+
+
+def _purge_trash(fresh):
+    """Стереть корзину в фоне: в запросе нельзя — у больших проектов это
+    минуты. Заодно хвосты, недочищенные до перезапуска контейнера: возраст —
+    по метке в имени, mtime после переименования остаётся старым."""
+    def run():
+        if fresh:
+            shutil.rmtree(fresh, True)
+        try:
+            names = os.listdir(_trash_dir())
+        except OSError:
+            return
+        now = time.time()
+        for name in names:
+            stamp = name.rsplit("-", 1)[-1]
+            if stamp.isdigit() and now - int(stamp) > TRASH_KEEP_SECONDS:
+                shutil.rmtree(os.path.join(_trash_dir(), name), True)
+    threading.Thread(target=run, daemon=True).start()
 
 
 @bp.get("/projects/<code>/cost")
@@ -684,9 +705,20 @@ def delete_project(code):
         # Строки уходят каскадом базы: все ссылки на projects — CASCADE или
         # SET NULL (проверено по pg_constraint). Удаление через ORM подняло
         # бы в память весь проект ради того же результата.
-        db.execute(delete(Project).where(Project.id == pid))
-        db.commit()
-    return jsonify({"ok": True, "files_removed": _drop_project_files(pid)})
+        try:
+            staged = _stage_project_files(pid)
+        except OSError:
+            return jsonify({"error": "Не удалось убрать файлы проекта — проект не удалён. Попробуйте ещё раз."}), 500
+        try:
+            db.execute(delete(Project).where(Project.id == pid))
+            db.commit()
+        except Exception:
+            # Строки остались — вернуть и папку, иначе проект без своих файлов.
+            if staged:
+                os.rename(staged, config.project_dir(pid))
+            raise
+    _purge_trash(staged)
+    return jsonify({"ok": True, "files_removed": staged is not None})
 
 
 # ---------------------------------------------------------------- members ---
