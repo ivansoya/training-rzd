@@ -17,7 +17,7 @@ s из N номеров попадает s·N с точностью до еди�
 """
 from itertools import zip_longest
 
-from dataprep_svc import albu, masks
+from dataprep_svc import albu, masks, registry
 from dataprep_svc.graph import plan as planlib
 from dataprep_svc.graph import rng, schema
 
@@ -126,6 +126,15 @@ def compile_graph(doc, load_version=None, *, min_visibility=0.15,
             min_visibility=min_visibility, trace=trace,
         )
     return compiled
+
+
+def node_label(node):
+    """Узел словами человека: подпись, а без неё — русские имена его операций."""
+    params = node.get("params") or {}
+    if params.get("label"):
+        return f"«{params['label']}»"
+    names = [registry.BY_OP.get(o["op"], {}).get("name", o["op"]) for o in _ops_of(node)]
+    return "«" + " → ".join(names) + "»" if names else schema.node_title(node)
 
 
 def _ops_of(node):

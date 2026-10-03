@@ -264,8 +264,14 @@ def build(db, job, *, on_beat=None):
             f"s{unit['source_index']}" if unit["source_count"] > 1 else ""
         )
 
+    # Внутренний номер узла («aug2135») человеку ничего не говорит.
+    titles = {}
+    for compiled in compiled_of.values():
+        for node in compiled.nodes:
+            titles.setdefault(node["id"], engine.node_label(node))
+
     def drop(node_id, _why):
-        dropped_at.update([node_id])
+        dropped_at.update([titles.get(node_id, node_id)])
 
     def emit(manifest, item, image, base, unit):
         """Записать образец, вышедший из графа."""
