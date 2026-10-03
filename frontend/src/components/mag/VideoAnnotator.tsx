@@ -51,7 +51,7 @@ import {
 import Sep from "../Sep";
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
-import { useEscape } from "./useEscape";
+import { hasLayer, useEscape } from "./useEscape";
 import { scoutLanes, taskColors, useScouts } from "../agents/scout";
 
 /** Управление редактором: клавиша и что она делает.
@@ -773,6 +773,7 @@ export default function VideoAnnotator({
   // --- клавиши ------------------------------------------------------------- #
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (hasLayer()) return;
       // Клавиши молчат, только пока человек печатает. Галочка — не поле
       // ввода: после щелчка по «Интерполяции» фокус оставался на ней, и
       // пробел переключал её снова вместо проигрывания.

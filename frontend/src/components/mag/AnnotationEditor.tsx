@@ -19,7 +19,7 @@ import { frameActions } from "./frameActions";
 import * as history from "./editHistory";
 import { empty, type History } from "./editHistory";
 import TagPicker from "./TagPicker";
-import { useEscape } from "./useEscape";
+import { hasLayer, useEscape } from "./useEscape";
 import { useAutosave } from "./useAutosave";
 import { withSavedIds } from "./savedIds";
 import type { Tag } from "../../api/tags";
@@ -794,6 +794,7 @@ export default function AnnotationEditor({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (hasLayer()) return;
       // Клавиши молчат, пока человек печатает, — но флажок и ползунок это не
       // печать. Прежде любой <input> глушил инструменты, и после клика по
       // галке в панели V/B/P переставали работать до тех пор, пока не
@@ -839,6 +840,7 @@ export default function AnnotationEditor({
           // Забыв его тут, мы заставили бы включать заново после каждого
           // выхода из инструмента — то есть постоянно.
           else if (tool !== "select") { setTool("select"); setLock(false); }
+          else if (selected !== null) pick(null);
           else void close();
           break;
         case "Space":

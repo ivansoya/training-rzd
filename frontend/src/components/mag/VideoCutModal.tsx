@@ -12,6 +12,7 @@ import VideoStrip from "./VideoStrip";
 import Sep from "../Sep";
 import Banner from "../Banner";
 import { ScoutBand, taskColors, useScouts } from "../agents/scout";
+import { hasLayer } from "./useEscape";
 
 const COLORS = ["#e21a1a", "#1f6feb", "#1a7f4b", "#8957e5", "#e8590c"];
 const STEPS_MS = [100, 250, 500, 1000, 2000, 5000];
@@ -475,6 +476,7 @@ export default function VideoCutModal({
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      if (hasLayer()) return;
       if (e.key === "Escape") {
         if (menu) setMenu(null);
         else if (leaving) setLeaving(false);

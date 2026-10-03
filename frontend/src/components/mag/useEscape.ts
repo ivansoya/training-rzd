@@ -22,6 +22,12 @@ function onKey(e: KeyboardEvent) {
   layers[layers.length - 1].current();
 }
 
+/** Открыт ли слой поверх. Горячие клавиши экрана под ним молчат: иначе F под
+ *  подтверждением добавляла кадр, а цифры под справкой перекрашивали объект. */
+export function hasLayer(): boolean {
+  return layers.length > 0;
+}
+
 export function useEscape(onClose: () => void, active = true) {
   const ref = useRef(onClose);
   ref.current = onClose;
