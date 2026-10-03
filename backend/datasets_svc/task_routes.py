@@ -1162,6 +1162,10 @@ def cut_video(task_id, video_id):
         row = db.get(TaskVideo, vid) if vid else None
         if row is None or row.task_id != task.id:
             return jsonify({"error": "Видео не найдено."}), 404
+        # Размечаемый ролик даёт кадры закрытием разметки; нарезанные из него
+        # кадры нигде бы не показались.
+        if row.mode != "cut":
+            return jsonify({"error": "Этот ролик загружен для разметки, а не для нарезки."}), 409
         segments = (request.get_json(silent=True) or {}).get("segments") or []
         try:
             diff = _plan_diff(db, row, segments)
