@@ -513,3 +513,8 @@ def test_sam3_не_больше_16_строк_и_бронь_растёт_с_пр
     two = _text("t", many[:2], model="sam3")
     assert ag.text_vram_mb(two) == ag.SAM3_BASE_MB + 2 * ag.SAM3_PER_PROMPT_MB
     assert ag.text_vram_mb(_text("t", many[:2])) == ag.YOLOE_MB
+
+
+def test_длинный_промт_отвергается_словами():
+    with pytest.raises(ag.AgentGraphError, match="длиннее 64"):
+        ag.check(_text_doc(_text("t", [("слово " * 20, "Класс", True)])))

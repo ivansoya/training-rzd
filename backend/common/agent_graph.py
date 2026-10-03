@@ -352,6 +352,9 @@ def _check_numbers(node, clamp=False):
                     row["conf"] = min(max(conf or 0, 0), 1)
 
 
+PROMPT_MAX = 64
+
+
 def _check_text(node, sam3, examples):
     params = node.get("params") or {}
     if params.get("model") not in (None, *TEXT_MODELS):
@@ -369,6 +372,11 @@ def _check_text(node, sam3, examples):
     twice = next((p for p in prompts if prompts.count(p) > 1), None)
     if twice:
         raise AgentGraphError(f"{title(node)}: промт «{twice}» повторяется.")
+    # Кодировщик текста молча обрезает длинное — лучше сказать сразу.
+    long = next((p for p in prompts if len(p) > PROMPT_MAX), None)
+    if long:
+        raise AgentGraphError(
+            f"{title(node)}: промт длиннее {PROMPT_MAX} символов — «{long[:24]}…».")
     sets = [s for _, s in text_sets(node)]
     if any(sets.count(s) > 1 for s in sets):
         raise AgentGraphError(f"{title(node)}: один набор образцов стоит в двух строках.")
