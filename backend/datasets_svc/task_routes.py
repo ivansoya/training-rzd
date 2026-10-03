@@ -466,18 +466,28 @@ def _target_dataset(db, task, user):
     """Датасет, куда уходят принятые кадры; создаётся при первом «готово»."""
     if task.target_dataset_id:
         return db.get(Dataset, task.target_dataset_id)
+    # Замок на проект: две таски, принятые разом, иначе выбрали бы один identifier.
+    db.execute(select(Project.id).where(Project.id == task.project_id).with_for_update())
+    rows = db.execute(
+        select(Dataset.identifier, Dataset.name).where(Dataset.project_id == task.project_id)
+    ).all()
+    taken = {r.identifier for r in rows}
+    names = {r.name for r in rows}
     base = translit_slug(task.target_dataset_name or task.name) or "dataset"
-    taken = set(db.execute(
-        select(Dataset.identifier).where(Dataset.project_id == task.project_id)
-    ).scalars())
     identifier = base
     n = 2
     while identifier in taken:
         identifier = f"{base}_{n}"
         n += 1
+    # Одноимённые таски давали одноимённые датасеты — в списках их не различить.
+    title = task.target_dataset_name or task.name
+    name, n = title, 2
+    while name in names:
+        name = f"{title} ({n})"
+        n += 1
     ds = Dataset(
         project_id=task.project_id,
-        name=task.target_dataset_name or task.name,
+        name=name,
         identifier=identifier,
         created_by=user.id if user else None,
     )
@@ -495,7 +505,12 @@ def set_status(task_id):
     try:
         if not _may_work(task, user, role):
             return jsonify({"error": "Это не ваша таска."}), 403
-        target = (request.get_json(silent=True) or {}).get("status")
+        # Таска под замком: два «Готово» разом создавали два датасета или падали 500.
+        task = db.execute(
+            select(Task).where(Task.id == task.id).with_for_update()
+            .execution_options(populate_existing=True)
+        ).scalar_one()
+        target = json_body().get("status")
         if target not in ALLOWED:
             return jsonify({"error": "Неизвестное состояние."}), 400
         if target not in ALLOWED[task.status]:
