@@ -378,6 +378,8 @@ export interface ImportState {
   upload?: { id: string; name?: string; size?: number; received?: number };
   archive?: { name: string; size_bytes: number; upload_seconds: number };
   report?: ImportReport;
+  /** Имя датасета, под которым записан импорт (после «done»). */
+  dataset_name?: string;
   result?: {
     dataset_id: string;
     images: number;

@@ -115,6 +115,8 @@ def _parse_label_text(text):
             return None, 0, f"строка {lineno}: нечисловое значение"
         if class_index < 0:
             return None, 0, f"строка {lineno}: отрицательный id класса {class_index}"
+        if class_index >= 2 ** 31:
+            return None, 0, f"строка {lineno}: id класса {class_index} слишком велик"
         fixed = []
         cut = False
         for c in coords:
@@ -222,6 +224,10 @@ def scan(zip_path, progress=None):
                         probe.size
             except Exception:  # noqa: BLE001
                 _note(skipped, member, "файл не читается как изображение")
+                continue
+
+            if len(os.path.basename(member)) > 255:
+                _note(skipped, member, "имя файла длиннее 255 символов")
                 continue
 
             label_member = _label_for(member, label_members)

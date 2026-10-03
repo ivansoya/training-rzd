@@ -178,8 +178,25 @@ export default function ImportWizard() {
   async function handleCancel() {
     if (!code) return;
     if (!window.confirm("Отменить импорт? Загруженный архив будет удалён.")) return;
-    await cancelImport(code).catch(() => {});
-    navigate(`/projects/${code}`);
+    try {
+      await cancelImport(code);
+      navigate(`/projects/${code}`);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }
+
+  /** После ошибки: убрать её следы на сервере и начать с выбора архива. */
+  async function handleRestart() {
+    if (!code) return;
+    try {
+      await cancelImport(code);
+      setError(null);
+      setDrafts({});
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    }
   }
 
   function setDraft(index: number, patch: Partial<ClassDraft>) {
@@ -225,6 +242,23 @@ export default function ImportWizard() {
       </div>
 
       {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
+      {/* Ошибка разбора или записи живёт на сервере: мастер после перезагрузки
+          её показывает, а не делает вид, что ничего не было. */}
+      {state.status === "error" && (
+        <Banner className="mag-error">
+          Импорт не удался: {state.error || "причина не сохранилась"}{" "}
+          <button className="mag-ghost mag-ghost-inline" type="button" onClick={handleRestart}>
+            Начать заново
+          </button>
+        </Banner>
+      )}
+      {(state.status === "uploading" || state.status === "classes") && (
+        <p className="mag-aux">
+          <button className="mag-ghost mag-sm" type="button" onClick={handleCancel}>
+            Отменить импорт
+          </button>
+        </p>
+      )}
 
       {/* ---- 1. Архив ---- */}
       {/* После записи шаг выбора архива больше не предлагаем: над «Импорт
@@ -454,7 +488,7 @@ export default function ImportWizard() {
       ) : state.status === "done" && state.result ? (
         <StepDone
           title="Импорт завершён"
-          sub={datasetName || "Датасет создан"}
+          sub={state.dataset_name || datasetName || "Датасет создан"}
           action={
             <Link className="mag-btn mag-btn-inline" to={`/projects/${code}`}>
               К проекту

@@ -10,7 +10,7 @@ from flask import Flask
 
 from common import config, db, jobs, origin, web
 from datasets_svc.export_routes import bp as export_bp
-from datasets_svc.project_routes import bp as project_bp
+from datasets_svc.project_routes import bp as project_bp, recover_imports
 from datasets_svc.routes import bp
 from datasets_svc.task_routes import bp as task_bp
 from datasets_svc.video_routes import bp as video_bp
@@ -30,6 +30,8 @@ app.register_blueprint(project_bp)
 app.register_blueprint(task_bp)
 app.register_blueprint(video_bp)
 app.register_blueprint(export_bp)
+# Работы импорта жили в потоках прежнего процесса — отпустить зависшие проекты.
+recover_imports()
 
 
 if __name__ == "__main__":

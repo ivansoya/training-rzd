@@ -5,6 +5,7 @@ binaries (`_import.json`), not in the browser. Progress of the two long phases
 goes through the usual job files, so the front end polls `/api/jobs/<id>` the
 same way it does for everything else.
 """
+import logging
 import os
 import tempfile
 import threading
@@ -53,6 +54,7 @@ PALETTE = [
 # Images written between commits: a batch keeps memory flat on a 100k dataset
 # without making progress look frozen.
 WRITE_BATCH = 200
+log = logging.getLogger(__name__)
 
 
 def _manifest_file(project_id):
@@ -66,6 +68,29 @@ def _state(project_id):
 def _save_state(project_id, state):
     os.makedirs(config.project_dir(project_id), exist_ok=True)
     save_json(config.project_import_file(project_id), state)
+
+
+# Замок на импорт проекта: отмена, запись и поток разбора меняют одно состояние.
+_import_locks: dict = {}
+_import_locks_guard = threading.Lock()
+
+
+def _import_lock(project_id):
+    with _import_locks_guard:
+        return _import_locks.setdefault(str(project_id), threading.Lock())
+
+
+def _save_if_current(project_id, job_id, state) -> bool:
+    """Записать состояние, только если импорт всё ещё этой работы.
+
+    Номер работы — токен: после «Отменить» или нового архива поток прежней
+    работы больше ничего не пишет (раньше он возвращал отменённый архив)."""
+    with _import_lock(project_id):
+        current = _state(project_id) or {}
+        if current.get("job_id") != job_id:
+            return False
+        _save_state(project_id, {**state, "job_id": job_id})
+        return True
 
 
 def _get_by_uuid(db, model, raw):
@@ -125,12 +150,20 @@ def _run_scan_job(job_id, project_id, zip_path, archive_info):
 
         report, manifest = importer.scan(zip_path, progress=progress)
         save_json(_manifest_file(project_id), manifest)
-        _save_state(project_id, {
+        if not _save_if_current(project_id, job_id, {
             "status": "classes",
             "archive": archive_info,
             "zip_path": zip_path,
             "report": report,
-        })
+        }):
+            # Отменили, пока читали: свой архив убираем сами.
+            for path in (zip_path, _manifest_file(project_id)):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            jobs.update(job_id, status="error", error="Импорт отменён.")
+            return
         jobs.update(job_id, status="done", result={"images": report["images"]})
     except importer.ImportError_ as exc:
         _fail(project_id, job_id, str(exc), zip_path)
@@ -141,13 +174,69 @@ def _run_scan_job(job_id, project_id, zip_path, archive_info):
 
 
 def _fail(project_id, job_id, message, zip_path=None):
+    """Импорт не удался: архив прочь, ошибка в мастер, проект снова «готов».
+
+    Раньше проект навсегда оставался «Импорт выполняется»: экспорт выключен,
+    набор не создать, повторный импорт — 409."""
     if zip_path:
         try:
             os.remove(zip_path)
         except OSError:
             pass
-    _save_state(project_id, {"status": "error", "error": message})
+    _save_if_current(project_id, job_id, {"status": "error", "error": message})
     jobs.update(job_id, status="error", error=message)
+    _back_to_ready(project_id)
+
+
+def _back_to_ready(project_id):
+    with SessionLocal() as db:
+        project = db.get(Project, project_id)
+        if project is not None and project.status == "importing":
+            project.status = "ready"
+            db.commit()
+
+
+def recover_imports():
+    """При старте сервиса: работы разбора и записи жили в потоках прежнего
+    процесса и умерли вместе с ним. Говорим об этом и отпускаем проект."""
+    with SessionLocal() as db:
+        stuck = db.execute(select(Project.id).where(Project.status == "importing")).scalars().all()
+    referenced = set()
+    for pid in stuck:
+        state = _state(pid) or {}
+        if state.get("status") in ("scanning", "writing"):
+            _save_state(pid, {**state, "status": "error",
+                              "error": "Импорт прервался перезапуском сервиса — начните заново."})
+            _back_to_ready(pid)
+            for path in (state.get("zip_path"), _manifest_file(pid)):
+                try:
+                    os.remove(path)
+                except (OSError, TypeError):
+                    pass
+        elif state.get("zip_path"):
+            referenced.add(os.path.abspath(state["zip_path"]))
+        # Ошибка прошлых версий проект не отпускала; без состояния — держать нечего.
+        if not state or state.get("status") == "error":
+            _back_to_ready(pid)
+    _sweep_tmp(referenced)
+
+
+def _sweep_tmp(referenced, max_age=3600):
+    """Архивы в _tmp, на которые не ссылается ни один импорт, — сироты отмен."""
+    try:
+        names = os.listdir(config.TMP_DIR)
+    except OSError:
+        return
+    now = time.time()
+    for name in names:
+        path = os.path.abspath(os.path.join(config.TMP_DIR, name))
+        if not name.endswith(".zip") or path in referenced:
+            continue
+        try:
+            if now - os.path.getmtime(path) > max_age:
+                os.remove(path)
+        except OSError:
+            pass
 
 
 @bp.post("/api/projects/<code>/import")
@@ -229,14 +318,15 @@ def _begin_scan(db, project, zip_path, archive_info, upload_id=None):
     project.status = "importing"
     db.commit()
     job_id = jobs.create("import-scan", message="Подготовка", project_id=project.id)
-    _save_state(project.id, {
-        "status": "scanning",
-        "archive": archive_info,
-        "zip_path": zip_path,
-        "job_id": job_id,
-        # Ради повторного «finish» после потерянного ответа.
-        **({"upload": {"id": upload_id}} if upload_id else {}),
-    })
+    with _import_lock(project.id):
+        _save_state(project.id, {
+            "status": "scanning",
+            "archive": archive_info,
+            "zip_path": zip_path,
+            "job_id": job_id,
+            # Ради повторного «finish» после потерянного ответа.
+            **({"upload": {"id": upload_id}} if upload_id else {}),
+        })
     threading.Thread(
         target=_run_scan_job,
         args=(job_id, project.id, zip_path, archive_info),
@@ -363,19 +453,22 @@ def cancel_import(code):
     if err:
         return err
     try:
-        state = _state(project.id) or {}
-        zip_path = state.get("zip_path")
-        if zip_path:
-            try:
-                os.remove(zip_path)
-            except OSError:
-                pass
-        upload.discard(state.get("upload"))
-        for path in (_manifest_file(project.id), config.project_import_file(project.id)):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
+        with _import_lock(project.id):
+            state = _state(project.id) or {}
+            if state.get("status") == "writing":
+                return jsonify({"error": "Запись уже идёт — дождитесь её конца."}), 409
+            zip_path = state.get("zip_path")
+            if zip_path:
+                try:
+                    os.remove(zip_path)
+                except OSError:
+                    pass
+            upload.discard(state.get("upload"))
+            for path in (_manifest_file(project.id), config.project_import_file(project.id)):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
         project.status = "ready"
         db.commit()
         return jsonify({"ok": True})
@@ -388,6 +481,9 @@ def cancel_import(code):
 # --------------------------------------------------------------------------- #
 def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
     db = SessionLocal()
+    before = _state(project_id) or {}
+    made = {"dataset": None, "classes": [], "superclasses": []}
+    written = 0
     try:
         jobs.update(job_id, message="Записываю изображения", phase="write",
                     total=len(manifest))
@@ -404,6 +500,7 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
         )
         db.add(dataset)
         db.flush()
+        made["dataset"] = dataset.id
 
         superclass_ids = {}
         for sc in plan["superclasses"]:
@@ -414,6 +511,7 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
             db.add(row)
             db.flush()
             superclass_ids[sc["name"]] = row.id
+            made["superclasses"].append(row.id)
 
         class_ids = {}
         for cls in plan["classes"]:
@@ -428,68 +526,41 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
             db.add(row)
             db.flush()
             class_ids[cls["class_index"]] = row.id
+            made["classes"].append(row.id)
         # Номера пришли из архива, а не от счётчика проекта: двигаем отметку
         # за ними, иначе следующий класс, созданный руками, налетит на занятый.
+        # Только вверх: опустить отметку значило бы раздать номера удалённых классов.
         if plan["classes"]:
-            db.get(Project, project_id).next_class_index = max(
-                cls["class_index"] for cls in plan["classes"]
-            ) + 1
+            project = db.get(Project, project_id)
+            project.next_class_index = max(
+                project.next_class_index or 0,
+                max(cls["class_index"] for cls in plan["classes"]) + 1,
+            )
         db.commit()
 
-        written = unreadable = orphan_boxes = 0
+        unreadable = orphan_boxes = 0
         with zipfile.ZipFile(zip_path) as zf:
             for i, entry in enumerate(manifest):
-                image = Image(
-                    project_id=project_id,
-                    dataset_id=dataset.id,
-                    file_name=os.path.basename(entry["image"]),
-                    file_path="",
-                    split=entry["split"],
-                    created_by=user_id,
-                )
-                db.add(image)
-                db.flush()
-
-                dest = os.path.join(images_dir, f"{image.id}.jpg")
-                thumb = os.path.join(thumbs_dir, f"{image.id}.jpg")
-                info = importer.extract_image(zf, entry["image"], dest, thumb)
-                if info is None:
-                    # Damage inside the pixel data — the header parsed during
-                    # the scan, so it is only visible now. Drop the image whole.
-                    db.delete(image)
+                # Свой SAVEPOINT на кадр: один негодный кадр — это «не открылся»,
+                # а не упавший импорт с половиной записанного.
+                savepoint = db.begin_nested()
+                try:
+                    put = _write_one(db, zf, entry, project_id, dataset.id, class_ids,
+                                     images_dir, thumbs_dir, user_id)
+                except Exception:  # noqa: BLE001
+                    savepoint.rollback()
+                    log.exception("импорт: кадр %s не записан", entry.get("image"))
                     unreadable += 1
-                    continue
-
-                width, height, size_bytes = info
-                image.file_path = os.path.relpath(dest, config.DATA_DIR)
-                image.width = width
-                image.height = height
-                image.size_bytes = size_bytes
-
-                # `boxes` — манифест, записанный прежней версией: он лежит
-                # файлом между разбором архива и записью, и импорт, начатый до
-                # обновления, дописывается уже после него.
-                for shape in entry.get("shapes", entry.get("boxes") or []):
-                    class_id = class_ids.get(importer.class_of(shape))
-                    if class_id is None:
-                        orphan_boxes += 1
-                        continue
-                    parsed = importer.to_pixels(shape, width, height)
-                    if parsed is None:
-                        # Контур, от которого после пересчёта в пиксели ничего
-                        # не осталось. Кадр из-за одного объекта не роняем.
-                        orphan_boxes += 1
-                        continue
-                    ann_type, geometry, area = parsed
-                    db.add(Annotation(
-                        image_id=image.id,
-                        class_id=class_id,
-                        ann_type=ann_type,
-                        geometry=geometry,
-                        area=round(area, 2),
-                        created_by=user_id,
-                    ))
-                written += 1
+                    put = None
+                else:
+                    savepoint.commit()
+                if put is None:
+                    pass
+                elif put == "unreadable":
+                    unreadable += 1
+                else:
+                    written += 1
+                    orphan_boxes += put
 
                 if (i + 1) % WRITE_BATCH == 0:
                     db.commit()
@@ -506,10 +577,17 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
             "unreadable": unreadable,
             "orphan_boxes": orphan_boxes,
         }
-        _save_state(project_id, {"status": "done", "result": result})
+        # Прошлые шаги остаются: после записи мастер показывает архив и отчёт,
+        # а не зовёт выбрать архив заново.
+        _save_if_current(project_id, job_id, {
+            "status": "done", "result": result, "archive": before.get("archive"),
+            "report": before.get("report"), "dataset_name": plan["dataset_name"],
+        })
         jobs.update(job_id, processed=len(manifest), status="done", result=result)
     except Exception as exc:  # noqa: BLE001
         db.rollback()
+        if not written:
+            _undo_empty(made)
         _fail(project_id, job_id, public_error(exc, "Запись импорта прервалась."))
     finally:
         db.close()
@@ -520,31 +598,101 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
                 pass
 
 
+def _undo_empty(made):
+    """Не записалось ни кадра — убрать созданные датасет и классы: иначе
+    повторный импорт упирался в «В проекте уже есть классы»."""
+    with SessionLocal() as db:
+        if made["dataset"]:
+            db.execute(Dataset.__table__.delete().where(Dataset.id == made["dataset"]))
+        if made["classes"]:
+            db.execute(LabelClass.__table__.delete().where(LabelClass.id.in_(made["classes"])))
+        if made["superclasses"]:
+            db.execute(Superclass.__table__.delete().where(Superclass.id.in_(made["superclasses"])))
+        db.commit()
+
+
+def _write_one(db, zf, entry, project_id, dataset_id, class_ids, images_dir, thumbs_dir, user_id):
+    """Один кадр архива → строки. "unreadable" — пиксели битые; иначе число
+    рамок, оставшихся без класса."""
+    image = Image(
+        project_id=project_id,
+        dataset_id=dataset_id,
+        file_name=os.path.basename(entry["image"]),
+        file_path="",
+        split=entry["split"],
+        created_by=user_id,
+    )
+    db.add(image)
+    db.flush()
+
+    dest = os.path.join(images_dir, f"{image.id}.jpg")
+    thumb = os.path.join(thumbs_dir, f"{image.id}.jpg")
+    info = importer.extract_image(zf, entry["image"], dest, thumb)
+    if info is None:
+        # Damage inside the pixel data — the header parsed during
+        # the scan, so it is only visible now. Drop the image whole.
+        db.delete(image)
+        return "unreadable"
+
+    width, height, size_bytes = info
+    image.file_path = os.path.relpath(dest, config.DATA_DIR)
+    image.width = width
+    image.height = height
+    image.size_bytes = size_bytes
+
+    # `boxes` — манифест, записанный прежней версией: он лежит
+    # файлом между разбором архива и записью, и импорт, начатый до
+    # обновления, дописывается уже после него.
+    orphans = 0
+    for shape in entry.get("shapes", entry.get("boxes") or []):
+        class_id = class_ids.get(importer.class_of(shape))
+        if class_id is None:
+            orphans += 1
+            continue
+        parsed = importer.to_pixels(shape, width, height)
+        if parsed is None:
+            # Контур, от которого после пересчёта в пиксели ничего
+            # не осталось. Кадр из-за одного объекта не роняем.
+            orphans += 1
+            continue
+        ann_type, geometry, area = parsed
+        db.add(Annotation(
+            image_id=image.id,
+            class_id=class_id,
+            ann_type=ann_type,
+            geometry=geometry,
+            area=round(area, 2),
+            created_by=user_id,
+        ))
+    db.flush()
+    return orphans
+
+
 @bp.post("/api/projects/<code>/import/commit")
 def commit_import(code):
     db, project, err = _resolve(code, "admin")
     if err:
         return err
     try:
-        state = _state(project.id)
-        if not state or state.get("status") != "classes":
-            return jsonify({"error": "Импорт не готов к записи."}), 409
-        manifest = load_json(_manifest_file(project.id), None)
-        if manifest is None:
-            return jsonify({"error": "Список файлов потерян, начните импорт заново."}), 409
-
         data = json_body()
-        plan, error = _build_plan(data, state)
-        if error:
-            return jsonify({"error": error}), 400
+        with _import_lock(project.id):
+            state = _state(project.id)
+            if not state or state.get("status") != "classes":
+                return jsonify({"error": "Импорт не готов к записи."}), 409
+            manifest = load_json(_manifest_file(project.id), None)
+            if manifest is None:
+                return jsonify({"error": "Список файлов потерян, начните импорт заново."}), 409
+            plan, error = _build_plan(data, state)
+            if error:
+                return jsonify({"error": error}), 400
 
-        user = current_user(db)
-        job_id = jobs.create("import-write", message="Подготовка",
-                             total=len(manifest), project_id=project.id,
-                             owner=user.id if user else None)
-        state["status"] = "writing"
-        state["job_id"] = job_id
-        _save_state(project.id, state)
+            user = current_user(db)
+            job_id = jobs.create("import-write", message="Подготовка",
+                                 total=len(manifest), project_id=project.id,
+                                 owner=user.id if user else None)
+            state["status"] = "writing"
+            state["job_id"] = job_id
+            _save_state(project.id, state)
         threading.Thread(
             target=_run_write_job,
             args=(job_id, project.id, plan, state["zip_path"], manifest, user.id),
@@ -1316,6 +1464,9 @@ def create_class(code):
     if err:
         return err
     try:
+        # Импорт заводит классы с номерами из архива — ручной класс на них налетел бы.
+        if project.status == "importing":
+            return jsonify({"error": "Идёт импорт архива — классы появятся после него."}), 409
         data = json_body()
         name = str_field(data, "name", max_len=4096)
         color = color_field(data, "color", label="Цвет")
