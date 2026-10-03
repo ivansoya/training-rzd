@@ -1363,13 +1363,12 @@ export default function VideoAnnotator({
             disabled={frozen || (!markedHere && busyHere)}
             aria-pressed={markedHere && !busyHere}
             aria-label={markedHere ? "Снять пометку «фоновый кадр»" : "Пометить кадр фоновым"}
+            // Всплывашка — только диагноз, почему пометка не действует; остальное в справке.
             title={busyHere
               ? (markedHere
                 ? "Пометка не действует: на этом кадре есть объект. Нажмите, чтобы снять"
                 : "На этом кадре есть объект — фоновым он быть не может")
-              : (markedHere
-                ? "Кадр отмечен фоновым: объектов на нём нет. Нажмите, чтобы снять (E)"
-                : "Отметить кадр фоновым: объектов на нём нет (E)")}
+              : undefined}
             onClick={toggleEmpty}
             {...hk("empty")}
           >
