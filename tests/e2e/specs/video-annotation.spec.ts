@@ -161,11 +161,13 @@ async function signIn(page: Page): Promise<string> {
   const link = await confirmLink(page.request, email);
   await page.goto(new URL(link).pathname);
 
-  // Подтверждение идёт запросом со страницы, и по успеху она уводит на главную.
-  // Ждём именно ухода: иначе следующий шаг обгонит незавершённый запрос.
-  await expect(page).not.toHaveURL(/\/confirm\//, { timeout: 20_000 });
-
-  // Сервер открывает сессию сразу на подтверждении — отдельный вход не нужен.
+  // Подтверждение не входит в аккаунт (чужая ссылка не должна подменять
+  // сессию), поэтому после него — обычный вход.
+  await expect(page.getByText("Почта подтверждена")).toBeVisible({ timeout: 20_000 });
+  const signed = await page.request.post("/api/auth/login", {
+    data: { identity: login, password },
+  });
+  expect(signed.ok(), await signed.text()).toBeTruthy();
   const me = await page.request.get("/api/auth/me");
   expect(me.ok(), await me.text()).toBeTruthy();
   expect((await me.json()).user.login).toBe(login);
