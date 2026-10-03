@@ -36,6 +36,7 @@ import ClassMenu from "./ClassMenu";
 import TrackLanes from "./TrackLanes";
 import type { LaneAction } from "./TrackLanes";
 import { useAutoLabel } from "./useAutoLabel";
+import AutoStatus from "./AutoStatus";
 import { useClip, useClipFrame, usePlayback } from "./useClip";
 import type { Clip } from "./useClip";
 import {
@@ -1065,7 +1066,9 @@ export default function VideoAnnotator({
             data-ht={
               auto.state === "ready"
                 ? HELP.auto[1]
-                : "Полуавтомат: модель ещё готовится"
+                : auto.state === "error"
+                  ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}`
+                  : "Полуавтомат: модель ещё готовится"
             }><span>A</span><small>SAM2</small></button>
           <hr />
           <button className="mag-tool" type="button" {...hk("zoomIn")}
@@ -1185,7 +1188,9 @@ export default function VideoAnnotator({
          </>}
         </aside>
 
-        <div className="mag-ved-stage">
+        <div className={autoLive && auto.busy ? "mag-ved-stage auto-wait" : "mag-ved-stage"}>
+          <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn}
+            quiet={frozen} onRetry={auto.retry} onDismiss={() => auto.setError(null)} />
           {/* Кадр готовится: гасим картинку и показываем кружок. Показывать
               проценты нечего — ждать приходится то сеть, то декодер, и число
               всё равно ничего не говорит о том, сколько осталось. */}

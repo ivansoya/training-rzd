@@ -24,8 +24,8 @@ import type {
  * Кадром может быть и изображение таски, и кадр размечаемого видео — хук
  * работает со ссылкой на кадр и не знает, что за ней стоит.
  */
-const OPEN_RETRIES = 3;
-const OPEN_PAUSE_MS = 15_000;
+// Паузы между попытками поднять сессию: растут, чтобы не долбить лежащий сервис.
+const OPEN_PAUSES_MS = [5_000, 15_000, 45_000];
 
 export type AutoState = "off" | "starting" | "ready" | "error";
 
@@ -74,9 +74,10 @@ export function useAutoLabel(
   const [state, setState] = useState<AutoState>("starting");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // Модель не поднялась (503): сервер погасил сломанный процесс, следующая
-  // попытка поднимет новый. Пробуем ещё OPEN_RETRIES раз с паузой.
+  // Модель не поднялась (503) или сервис не ответил: следующая попытка поднимет
+  // новый процесс. Пробуем ещё с растущей паузой; дальше — кнопка «Повторить».
   const [attempt, setAttempt] = useState(0);
+  const [round, setRound] = useState(0);
   const session = useRef<string | null>(null);
   const warmed = useRef<Set<string>>(new Set());
 
@@ -107,6 +108,7 @@ export function useAutoLabel(
         // ту же сессию себе.
         session.current = session_id;
         if (alive) {
+          setError(null);
           setState("ready");
         } else if (mounted === 0) {
           // А вот если редактор и правда закрыли, пока сессия открывалась —
@@ -118,9 +120,11 @@ export function useAutoLabel(
       .catch((e) => {
         if (!alive) return;
         const status = (e as { status?: number }).status;
-        if (status === 503 && attempt < OPEN_RETRIES) {
-          setError(`${(e as Error).message} Повторю через ${OPEN_PAUSE_MS / 1000} с.`);
-          window.setTimeout(() => alive && setAttempt((n) => n + 1), OPEN_PAUSE_MS);
+        const pause = OPEN_PAUSES_MS[attempt];
+        // Отказ в правах повтором не лечится; сбой сервиса и сети — лечится.
+        if ((!status || status >= 500) && pause !== undefined) {
+          setError(`${(e as Error).message} Повторю через ${pause / 1000} с.`);
+          window.setTimeout(() => alive && setAttempt((n) => n + 1), pause);
           return;
         }
         setError((e as Error).message);
@@ -135,7 +139,14 @@ export function useAutoLabel(
       if (session.current) close(session.current);
       session.current = null;
     };
-  }, [attempt]);
+  }, [attempt, round]);
+
+  /** «Повторить» после отказа: попытки начинаются заново. */
+  const retry = useCallback(() => {
+    setError(null);
+    setAttempt(0);
+    setRound((n) => n + 1);
+  }, []);
 
   /** Новая сессия взамен потерянной. Кэш прогретых кадров при этом обнуляется:
    *  эмбеддинги жили в том процессе, которого больше нет. */
@@ -270,5 +281,5 @@ export function useAutoLabel(
     [reopen]
   );
 
-  return { state, error, busy, predict, setError };
+  return { state, error, busy, predict, setError, retry };
 }

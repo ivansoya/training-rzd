@@ -24,6 +24,7 @@ import { useAutosave } from "./useAutosave";
 import { withSavedIds } from "./savedIds";
 import type { Tag } from "../../api/tags";
 import { useAutoLabel } from "./useAutoLabel";
+import AutoStatus from "./AutoStatus";
 import { useLive } from "../../live/LiveProvider";
 import type { AutoRefine } from "../../auth/api";
 import Sep from "../Sep";
@@ -1020,11 +1021,6 @@ export default function AnnotationEditor({
             <button type="button" aria-label="Скрыть ошибку" onClick={() => setError(null)}>✕</button>
           </span>
         )}
-        {/* Отказ модели при закрытой панели полуавтомата: иначе клик просто
-            «ничего не сделал», и причина видна только в ⚙. */}
-        {auto.error && !autoPanel && autoOn && (
-          <span className="mag-ed-err">{auto.error}</span>
-        )}
         {saveState === "stale" ? (
           <span className="mag-ed-unsaved">
             кадр изменил другой человек
@@ -1321,9 +1317,11 @@ export default function AnnotationEditor({
         {/* Окно кадра: холст и плашки поверх него. Плашки — соседи холста, а
             не его дети: иначе нажатие на кнопку начинало бы рамку. */}
         <div
-          className="mag-ed-view"
+          className={autoLive && auto.busy ? "mag-ed-view auto-wait" : "mag-ed-view"}
           onPointerDownCapture={() => { gesture.current = "down"; }}
         >
+          <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn}
+            quiet={frozen} onRetry={auto.retry} onDismiss={() => auto.setError(null)} />
           <BoxCanvas
             ref={canvas}
             imageId={image.id}

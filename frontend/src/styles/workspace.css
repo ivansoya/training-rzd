@@ -771,3 +771,9 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 @media (prefers-reduced-motion: reduce) {
   .mag-presence .mag-dot.on { animation: none; }
 }
+
+/* Плашка полуавтомата над холстом: ожидание, ответ модели, отказ и повтор. */
+.mag-auto-plate { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 7px 12px; border: 1px solid var(--ed-edge); border-radius: 9px; background: rgba(31, 30, 41, .92); color: var(--ed-ink); font-size: 12.5px; box-shadow: 0 8px 22px rgba(0, 0, 0, .35); pointer-events: auto; }
+.mag-auto-plate.err { border-color: rgba(229, 72, 77, .6); }
+.mag-auto-plate button { padding: 3px 9px; border: 1px solid var(--ed-edge); border-radius: 6px; background: var(--ed-btn); color: var(--ed-ink); font: inherit; cursor: pointer; }
+.auto-wait, .auto-wait canvas { cursor: wait !important; }
