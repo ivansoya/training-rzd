@@ -7,7 +7,7 @@
 """
 from flask import Flask
 
-from common import config, origin
+from common import config, origin, web
 from common.db import wait_for_db
 from dataprep_svc.routes import bp
 
@@ -17,6 +17,7 @@ config.ensure_dirs()
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = None
 origin.guard(app)
+web.register_json_errors(app)
 app.register_blueprint(bp)
 
 

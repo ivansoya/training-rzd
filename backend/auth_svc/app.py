@@ -7,12 +7,13 @@ from flask import Flask
 
 from auth_svc.core import bp as core_bp
 from auth_svc.routes import bp as auth_bp
-from common import db, origin
+from common import db, origin, web
 
 db.wait_for_db()
 
 app = Flask(__name__)
 origin.guard(app)
+web.register_json_errors(app)
 app.register_blueprint(auth_bp)
 app.register_blueprint(core_bp)
 

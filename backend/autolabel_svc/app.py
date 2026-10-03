@@ -7,13 +7,14 @@ GPU, а модель нельзя грузить в каждый поток guni
 from flask import Flask
 
 from autolabel_svc.routes import bp
-from common import config, db, origin
+from common import config, db, origin, web
 
 config.ensure_dirs()
 db.wait_for_db()
 
 app = Flask(__name__)
 origin.guard(app)
+web.register_json_errors(app)
 app.register_blueprint(bp)
 
 

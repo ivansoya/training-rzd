@@ -7,7 +7,7 @@
 """
 from flask import Flask
 
-from common import config, live, origin
+from common import config, live, origin, web
 from common.db import wait_for_db
 from training_svc.agents import bp as agents_bp
 from training_svc.routes import bp
@@ -20,6 +20,7 @@ config.ensure_dirs()
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = None
 origin.guard(app)
+web.register_json_errors(app)
 app.register_blueprint(bp)
 app.register_blueprint(agents_bp)
 

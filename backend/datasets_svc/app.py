@@ -8,7 +8,7 @@ queryable in the database.
 """
 from flask import Flask
 
-from common import config, db, jobs, origin
+from common import config, db, jobs, origin, web
 from datasets_svc.export_routes import bp as export_bp
 from datasets_svc.project_routes import bp as project_bp
 from datasets_svc.routes import bp
@@ -23,6 +23,7 @@ app = Flask(__name__)
 # No upload cap: real datasets are several GB; a cap aborts mid-transfer.
 app.config["MAX_CONTENT_LENGTH"] = None
 origin.guard(app)
+web.register_json_errors(app)
 app.register_blueprint(bp)
 app.register_blueprint(project_bp)
 app.register_blueprint(task_bp)
