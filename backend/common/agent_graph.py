@@ -158,6 +158,21 @@ def net_classes(node):
     return out
 
 
+# SAM 3 держит на карте всё разом: ~150 МБ на промт сверх базы (замер: 1 промт —
+# 3,2 ГБ, 20 — 6,2, 40 — 10,6). Строк больше 16 — превью уходит за карту.
+SAM3_BASE_MB = 3000
+SAM3_PER_PROMPT_MB = 150
+SAM3_MAX_ROWS = 16
+YOLOE_MB = 1500
+
+
+def text_vram_mb(node) -> int:
+    """Сколько видеопамяти просить под узел «Сети по тексту»."""
+    if text_model(node.get("params")) != "sam3":
+        return YOLOE_MB
+    return SAM3_BASE_MB + SAM3_PER_PROMPT_MB * len(text_rows(node))
+
+
 def text_rows(node):
     """[(номер строки, строка)] включённых строк «Сети по тексту» — в этом
     порядке классы и уходят в модель: её номер k — это `text_rows[k]`."""
@@ -345,6 +360,9 @@ def _check_text(node, sam3, examples):
         raise AgentGraphError(f"{title(node)}: нет весов SAM 3 на сервере.")
     if not text_rows(node):
         raise AgentGraphError(f"{title(node)}: не включена ни одна строка.")
+    if text_model(params) == "sam3" and len(text_rows(node)) > SAM3_MAX_ROWS:
+        raise AgentGraphError(
+            f"{title(node)}: у SAM 3 не больше {SAM3_MAX_ROWS} строк — память растёт с каждой.")
     # Одно слово или один набор дважды — два класса модели на одно и то же:
     # они делили бы находки между собой. Синоним пишется другим словом.
     prompts = [p.lower() for _, p in text_prompts(node)]

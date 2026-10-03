@@ -337,6 +337,25 @@ def _may_work(db, user, task, project):
     return has_role(role, "editor") and (role == "admin" or task.assignee_id == user.id)
 
 
+def _queue_reason(db, run):
+    """«В очереди» без слов не объясняет ничего: какой по счёту и кого ждёт."""
+    if run.status != "queued":
+        return None
+    ahead = db.execute(
+        select(AgentRun).where(
+            AgentRun.status.in_(("queued", "waiting_gpu", "running")),
+            AgentRun.created_at < run.created_at,
+        ).order_by(AgentRun.created_at)
+    ).scalars().all()
+    if not ahead:
+        return "Ждёт свободного исполнителя — начнётся через несколько секунд."
+    busy = next((r for r in ahead if r.status == "running"), ahead[0])
+    graph = db.get(AugGraph, busy.graph_id) if busy.graph_id else None
+    left = (busy.total or 0) - (busy.processed or 0)
+    tail = f", осталось кадров: {left}" if busy.total else ""
+    return f"В очереди {len(ahead) + 1}-м: идёт прогон «{graph.name if graph else 'агента'}»{tail}."
+
+
 def _run_view(db, run):
     version = db.get(AugGraphVersion, run.version_id) if run.version_id else None
     graph = db.get(AugGraph, run.graph_id) if run.graph_id else None
@@ -347,7 +366,7 @@ def _run_view(db, run):
         "total": run.total,
         "stats": run.stats or {},
         "error": run.error,
-        "queue_reason": run.queue_reason,
+        "queue_reason": run.queue_reason or _queue_reason(db, run),
         "agent": graph.name if graph else None,
         "version": version.version if version else None,
         "sources": run.params.get("sources") or [],

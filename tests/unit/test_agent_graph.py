@@ -503,3 +503,13 @@ def test_прогон_зажимает_фильтр():
     ag.check(doc, clamp=True)
     p = doc["nodes"][5]["params"]
     assert p["max_side"] == 500 and p["classes"][0]["conf"] == 1
+
+
+def test_sam3_не_больше_16_строк_и_бронь_растёт_с_промтами():
+    many = [(f"w{i}", f"Класс {i}", True) for i in range(17)]
+    with pytest.raises(ag.AgentGraphError, match="не больше 16"):
+        ag.check(_text_doc(_text("t", many, model="sam3")))
+    ag.check(_text_doc(_text("t", many)))  # YOLOE — без потолка
+    two = _text("t", many[:2], model="sam3")
+    assert ag.text_vram_mb(two) == ag.SAM3_BASE_MB + 2 * ag.SAM3_PER_PROMPT_MB
+    assert ag.text_vram_mb(_text("t", many[:2])) == ag.YOLOE_MB

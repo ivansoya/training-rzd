@@ -28,7 +28,7 @@ from sqlalchemy import select
 from common import agent_graph, config, gpu, live, shapes, task_frames, video_frames, video_tracks
 from common.db import SessionLocal
 from common.models import (
-    AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, Image, TaskVideo,
+    AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, GpuLease, Image, TaskVideo,
     VideoAnnotation, VideoScout, utcnow,
 )
 
@@ -39,14 +39,14 @@ log = logging.getLogger("training")
 NET_VRAM_MB = 1500
 # SAM2 small на кадре 1920×1400 — около гигабайта; large вдвое больше.
 SAM_VRAM_MB = 1500
-# «Сеть по тексту»: YOLOE-26 — как своя сеть; SAM 3 на четырёх промтах занял
-# 3,2 ГБ (замер 24.09.2026), с запасом на промты.
-TEXT_VRAM_MB = {"yoloe": 1500, "sam3": 4000}
+# «Сеть по тексту» считается по числу промтов — agent_graph.text_vram_mb.
 # Веса YOLOE-26 и кодировщик промтов лежат в образе (training_svc/fetch_yoloe.py).
 YOLOE_DIR = os.environ.get("YOLOE_DIR", "/opt/yoloe")
-# SAM 3 смотрит на вход 1008 и маски отдаёт по размеру поданного кадра: целый
-# кадр 2688×1520 с сотней масок — десятки гигабайт. Подаём ужатым до входа.
-SAM3_SIDE = 1008
+# SAM 3 в ultralytics считает на квадрате 644 и растягивает в него кадр без
+# сохранения пропорций (рамки уезжали до 20 px). Ужимаем длинную сторону до 644
+# и добиваем до квадрата сами: растягивать становится нечего. Заодно маски — по
+# размеру поданного кадра, а не 2688×1520 (десятки гигабайт на сотню масок).
+SAM3_SIDE = 644
 NOTIFY_EVERY = 1.0
 
 # Файл и конфиг — как у полуавтомата (autolabel_svc/runners/sam2_runner.py);
@@ -65,18 +65,32 @@ class Stopped(Exception):
     """Прогон сняли кнопкой."""
 
 
+# Прогоны, которые сейчас ведут потоки этого процесса: строка не меняет статус
+# до брони карты, и без этого два потока пула взяли бы один прогон.
+_taken: set = set()
+_taken_lock = threading.Lock()
+
+
 def claim(db, worker_id):
-    run = db.execute(
-        select(AgentRun)
-        .where(AgentRun.status.in_(("queued", "waiting_gpu")))
-        .order_by(AgentRun.created_at)
-        .limit(1)
-        .with_for_update(skip_locked=True)
-    ).scalar_one_or_none()
-    if run is not None:
-        run.worker_id = worker_id
-        db.commit()
+    with _taken_lock:
+        q = (select(AgentRun)
+             .where(AgentRun.status.in_(("queued", "waiting_gpu")))
+             .order_by(AgentRun.created_at)
+             .limit(1)
+             .with_for_update(skip_locked=True))
+        if _taken:
+            q = q.where(AgentRun.id.not_in(_taken))
+        run = db.execute(q).scalar_one_or_none()
+        if run is not None:
+            run.worker_id = worker_id
+            _taken.add(run.id)
+            db.commit()
     return run
+
+
+def release(run_id):
+    with _taken_lock:
+        _taken.discard(run_id)
 
 
 def frames(db, run):
@@ -144,19 +158,27 @@ def execute(db, run):
     batch = max((len(agent_graph.variants(n.get("params") or {}))
                  * (8 if (n.get("params") or {}).get("tiles") else 1)
                  for n in nets + texts), default=1)
-    sig = f"agent:{len(nets)}:b{batch}:{','.join(sams)}:{','.join(families)}"
+    # Число промтов и наборов — в подписи: SAM 3 на 40 промтов и на 1 — разные задачи.
+    prompts = sorted(f"{len(agent_graph.text_prompts(n))}p{len(agent_graph.text_sets(n))}s"
+                     for n in texts)
+    sig = (f"agent:{len(nets)}:b{batch}:{','.join(sams)}:{','.join(families)}"
+           f":{','.join(prompts)}")
     want, _ = gpu.estimate(db, "agent", sig, NET_VRAM_MB * len(nets) + SAM_VRAM_MB * len(sams)
-                           + sum(TEXT_VRAM_MB[f] for f in families))
-    # Прошлая бронь больше не нужна — та же причина, что у обучения: без
-    # отмены каждая попытка оставляла в очереди ещё одну запись. А пока ждём,
-    # бронь стоит в очереди: по её возрасту диспетчер придерживает место.
-    if run.gpu_lease_id:
-        gpu.cancel(db, run.gpu_lease_id, "Новая попытка")
-    lease = gpu.request(
-        db, holder="training", kind="agent", want_mb=want, ref_id=run.id,
-        project_id=run.project_id, user_id=run.created_by, priority=35,
-        allow_cpu=True, title="Агент разметки",
-    )
+                           + sum(agent_graph.text_vram_mb(n) for n in texts))
+    # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла время
+    # ожидания, и защита от голодания (возраст брони) не срабатывала.
+    lease = db.get(GpuLease, run.gpu_lease_id) if run.gpu_lease_id else None
+    if lease is not None and lease.status == "queued" and lease.want_mb == want:
+        gpu.try_grant(db, lease.id)
+        db.refresh(lease)
+    elif lease is None or lease.status != "held" or lease.want_mb != want:
+        if lease is not None and lease.status in gpu.ACTIVE:
+            gpu.cancel(db, lease.id, "Новая попытка")
+        lease = gpu.request(
+            db, holder="training", kind="agent", want_mb=want, ref_id=run.id,
+            project_id=run.project_id, user_id=run.created_by, priority=35,
+            allow_cpu=True, title="Агент разметки",
+        )
     if lease.status != "held":
         run.status = "waiting_gpu"
         run.queue_reason = lease.reason
@@ -179,13 +201,16 @@ def execute(db, run):
         plan = _video_plan(db, run, mode) if ids is None else None
         run.total = len(ids) if ids is not None else sum(len(f) for _, f in plan)
         db.commit()
+        # Своя память — прирост от этого уровня: соседний прогон или превью в
+        # том же процессе не должны попадать в замер (раньше 6740 вместо 3900).
+        base = _allocated_mb(device)
         with _beating(lease.id):
             models = _load(weights)
             models.update({n["id"]: load_text(n, device, sets) for n in texts})
             # Разведке нужны где и что, а не контур: SAM не грузим вовсе.
             if mode != "scout":
                 models.update({name: _load_sam(name, device) for name in sams})
-        tick = _ticker(db, run, lease.id)
+        tick = _ticker(db, run, lease.id, device, base)
         mapping = run.params.get("mapping") or {}
         if ids is not None:
             boxes = marked = 0
@@ -196,7 +221,7 @@ def execute(db, run):
                 tick({"boxes": boxes, "frames": marked})
         else:
             _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, tick)
-        peak = _peak_mb(device)
+        peak = tick.peak()
         _finish(db, run, "done")
     except Stopped:
         _finish(db, run, "stopped")
@@ -368,7 +393,10 @@ def _sam3(model, pixels, rows, node, contour):
         if k < 1:
             image = cv2.resize(image, (round(image.shape[1] * k), round(image.shape[0] * k)),
                                interpolation=cv2.INTER_AREA)
-        return image, k
+        # Поля справа и снизу: координаты рамок от них не меняются.
+        square = np.zeros((SAM3_SIDE, SAM3_SIDE, 3), np.uint8)
+        square[:image.shape[0], :image.shape[1]] = image[:SAM3_SIDE, :SAM3_SIDE]
+        return square, k
 
     words = [(i, r) for i, r in rows if not agent_graph.is_examples(r)]
     if words:
@@ -415,7 +443,8 @@ def load_text(node, device, sets=None):
 
         return Sam3Text(SAM3SemanticPredictor(overrides=dict(
             task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
-            half=device != "cpu", device="cpu" if device == "cpu" else 0)),
+            imgsz=SAM3_SIDE, quantize=16 if device != "cpu" else None,
+            device="cpu" if device == "cpu" else 0)),
             {s: examples.collage_crops(sets[s]) for _, s in agent_graph.text_sets(node)})
 
     import torch
@@ -494,11 +523,15 @@ def _write(db, run, image, found, mapping):
     return put
 
 
-def _ticker(db, run, lease_id):
-    """Шаг хода: +1 кадр, статистика, отмена кнопкой, пульс брони и живой связи."""
+def _ticker(db, run, lease_id, device=None, base=0):
+    """Шаг хода: +1 кадр, статистика, отмена кнопкой, пульс брони и живой связи.
+
+    Заодно держит пик своей памяти: прирост `memory_allocated` от `base`."""
     last = [0.0]
+    top = [0]
 
     def tick(stats):
+        top[0] = max(top[0], _allocated_mb(device) - base)
         db.refresh(run)
         if run.cancel_requested:
             raise Stopped()
@@ -512,6 +545,8 @@ def _ticker(db, run, lease_id):
             live.notify(db, "agent", run.id, run.project_id, n=run.processed)
             last[0] = now
 
+    # Запас 15 %: allocated не видит кэш распределителя.
+    tick.peak = lambda: int(top[0] * 1.15) if top[0] > 0 else 0
     return tick
 
 
@@ -682,22 +717,22 @@ def sam_weights(name):
     return path
 
 
-def _peak_mb(device):
-    if device == "cpu":
+def _allocated_mb(device):
+    if device in (None, "cpu"):
         return 0
     try:
         import torch
-        return int(torch.cuda.max_memory_reserved() / (1 << 20))
+        return int(torch.cuda.memory_allocated() / (1 << 20))
     except Exception:
         return 0
 
 
 def _free():
+    # Без reset_peak_memory_stats: общий на процесс сброс сбивал замер соседа.
     try:
         import torch
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
-            torch.cuda.reset_peak_memory_stats()
     except Exception:
         pass
 

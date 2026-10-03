@@ -46,6 +46,7 @@ class _Warm:
         self.texts = {}    # agent_runner.text_key -> YOLOE с промтами или SAM 3
         self.last = 0.0
         self.note = None   # почему на процессоре
+        self.want = 0      # сколько забронировано
 
     def drop(self, db):
         if self.lease_id:
@@ -53,13 +54,17 @@ class _Warm:
         self.lease_id, self.device, self.nets, self.sams, self.texts, self.note = None, None, {}, {}, {}, None
         agent_runner._free()
 
-    def ensure_device(self, db):
+    def ensure_device(self, db, want=VRAM_MB):
         """Карта, если дают; иначе процессор и причина словами."""
-        if self.lease_id:
+        if self.lease_id and self.want >= want:
             gpu.beat(db, self.lease_id)
             return
-        lease = gpu.request(db, holder="training", kind="agent-preview", want_mb=VRAM_MB,
+        if self.lease_id:
+            # Граф стал прожорливее брони (SAM 3 с новыми промтами) — перебронируем.
+            self.drop(db)
+        lease = gpu.request(db, holder="training", kind="agent-preview", want_mb=want,
                             priority=20, allow_cpu=True, title="Превью агента")
+        self.want = want
         if lease.status == "held":
             self.lease_id = lease.id
             device, note = ("cpu" if lease.device_id is None else 0), None
@@ -125,7 +130,9 @@ def _answer(db, warm, row):
                 raise agent_graph.AgentGraphError(f"{agent_graph.title(node)}: весов нет на полке.")
             weights[node["id"]] = got
     image = db.get(Image, row.image_id)
-    warm.ensure_device(db)
+    sam3 = [n for n in doc["nodes"] if n["type"] == "text"
+            and agent_graph.text_model(n.get("params")) == "sam3"]
+    warm.ensure_device(db, VRAM_MB + sum(agent_graph.text_vram_mb(n) for n in sam3))
     started = time.monotonic()
     models = warm.models(doc, weights, sets)
     predict, segment = agent_runner.frame_fns(
@@ -140,6 +147,19 @@ def _answer(db, warm, row):
         "note": warm.note,
         "ms": round((time.monotonic() - started) * 1000),
     }
+
+
+def _trim(warm):
+    """После ответа кэш распределителя сверх брони отдаём: превью SAM 3 на 80
+    промтов оставляло занятыми 15 ГБ из 16 при брони в 3."""
+    if warm.device in (None, "cpu"):
+        return
+    try:
+        import torch
+        if torch.cuda.memory_reserved() / (1 << 20) > warm.want:
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def loop(stop):
@@ -167,6 +187,7 @@ def loop(stop):
                     row.status, row.error = "error", str(exc)[:500]
                 db.commit()
                 warm.last = time.monotonic()
+                _trim(warm)
             if warm.lease_id and time.monotonic() - warm.last > IDLE_RELEASE:
                 warm.drop(db)
             elif warm.lease_id:

@@ -403,7 +403,7 @@ export function AgentRunBar({
       )}
       {run.error && <span className="ag-warn-text">{run.error}</span>}
       {stopError && <span className="ag-warn-text">Не остановился: {stopError}</span>}
-      {run.queue_reason && run.status === "waiting_gpu" && <span className="ag-muted">{run.queue_reason}</span>}
+      {run.queue_reason && (run.status === "waiting_gpu" || run.status === "queued") && <span className="ag-muted">{run.queue_reason}</span>}
       {active && (
         <span className="bar">
           <i style={{ width: `${pct}%` }} />

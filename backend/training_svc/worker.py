@@ -401,11 +401,17 @@ class _pulse:
         return False
 
 
+# Сколько прогонов агентов идёт разом. Один на стенд — и часовой ролик соседа
+# держал всех; память делит диспетчер GPU, как и у остальных задач.
+AGENT_WORKERS = max(1, int(os.environ.get("AGENT_WORKERS", "2")))
+
+
 def agents_loop():
     """Прогоны агентов. Своя нить: прогон по тысяче кадров не должен держать
     ни обучение, ни счёт признаков — у каждого своя очередь к карте."""
     while not _stop.is_set():
         db = SessionLocal()
+        run = None
         try:
             run = agent_runner.claim(db, me())
             if run is None or not agent_runner.execute(db, run):
@@ -417,6 +423,8 @@ def agents_loop():
         except Exception:
             log.exception("прогон агента не удался")
         finally:
+            if run is not None:
+                agent_runner.release(run.id)
             db.close()
 
 
@@ -468,7 +476,8 @@ def main():
         threading.Thread(target=reaper, name="reaper", daemon=True),
         threading.Thread(target=runs_loop, name="runs", daemon=True),
         threading.Thread(target=prep_loop, name="embed", daemon=True),
-        threading.Thread(target=agents_loop, name="agents", daemon=True),
+        *(threading.Thread(target=agents_loop, name=f"agents-{i}", daemon=True)
+          for i in range(AGENT_WORKERS)),
         threading.Thread(target=agent_preview.loop, args=(_stop,), name="agent-preview", daemon=True),
         threading.Thread(target=examples.loop, args=(_stop,), name="agent-examples", daemon=True),
     ]
