@@ -34,6 +34,8 @@ import os
 import threading
 from fractions import Fraction
 
+from common.video_frames import open_video
+
 # Кадров в перегоне. На 25 к/с это около пяти секунд: прыжок в произвольное
 # место стоит одной загрузки, а держать перегон разжатым всё равно нельзя —
 # 120 кадров 2688×1520 это 735 МБ, поэтому клиент разжимает окно вокруг курсора.
@@ -142,7 +144,7 @@ def build_index(path):
     """
     av = _av()
     try:
-        with av.open(path) as container:
+        with open_video(path) as container:
             if not container.streams.video:
                 raise VideoError("В файле нет видеодорожки.")
             stream = container.streams.video[0]
@@ -449,7 +451,7 @@ def grab_in(path, local_no):
     """
     av = _av()
     try:
-        with av.open(path) as container:
+        with open_video(path) as container:
             if not container.streams.video:
                 raise VideoError("В файле нет видеодорожки.")
             stream = container.streams.video[0]
@@ -490,7 +492,7 @@ def grab_at(video_path, index, frame_no):
         raise VideoError(f"В ролике нет кадра {frame_no}.")
     want = pts[frame_no]
     try:
-        with av.open(video_path) as container:
+        with open_video(video_path) as container:
             if not container.streams.video:
                 raise VideoError("В файле нет видеодорожки.")
             stream = container.streams.video[0]
@@ -520,7 +522,7 @@ def frame_count_of(path):
     """Сколько кадров в готовом файле. Считаем пакеты: разжимать незачем."""
     av = _av()
     try:
-        with av.open(path) as container:
+        with open_video(path) as container:
             if not container.streams.video:
                 return 0
             stream = container.streams.video[0]
@@ -555,7 +557,7 @@ def make_variant(video_path, index, quality, dest_path, progress=None):
             av, dest_path, rate, params["size"], params,
             CHUNK_FRAMES, x264=_VARIANT_X264,
         )
-        with av.open(video_path) as src:
+        with open_video(video_path) as src:
             istream = src.streams.video[0]
             istream.thread_type = "AUTO"
             expected = 0
@@ -638,7 +640,7 @@ def cut_from_variant(variant_path_, total, dest_for, only=None, progress=None):
     writer = None
     current = -1
     try:
-        with av.open(variant_path_) as src:
+        with open_video(variant_path_) as src:
             istream = src.streams.video[0]
             for n, packet in enumerate(_packets(src, istream)):
                 chunk_no = n // CHUNK_FRAMES
@@ -705,7 +707,7 @@ def cut_all(video_path, index, quality, dest_for, progress=None,
     made = 0
     seen = 0
     try:
-        with av.open(video_path) as src:
+        with open_video(video_path) as src:
             istream = src.streams.video[0]
             istream.thread_type = "AUTO"
             for frame in src.decode(istream):
@@ -769,7 +771,7 @@ def cut_chunk(video_path, index, chunk_no, quality, dest, positional=False):
     writer = None
     try:
         writer = _Writer(av, dest, rate, size, params, want)
-        with av.open(video_path) as src:
+        with open_video(video_path) as src:
             istream = src.streams.video[0]
             istream.thread_type = "AUTO"
             if positional:

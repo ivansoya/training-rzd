@@ -81,6 +81,9 @@ services:
     image: yolo-datasets
     container_name: yolo-datasets
     restart: unless-stopped
+    # Потолок: утечка декодера или сбежавшая работа не съест память стенда.
+    mem_limit: ${DATASETS_MEM:-4g}
+    pids_limit: 512
     environment:
       # Report the *real* host drive in the disk meter (see common.config).
       - HOST_STAT_PATH=/hoststat
@@ -118,6 +121,9 @@ services:
     container_name: yolo-video-worker
     command: ["python", "-m", "datasets_svc.worker"]
     restart: unless-stopped
+    # Потолок: утечка декодера или сбежавшая работа не съест память стенда.
+    mem_limit: ${VIDEO_WORKER_MEM:-6g}
+    pids_limit: 512
     environment:
       - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
       # Быстрые берут то, чего ждёт живой человек: таблицу кадров только что

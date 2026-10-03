@@ -19,7 +19,7 @@ from common import config
 MAX_FRAMES = 3000
 
 
-from common.video_frames import VideoError, extract_frames  # noqa: E402,F401 — общие с агентом
+from common.video_frames import VideoError, extract_frames, open_video  # noqa: E402,F401 — общие с агентом
 
 
 def probe(path):
@@ -29,7 +29,7 @@ def probe(path):
     except ImportError as exc:  # noqa: BLE001
         raise VideoError("Обработка видео недоступна на сервере.") from exc
     try:
-        with av.open(path) as container:
+        with open_video(path) as container:
             if not container.streams.video:
                 raise VideoError("В файле нет видеодорожки.")
             stream = container.streams.video[0]
@@ -131,7 +131,7 @@ def count_frames(path):
     except ImportError as exc:  # noqa: BLE001
         raise VideoError("Обработка видео недоступна на сервере.") from exc
     try:
-        with av.open(path) as container:
+        with open_video(path) as container:
             stream = container.streams.video[0]
             if stream.frames:
                 return int(stream.frames)
@@ -156,7 +156,7 @@ def grab_frame(path, frame_no):
         raise VideoError("Обработка видео недоступна на сервере.") from exc
 
     frame_no = max(0, int(frame_no))
-    with av.open(path) as container:
+    with open_video(path) as container:
         stream = container.streams.video[0]
         stream.thread_type = "AUTO"
         rate = float(stream.average_rate) if stream.average_rate else 0.0

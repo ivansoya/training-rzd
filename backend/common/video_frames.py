@@ -13,10 +13,33 @@
 `training-worker` (агент на ролике).
 """
 from bisect import bisect_right
+from contextlib import contextmanager
 
 
 class VideoError(Exception):
     pass
+
+
+@contextmanager
+def open_video(path):
+    """`av.open`, который закрывает и кодек.
+
+    Без этого каждое декодирование с `thread_type="AUTO"` оставляло 16 живых
+    потоков с буферами кадров до прохода сборщика: у воркера видео — сотни
+    потоков и гигабайты памяти, которые glibc системе не возвращает.
+    """
+    import av
+
+    container = av.open(path)
+    try:
+        yield container
+    finally:
+        for stream in container.streams.video:
+            try:
+                stream.codec_context.close()
+            except Exception:  # noqa: BLE001
+                pass
+        container.close()
 
 
 def unpack_pts(payload):
@@ -110,7 +133,7 @@ def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None):
     saved = 0
     ordinal = -1
     first = pts[0] if pts else None
-    with av.open(path) as container:
+    with open_video(path) as container:
         stream = container.streams.video[0]
         stream.thread_type = "AUTO"
         time_base = float(stream.time_base) if stream.time_base else 0.0
