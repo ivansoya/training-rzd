@@ -93,6 +93,30 @@ def test_соседи_белого_списка_не_проходят(module, na
     assert not pt_guard.allowed(module, name)
 
 
+def _cls(module, name):
+    cls = type(name, (), {})
+    cls.__module__, cls.__qualname__ = module, name
+    return cls
+
+
+def test_метод_слоя_через_getattr_пропускается():
+    # Так -seg модели ultralytics хранят ссылку на Detect.forward.
+    detect = _cls("ultralytics.nn.modules.head", "Detect")
+    path = _pt(_pickle_with(_Global("__builtin__", "getattr", (detect, "forward"))))
+    pt_guard.check(path)
+
+
+@pytest.mark.parametrize("target,attr", [
+    (("ultralytics.nn.modules.head", "Detect"), "__init__"),
+    (("subprocess", "Popen"), "communicate"),
+    (("builtins", "object"), "__subclasses__"),
+])
+def test_прочий_getattr_отвергнут(target, attr):
+    path = _pt(_pickle_with(_Global("__builtin__", "getattr", (_cls(*target), attr))))
+    with pytest.raises(pt_guard.UnsafeWeights):
+        pt_guard.check(path)
+
+
 def test_не_zip_это_отказ():
     fd, path = tempfile.mkstemp(suffix=".pt")
     os.write(fd, b"not a zip")

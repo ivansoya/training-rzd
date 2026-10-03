@@ -9,9 +9,12 @@
 а имена запоминаются. Если хоть одно имя вне белого списка — файл отвергнут.
 Проверенный файл дальше открывается обычным путём.
 
-Отвергнуто: `torch.load(weights_only=True)`. В torch 2.3 белый список к нему
-не расширить (`add_safe_globals` появился в 2.4), а модели ultralytics без
-него не грузятся вовсе. Своё холостое чтение не зависит от версии torch.
+Своё холостое чтение, а не `torch.load(weights_only=True)`: открывает файл
+всё равно ultralytics, и ему нужен обычный pickle; проверка же не должна
+зависеть от версии torch и его списка безопасных имён.
+
+`getattr` пускается в одном виде: класс из белого списка и публичное имя —
+так -seg модели хранят `Detect.forward`. Любой другой вызов — отказ.
 
 Список снят с настоящих чекпойнтов — yolo11n, yolo26n и всех обученных здесь
 best.pt (23.09.2026: девять файлов, один yolo26 добавил шесть имён) — и
@@ -41,6 +44,7 @@ _NAMES = {
 }
 # Хранилища тензоров: FloatStorage, HalfStorage, LongStorage…
 _TORCH_STORAGE = "Storage"
+_GETATTR = {("__builtin__", "getattr"), ("builtins", "getattr")}
 
 
 class UnsafeWeights(ValueError):
@@ -49,7 +53,11 @@ class UnsafeWeights(ValueError):
     def __init__(self, names):
         self.names = sorted(names)
         shown = ", ".join(f"{m}.{n}" for m, n in self.names[:5])
-        super().__init__(f"Файл весов ссылается на запрещённое: {shown}")
+        super().__init__(
+            f"Файл весов ссылается на запрещённое: {shown}. Если это официальные "
+            "веса ultralytics, передайте это сообщение администратору — "
+            "список разрешённых имён расширяют вручную."
+        )
 
 
 def allowed(module: str, name: str) -> bool:
@@ -94,10 +102,25 @@ class _DryRun(pickle.Unpickler):
     def __init__(self, fh):
         super().__init__(fh)
         self.seen = set()
+        self.bad_getattr = False
+        self.stubs = {}
 
     def find_class(self, module, name):
         self.seen.add((module, name))
-        return _Stub
+        if (module, name) in _GETATTR:
+            return self._getattr
+        # Своя заглушка на имя: getattr должен знать, у какого класса берут атрибут.
+        key = (module, name)
+        if key not in self.stubs:
+            self.stubs[key] = type(name, (_Stub,), {"_origin": key})
+        return self.stubs[key]
+
+    def _getattr(self, obj, attr, *default):
+        origin = getattr(obj, "_origin", None) if isinstance(obj, type) else None
+        safe = (origin is not None and allowed(*origin) and isinstance(attr, str)
+                and attr.isidentifier() and not attr.startswith("_"))
+        self.bad_getattr |= not safe
+        return _Stub()
 
     def persistent_load(self, pid):
         return None
@@ -119,7 +142,7 @@ def globals_of(path: str) -> set:
                 runner.load()
             except Exception as exc:  # битый pickle — тоже отказ, а не падение
                 raise ValueError(f"Файл весов не читается: {exc}") from exc
-            return runner.seen
+            return runner.seen if runner.bad_getattr else runner.seen - _GETATTR
 
 
 def check(path: str) -> None:
