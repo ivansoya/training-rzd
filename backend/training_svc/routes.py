@@ -342,7 +342,9 @@ def get_run(code, run_id):
         run = db.get(TrainRun, _uuid(run_id))
         if run is None or run.project_id != project.id:
             return jsonify({"error": "Обучение не найдено."}), 404
-        return jsonify(_run_view(db, run, full=True))
+        # Кнопки «Остановить» и «Удалить» — только тому, кому сервер их позволит.
+        return jsonify({**_run_view(db, run, full=True),
+                        "can_manage": may_manage(db, user, project, run)})
     finally:
         db.close()
 

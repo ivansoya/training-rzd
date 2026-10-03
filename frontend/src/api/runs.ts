@@ -81,6 +81,8 @@ export interface Run {
   confusion?: { matrix: number[][]; names: string[] } | null;
   curves?: CurveSeries[] | null;
   per_class?: PerClass | null;
+  /** Можно ли остановить и удалить: автор или админ проекта. */
+  can_manage?: boolean;
 }
 
 /** Метрика одного класса. `null` значит «измерить было нечем». */

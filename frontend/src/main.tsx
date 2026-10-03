@@ -15,6 +15,7 @@ import AuthGate from "./components/auth/AuthGate";
 import ConfirmPage from "./components/auth/ConfirmPage";
 import DatasetPage from "./components/mag/DatasetPage";
 import ImportWizard from "./components/mag/ImportWizard";
+import RoleGate from "./components/mag/RoleGate";
 import MagShell from "./components/mag/MagShell";
 import ProjectClasses from "./components/mag/ProjectClasses";
 import ProjectTags from "./components/mag/ProjectTags";
@@ -92,7 +93,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   path="/projects/:code/training/new"
                   element={
                     <MagShell>
-                      <TrainSetWizard />
+                      <RoleGate need="editor" what="Собирать обучающие наборы">
+                        <TrainSetWizard />
+                      </RoleGate>
                     </MagShell>
                   }
                 />
@@ -126,7 +129,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   path="/projects/:code/import"
                   element={
                     <MagShell>
-                      <ImportWizard />
+                      <RoleGate need="admin" what="Импортировать архив">
+                        <ImportWizard />
+                      </RoleGate>
                     </MagShell>
                   }
                 />

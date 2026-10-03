@@ -1,15 +1,16 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, NavLink, matchPath, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/AuthGate";
 import { initials } from "../auth/AccountPage";
 import Sep from "../Sep";
 import ErrorBoundary from "../ErrorBoundary";
+import { LiveProvider } from "../../live/LiveProvider";
 
 /** The workspace shell never transforms its children: editors measure their
  * bitmap and annotation layers in viewport coordinates. */
 export default function MagShell({ children }: { children: ReactNode }) {
-  const { me } = useAuth();
+  const { me, refresh } = useAuth();
   const { pathname } = useLocation();
   const graphEditor = Boolean(matchPath("/augment/:graphId", pathname));
   const agentEditor = Boolean(matchPath("/agents/:graphId", pathname));
@@ -21,6 +22,14 @@ export default function MagShell({ children }: { children: ReactNode }) {
     ? me.projects.find((p) => p.code === rawCode.trim().toUpperCase())
     : undefined;
   const code = current?.code;
+  // Не участник — «не найден», а не пустые разделы чужого проекта. Перед
+  // вердиктом один раз перечитываем себя: проект могли только что создать.
+  const [checked, setChecked] = useState<string | null>(null);
+  const missing = Boolean(rawCode) && !current;
+  useEffect(() => {
+    if (!missing || checked === rawCode) return;
+    refresh().catch(() => undefined).finally(() => setChecked(rawCode ?? null));
+  }, [missing, rawCode, checked, refresh]);
   const projectPath = code ? "/projects/" + code : "";
   const projectName = current?.name;
   const lowerPath = pathname.toLowerCase();
@@ -57,7 +66,7 @@ export default function MagShell({ children }: { children: ReactNode }) {
     if (r.left < b.left || r.right > b.right) bar.scrollLeft += r.left - b.left - (b.width - r.width) / 2;
   }, [pathname, code]);
 
-  return (
+  const shell = (
     <div className={`mag mag-page workspace${graphEditor || agentEditor ? " workspace-graph" : ""}`}>
       <a className="workspace-skip" href="#workspace-content">К содержимому</a>
       <aside ref={sidebar} className="workspace-sidebar" aria-label="Навигация рабочей среды">
@@ -96,8 +105,20 @@ export default function MagShell({ children }: { children: ReactNode }) {
         </Link>
       </header>
       <main id="workspace-content" className="workspace-main" tabIndex={-1}>
-        <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
+        <ErrorBoundary resetKey={pathname}>
+          {!missing ? children : checked === rawCode ? (
+            <div className="mag-content mag-empty">
+              <p>Проект не найден или у вас нет к нему доступа.</p>
+              <Link className="mag-link" to="/">К проектам</Link>
+            </div>
+          ) : (
+            <div className="mag-content mag-empty">Загружаем проект…</div>
+          )}
+        </ErrorBoundary>
       </main>
     </div>
   );
+  // Живая связь — одна на вкладку и на весь проект, на любой его странице:
+  // таска, обучение и мастера лежат вне ProjectShell и раньше её не слышали.
+  return code ? <LiveProvider key={code} code={code}>{shell}</LiveProvider> : shell;
 }

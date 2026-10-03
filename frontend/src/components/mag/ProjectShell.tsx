@@ -5,7 +5,6 @@ import { useAuth } from "../auth/AuthGate";
 import { plural, ru } from "../ru";
 import type { ProjectDetail } from "../../auth/api";
 import ExportModal from "./ExportModal";
-import { LiveProvider } from "../../live/LiveProvider";
 
 export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} Б`;
@@ -89,11 +88,8 @@ export default function ProjectShell() {
 
   const { project, stats } = detail;
 
+  // Живая связь поднята в MagShell: она нужна и страницам вне этой оболочки.
   return (
-    // Живая связь — одна на вкладку и на весь проект: она приносит «изменился
-    // такой-то ран», а строку экран дочитывает сам. Соединение на каждое
-    // обучение занимало бы поток сервера на всё время прогона.
-    <LiveProvider code={project.code}>
     <div className="mag-content">
       <div className="workspace-project-head">
         <div><span className="workspace-eyebrow">Проект / {project.code}</span><h1>{project.name}</h1></div>
@@ -136,6 +132,5 @@ export default function ProjectShell() {
         <ExportModal detail={detail} onClose={() => setExporting(false)} />
       )}
     </div>
-    </LiveProvider>
   );
 }

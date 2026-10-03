@@ -339,7 +339,7 @@ export default function TrainRunPage() {
         )}
 
         <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
-          {busy || run.status === "queued" || run.status === "waiting_gpu" ? (
+          {run.can_manage !== false && (busy || run.status === "queued" || run.status === "waiting_gpu") ? (
             <button
               type="button"
               className="mag-ghost"
