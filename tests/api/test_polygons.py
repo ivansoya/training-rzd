@@ -389,3 +389,26 @@ def test_удаление_класса_снимает_размечен_с_опу
     with db.cursor() as cur:
         cur.execute("SELECT task_status FROM images WHERE id = %s", (image["id"],))
         assert cur.fetchone()[0] == "new"
+
+
+def test_jpg_и_png_с_одной_основой_не_делят_файл_разметки(api, task, project, label_class):
+    for name, fmt in (("collide.jpg", "JPEG"), ("collide.png", "PNG")):
+        buf = io.BytesIO()
+        PilImage.new("RGB", (100, 80), (20, 40, 60)).save(buf, fmt)
+        buf.seek(0)
+        assert api.post(f"{BASE_URL}/api/tasks/{task['id']}/images",
+                        files={"files": (name, buf, "image/" + fmt.lower())}).status_code in (200, 201)
+    for i, row in enumerate(api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]):
+        save(api, row["id"], [{"class_index": label_class["class_index"],
+                               "x": 10 + i * 20, "y": 10, "w": 30, "h": 30}])
+    accept(api, task["id"])
+    code = project["code"]
+    datasets = api.get(f"{BASE_URL}/api/projects/{code}").json()["datasets"]
+    res = api.post(f"{BASE_URL}/api/projects/{code}/export", json={
+        "datasets": [d["id"] for d in datasets], "classes": [label_class["id"]], "ann_type": "bbox",
+    })
+    assert wait_job(api, res.json()["job_id"])["status"] == "done"
+    dl = api.get(f"{BASE_URL}/api/projects/{code}/export/{res.json()['job_id']}/download")
+    with zipfile.ZipFile(io.BytesIO(dl.content)) as zf:
+        labels = [n for n in zf.namelist() if n.startswith("labels/") and "collide" in n]
+    assert len(labels) == len(set(labels)) == 2, labels

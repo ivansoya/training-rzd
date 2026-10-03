@@ -377,13 +377,15 @@ def unique_name(taken, file_name, fallback_ext=".jpg"):
     # Расширение берём у файла на диске, иначе .jpg в архиве окажется подписью
     # к чужим байтам.
     ext = ext or fallback_ext or ".jpg"
-    candidate = base + ext
+    # Занята основа, а не имя с расширением: a.jpg и a.png делили бы один
+    # labels/a.txt, и разметка одного молча подменяла бы другой.
+    stem = base
     n = 2
-    while candidate.lower() in taken:
-        candidate = f"{base}_{n}{ext}"
+    while stem.lower() in taken:
+        stem = f"{base}_{n}"
         n += 1
-    taken.add(candidate.lower())
-    return candidate
+    taken.add(stem.lower())
+    return stem + ext
 
 
 def box_line(export_id, geometry, width, height):
