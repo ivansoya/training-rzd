@@ -1017,7 +1017,9 @@ class AugGraph(Base, AuditMixin):
 
     __tablename__ = "aug_graphs"
     __table_args__ = (
-        sa.UniqueConstraint("owner_id", "kind", "name", name="uq_aug_graph_name"),
+        # Имя держат только живые: архивный «Новый агент» не мешает завести новый.
+        sa.Index("uq_aug_graph_name", "owner_id", "kind", "name", unique=True,
+                 postgresql_where=sa.text("archived_at IS NULL")),
         sa.Index("ix_aug_graphs_owner", "owner_id", "kind", "archived_at"),
     )
 

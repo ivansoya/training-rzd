@@ -192,7 +192,7 @@ def create_graph():
         taken = db.execute(
             select(AugGraph).where(
                 AugGraph.owner_id == user.id, AugGraph.kind == kind,
-                AugGraph.name == name,
+                AugGraph.name == name, AugGraph.archived_at.is_(None),
             )
         ).scalar_one_or_none()
         if taken is not None:
@@ -548,15 +548,24 @@ def patch_graph(graph_id):
             name = str_field(data, "name", max_len=NAME_MAX, label="Имя графа")
             if not name:
                 return jsonify({"error": "У графа должно быть имя."}), 400
+        new_name = name if "name" in data else graph.name
+        live = not data["archived"] if "archived" in data else graph.archived_at is None
+        # Имя сверяем только с живыми: архивный его не держит, а возвращённый — снова держит.
+        if live and ("name" in data or "archived" in data):
             taken = db.execute(
                 select(AugGraph.id).where(
                     AugGraph.owner_id == user.id, AugGraph.kind == graph.kind,
-                    AugGraph.name == name, AugGraph.id != graph.id,
+                    AugGraph.name == new_name, AugGraph.id != graph.id,
+                    AugGraph.archived_at.is_(None),
                 )
             ).first()
             if taken:
-                return jsonify({"error": "Такое имя уже занято."}), 409
-            graph.name = name
+                return jsonify({"error": (
+                    "Такое имя уже занято." if "name" in data else
+                    f"Имя «{new_name}» уже носит другой граф — переименуйте его, "
+                    "прежде чем возвращать этот."
+                )}), 409
+        graph.name = new_name
         if "description" in data:
             graph.description = str_field(data, "description", max_len=5000) or None
         if "archived" in data:

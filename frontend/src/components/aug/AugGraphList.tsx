@@ -46,10 +46,8 @@ export default function AugGraphList() {
     setMaking(true);
     setError(null);
     try {
-      // Имя занято и у архивных: сервер сравнивает со всеми графами человека,
-      // и «Новый граф» из архива давал 409 на первом же щелчке.
-      const [live, archived] = await Promise.all([api.listGraphs("aug"), api.listGraphs("aug", true)]);
-      const taken = new Set([...live.graphs, ...archived.graphs].map((g) => g.name));
+      // Имя держат только живые графы — и из архива смотрим на них же.
+      const taken = new Set((await api.listGraphs("aug")).graphs.map((g) => g.name));
       let name = "Новый граф";
       for (let n = 2; taken.has(name); n++) name = `Новый граф ${n}`;
       const got = await api.createGraph(name);
@@ -157,16 +155,14 @@ export default function AugGraphList() {
                 >
                   {archived ? "Вернуть" : "В архив"}
                 </button>
-                {!archived && (
-                  <button
-                    type="button"
-                    className="g-graph-del"
-                    disabled={working === g.id}
-                    onClick={() => remove(g)}
-                  >
-                    Удалить
-                  </button>
-                )}
+                <button
+                  type="button"
+                  className="g-graph-del"
+                  disabled={working === g.id}
+                  onClick={() => remove(g)}
+                >
+                  Удалить
+                </button>
               </span>
             </div>
           ))}

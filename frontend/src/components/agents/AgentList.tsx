@@ -37,15 +37,31 @@ export default function AgentList() {
   const create = async () => {
     if (making) return;
     setMaking(true);
-    const taken = new Set((agents ?? []).map((g) => g.name));
-    let name = "Новый агент";
-    for (let n = 2; taken.has(name); n++) name = `Новый агент ${n}`;
     try {
+      // Имя держат только живые агенты: из архива смотрим на них же.
+      const taken = new Set((await aug.listGraphs("agent")).graphs.map((g) => g.name));
+      let name = "Новый агент";
+      for (let n = 2; taken.has(name); n++) name = `Новый агент ${n}`;
       const got = await aug.createGraph(name, undefined, "agent");
       navigate(`/agents/${got.id}`);
     } catch (e) {
       setError((e as Error).message);
       setMaking(false);
+    }
+  };
+
+  /** Удалить агента из архива. С рамками в проектах сервер откажет и скажет почему. */
+  const remove = async (g: aug.GraphSummary) => {
+    if (!window.confirm(`Удалить агента «${g.name}» со всеми версиями?`)) return;
+    setWorking(g.id);
+    setError(null);
+    try {
+      await aug.deleteGraph(g.id);
+      setAgents((old) => (old ?? []).filter((x) => x.id !== g.id));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setWorking(null);
     }
   };
 
@@ -108,9 +124,14 @@ export default function AgentList() {
                   <span>{g.version ? `версия ${g.version}` : "без версии"}</span>
                   <span>{count(classes.length, "класс", "класса", "классов")}</span>
                   {archived ? (
-                    <button type="button" className="g-graph-del" disabled={working === g.id} onClick={() => shelve(g, false)}>
-                      Вернуть
-                    </button>
+                    <>
+                      <button type="button" className="g-graph-del" disabled={working === g.id} onClick={() => shelve(g, false)}>
+                        Вернуть
+                      </button>
+                      <button type="button" className="g-graph-del" disabled={working === g.id} onClick={() => remove(g)}>
+                        Удалить
+                      </button>
+                    </>
                   ) : asking === g.id ? (
                     <>
                       <span className="ag-warn-text ag-ask">В архив?</span>
