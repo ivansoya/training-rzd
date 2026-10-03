@@ -11,6 +11,8 @@ h`` у него заполнены так же, как у бокса, — по �
 ленты кадров, старый код просмотра), продолжает работать, не зная о полигонах
 вовсе, и показывает объект рамкой вместо контура. Отличает их поле ``kind``.
 """
+import math
+
 from common import polygon as polylib
 
 # Бокс тоньше двух пикселей — это промах мышью, а не объект.
@@ -30,6 +32,8 @@ def clamp_box(box, width, height):
         w = float(box.get("w", 0))
         h = float(box.get("h", 0))
     except (TypeError, ValueError):
+        return None
+    if not all(math.isfinite(v) for v in (x, y, w, h)):
         return None
     # Отрицательные размеры — это протяжка справа налево; нормализуем.
     if w < 0:

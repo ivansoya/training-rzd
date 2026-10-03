@@ -7,7 +7,7 @@ token in an httpOnly cookie, so no credentials are reachable from JS.
 import re
 from datetime import datetime, timedelta, timezone
 
-from flask import Blueprint, jsonify, make_response, request
+from flask import Blueprint, jsonify, make_response
 from sqlalchemy import func, select
 
 from auth_svc import mailer
@@ -22,6 +22,7 @@ from common.models import (
     User,
     utcnow,
 )
+from common.web import json_body, str_field
 
 bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
@@ -69,11 +70,12 @@ def _issue_confirmation(db, user: User) -> bool:
 
 @bp.post("/register")
 def register():
-    data = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
-    login = (data.get("login") or "").strip().lower()
-    display_name = (data.get("display_name") or "").strip()
-    password = data.get("password") or ""
+    data = json_body()
+    # Длины проверяются ниже со своими словами; здесь — что это строки.
+    email = str_field(data, "email", max_len=4096).lower()
+    login = str_field(data, "login", max_len=4096).lower()
+    display_name = str_field(data, "display_name", max_len=4096)
+    password = str_field(data, "password", max_len=4096, strip=False)
 
     errors = {}
     if not EMAIL_RE.match(email):
@@ -115,8 +117,8 @@ def register():
 
 @bp.post("/confirm")
 def confirm_email():
-    data = request.get_json(silent=True) or {}
-    token = data.get("token") or ""
+    data = json_body()
+    token = str_field(data, "token", max_len=256)
     if not token:
         return jsonify({"error": "Нет токена подтверждения."}), 400
     with SessionLocal() as db:
@@ -146,8 +148,8 @@ def confirm_email():
 
 @bp.post("/resend")
 def resend_confirmation():
-    data = request.get_json(silent=True) or {}
-    email = (data.get("email") or "").strip().lower()
+    data = json_body()
+    email = str_field(data, "email", max_len=4096).lower()
     with SessionLocal() as db:
         user = db.execute(
             select(User).where(func.lower(User.email) == email)
@@ -161,9 +163,9 @@ def resend_confirmation():
 
 @bp.post("/login")
 def login():
-    data = request.get_json(silent=True) or {}
-    identity = (data.get("identity") or "").strip().lower()
-    password = data.get("password") or ""
+    data = json_body()
+    identity = str_field(data, "identity", max_len=4096).lower()
+    password = str_field(data, "password", max_len=4096, strip=False)
     if not identity or not password:
         return jsonify({"error": "Укажите логин (или почту) и пароль."}), 400
 
@@ -233,9 +235,9 @@ def me():
 
 @bp.post("/password")
 def change_password():
-    data = request.get_json(silent=True) or {}
-    current = data.get("current") or ""
-    new = data.get("new") or ""
+    data = json_body()
+    current = str_field(data, "current", max_len=4096, strip=False)
+    new = str_field(data, "new", max_len=4096, strip=False)
     with SessionLocal() as db:
         sess, user = current_session(db)
         if user is None:

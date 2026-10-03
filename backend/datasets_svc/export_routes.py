@@ -44,6 +44,7 @@ from common import selection as sel_lib
 from common.auth import current_user
 from common.db import SessionLocal
 from common.models import Dataset, Project
+from common.web import public_error
 from common.storage import load_json, one_line, save_json, translit_slug
 # Тот же разбор кода проекта и прав, что у остальных данных проекта.
 from datasets_svc.project_routes import _resolve
@@ -302,7 +303,8 @@ def _run_export_job(job_id, project_id, sel, user_id, offset_min=0):
         jobs.update(job_id, status="done", processed=len(items),
                     result={"job_id": job_id, **meta})
     except Exception as exc:  # noqa: BLE001
-        jobs.update(job_id, status="error", error=str(exc))
+        jobs.update(job_id, status="error",
+                    error=public_error(exc, "Выгрузка прервалась."))
     finally:
         db.close()
 

@@ -39,6 +39,7 @@ from common.models import (
     VideoTrack,
 )
 from common.storage import translit_slug
+from common.web import InputError, json_body, public_error
 from datasets_svc import materialize
 from common import shapes
 from datasets_svc import video as videolib
@@ -1068,7 +1069,8 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
         jobs.update(job_id, status="error", error=str(exc))
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        jobs.update(job_id, status="error", error=str(exc))
+        jobs.update(job_id, status="error",
+                    error=public_error(exc, "Нарезка ролика прервалась."))
     finally:
         db.close()
 
@@ -1240,7 +1242,11 @@ def _save_annotations(db, image_id):
         if not _may_work(task, user, role):
             return jsonify({"error": "Это не ваша таска."}), 403
 
-    data = request.get_json(silent=True) or {}
+    data = json_body()
+    # Битое тело раньше читалось как «боксов нет» и стирало разметку кадра.
+    boxes = data.get("boxes")
+    if not isinstance(boxes, list) or not all(isinstance(b, dict) for b in boxes):
+        raise InputError("boxes: ожидается список фигур.", "boxes")
     # Клиент шлёт версию, которую видел; без неё (агенты, старые клиенты) — без сверки.
     seen = data.get("rev")
     if seen is not None and seen != image.annotations_rev:

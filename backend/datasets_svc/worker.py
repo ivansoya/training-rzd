@@ -191,7 +191,7 @@ def _do_chunkset(db, job, video, path):
             _wipe_chunks(path, total, quality)
             if _rebuild_variant(db, video, path, quality, asset, index):
                 raise chunklib.VideoError(
-                    f"Копия {quality} переделывается: {exc}"
+                    f"Копия {quality} переделывается."
                 ) from exc
             made = 0
     if not made:
@@ -379,6 +379,13 @@ def run_job(db, job):
     log.info("готово: %s %s %s", job.kind, job.quality or "", result)
 
 
+def _public(exc):
+    """Что показать человеку: свои фразы — как есть, чужие (errno, пути) — общей."""
+    if isinstance(exc, chunklib.VideoError):
+        return str(exc)
+    return "Не удалось обработать ролик. Подробности — в журнале видео-воркера."
+
+
 def _mark_failed(db, job, exc):
     """Отметить ступень несостоявшейся, когда попытки кончились.
 
@@ -423,9 +430,9 @@ def loop(kinds, name):
                 # отметка об отказе не записалась бы, и задача висела бы
                 # «в работе» до истечения аренды.
                 db.rollback()
-                requeued = queue.release(db, job, exc)
+                requeued = queue.release(db, job, _public(exc))
                 if not requeued:
-                    _mark_failed(db, job, exc)
+                    _mark_failed(db, job, _public(exc))
                 log.warning(
                     "задача %s %s", job.id,
                     "вернулась в очередь" if requeued else "признана безнадёжной",

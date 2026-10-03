@@ -9,6 +9,7 @@
 запрос. Поэтому падение воркера или переезд сессии на другой процесс не теряют
 начатое выделение — теряется только кэш эмбеддинга, который пересчитается.
 """
+import logging
 import multiprocessing as mp
 import os
 import threading
@@ -25,6 +26,9 @@ MAX_WORKERS = int(os.environ.get("AUTOLABEL_MAX_WORKERS", "3"))
 SESSION_TTL = int(os.environ.get("AUTOLABEL_SESSION_TTL", "600"))
 REQUEST_TIMEOUT = int(os.environ.get("AUTOLABEL_TIMEOUT", "180"))
 SWEEP_EVERY = 30
+
+
+log = logging.getLogger(__name__)
 
 
 class WorkerError(RuntimeError):
@@ -84,7 +88,11 @@ class Worker:
             raise WorkerError("Модель не ответила вовремя.")
         reply = slot["reply"]
         if not reply.get("ok"):
-            raise WorkerError(reply.get("error") or "Ошибка модели.")
+            # Текст исключения и трасса — в журнал, человеку — фраза без путей и Python.
+            log.error("Воркер %s: %s %s", op, reply.get("error"), reply.get("trace") or "")
+            if "trace" not in reply:
+                raise WorkerError("Модель не загрузилась. Подробности — в журнале сервиса.")
+            raise WorkerError("Модель не смогла обработать кадр.")
         return reply["data"]
 
     def stop(self):

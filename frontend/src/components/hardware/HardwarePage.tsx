@@ -127,9 +127,15 @@ function Card({
             max={Math.round(device.total_mb / 1024)}
             step={0.5}
             defaultValue={(device.reserved_mb / 1024).toFixed(1)}
-            onBlur={(e) =>
-              onLimit({ reserved_mb: Math.round(Number(e.target.value) * 1024) })
-            }
+            onBlur={(e) => {
+              // Пустое поле — не «ноль»: Number("") обнулял запас.
+              const v = e.target.valueAsNumber;
+              if (!Number.isFinite(v) || v < 0) {
+                e.target.value = (device.reserved_mb / 1024).toFixed(1);
+                return;
+              }
+              onLimit({ reserved_mb: Math.round(v * 1024) });
+            }}
           />
         </div>
         <div className="mag-field" style={{ marginBottom: 0 }}>
@@ -140,7 +146,14 @@ function Card({
             min={1}
             max={4}
             defaultValue={device.max_heavy}
-            onBlur={(e) => onLimit({ max_heavy: Number(e.target.value) })}
+            onBlur={(e) => {
+              const v = e.target.valueAsNumber;
+              if (!Number.isInteger(v) || v < 1) {
+                e.target.value = String(device.max_heavy);
+                return;
+              }
+              onLimit({ max_heavy: v });
+            }}
           />
         </div>
       </div>

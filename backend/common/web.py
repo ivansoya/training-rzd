@@ -78,13 +78,15 @@ def json_body() -> dict:
     return data
 
 
-def str_field(data, key, *, max_len, required=False, default="", label=None):
+def str_field(data, key, *, max_len, required=False, default="", label=None,
+              strip=True):
     value = data.get(key)
     if value is None:
         value = default
     if not isinstance(value, str):
         raise InputError(f"{label or key}: ожидается строка.", key)
-    value = value.strip()
+    if strip:
+        value = value.strip()
     if required and not value:
         raise InputError(f"{label or key}: поле не заполнено.", key)
     if len(value) > max_len:
@@ -125,3 +127,9 @@ def color_field(data, key, *, default=None, label=None):
 def finite(value) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool) \
         and math.isfinite(value)
+
+
+def public_error(exc, fallback="Не получилось. Подробности — в журнале сервиса."):
+    """Текст чужого исключения (SQL, пути тома, errno) — в журнал, человеку — фраза."""
+    log.error("%s: %s", fallback, exc, exc_info=exc)
+    return fallback

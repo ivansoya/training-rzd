@@ -25,6 +25,7 @@ from common.models import (
     DataprepJob, Project, ProjectAugGraph, TrainRun, TrainSet, TrainSetFeed, User,
     utcnow,
 )
+from common.web import json_body, str_field
 from common import config, live
 from common import prep_queue as queue
 from common import similarity
@@ -179,8 +180,8 @@ def create_graph():
     if err:
         return err
     try:
-        data = request.get_json(silent=True) or {}
-        name = (data.get("name") or "").strip()
+        data = json_body()
+        name = str_field(data, "name", max_len=NAME_MAX, label="Имя графа")
         kind = data.get("kind") or "aug"
         if kind not in GRAPH_KINDS:
             return jsonify({"error": "Неизвестный род графа."}), 400
@@ -195,13 +196,22 @@ def create_graph():
         if taken is not None:
             return jsonify({"error": "Такое имя уже занято."}), 409
 
+        doc = data.get("doc") or _starter()
+        bad = _doc_shape_error(doc)
+        if bad:
+            return bad
         graph = AugGraph(
             owner_id=user.id, name=name, kind=kind,
-            description=(data.get("description") or "").strip() or None,
+            description=str_field(data, "description", max_len=5000) or None,
             created_by=user.id,
         )
         db.add(graph)
-        db.commit()
+        # Без коммита: негодная первая версия откатит и сам граф, сирот не будет.
+        try:
+            db.flush()
+        except IntegrityError:
+            db.rollback()
+            return jsonify({"error": "Такое имя уже занято."}), 409
 
         if kind == "agent":
             # У нового агента ещё нет весов, а версия без весов не проходит
@@ -212,13 +222,27 @@ def create_graph():
             db.commit()
             return jsonify(_graph_view(db, graph)), 201
 
-        doc = data.get("doc") or _starter()
         version, error = _save_version(db, graph, doc, user, note="Начало")
         if error:
+            db.rollback()
             return error
         return jsonify(_graph_view(db, graph, version)), 201
     finally:
         db.close()
+
+
+NAME_MAX = 160  # aug_graphs.name — varchar(160)
+
+
+def _doc_shape_error(doc):
+    """Ответ 400, если документ графа не той формы, иначе None."""
+    if not isinstance(doc, dict) or not isinstance(doc.get("nodes"), list) \
+            or not isinstance(doc.get("edges"), list) \
+            or not all(isinstance(x, dict) for x in doc["nodes"] + doc["edges"]):
+        return jsonify({"error": "Граф должен быть объектом с узлами и связями."}), 400
+    if len(doc["nodes"]) > schema.MAX_NODES:
+        return jsonify({"error": "Слишком большой граф."}), 400
+    return None
 
 
 def _starter(kind="aug"):
@@ -419,12 +443,10 @@ def save_draft(graph_id):
         graph = db.get(AugGraph, _uuid(graph_id))
         if graph is None or graph.owner_id != user.id:
             return jsonify({"error": "Граф не найден."}), 404
-        doc = (request.get_json(silent=True) or {}).get("doc")
-        if not isinstance(doc, dict) or not isinstance(doc.get("nodes"), list) \
-                or not isinstance(doc.get("edges"), list):
-            return jsonify({"error": "Граф должен быть объектом с узлами и связями."}), 400
-        if len(doc["nodes"]) > schema.MAX_NODES:
-            return jsonify({"error": "Слишком большой граф."}), 400
+        doc = json_body().get("doc")
+        bad = _doc_shape_error(doc)
+        if bad:
+            return bad
         head = db.get(AugGraphVersion, graph.head_version_id) \
             if graph.head_version_id else None
         graph.draft = doc
@@ -485,9 +507,13 @@ def save_version(graph_id):
             return jsonify({
                 "error": "Граф чужой. Сделайте свою копию, чтобы править."
             }), 403
-        data = request.get_json(silent=True) or {}
+        data = json_body()
+        bad = _doc_shape_error(data.get("doc"))
+        if bad:
+            return bad
         version, error = _save_version(
-            db, graph, data.get("doc") or {}, user, note=data.get("note")
+            db, graph, data["doc"], user,
+            note=str_field(data, "note", max_len=2000, label="Заметка"),
         )
         if error:
             return error
@@ -518,14 +544,22 @@ def patch_graph(graph_id):
         graph = db.get(AugGraph, _uuid(graph_id))
         if graph is None or graph.owner_id != user.id:
             return jsonify({"error": "Граф не найден."}), 404
-        data = request.get_json(silent=True) or {}
+        data = json_body()
         if "name" in data:
-            name = (data["name"] or "").strip()
+            name = str_field(data, "name", max_len=NAME_MAX, label="Имя графа")
             if not name:
                 return jsonify({"error": "У графа должно быть имя."}), 400
+            taken = db.execute(
+                select(AugGraph.id).where(
+                    AugGraph.owner_id == user.id, AugGraph.kind == graph.kind,
+                    AugGraph.name == name, AugGraph.id != graph.id,
+                )
+            ).first()
+            if taken:
+                return jsonify({"error": "Такое имя уже занято."}), 409
             graph.name = name
         if "description" in data:
-            graph.description = (data["description"] or "").strip() or None
+            graph.description = str_field(data, "description", max_len=5000) or None
         if "archived" in data:
             graph.archived_at = utcnow() if data["archived"] else None
         if "head_version_id" in data:
@@ -534,7 +568,12 @@ def patch_graph(graph_id):
             if version is None or version.graph_id != graph.id:
                 return jsonify({"error": "Версия не от этого графа."}), 404
             graph.head_version_id = version.id
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # Имя заняли между проверкой и записью.
+            db.rollback()
+            return jsonify({"error": "Такое имя уже занято."}), 409
         return jsonify(_graph_view(db, graph))
     finally:
         db.close()

@@ -13,6 +13,7 @@
 Модуль намеренно чистый: ни моделей, ни БД, ни numpy. Такую арифметику
 проверяют числами (``tests/unit/test_polygon.py``), а не глазами по картинке.
 """
+import math
 
 # Меньше трёх точек — не фигура, а отрезок. Правило одно на клиент и сервер:
 # замкнуть контур из двух точек редактор не даёт, и принять такой снаружи
@@ -58,6 +59,8 @@ def _clean_ring(ring):
             else:
                 x, y = float(p[0]), float(p[1])
         except (KeyError, IndexError, TypeError, ValueError):
+            return None
+        if not (math.isfinite(x) and math.isfinite(y)):
             return None
         if pts and _same(pts[-1], (x, y)):
             continue

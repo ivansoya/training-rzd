@@ -28,6 +28,7 @@ from common.models import (
     AugGraphVersion, Dataset, Image, LabelClass, Project, ProjectMember, Task, TaskVideo, TrainRun,
     VideoScout, utcnow,
 )
+from common.web import int_field, json_body, public_error
 from common import agent_examples as ax
 from training_svc import agent_preview as agent_preview_lib, examples as examples_lib, pt_guard
 
@@ -190,7 +191,8 @@ def upload_weights():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:  # noqa: BLE001 — ultralytics не открыл файл
-        return jsonify({"error": f"Веса не открываются: {exc}"}), 400
+        return jsonify({"error": public_error(
+            exc, "Веса не открываются: это не модель YOLO или файл повреждён.")}), 400
     finally:
         if tmp and os.path.exists(tmp):
             os.remove(tmp)
@@ -261,7 +263,8 @@ def weights_from_run():
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
     except Exception as exc:  # noqa: BLE001 — ultralytics не открыл файл
-        return jsonify({"error": f"Веса не открываются: {exc}"}), 400
+        return jsonify({"error": public_error(
+            exc, "Веса не открываются: это не модель YOLO или файл повреждён.")}), 400
     finally:
         if tmp and os.path.exists(tmp):
             os.remove(tmp)
@@ -866,8 +869,8 @@ def derive_examples(set_id):
         parent = _examples_row(db, user, set_id)
         if parent is None or parent.status != "ready":
             return jsonify({"error": "Набор не найден."}), 404
-        data = request.get_json(silent=True) or {}
-        add = int(data.get("add") or 0)
+        data = json_body()
+        add = int_field(data, "add", lo=0, default=0, label="Сколько добавить")
         if add:
             if not 1 <= add <= MAX_EXAMPLES - len(parent.items):
                 return jsonify({"error": f"В наборе не больше {MAX_EXAMPLES} образцов."}), 400

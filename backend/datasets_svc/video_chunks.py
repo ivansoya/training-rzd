@@ -464,7 +464,7 @@ def grab_in(path, local_no):
     except VideoError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise VideoError(f"Не удалось прочитать кадр: {exc}") from exc
+        raise VideoError("Не удалось прочитать кадр.") from exc
     raise VideoError(f"В файле нет кадра {local_no}.")
 
 
@@ -512,7 +512,7 @@ def grab_at(video_path, index, frame_no):
     except VideoError:
         raise
     except Exception as exc:  # noqa: BLE001
-        raise VideoError(f"Не удалось прочитать кадр: {exc}") from exc
+        raise VideoError("Не удалось прочитать кадр.") from exc
     raise VideoError(f"Кадр {frame_no} в ролике не найден.")
 
 
@@ -588,7 +588,7 @@ def make_variant(video_path, index, quality, dest_path, progress=None):
     except Exception as exc:  # noqa: BLE001
         if writer is not None:
             writer.abort()
-        raise VideoError(f"Не удалось сделать копию {quality}: {exc}") from exc
+        raise VideoError(f"Не удалось сделать копию {quality}.") from exc
 
     if progress:
         progress(total, total)
@@ -672,7 +672,7 @@ def cut_from_variant(variant_path_, total, dest_for, only=None, progress=None):
     except Exception as exc:  # noqa: BLE001
         if writer is not None:
             writer.abort()
-        raise VideoError(f"Не удалось разложить копию на перегоны: {exc}") from exc
+        raise VideoError("Не удалось разложить копию на перегоны.") from exc
 
     if progress:
         progress(total, total)
@@ -745,7 +745,7 @@ def cut_all(video_path, index, quality, dest_for, progress=None,
     except Exception as exc:  # noqa: BLE001
         if writer is not None:
             writer.abort()
-        raise VideoError(f"Не удалось нарезать ролик на перегоны: {exc}") from exc
+        raise VideoError("Не удалось нарезать ролик на перегоны.") from exc
 
     if progress:
         progress(total, total)
@@ -811,7 +811,7 @@ def cut_chunk(video_path, index, chunk_no, quality, dest, positional=False):
     except Exception as exc:  # noqa: BLE001
         if writer is not None:
             writer.abort()
-        raise VideoError(f"Не удалось нарезать перегон: {exc}") from exc
+        raise VideoError("Не удалось нарезать перегон.") from exc
 
     if written != want:
         try:

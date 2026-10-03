@@ -39,6 +39,7 @@ from datasets_svc import video_index
 from common import shapes
 from datasets_svc import video_queue as queue
 from common import video_tracks as tracklib
+from common.web import InputError, json_body, public_error
 from datasets_svc.materialize import collect, frame_is_free
 from datasets_svc.task_routes import (
     _clamp_box,
@@ -265,6 +266,15 @@ def _grab(db, video, source, frame_no):
             pass
     return videolib.grab_frame(source, frame_no)
 
+
+
+def _source_arg(value):
+    """Кто поставил рамку: только human или model — иначе 500 от enum базы."""
+    if value in (None, ""):
+        return "human"
+    if value not in ("human", "model"):
+        raise InputError("source: human или model.", "source")
+    return value
 
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/frame")
 def video_frame(task_id, video_id):
@@ -691,7 +701,7 @@ def create_track(task_id, video_id):
             class_id=cls.id,
             ann_type="bbox",
             geometry=geometry,
-            source=data.get("source") or "human",
+            source=_source_arg(data.get("source")),
             created_by=user.id,
         )
         db.add(key)
@@ -870,7 +880,7 @@ def put_key(track_id, frame_no):
             )
             db.add(row)
         row.geometry = geometry
-        row.source = data.get("source") or "human"
+        row.source = _source_arg(data.get("source"))
         if extending:
             track.start_frame = min(track.start_frame, frame_no)
             if track.end_frame is not None:
@@ -1049,7 +1059,9 @@ def put_frame_boxes(task_id, video_id, frame_no):
                 select(LabelClass).where(LabelClass.project_id == project.id)
             ).scalars()
         }
-        raws = (request.get_json(silent=True) or {}).get("boxes") or []
+        raws = json_body().get("boxes")
+        if not isinstance(raws, list) or not all(isinstance(r, dict) for r in raws):
+            raise InputError("boxes: ожидается список фигур.", "boxes")
         # То же, что и на кадре таски: молча пропустить бокс с исчезнувшим
         # классом здесь значит стереть его — сохранение сносит всю одиночную
         # разметку кадра и вставляет заново.
@@ -1075,7 +1087,7 @@ def put_frame_boxes(task_id, video_id, frame_no):
             ann_type, geometry, _area = parsed
             fresh.append({"id": str(raw.get("id") or ""), "class_id": cls.id,
                           "ann_type": ann_type, "geometry": geometry,
-                          "source": raw.get("source")})
+                          "source": _source_arg(raw.get("source"))})
 
         single = (VideoAnnotation.video_id == video.id,
                   VideoAnnotation.track_id.is_(None),
@@ -1330,7 +1342,8 @@ def _run_close_job(job_id, task_id, video_id, user_id):
         jobs.update(job_id, status="error", error=str(exc))
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        jobs.update(job_id, status="error", error=str(exc))
+        jobs.update(job_id, status="error",
+                    error=public_error(exc, "Не удалось достать кадры из ролика."))
     finally:
         db.close()
 

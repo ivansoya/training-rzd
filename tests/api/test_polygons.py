@@ -331,3 +331,15 @@ def test_рамка_треком_становится_по_прежнему(api,
         f"{BASE_URL}/api/video-tracks/{res.json()['id']}/keys/10",
         json={"geometry": {"x": 20, "y": 20, "w": 50, "h": 50}},
     ).status_code in (200, 201)
+
+
+def test_битое_тело_не_стирает_разметку(api, task, image, label_class):
+    save(api, image["id"], [{
+        "class_index": label_class["class_index"], "x": 10, "y": 10, "w": 50, "h": 50,
+    }])
+    url = f"{BASE_URL}/api/images/{image['id']}/annotations"
+    for body in ('[]', '{"rev": 1}', '{"boxes": [1]}', '{"boxes": [{"x": NaN}]}', 'мусор'):
+        res = api.put(url, data=body.encode(), headers={"Content-Type": "application/json"})
+        assert res.status_code == 400, (body, res.status_code, res.text)
+        assert res.json()["error"]
+    assert len(read_back(api, task["id"], image["id"])) == 1

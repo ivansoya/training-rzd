@@ -7,13 +7,14 @@
 import os
 import uuid
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 
 from autolabel_svc.manager import WorkerError, manager
 from common import config
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import Image, Project, Task, TaskVideo
+from common.web import InputError, finite, json_body
 
 bp = Blueprint("autolabel", __name__, url_prefix="/api/auto")
 
@@ -131,7 +132,7 @@ def _editor_of(code):
 def open_session():
     """Сессия на пользователя и модель. SAM2 открывают при входе в редактор,
     остальные модели — в момент первого обращения к ним."""
-    data = request.get_json(silent=True) or {}
+    data = json_body()
     user_id, err = _editor_of(data.get("project"))
     if err:
         return err
@@ -161,7 +162,7 @@ def close_session(session_id):
 def warm(session_id):
     """Прогрев кадра. Редактор зовёт его на текущий кадр и фоном на соседний:
     кодировщик — самая дорогая часть, клики после него мгновенные."""
-    data = request.get_json(silent=True) or {}
+    data = json_body()
     user_id, path, err = _frame(data)
     if err:
         return err
@@ -178,11 +179,42 @@ def warm(session_id):
         return jsonify({"error": str(exc)}), 503
 
 
+WANT = {"box", "polygon"}
+
+
+def _check_predict(data):
+    """Подсказки — конечные числа нужной формы; иначе 400 до похода в воркер."""
+    prompts = data.get("prompts") or {}
+    if not isinstance(prompts, dict):
+        raise InputError("prompts: ожидается объект.", "prompts")
+    points = prompts.get("points") or []
+    if not isinstance(points, list) or not all(
+        isinstance(p, dict) and finite(p.get("x")) and finite(p.get("y")) for p in points
+    ):
+        raise InputError("Точки подсказки — конечные числа x и y.", "prompts")
+    box = prompts.get("box")
+    if box is not None and not (
+        isinstance(box, dict) and all(finite(box.get(k)) for k in ("x", "y", "w", "h"))
+    ):
+        raise InputError("Рамка подсказки — конечные числа x, y, w, h.", "prompts")
+    want = data.get("want") or ["box"]
+    if not isinstance(want, list) or not set(want) <= WANT:
+        raise InputError("want: список из box и polygon.", "want")
+    space = data.get("space")
+    if space is not None and not (
+        isinstance(space, dict) and finite(space.get("w")) and finite(space.get("h"))
+    ):
+        raise InputError("space: конечные числа w и h.", "space")
+    if not isinstance(data.get("refine") or {}, dict):
+        raise InputError("refine: ожидается объект.", "refine")
+
+
 @bp.post("/sessions/<session_id>/predict")
 def predict(session_id):
     """Весь набор точек приходит целиком на каждый клик — воркер не помнит
     диалог, поэтому его перезапуск не теряет начатое выделение."""
-    data = request.get_json(silent=True) or {}
+    data = json_body()
+    _check_predict(data)
     user_id, path, err = _frame(data)
     if err:
         return err

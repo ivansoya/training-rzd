@@ -16,6 +16,7 @@ from common.db import SessionLocal
 from common.models import (
     GpuDevice, TrainEpoch, TrainRun, TrainSet, TrainSetFeed, User, utcnow,
 )
+from common.web import InputError, int_field, json_body
 from common.storage import load_json
 from training_svc import metrics as metrics_lib, trainer
 
@@ -125,12 +126,17 @@ def set_device_limits(device_id):
     try:
         if not user.is_staff:
             return jsonify({"error": "Железо настраивает обслуживание."}), 403
-        data = request.get_json(silent=True) or {}
+        data = json_body()
+        enabled = data.get("enabled")
+        if enabled is not None and not isinstance(enabled, bool):
+            raise InputError("enabled: ожидается да или нет.", "enabled")
         dev = gpu.set_limits(
             db, _uuid(device_id),
-            reserved_mb=data.get("reserved_mb"),
-            max_heavy=data.get("max_heavy"),
-            enabled=data.get("enabled"),
+            reserved_mb=int_field(data, "reserved_mb", lo=0, hi=1 << 20,
+                                  label="Запас памяти, МБ"),
+            max_heavy=int_field(data, "max_heavy", lo=1, hi=64,
+                                label="Тяжёлых задач"),
+            enabled=enabled,
         )
         if dev is None:
             return jsonify({"error": "Карта не найдена."}), 404

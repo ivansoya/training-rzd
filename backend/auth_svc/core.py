@@ -8,7 +8,7 @@ import threading
 import time
 import uuid
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify
 from sqlalchemy import and_, delete, func, or_, select
 
 from auth_svc.routes import ROLE_LABELS
@@ -16,6 +16,7 @@ from auth_svc.sessions import current_session, is_online
 from common import config
 from common.db import SessionLocal
 from common.storage import has_control
+from common.web import InputError, json_body, str_field
 from common.models import (
     AgentRun,
     Annotation,
@@ -116,12 +117,12 @@ def list_friends():
 
 @bp.post("/friends")
 def add_friend():
-    data = request.get_json(silent=True) or {}
+    data = json_body()
     with SessionLocal() as db:
         _, user = current_session(db)
         if user is None:
             return jsonify({"error": "Не выполнен вход."}), 401
-        target = _find_user(db, data.get("identity") or "")
+        target = _find_user(db, str_field(data, "identity", max_len=255))
         if target is None:
             return jsonify({"error": "Пользователь с таким логином или почтой не найден."}), 404
         if target.id == user.id:
@@ -250,10 +251,12 @@ def list_projects():
 
 @bp.post("/projects")
 def create_project():
-    data = request.get_json(silent=True) or {}
-    name = (data.get("name") or "").strip()
-    description = (data.get("description") or "").strip() or None
+    data = json_body()
+    name = str_field(data, "name", max_len=4096)
+    description = str_field(data, "description", max_len=5000, label="Описание") or None
     invites = data.get("invites") or []
+    if not isinstance(invites, list) or not all(isinstance(i, dict) for i in invites):
+        raise InputError("invites: ожидается список приглашений.", "invites")
 
     if not name:
         return jsonify({"errors": {"name": "Укажите название проекта."}}), 400
@@ -447,7 +450,7 @@ def project_detail(code):
 
 @bp.post("/projects/<code>/invite")
 def invite_to_project(code):
-    data = request.get_json(silent=True) or {}
+    data = json_body()
     role = data.get("role")
     with SessionLocal() as db:
         _, user = current_session(db)
@@ -463,7 +466,7 @@ def invite_to_project(code):
             return jsonify({"error": "Приглашать может только администратор проекта."}), 403
         if role not in ROLES:
             return jsonify({"error": "Укажите роль: администратор, редактор или просмотр."}), 400
-        target = _find_user(db, data.get("identity") or "")
+        target = _find_user(db, str_field(data, "identity", max_len=255))
         if target is None:
             return jsonify({"error": "Пользователь с таким логином или почтой не найден."}), 404
         if _membership(db, target, project) is not None:
@@ -748,7 +751,7 @@ def _member_by_user(db, project, user_id):
 
 @bp.patch("/projects/<code>/members/<user_id>")
 def change_member_role(code, user_id):
-    role = (request.get_json(silent=True) or {}).get("role")
+    role = json_body().get("role")
     with SessionLocal() as db:
         _, user = current_session(db)
         if user is None:

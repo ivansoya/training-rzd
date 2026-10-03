@@ -14,6 +14,7 @@ import zipfile
 
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from common import config, jobs, live, tags
 from common.auth import current_user, has_role, project_by_code, role_in
@@ -37,6 +38,7 @@ from common.models import (
     VideoTrack,
 )
 from common.storage import load_json, save_json, translit_slug
+from common.web import InputError, color_field, json_body, public_error, str_field
 from datasets_svc import importer, upload
 from common import shapes
 
@@ -135,7 +137,7 @@ def _run_scan_job(job_id, project_id, zip_path, archive_info):
     except zipfile.BadZipFile:
         _fail(project_id, job_id, "Файл не является zip-архивом", zip_path)
     except Exception as exc:  # noqa: BLE001
-        _fail(project_id, job_id, str(exc), zip_path)
+        _fail(project_id, job_id, public_error(exc, "Архив не разобрался."), zip_path)
 
 
 def _fail(project_id, job_id, message, zip_path=None):
@@ -255,7 +257,7 @@ def begin_upload(code):
         blocked = _import_blocked(db, project)
         if blocked:
             return blocked
-        data = request.get_json(silent=True) or {}
+        data = json_body()
         name = str(data.get("name") or "")
         try:
             size = int(data.get("size"))
@@ -508,7 +510,7 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
         jobs.update(job_id, processed=len(manifest), status="done", result=result)
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        _fail(project_id, job_id, str(exc))
+        _fail(project_id, job_id, public_error(exc, "Запись импорта прервалась."))
     finally:
         db.close()
         for path in (zip_path, _manifest_file(project_id)):
@@ -531,7 +533,7 @@ def commit_import(code):
         if manifest is None:
             return jsonify({"error": "Список файлов потерян, начните импорт заново."}), 409
 
-        data = request.get_json(silent=True) or {}
+        data = json_body()
         plan, error = _build_plan(data, state)
         if error:
             return jsonify({"error": error}), 400
@@ -556,15 +558,20 @@ def commit_import(code):
 def _build_plan(data, state):
     """Validate what the class step sent back. Names are required, superclasses
     are not: a class without one simply drops out of superclass export."""
-    dataset_name = (data.get("dataset_name") or "").strip()
+    dataset_name = str_field(data, "dataset_name", max_len=DATASET_NAME_MAX,
+                             label="Название датасета")
     if not dataset_name:
         return None, "Укажите название датасета."
+    for key in ("superclasses", "classes"):
+        rows = data.get(key) or []
+        if not isinstance(rows, list) or not all(isinstance(r, dict) for r in rows):
+            raise InputError(f"{key}: ожидается список объектов.", key)
 
     known = {c["class_index"] for c in state["report"]["classes"]}
     superclasses = []
     seen_sc = set()
     for i, sc in enumerate(data.get("superclasses") or []):
-        name = (sc.get("name") or "").strip()
+        name = str_field(sc, "name", max_len=4096, label="Суперкласс")
         if not name or name in seen_sc:
             continue
         if len(name) > NAME_MAX:
@@ -572,7 +579,8 @@ def _build_plan(data, state):
         seen_sc.add(name)
         superclasses.append({
             "name": name,
-            "color": sc.get("color") or PALETTE[i % len(PALETTE)],
+            "color": color_field(sc, "color", label="Цвет суперкласса")
+            or PALETTE[i % len(PALETTE)],
         })
 
     classes = []
@@ -582,23 +590,27 @@ def _build_plan(data, state):
             class_index = int(cls["class_index"])
         except (KeyError, TypeError, ValueError):
             return None, "Класс без идентификатора."
+        if not 0 <= class_index < 2 ** 31:
+            return None, f"Номер класса {class_index} вне допустимого."
         if class_index not in known:
             return None, f"Класс {class_index} не встречался в архиве."
         if class_index in seen_idx:
             return None, f"Класс {class_index} указан дважды."
         seen_idx.add(class_index)
-        name = (cls.get("name") or "").strip()
+        name = str_field(cls, "name", max_len=4096, label=f"Класс {class_index}")
         if not name:
             return None, f"Класс {class_index} без названия."
         if len(name) > NAME_MAX:
             return None, f"Название класса {class_index} длиннее {NAME_MAX} символов."
-        superclass = (cls.get("superclass") or "").strip() or None
+        superclass = str_field(cls, "superclass", max_len=4096,
+                               label=f"Суперкласс класса {class_index}") or None
         if superclass and superclass not in seen_sc:
             return None, f"Суперкласс «{superclass}» не объявлен."
         classes.append({
             "class_index": class_index,
             "name": name,
-            "color": cls.get("color") or PALETTE[i % len(PALETTE)],
+            "color": color_field(cls, "color", label=f"Цвет класса {class_index}")
+            or PALETTE[i % len(PALETTE)],
             "superclass": superclass,
         })
     if not classes:
@@ -660,15 +672,30 @@ def _wanted_classes(project_id, db, raw):
         try:
             numbers.append(int(piece))
         except ValueError:
-            continue
+            raise InputError(f"classes: «{piece}» — не номер класса.", "classes")
     if not numbers:
         return []
-    return list(db.execute(
-        select(LabelClass.id).where(
+    found = dict(db.execute(
+        select(LabelClass.class_index, LabelClass.id).where(
             LabelClass.project_id == project_id,
             LabelClass.class_index.in_(numbers),
         )
-    ).scalars())
+    ).all())
+    # Молча снять фильтр значило бы показать все кадры под видом отобранных.
+    missing = sorted(set(numbers) - set(found))
+    if missing:
+        raise InputError(f"Классов с номерами {missing} в проекте нет.", "classes")
+    return list(found.values())
+
+
+SPLITS = ("train", "val", "test", "other")
+
+
+def _split_arg():
+    split = request.args.get("split") or None
+    if split is not None and split not in SPLITS:
+        raise InputError(f"split: одно из {', '.join(SPLITS)}.", "split")
+    return split
 
 
 def _image_query(db, project, *, dataset_ids, split, class_ids, only_empty):
@@ -785,7 +812,7 @@ def project_images(code):
             if row is not None and row.project_id == project.id:
                 chosen.append(row.id)
 
-        split = request.args.get("split") or None
+        split = _split_arg()
         only_empty = request.args.get("empty") == "1"
         order = request.args.get("sort", "name")
         class_ids = _wanted_classes(project.id, db, request.args.get("classes"))
@@ -873,7 +900,7 @@ def dataset_detail(code, dataset_id):
             .limit(4)
         ).all()
 
-        split = request.args.get("split")
+        split = _split_arg()
         only_empty = request.args.get("empty") == "1"
         order = request.args.get("sort", "name")
         try:
@@ -1010,7 +1037,7 @@ def rename_dataset(code, dataset_id):
         dataset = _own_dataset(db, project, dataset_id)
         if dataset is None:
             return jsonify({"error": "Датасет не найден."}), 404
-        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        name = str_field(json_body(), "name", max_len=4096)
         if not name:
             return jsonify({"error": "Укажите название датасета."}), 400
         if len(name) > DATASET_NAME_MAX:
@@ -1280,8 +1307,9 @@ def create_class(code):
     if err:
         return err
     try:
-        data = request.get_json(silent=True) or {}
-        name = (data.get("name") or "").strip()
+        data = json_body()
+        name = str_field(data, "name", max_len=4096)
+        color = color_field(data, "color", label="Цвет")
         if not name:
             return jsonify({"error": "Укажите название класса."}), 400
         if _long_name(name):
@@ -1307,7 +1335,7 @@ def create_class(code):
             superclass_id=superclass_id,
             class_index=class_index,
             name=name,
-            color=data.get("color") or PALETTE[class_index % len(PALETTE)],
+            color=color or PALETTE[class_index % len(PALETTE)],
             created_by=current_user(db).id,
         )
         db.add(row)
@@ -1343,16 +1371,17 @@ def update_class(code, class_id):
         row = _get_by_uuid(db, LabelClass, class_id)
         if row is None or row.project_id != project.id:
             return jsonify({"error": "Класс не найден."}), 404
-        data = request.get_json(silent=True) or {}
+        data = json_body()
+        color = color_field(data, "color", label="Цвет")
         if "name" in data:
-            name = (data.get("name") or "").strip()
+            name = str_field(data, "name", max_len=4096)
             if not name:
                 return jsonify({"error": "Название не может быть пустым."}), 400
             if _long_name(name):
                 return _long_name(name)
             row.name = name
-        if "color" in data and data["color"]:
-            row.color = data["color"]
+        if color:
+            row.color = color
         if "superclass_id" in data:
             row.superclass_id = _superclass_arg(db, project, data)
         db.commit()
@@ -1531,7 +1560,7 @@ def move_class(code, class_id):
         row = _get_by_uuid(db, LabelClass, class_id)
         if row is None or row.project_id != project.id:
             return jsonify({"error": "Класс не найден."}), 404
-        data = request.get_json(silent=True) or {}
+        data = json_body()
         target, bad = _target_arg(db, project, data.get("target_id"))
         if bad:
             return bad
@@ -1690,7 +1719,7 @@ def create_tag(code):
     if err:
         return err
     try:
-        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        name = str_field(json_body(), "name", max_len=4096)
         if not name:
             return jsonify({"error": "Укажите название тага."}), 400
         if len(name) > 64:
@@ -1704,7 +1733,14 @@ def create_tag(code):
             row = Tag(project_id=project.id, name=name,
                       created_by=current_user(db).id)
             db.add(row)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                # Тот же таг успели создать из соседнего окна — отдаём его.
+                db.rollback()
+                row = db.execute(
+                    select(Tag).where(Tag.project_id == project.id, Tag.name == name)
+                ).scalar_one()
         return jsonify(tags.view(row)), 201
     finally:
         db.close()
@@ -1719,7 +1755,7 @@ def rename_tag(code, tag_id):
         row = _get_by_uuid(db, Tag, tag_id)
         if row is None or row.project_id != project.id:
             return jsonify({"error": "Таг не найден."}), 404
-        name = ((request.get_json(silent=True) or {}).get("name") or "").strip()
+        name = str_field(json_body(), "name", max_len=4096)
         if not name:
             return jsonify({"error": "Укажите название тага."}), 400
         if len(name) > 64:
@@ -1786,8 +1822,9 @@ def create_superclass(code):
     if err:
         return err
     try:
-        data = request.get_json(silent=True) or {}
-        name = (data.get("name") or "").strip()
+        data = json_body()
+        name = str_field(data, "name", max_len=4096)
+        color = color_field(data, "color", label="Цвет")
         if not name:
             return jsonify({"error": "Укажите название суперкласса."}), 400
         if _long_name(name):
@@ -1805,7 +1842,7 @@ def create_superclass(code):
         row = Superclass(
             project_id=project.id,
             name=name,
-            color=data.get("color") or PALETTE[taken % len(PALETTE)],
+            color=color or PALETTE[taken % len(PALETTE)],
             created_by=current_user(db).id,
         )
         db.add(row)
@@ -1825,16 +1862,17 @@ def update_superclass(code, sc_id):
         row = _get_by_uuid(db, Superclass, sc_id)
         if row is None or row.project_id != project.id:
             return jsonify({"error": "Суперкласс не найден."}), 404
-        data = request.get_json(silent=True) or {}
+        data = json_body()
+        color = color_field(data, "color", label="Цвет")
         if "name" in data:
-            name = (data.get("name") or "").strip()
+            name = str_field(data, "name", max_len=4096)
             if not name:
                 return jsonify({"error": "Название не может быть пустым."}), 400
             if _long_name(name):
                 return _long_name(name)
             row.name = name
-        if "color" in data and data["color"]:
-            row.color = data["color"]
+        if color:
+            row.color = color
         db.commit()
         return jsonify({"id": str(row.id), "name": row.name, "color": row.color})
     finally:

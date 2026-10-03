@@ -63,9 +63,12 @@ def plan(segments, duration_ms):
     """
     moments = set()
     for seg in segments or []:
-        start = max(0, int(seg.get("start_ms", 0)))
-        end = int(seg.get("end_ms", duration_ms or 0))
-        step = int(seg.get("step_ms", 1000))
+        try:
+            start = max(0, int(seg.get("start_ms", 0)))
+            end = int(seg.get("end_ms", duration_ms or 0))
+            step = int(seg.get("step_ms", 1000))
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            raise VideoError("Участок нарезки — целые start_ms, end_ms и step_ms.")
         if step <= 0:
             raise VideoError("Шаг должен быть больше нуля.")
         if duration_ms:
