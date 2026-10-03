@@ -3,35 +3,30 @@
 Решения владельца (25.09.2026): набор собирается из ручных рамок класса в
 датасетах проекта, лежит на полке неизменяемым; «убрать», «переставить» и
 «добрать» дают новый набор. YOLOE берёт средний вектор образцов, SAM 3 —
-коллаж из первых вырезок. Ролик и проверка — как у `test_agent_text`:
-кадры «РСМ-2000 · тест» блоками «человек, пусто, человек, пусто, пусто».
+коллаж из первых вырезок. Ролик и проверка — как у `test_agent_text`.
+Источник образцов — свой проект со снимками людей и ручными рамками
+(`agent_data.source_project`).
 
-Нужны стенд с картой и копия РСМ-2000; нет SAM 3 на томе — его проверка
-пропускается.
+Нужен стенд с картой; нет SAM 3 на томе — его проверка пропускается.
 """
 import time
 
 import pytest
 
-from conftest import BASE_URL, tag
+import agent_data
+from conftest import BASE_URL, drop_project, tag
 from test_agent_text import setup  # noqa: F401 — фикстура
 from test_agent_video import (  # noqa: F401 — фикстуры
     PERSON, STEP, _agent_singles, _empty_blocks, _person_blocks, clip, owner,
 )
 
-SOURCE = "РСМ-2000 · тест"
-
-
 @pytest.fixture(scope="module")
 def source(owner, db):
-    with db.cursor() as cur:
-        cur.execute("select code from projects where name = %s", (SOURCE,))
-        row = cur.fetchone()
-    if row is None:
-        pytest.skip(f"Нет проекта «{SOURCE}»")
-    got = owner.get(f"{BASE_URL}/api/agents/examples/sources", params={"project": row[0]})
+    code = agent_data.source_project(owner, db)
+    got = owner.get(f"{BASE_URL}/api/agents/examples/sources", params={"project": code})
     assert got.status_code == 200, got.text
-    return got.json()
+    yield got.json()
+    drop_project(db, code)
 
 
 @pytest.fixture(scope="module")
@@ -99,7 +94,7 @@ def test_источники_считают_годные_рамки(source):
 
 def test_набор_с_разных_кадров_и_вырезки(owner, people):
     assert people["status"] == "ready" and len(people["items"]) == 16
-    # сперва по одной рамке с кадра: людей на РСМ больше, чем 16 кадров
+    # сперва по одной рамке с кадра: людей на снимках больше, чем 16 кадров
     assert people["frames"] == 16
     uid = people["items"][0]["uid"]
     crop = owner.get(f"{BASE_URL}/api/agents/examples/{people['id']}/crops/{uid}")
@@ -154,14 +149,14 @@ def test_разметка_sam3_по_образцам_коллажем(owner, set
     assert {r[3] for r in agent} == {"polygon"}
 
 
-def test_превью_по_образцам(owner, setup, db, people):
+def test_превью_по_образцам(owner, setup, db, source, people):
     graph = setup["graphs"].get("examples-l") or _agent(owner, setup, "l", people["id"])
+    code = source["project"]["code"]
     with db.cursor() as cur:
-        cur.execute("""select i.id, p.code from images i join projects p on p.id = i.project_id
-                       join annotations a on a.image_id = i.id join classes c on c.id = a.class_id
-                       where p.name = %s group by i.id, i.file_name, p.code
-                       having bool_or(c.name = %s) order by i.file_name limit 1""", (SOURCE, PERSON))
-        image_id, code = cur.fetchone()
+        cur.execute("""select i.id from images i join projects p on p.id = i.project_id
+                       where p.code = %s and i.dataset_id is not null
+                       order by i.file_name limit 1""", (code,))
+        image_id = cur.fetchone()[0]
     res = owner.post(f"{BASE_URL}/api/agents/preview", json={
         "graph_id": graph["id"], "doc": _doc("l", people["id"]), "project": code,
         "image_id": str(image_id), "step": "same"})

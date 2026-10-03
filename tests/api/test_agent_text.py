@@ -3,16 +3,17 @@
 Решения владельца (24.09.2026): узел с таблицей «промт → класс агента»,
 модель — YOLOE-26 из образа или SAM 3 с тома; SAM 3 сразу пишет контур.
 Проверяется «агент видит», а не «ручка отвечает»: ролик тот же, что у
-`test_agent_video` — кадры «РСМ-2000 · тест» блоками «человек, пусто,
-человек, пусто, пусто» по ручной разметке.
+`test_agent_video` — снимки с людьми и пустые кадры блоками «человек, пусто,
+человек, пусто, пусто».
 
-Весов на полке не нужно — в этом и смысл узла. Нужен стенд с картой, копия
-РСМ-2000 и веса SAM 3 на томе; нет SAM 3 — его проверки пропускаются.
+Весов на полке не нужно — в этом и смысл узла. Нужен стенд с картой и веса
+SAM 3 на томе; нет SAM 3 — его проверки пропускаются.
 """
 import time
 
 import pytest
 
+import agent_data
 from conftest import BASE_URL, drop_project, tag
 from test_agent_video import (  # noqa: F401 — фикстуры
     PERSON, STEP, _agent_singles, _empty_blocks, _person_blocks, clip, owner,
@@ -136,15 +137,13 @@ def test_разметка_sam3_сразу_с_контуром(owner, setup, db, 
 
 def test_превью_показывает_находки_узла(owner, setup, db):
     graph = setup["graphs"].get("l") or _agent(owner, setup, "l")
+    # Превью смотрит кадр проекта: свой проект из двух снимков с людьми.
+    code = agent_data.source_project(owner, db, frames=2)
     with db.cursor() as cur:
-        # Тот же кадр, что открывает ролик: на нём разведка человека уже нашла.
-        # Не любой кадр с человеком — сверху на тележке, смазанного, YOLOE при
-        # 0,25 не берёт.
-        cur.execute("""select i.id, p.code from images i join projects p on p.id = i.project_id
-                       join annotations a on a.image_id = i.id join classes c on c.id = a.class_id
-                       where p.name = 'РСМ-2000 · тест' group by i.id, i.file_name, p.code
-                       having bool_or(c.name = %s) order by i.file_name limit 1""", (PERSON,))
-        image_id, code = cur.fetchone()
+        cur.execute("""select i.id from images i join projects p on p.id = i.project_id
+                       where p.code = %s and i.dataset_id is not null
+                       order by i.file_name limit 1""", (code,))
+        image_id = cur.fetchone()[0]
     res = owner.post(f"{BASE_URL}/api/agents/preview", json={
         "graph_id": graph["id"], "doc": _doc("l"), "project": code, "image_id": str(image_id), "step": "same"})
     assert res.status_code == 200, res.text

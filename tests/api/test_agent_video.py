@@ -1,36 +1,29 @@
 """Агент на ролике: разведка и разметка каждого N-го кадра — на настоящих весах.
 
 Решения владельца (24.09.2026). Проверяется не «ручка отвечает», а «агент
-видит»: ролик собран из кадров «РСМ-2000 · тест», про которые ручная разметка
-говорит, где человек есть, а где нет. Агент — как у владельца: две «Сети» на
-одних весах РСМ-2000 (одна ищет только человека, вторая всё остальное),
-«Объединение» и «Уточнение SAM».
+видит»: ролик собран из снимков с людьми и кадров, где людей нет точно
+(`agent_data`). Агент — как у владельца: две «Сети» на одних весах (одна ищет
+только человека, вторая всё остальное), «Объединение» и «Уточнение SAM».
+Веса — COCO `yolo11n.pt` с тома, кладутся на полку свежего владельца.
 
-Ролик — пять блоков по две секунды при 5 к/с, по кадру РСМ-2000 на блок:
+Ролик — пять блоков по две секунды при 5 к/с, по снимку на блок:
 «человек, пусто, человек, пусто, пусто» — пусто в смысле «человека нет».
 Разведка обязана найти человека ровно в блоках с человеком; разметка —
 поставить рамки на каждый N-й кадр, кроме кадра, где уже поработал человек,
 дать полигоны от SAM и рамки обеих сетей; закрытие разметки — отдать кадры
 агента на проверку (`new`), а тронутые человеком — размеченными.
 
-Нужен стенд с картой и дев-учётка `tester` с весами РСМ-2000 на полке:
-контейнер тестов тома не видит, и чужие веса ему взять неоткуда. Нет весов
-или копии проекта — тест пропускается и говорит почему.
+Нужен стенд с картой; данные тест заводит сам.
 """
-import io
-import os
 import time
 import uuid
 
 import pytest
-import requests
 
+import agent_data
+from agent_data import PERSON
 from conftest import BASE_URL, drop_project, tag, wait_job
 
-LOGIN = os.environ.get("TEST_AGENT_LOGIN", "tester")
-PASSWORD = os.environ.get("TEST_AGENT_PASSWORD", "123456")
-SOURCE_PROJECT = "РСМ-2000 · тест"
-PERSON = "Человек"
 FPS = 5
 BLOCK = 10                      # кадров на блок — две секунды
 PLAN = [True, False, True, False, False]   # есть ли человек в блоке
@@ -47,48 +40,26 @@ def _empty_blocks():
 
 
 @pytest.fixture(scope="module")
-def owner():
-    s = requests.Session()
-    res = s.post(f"{BASE_URL}/api/auth/login", json={"identity": LOGIN, "password": PASSWORD})
-    if res.status_code != 200:
-        pytest.skip(f"Нет дев-учётки {LOGIN}: {res.status_code}")
-    return s
+def owner(db):
+    return agent_data.session(db)
 
 
 @pytest.fixture(scope="module")
 def weights(owner):
-    shelf = owner.get(f"{BASE_URL}/api/agents/weights").json()["weights"]
-    found = next((w for w in shelf if "РСМ-2000" in w["name"] and PERSON in w["names"]), None)
-    if found is None:
-        pytest.skip("На полке нет весов РСМ-2000 с классом «Человек»")
-    return found
+    row = agent_data.shelf_weights(owner)
+    assert PERSON in row["names"], row["names"]
+    yield row
+    owner.delete(f"{BASE_URL}/api/agents/weights/{row['id']}")
 
 
 @pytest.fixture(scope="module")
-def clip(owner, db, tmp_path_factory):
-    """Ролик из кадров копии РСМ-2000: человек по ручной разметке — или нет."""
+def clip(tmp_path_factory):
+    """Ролик: блоки со снимками людей и блоки, где людей нет точно."""
     import av
-    from PIL import Image
 
-    with db.cursor() as cur:
-        cur.execute("""
-            select i.id, bool_or(c.name = %s) from images i
-            join projects p on p.id = i.project_id
-            join annotations a on a.image_id = i.id join classes c on c.id = a.class_id
-            where p.name = %s group by i.id, i.file_name order by i.file_name""",
-                    (PERSON, SOURCE_PROJECT))
-        rows = cur.fetchall()
-    with_person = [r[0] for r in rows if r[1]]
-    without = [r[0] for r in rows if not r[1]]
-    if len(with_person) < 2 or len(without) < 3:
-        pytest.skip(f"Нет проекта «{SOURCE_PROJECT}» с размеченными кадрами")
-    picks = iter(with_person[:2]), iter(without[:3])
-    frames = []
-    for has in PLAN:
-        image_id = next(picks[0] if has else picks[1])
-        res = owner.get(f"{BASE_URL}/api/images/{image_id}/file")
-        assert res.status_code == 200, res.text
-        frames.append(Image.open(io.BytesIO(res.content)).convert("RGB"))
+    people = iter(["bus.jpg", "zidane.jpg"])
+    frames = [agent_data.place(next(people))[0] if has else agent_data.blank(i)
+              for i, has in enumerate(PLAN)]
 
     path = tmp_path_factory.mktemp("agent") / "rsm-agent.mp4"
     width, height = frames[0].size
@@ -208,7 +179,7 @@ def test_разведка_находит_человека_там_где_он_е�
         # полшага — это край, а не находка. Середина пустого блока — чиста.
         middle = block[len(block) // 2]
         assert not any(a <= middle <= b for a, b, _ in people), (block, people)
-    # Вторая сеть тоже работала: в роликах РСМ-2000 кроме людей есть предметы.
+    # Вторая сеть тоже работала: на снимках кроме людей автобус и галстук.
     assert set(annotate["segments"]) - {PERSON}, annotate["segments"]
 
 

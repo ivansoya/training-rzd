@@ -17,6 +17,10 @@ RUN apt-get update \
 COPY requirements.txt ./requirements.txt
 RUN pip3 install --no-cache-dir -r requirements.txt
 
+# Снимки с людьми для тестов агентов (tests/api/agent_data.py) — из колеса
+# ultralytics: сам пакет тестам не нужен, нужны только его bus.jpg и zidane.jpg.
+RUN pip3 download --no-cache-dir --no-deps ultralytics -d /tmp/u     && mkdir -p /opt/test-assets     && python3 -c "import glob, zipfile; z = zipfile.ZipFile(glob.glob('/tmp/u/*.whl')[0]); [open('/opt/test-assets/' + n.rsplit('/', 1)[1], 'wb').write(z.read(n))  for n in z.namelist() if n.startswith('ultralytics/assets/') and n.endswith('.jpg')]"     && rm -rf /tmp/u
+
 # Playwright той же версии, что браузеры в образе. Кладём в сторону, а не в
 # каталог тестов: он монтируется с хоста, и node_modules там были бы мусором в
 # репозитории. Перед прогоном содержимое раскатывается в свой том — офлайн.
