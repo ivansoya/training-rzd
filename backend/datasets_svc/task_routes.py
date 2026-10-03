@@ -1095,7 +1095,8 @@ def cut_video(task_id, video_id):
         if not diff["add"] and not diff["drop"]:
             return jsonify({"error": "Плану нечего менять."}), 400
 
-        job_id = jobs.create("video-cut", total=len(diff["add"]), message="Подготовка")
+        job_id = jobs.create("video-cut", total=len(diff["add"]), message="Подготовка",
+                             project_id=project.id, owner=user.id)
         threading.Thread(
             target=_run_cut_job,
             args=(job_id, task.id, row.id, segments, user.id),

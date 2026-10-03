@@ -32,11 +32,14 @@ def _write(job_id, data):
         os.replace(tmp, _path(job_id))
 
 
-def create(job_type, total=0, message=""):
+def create(job_type, total=0, message="", *, project_id=None, owner=None):
+    """`project_id` и `owner` решают, кому джобу показывать (`/api/jobs/<id>`)."""
     job_id = uuid.uuid4().hex[:12]
     _write(job_id, {
         "id": job_id,
         "type": job_type,
+        "project_id": str(project_id) if project_id else None,
+        "owner": str(owner) if owner else None,
         "status": "running",
         "processed": 0,
         "total": total,

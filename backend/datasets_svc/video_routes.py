@@ -1374,7 +1374,8 @@ def close_annotation(task_id, video_id):
                 "error": "Размечать нечего — на ролике нет ни боксов, ни фоновых кадров."
             }), 400
 
-        job_id = jobs.create("video-close", total=total, message="Достаю кадры")
+        job_id = jobs.create("video-close", total=total, message="Достаю кадры",
+                             project_id=project.id, owner=user.id)
         threading.Thread(
             target=_run_close_job,
             args=(job_id, task.id, video.id, user.id),

@@ -212,4 +212,10 @@ def predict(session_id):
 
 @bp.get("/health")
 def health():
+    with SessionLocal() as db:
+        user = current_user(db)
+        staff = user is not None and user.is_staff
+    # Число сессий и воркеров — сведения о нагрузке, их видит только staff.
+    if not staff:
+        return jsonify({"ok": True})
     return jsonify({"ok": True, "models": list(MODELS), **manager.stats()})

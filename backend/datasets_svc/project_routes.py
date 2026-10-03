@@ -226,7 +226,7 @@ def _begin_scan(db, project, zip_path, archive_info, upload_id=None):
     """
     project.status = "importing"
     db.commit()
-    job_id = jobs.create("import-scan", message="Подготовка")
+    job_id = jobs.create("import-scan", message="Подготовка", project_id=project.id)
     _save_state(project.id, {
         "status": "scanning",
         "archive": archive_info,
@@ -538,7 +538,8 @@ def commit_import(code):
 
         user = current_user(db)
         job_id = jobs.create("import-write", message="Подготовка",
-                             total=len(manifest))
+                             total=len(manifest), project_id=project.id,
+                             owner=user.id if user else None)
         state["status"] = "writing"
         state["job_id"] = job_id
         _save_state(project.id, state)

@@ -12,11 +12,15 @@
 import os
 import shutil
 import time
+import uuid
 
 from flask import Blueprint, jsonify
 
 from common import jobs
+from common.auth import current_user, has_role, role_in
 from common.config import DATA_DIR, HOST_STAT_PATH, PROJECTS_DIR
+from common.db import SessionLocal
+from common.models import Project
 
 bp = Blueprint("datasets", __name__)
 
@@ -29,9 +33,24 @@ def health():
 @bp.get("/api/jobs/<job_id>")
 def get_job(job_id):
     job = jobs.get(job_id)
-    if not job:
-        return jsonify({"error": "job not found"}), 404
+    with SessionLocal() as db:
+        user = current_user(db)
+        if user is None:
+            return jsonify({"error": "Нужно войти."}), 401
+        if not job or not _may_see(db, user, job):
+            return jsonify({"error": "job not found"}), 404
     return jsonify(job)
+
+
+def _may_see(db, user, job) -> bool:
+    """Джобу видит её автор и любой участник её проекта; ничейная — никто."""
+    if job.get("owner") == str(user.id):
+        return True
+    try:
+        project = db.get(Project, uuid.UUID(job["project_id"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    return project is not None and has_role(role_in(db, user, project), "viewer")
 
 
 # Обход тома — недёшев, а спрашивают о месте часто (мастер сборки набора
@@ -58,6 +77,10 @@ def storage():
     ``disk_usage`` показывает виртуальный том Docker, который объявляет около
     терабайта независимо от того, что под ним.
     """
+    with SessionLocal() as db:
+        user = current_user(db)
+        if user is None or not user.is_staff:
+            return jsonify({"error": "Только для администраторов стенда."}), 403
     now = time.time()
     cached = _storage_cache["data"]
     if cached and now - _storage_cache["t"] < 3:

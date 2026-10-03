@@ -345,9 +345,10 @@ def start_export(code):
         if not sel["classes"]:
             return jsonify({"error": "Выберите хотя бы один класс."}), 400
 
-        job_id = jobs.create("project-export", message="Готовлю выгрузку")
         user = current_user(db)
         user_id = user.id if user is not None else None
+        job_id = jobs.create("project-export", message="Готовлю выгрузку",
+                             project_id=project.id, owner=user_id)
         threading.Thread(
             target=_run_export_job,
             args=(job_id, project.id, sel, user_id, data.get("tz_offset")),
