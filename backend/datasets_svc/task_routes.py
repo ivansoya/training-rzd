@@ -1235,7 +1235,8 @@ def _save_annotations(db, image_id):
     role = role_in(db, user, project)
     if not has_role(role, "editor"):
         return jsonify({"error": "Недостаточно прав в проекте."}), 403
-    if image.task_id:
+    # Принятый кадр — данные проекта: правит любой редактор, таска тут ни при чём.
+    if image.task_id and image.dataset_id is None:
         task = db.get(Task, image.task_id)
         if task.status == "closed":
             return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
@@ -1346,7 +1347,8 @@ def _save_annotations(db, image_id):
         if fresh:
             image.task_status = "annotated"
         elif image.task_status == "annotated":
-            image.task_status = "new"
+            # Кадр в датасете без объектов остаётся данными — фоновым примером.
+            image.task_status = "empty" if image.dataset_id else "new"
     image.annotations_rev += 1
     db.commit()
     # id и автор — по порядку присланного (null — фигура отброшена): без id
