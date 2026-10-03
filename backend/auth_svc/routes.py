@@ -64,7 +64,7 @@ def _issue_confirmation(db, user: User) -> bool:
             expires_at=utcnow() + CONFIRMATION_TTL,
         )
     )
-    return mailer.send_confirmation_email(user.email, user.display_name, token)
+    return mailer.send_confirmation_email(user.email, token)
 
 
 @bp.post("/register")

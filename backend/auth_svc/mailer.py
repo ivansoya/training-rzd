@@ -27,7 +27,8 @@ def _send(msg: EmailMessage) -> None:
         smtp.send_message(msg)
 
 
-def send_confirmation_email(to_email: str, display_name: str, token: str) -> bool:
+def send_confirmation_email(to_email: str, token: str) -> bool:
+    # Имени в письме нет: иначе сервис пересылает чужой текст на любой адрес.
     link = f"{APP_BASE_URL}/confirm/{token}"
     msg = EmailMessage()
     msg["Subject"] = "Подтвердите почту — Магистраль ML"

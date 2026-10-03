@@ -292,7 +292,7 @@ services:
     build: ./tests
     container_name: yolo-tests
     environment:
-      - TEST_BASE_URL=http://frontend
+      - TEST_BASE_URL=http://frontend:81
       - TEST_DB_DSN=postgresql://app:app@db:5432/app
       - TEST_MAILPIT_URL=http://mailpit:8025
     depends_on:
