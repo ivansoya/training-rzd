@@ -520,6 +520,12 @@ export function ConfusionMatrix({
   const font = cell < 30 ? 8.5 : 10.5;
   const left = size > 18 ? 132 : 96;
   const top = 16;
+  // Поворот — по длине подписей, а не по числу классов: «big-bucket» не
+  // влезает в клетку уже при девяти. Ширина знака моноширинного — ~0,62 кегля.
+  const shown = (name: string) => (name.length > 14 ? `${name.slice(0, 13)}…` : name);
+  const longest = Math.max(0, ...names.slice(0, size).map((n) => shown(n).length)) * font * 0.62;
+  const tilt = longest > cell - 4;
+  const below = tilt ? Math.ceil(longest * 0.87) + 44 : 42;
 
   // Нормируем по столбцу: столбец — это «что было на самом деле», и доля от
   // него отвечает на вопрос «сколько таких модель нашла».
@@ -538,7 +544,7 @@ export function ConfusionMatrix({
       <div className="t-scroll">
         <svg
           width={left + size * cell + 12}
-          height={top + size * cell + (size > 10 ? 96 : 42)}
+          height={top + size * cell + below}
           role="img"
           aria-label="Матрица ошибок по классам"
         >
@@ -572,13 +578,13 @@ export function ConfusionMatrix({
                 // Вертикально: иначе на двадцати шести классах подписи
                 // наезжают друг на друга и не читается ни одна.
                 transform={
-                  size > 10
+                  tilt
                     ? `rotate(-60 ${left + c * cell + cell / 2} ${top + size * cell + 14})`
                     : undefined
                 }
-                textAnchor={size > 10 ? "end" : "middle"}
+                textAnchor={tilt ? "end" : "middle"}
               >
-                {name.length > 14 ? `${name.slice(0, 13)}…` : name}
+                {shown(name)}
               </text>
             ))}
           </g>

@@ -504,7 +504,17 @@ table.t-cls tr.thin td { color: var(--skip); }
 }
 
 .t-card svg { display: block; width: 100%; height: auto; }
-.t-scroll { overflow-x: auto; }
+/* Тени по краям, пока есть что прокрутить: таблица, обрезанная по краю
+   экрана, иначе выглядит законченной. Фон «local» едет с содержимым и
+   закрывает тень, когда край достигнут. */
+.t-scroll {
+  overflow-x: auto;
+  background:
+    linear-gradient(to right, var(--card) 30%, transparent) left / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--card) 30%, transparent) right / 40px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.45), transparent) left / 12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.45), transparent) right / 12px 100% no-repeat scroll;
+}
 
 /* Отключённая кнопка обязана выглядеть отключённой. Приглушённый акцент
    читается как «нажми меня», и человек жмёт — и ничего не происходит. */
