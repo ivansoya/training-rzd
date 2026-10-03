@@ -18,20 +18,8 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = None
 origin.guard(app)
 web.register_json_errors(app)
+web.served_by(app, "dataprep")
 app.register_blueprint(bp)
-
-
-@app.after_request
-def whose(response):
-    """Кто ответил.
-
-    Не отладочная мелочь: маршрутизация в nginx идёт регулярками по порядку, и
-    ошибка в порядке уводит запрос в соседний сервис, который отвечает 404 —
-    а в логах нужного сервиса при этом нет ни строчки. С этим заголовком
-    вопрос «куда ушёл мой запрос» закрывается за секунду.
-    """
-    response.headers["X-Served-By"] = "dataprep"
-    return response
 
 
 if __name__ == "__main__":

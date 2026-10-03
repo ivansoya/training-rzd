@@ -60,6 +60,15 @@ def register_json_errors(app: Flask) -> None:
         }), 500
 
 
+def served_by(app: Flask, name: str) -> None:
+    """Заголовок «кто ответил»: ошибка в порядке регулярок nginx уводит запрос в
+    соседний сервис, и без него в логах нужного сервиса не видно ни строчки."""
+    @app.after_request
+    def _whose(response):
+        response.headers["X-Served-By"] = name
+        return response
+
+
 def _no_constants(name):
     raise ValueError(name)
 

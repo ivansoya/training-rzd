@@ -67,3 +67,10 @@ def test_имена_уникальны_без_учёта_регистра(api, p
     b = api.post(f"{base}/superclasses", json={"name": "Прочее"}).json()
     assert api.patch(f"{base}/superclasses/{b['id']}", json={"name": "опасность"}).status_code == 409
     assert a["id"] != b["id"]
+
+
+def test_неизвестный_api_это_404_json_и_видно_кто_ответил(api):
+    res = api.get(f"{BASE_URL}/api/nope/ever")
+    assert res.status_code == 404 and res.json()["code"] == "no_route"
+    assert api.get(f"{BASE_URL}/api/auth/me").headers.get("X-Served-By") == "auth"
+    assert api.get(f"{BASE_URL}/api/storage").headers.get("X-Served-By") == "datasets"

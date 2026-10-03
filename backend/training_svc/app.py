@@ -21,17 +21,9 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = None
 origin.guard(app)
 web.register_json_errors(app)
+web.served_by(app, "training")
 app.register_blueprint(bp)
 app.register_blueprint(agents_bp)
-
-
-@app.after_request
-def whose(response):
-    """Кто ответил. Маршрутизация в nginx идёт регулярками по порядку, и
-    ошибка в порядке уводит запрос в соседний сервис — тот отвечает 404, а в
-    логах нужного нет ни строчки."""
-    response.headers["X-Served-By"] = "training"
-    return response
 
 
 if __name__ == "__main__":

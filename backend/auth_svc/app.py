@@ -14,6 +14,7 @@ db.wait_for_db()
 app = Flask(__name__)
 origin.guard(app)
 web.register_json_errors(app)
+web.served_by(app, "auth")
 app.register_blueprint(auth_bp)
 app.register_blueprint(core_bp)
 

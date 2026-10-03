@@ -15,6 +15,7 @@ db.wait_for_db()
 app = Flask(__name__)
 origin.guard(app)
 web.register_json_errors(app)
+web.served_by(app, "autolabel")
 app.register_blueprint(bp)
 
 

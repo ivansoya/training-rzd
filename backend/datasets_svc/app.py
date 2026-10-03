@@ -24,6 +24,7 @@ app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = None
 origin.guard(app)
 web.register_json_errors(app)
+web.served_by(app, "datasets")
 app.register_blueprint(bp)
 app.register_blueprint(project_bp)
 app.register_blueprint(task_bp)
