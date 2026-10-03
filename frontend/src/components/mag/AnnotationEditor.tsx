@@ -221,8 +221,11 @@ export default function AnnotationEditor({
   const [scale, setScale] = useState(1);
   const [filmH, setFilmH] = useState(164);
   // «failed» — запись не прошла: правка жива только здесь, её повторяют сами
-  // и с кадра без неё не уходят.
-  const [saveState, setSaveState] = useState<"saved" | "saving" | "failed">("saved");
+  // и с кадра без неё не уходят. «refused» — сервер отказал (4xx): повтор не
+  // поможет, человек решает — поправить или отбросить правку.
+  const [saveState, setSaveState] = useState<"saved" | "saving" | "failed" | "refused">("saved");
+  // Счётчик «перечитать кадр»: отброшенная правка возвращает разметку с сервера.
+  const [reloadKey, setReloadKey] = useState(0);
   const [saveErr, setSaveErr] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
   const [grid, setGrid] = useState(true);
@@ -285,7 +288,7 @@ export default function AnnotationEditor({
     setSaveErr(null);
     // Ошибка прошлого кадра к этому не относится.
     setError(null);
-  }, [image?.id]);
+  }, [image?.id, reloadKey]);
 
   const byIndex = useMemo(() => {
     const m = new Map<number, LabelClass>();
@@ -361,8 +364,14 @@ export default function AnnotationEditor({
       } catch (e) {
         dirty.current = true;
         setSaveErr((e as Error).message);
-        setSaveState("failed");
-        setAttempt((n) => n + 1);
+        const status = (e as { status?: number }).status;
+        // Отказ сервера повтором не лечится: бесконечный повтор держал кадр.
+        if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+          setSaveState("refused");
+        } else {
+          setSaveState("failed");
+          setAttempt((n) => n + 1);
+        }
         return false;
       }
     };
@@ -487,6 +496,12 @@ export default function AnnotationEditor({
   const close = useCallback(async () => {
     if (await flush()) onClose();
   }, [flush, onClose]);
+
+  // Отказ сервера: правку не спасти — вернуть кадр к последнему записанному.
+  const discard = useCallback(() => {
+    dirty.current = false;
+    setReloadKey((k) => k + 1);
+  }, []);
 
   // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет.
   const go = useCallback(
@@ -1020,7 +1035,14 @@ export default function AnnotationEditor({
         {auto.error && !autoPanel && autoOn && (
           <span className="mag-ed-err">{auto.error}</span>
         )}
-        {saveState === "failed" ? (
+        {saveState === "refused" ? (
+          <span className="mag-ed-unsaved">
+            не сохранено: {saveErr}
+            <button type="button" className="mag-ed-discard" onClick={discard}>
+              Отбросить правку
+            </button>
+          </span>
+        ) : saveState === "failed" ? (
           <span className="mag-ed-unsaved" title={saveErr || undefined}>
             не сохранено — повторяю
           </span>

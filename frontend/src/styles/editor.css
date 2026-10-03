@@ -761,6 +761,18 @@
   white-space: nowrap;
 }
 
+/* Отказ сервера: единственный выход с кадра — отбросить правку */
+.mag-ed-discard {
+  margin-left: 8px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
 /* Состояние кадра словами: цвет один, а причин у обводки в ленте пять */
 .mag-ed-flag {
   font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
