@@ -22,11 +22,32 @@ export class GraphError extends Error {}
 
 const SOURCES: NodeKind[] = ["source", "input"];
 
+// int() и float() питона: null и "" — не числа, дробь отбрасывается, а не округляется.
+const FLOAT_TEXT = /^\s*[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?\s*$/;
+
+function pyFloat(raw: unknown): number | null {
+  if (typeof raw === "boolean") return raw ? 1 : 0;
+  const value =
+    typeof raw === "number" ? raw : typeof raw === "string" && FLOAT_TEXT.test(raw) ? Number(raw) : NaN;
+  return Number.isFinite(value) ? value : null;
+}
+
+function pyInt(raw: unknown): number | null {
+  if (typeof raw === "string") return /^\s*[+-]?\d+\s*$/.test(raw) ? parseInt(raw, 10) : null;
+  const value = pyFloat(raw);
+  return value === null ? null : Math.trunc(value);
+}
+
+/** Список из `a or b or []` питона: пустой список там ложен. */
+function listOf(...raws: unknown[]): unknown[] {
+  const hit = raws.find((r) => (Array.isArray(r) ? r.length > 0 : !!r));
+  return Array.isArray(hit) ? hit : [];
+}
+
 function whole(node: GraphNode, key: string, dflt: number, low: number, high: number) {
-  const raw = (node.params ?? {})[key];
-  const value = typeof raw === "number" ? raw : Number(raw);
-  if (!Number.isFinite(value)) return dflt;
-  return Math.max(low, Math.min(high, Math.round(value)));
+  const value = pyInt((node.params ?? {})[key]);
+  if (value === null) return dflt;
+  return Math.max(low, Math.min(high, value));
 }
 
 export const branches = (n: GraphNode) => whole(n, "branches", 2, 2, MAX_BRANCHES);
@@ -36,10 +57,10 @@ export const times = (n: GraphNode) => whole(n, "times", 2, 1, MAX_TIMES);
 /** Доли столбцов или строк сетки: n чисел, в сумме единица. Уже 5 % ячейка
  *  не бывает — её перегородку потом не поймать мышью. */
 function shares(raw: unknown, n: number): number[] {
-  const list = Array.isArray(raw) ? raw : [];
+  const list = listOf(raw);
   const out = Array.from({ length: n }, (_, i) => {
-    const v = Number(list[i]);
-    return Number.isFinite(v) ? Math.max(0.05, v) : 1;
+    const v = pyFloat(list[i]);
+    return v === null ? 1 : Math.max(0.05, v);
   });
   const total = out.reduce((a, b) => a + b, 0);
   return out.map((v) => v / total);
@@ -68,11 +89,11 @@ export function grid(node: GraphNode) {
 export function weights(node: GraphNode): number[] {
   const n = branches(node);
   const params = node.params ?? {};
-  const raw = (params.shares ?? params.weights) as unknown[] | undefined;
+  const raw = listOf(params.shares, params.weights);
   const out: number[] = [];
   for (let i = 0; i < n; i++) {
-    const value = Number(raw?.[i]);
-    out.push(Number.isFinite(value) && value > 0 ? value : Number.isFinite(value) ? 0 : 1);
+    const value = pyFloat(raw[i]);
+    out.push(value === null ? 1 : Math.max(0, value));
   }
   const total = out.reduce((a, b) => a + b, 0);
   return total > 0 ? out : new Array(n).fill(1);

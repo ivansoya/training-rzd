@@ -1,0 +1,144 @@
+{
+  "name": "Неровные параметры",
+  "note": "Числа, которых редактор не пишет: дробь, строка, null, пустой список. Сервер приводит их int()/float() питона, клиент обязан прийти к тем же числам.",
+  "base": 1000,
+  "doc": {
+    "v": 1,
+    "nodes": [
+      {
+        "id": "s",
+        "type": "source",
+        "params": {
+          "label": "Источник"
+        }
+      },
+      {
+        "id": "m",
+        "type": "multiply",
+        "params": {
+          "label": "Размножение",
+          "times": 2.7
+        }
+      },
+      {
+        "id": "cut",
+        "type": "split_share",
+        "params": {
+          "label": "Разделитель потока",
+          "branches": "3",
+          "shares": [],
+          "weights": [
+            null,
+            1,
+            "2"
+          ]
+        }
+      },
+      {
+        "id": "a",
+        "type": "flow",
+        "params": {
+          "label": "Туман",
+          "ops": []
+        }
+      },
+      {
+        "id": "m2",
+        "type": "multiply",
+        "params": {
+          "label": "Размножение 2",
+          "times": null
+        }
+      },
+      {
+        "id": "m3",
+        "type": "multiply",
+        "params": {
+          "label": "Размножение 3",
+          "times": ""
+        }
+      },
+      {
+        "id": "o",
+        "type": "merge",
+        "params": {
+          "label": "Слияние",
+          "inputs": 2.7
+        }
+      },
+      {
+        "id": "end",
+        "type": "output",
+        "params": {
+          "label": "Выход"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "from": "s",
+        "out": "out",
+        "to": "m",
+        "in": "in"
+      },
+      {
+        "from": "m",
+        "out": "out",
+        "to": "m3",
+        "in": "in"
+      },
+      {
+        "from": "m3",
+        "out": "out",
+        "to": "cut",
+        "in": "in"
+      },
+      {
+        "from": "cut",
+        "out": "o0",
+        "to": "a",
+        "in": "in"
+      },
+      {
+        "from": "cut",
+        "out": "o1",
+        "to": "m2",
+        "in": "in"
+      },
+      {
+        "from": "a",
+        "out": "out",
+        "to": "o",
+        "in": "i0"
+      },
+      {
+        "from": "m2",
+        "out": "out",
+        "to": "o",
+        "in": "i1"
+      },
+      {
+        "from": "o",
+        "out": "out",
+        "to": "end",
+        "in": "in"
+      }
+    ]
+  },
+  "expect": {
+    "outputs": 3000,
+    "dropped": 2000,
+    "multiplier": 3,
+    "nodes": 8,
+    "edges": {
+      "s:out->m:in": 1000,
+      "m:out->m3:in": 2000,
+      "m3:out->cut:in": 4000,
+      "cut:o0->a:in": 1000,
+      "cut:o1->m2:in": 1000,
+      "a:out->o:i0": 1000,
+      "m2:out->o:i1": 2000,
+      "o:out->end:in": 3000
+    }
+  }
+}

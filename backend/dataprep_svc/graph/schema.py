@@ -9,6 +9,8 @@
 образцу по отдельности. Число образцов на каждом проводе поэтому считается
 заранее — см. ``plan.py``.
 """
+import math
+
 
 # Узлы источника: с них поток начинается. В корневом графе это «Источник»,
 # внутри графа-блока — «Вход», гнездо, через которое поток вливается снаружи.
@@ -55,9 +57,25 @@ class GraphError(ValueError):
 def _int(params, key, default, low, high):
     try:
         value = int(params.get(key, default))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):  # OverflowError — int(inf)
         return default
     return max(low, min(high, value))
+
+
+def _float(raw):
+    """float() без nan и inf: такое число не доля, а умолчание."""
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError(raw)
+    return value
+
+
+def _list(*raws):
+    """Первый непустой из списков; словарь или строка — не список долей."""
+    for raw in raws:
+        if raw:
+            return raw if isinstance(raw, list) else []
+    return []
 
 
 def branches(node) -> int:
@@ -75,10 +93,10 @@ def times(node) -> int:
 def _shares(raw, n):
     """Доли столбцов или строк сетки: n положительных чисел, в сумме единица.
     Ячейка уже 5 % не бывает — её перегородку потом не поймать мышью."""
-    out = []
+    raw, out = _list(raw), []
     for i in range(n):
         try:
-            out.append(max(0.05, float(raw[i])))
+            out.append(max(0.05, _float(raw[i])))
         except (IndexError, TypeError, ValueError):
             out.append(1.0)
     total = sum(out)
@@ -121,11 +139,11 @@ def weights(node) -> list:
     """
     n = branches(node)
     params = node.get("params") or {}
-    raw = params.get("shares") or params.get("weights") or []
+    raw = _list(params.get("shares"), params.get("weights"))
     out = []
     for i in range(n):
         try:
-            out.append(max(0.0, float(raw[i])))
+            out.append(max(0.0, _float(raw[i])))
         except (IndexError, TypeError, ValueError):
             out.append(1.0)
     return out if sum(out) > 0 else [1.0] * n
