@@ -44,7 +44,7 @@ from datasets_svc import materialize
 from common import shapes
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
-from datasets_svc import video_index
+from datasets_svc import video_busy, video_index
 from common.video_frames import FrameClock
 from datasets_svc import video_queue as queue
 
@@ -750,12 +750,14 @@ def delete_video(task_id, video_id):
     try:
         if not _may_work(task, user, role):
             return jsonify({"error": "Это не ваша таска."}), 403
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта — менять её нечем."}), 409
         vid = _uuid_or_none(video_id)
         row = db.get(TaskVideo, vid) if vid else None
         if row is None or row.task_id != task.id:
             return jsonify({"error": "Видео не найдено."}), 404
+        # Посреди нарезки ролик не удаляем: следующие кадры легли бы без источника.
+        busy = video_busy.refusal(row.id)
+        if busy:
+            return busy
 
         frames = db.execute(
             select(Image).where(Image.source_video_id == row.id)
@@ -878,6 +880,8 @@ def upload_video(task_id):
     try:
         if not _may_work(task, user, role):
             return jsonify({"error": "Это не ваша таска."}), 403
+        if task.status == "closed":
+            return jsonify({"error": "Таска закрыта — загружать в неё нельзя."}), 409
         file = request.files.get("file")
         if not file or not file.filename:
             return jsonify({"error": "Файл не передан."}), 400
@@ -1039,6 +1043,10 @@ def estimate_cut(task_id, video_id):
 
 def _run_cut_job(job_id, task_id, video_id, segments, user_id):
     db = SessionLocal()
+    # Кадры после последнего коммита: при сбое их строки откатятся, а файлы
+    # остались бы на томе без записей — убираем их сами.
+    pending = []
+    base = None
     try:
         task = db.get(Task, task_id)
         row = db.get(TaskVideo, video_id)
@@ -1095,8 +1103,10 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
             image.width, image.height = size
             image.size_bytes = nbytes
             created.append(image.id)
+            pending.append(image.id)
             if len(created) % 25 == 0:
                 db.commit()
+                pending.clear()
 
         videolib.extract_frames(path, frames, on_frame, pts=index["pts"],
                                 progress=lambda d, t: jobs.update(job_id, processed=d))
@@ -1120,13 +1130,22 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
                     result={"frames": len(created), "removed": len(diff["drop"])})
     except videolib.VideoError as exc:
         db.rollback()
+        _drop_pending(base, pending)
         jobs.update(job_id, status="error", error=str(exc))
     except Exception as exc:  # noqa: BLE001
         db.rollback()
+        _drop_pending(base, pending)
         jobs.update(job_id, status="error",
                     error=public_error(exc, "Нарезка ролика прервалась."))
     finally:
         db.close()
+        video_busy.release(video_id)
+
+
+def _drop_pending(base, ids):
+    if base:
+        for image_id in ids:
+            _drop_files(base, image_id)
 
 
 @bp.post("/api/tasks/<task_id>/videos/<video_id>/cut")
@@ -1137,6 +1156,8 @@ def cut_video(task_id, video_id):
     try:
         if not _may_work(task, user, role):
             return jsonify({"error": "Это не ваша таска."}), 403
+        if task.status == "closed":
+            return jsonify({"error": "Таска закрыта — резать в неё нельзя."}), 409
         vid = _uuid_or_none(video_id)
         row = db.get(TaskVideo, vid) if vid else None
         if row is None or row.task_id != task.id:
@@ -1151,8 +1172,12 @@ def cut_video(task_id, video_id):
         if not diff["add"] and not diff["drop"]:
             return jsonify({"error": "Плану нечего менять."}), 400
 
+        slot = video_busy.take(row.id, "cut")
+        if slot is None:
+            return video_busy.refusal(row.id)
         job_id = jobs.create("video-cut", total=len(diff["add"]), message="Подготовка",
                              project_id=project.id, owner=user.id)
+        slot["job_id"] = job_id
         threading.Thread(
             target=_run_cut_job,
             args=(job_id, task.id, row.id, segments, user.id),
@@ -1581,6 +1606,8 @@ def set_video_tags(task_id, video_id):
     try:
         if not _may_work(task, user, role):
             return jsonify({"error": "Это не ваша таска."}), 403
+        if task.status == "closed":
+            return jsonify({"error": "Таска закрыта — роликов в ней больше не режут."}), 409
         vid = _uuid_or_none(video_id)
         video = db.get(TaskVideo, vid) if vid else None
         if video is None or video.task_id != task.id:

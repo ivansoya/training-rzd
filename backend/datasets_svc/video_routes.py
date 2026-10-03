@@ -32,7 +32,7 @@ from common.models import (
     VideoTrack,
     utcnow,
 )
-from datasets_svc import materialize
+from datasets_svc import materialize, video_busy
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
 from datasets_svc import video_index
@@ -1310,6 +1310,7 @@ def _run_close_job(job_id, task_id, video_id, user_id):
                     error=public_error(exc, "Не удалось достать кадры из ролика."))
     finally:
         db.close()
+        video_busy.release(video_id)
 
 
 @bp.post("/api/tasks/<task_id>/videos/<video_id>/close-annotation")
@@ -1351,8 +1352,12 @@ def close_annotation(task_id, video_id):
                 "error": "Размечать нечего — на ролике нет ни боксов, ни фоновых кадров."
             }), 400
 
+        slot = video_busy.take(video.id, "close")
+        if slot is None:
+            return video_busy.refusal(video.id)
         job_id = jobs.create("video-close", total=total, message="Достаю кадры",
                              project_id=project.id, owner=user.id)
+        slot["job_id"] = job_id
         threading.Thread(
             target=_run_close_job,
             args=(job_id, task.id, video.id, user.id),
