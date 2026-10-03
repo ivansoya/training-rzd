@@ -214,9 +214,8 @@ export async function register(fields: {
   return asJson(await post("auth/register", fields));
 }
 
-export async function confirmEmail(token: string): Promise<AuthUser> {
-  const { user } = await asJson<{ user: AuthUser }>(await post("auth/confirm", { token }));
-  return user;
+export async function confirmEmail(token: string): Promise<{ login: string }> {
+  return asJson<{ confirmed: boolean; login: string }>(await post("auth/confirm", { token }));
 }
 
 export async function resendConfirmation(email: string): Promise<void> {

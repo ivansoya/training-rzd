@@ -139,11 +139,9 @@ def confirm_email():
             return jsonify({"error": "Пользователь не найден."}), 400
         user.email_confirmed_at = utcnow()
         db.delete(conf)
-        token = start_session(db, user)  # confirmed = signed in at once
         db.commit()
-        resp = make_response(jsonify({"user": user_json(user)}))
-        set_cookie(resp, token)
-        return resp
+        # Без входа: чужая ссылка иначе молча подменила бы сессию того, кто её открыл.
+        return jsonify({"confirmed": True, "login": user.login})
 
 
 @bp.post("/resend")

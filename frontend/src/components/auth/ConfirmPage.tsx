@@ -2,20 +2,17 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { confirmEmail } from "../../auth/api";
 
-// Landing for the link from the confirmation email. On success the backend
-// starts a session, so a full reload drops the user straight into the app.
+// Страница ссылки из письма. Входа здесь нет: ссылку мог прислать кто угодно,
+// и открывший её не должен молча оказаться в чужом аккаунте.
 export default function ConfirmPage() {
   const { token } = useParams<{ token: string }>();
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [login, setLogin] = useState<string | null>(null);
 
   useEffect(() => {
     if (!token) return;
     confirmEmail(token)
-      .then(() => {
-        setDone(true);
-        window.location.replace("/");
-      })
+      .then((r) => setLogin(r.login))
       .catch((e) => setError((e as Error).message));
   }, [token]);
 
@@ -30,8 +27,14 @@ export default function ConfirmPage() {
               На страницу входа
             </a>
           </div>
-        ) : done ? (
-          "Почта подтверждена — входим…"
+        ) : login ? (
+          <div className="mag-confirm-box">
+            <h1>Почта подтверждена</h1>
+            <p>Войдите под логином <b>{login}</b>.</p>
+            <a className="mag-link" href="/">
+              На страницу входа
+            </a>
+          </div>
         ) : (
           "Подтверждаем почту…"
         )}
