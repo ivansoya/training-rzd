@@ -172,6 +172,18 @@ def _last_frame(video):
     return None
 
 
+def _frame_error(video, frame_no):
+    """400, если кадра с таким номером в ролике нет, иначе None.
+
+    Без проверки кадр −5 при закрытии «съедал» кадр 0, а кадры за концом
+    обещались и пропадали молча."""
+    last = _last_frame(video)
+    if frame_no < 0 or (last is not None and frame_no > last):
+        span = f": номера от 0 до {last}" if last is not None else ""
+        return jsonify({"error": f"Кадра {frame_no} в ролике нет{span}."}), 400
+    return None
+
+
 def _track_json(track, keys):
     return {
         "id": str(track.id),
@@ -284,8 +296,9 @@ def video_frame(task_id, video_id):
             frame_no = int(request.args.get("n", 0))
         except (TypeError, ValueError):
             return jsonify({"error": "Номер кадра должен быть числом."}), 400
-        if frame_no < 0:
-            return jsonify({"error": "Номер кадра должен быть неотрицательным."}), 400
+        bad = _frame_error(video, frame_no)
+        if bad:
+            return bad
 
         folder = _frame_dir(task, video.id)
         cached = _frame_file(task, video, frame_no)
@@ -672,6 +685,9 @@ def create_track(task_id, video_id):
             frame_no = int(data.get("frame_no"))
         except (TypeError, ValueError):
             return jsonify({"error": "Не указан кадр."}), 400
+        bad = _frame_error(video, frame_no)
+        if bad:
+            return bad
         denied = _no_contour(data.get("geometry"))
         if denied:
             return denied
@@ -808,6 +824,9 @@ def put_key(track_id, frame_no):
         return err
     try:
         video = db.get(TaskVideo, track.video_id)
+        bad = _frame_error(video, frame_no)
+        if bad:
+            return bad
         data = request.get_json(silent=True) or {}
         extending = data.get("extend") is True
         if extending and (frame_no > _last_frame(video) or "geometry" not in data):
@@ -1050,6 +1069,9 @@ def put_frame_boxes(task_id, video_id, frame_no):
         denied = _writable(task, user, role, video)
         if denied:
             return denied
+        bad = _frame_error(video, frame_no)
+        if bad:
+            return bad
         by_index = {
             c.class_index: c
             for c in db.execute(
@@ -1219,6 +1241,9 @@ def move_key(track_id, frame_no):
             target = int(data.get("to"))
         except (TypeError, ValueError):
             return jsonify({"error": "Не указан кадр, куда переносим."}), 400
+        bad = _frame_error(db.get(TaskVideo, track.video_id), target)
+        if bad:
+            return bad
         if track.end_frame is not None and target > track.end_frame:
             return jsonify({"error": "Кадр позже исчезновения объекта."}), 400
 
