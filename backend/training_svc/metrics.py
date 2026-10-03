@@ -124,7 +124,11 @@ def curves_of(raw, points=101):
     точек на класс, а глазом отличимы сто.
     """
     out = []
-    for item in [] if raw is None else raw:
+    items = [] if raw is None else list(raw)
+    # У сегментации кривых вдвое больше: сначала по рамкам, потом по маскам, с
+    # одинаковыми подписями — без пометки вкладки неотличимы.
+    halves = len(items) == 8
+    for n, item in enumerate(items):
         try:
             x, y, xlabel, ylabel = item
         except (TypeError, ValueError):
@@ -137,6 +141,7 @@ def curves_of(raw, points=101):
             "y": [[round(float(v), 4) for v in list(row)[::step]] for row in series],
             "x_label": str(xlabel),
             "y_label": str(ylabel),
+            **({"group": "B" if n < 4 else "M"} if halves else {}),
         })
     return out or None
 

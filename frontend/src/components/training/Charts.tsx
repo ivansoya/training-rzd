@@ -38,9 +38,11 @@ const LOSSES = [
   { key: "box_loss", label: "рамка", colour: "#2ee07a" },
   { key: "cls_loss", label: "класс", colour: "#6aa8ff" },
   { key: "dfl_loss", label: "форма", colour: "#ffb02e" },
+  { key: "seg_loss", label: "маска", colour: "#31d0d8" },
   { key: "val/box_loss", label: "рамка — проверка", colour: "#2ee07a", dash: true },
   { key: "val/cls_loss", label: "класс — проверка", colour: "#6aa8ff", dash: true },
   { key: "val/dfl_loss", label: "форма — проверка", colour: "#ffb02e", dash: true },
+  { key: "val/seg_loss", label: "маска — проверка", colour: "#31d0d8", dash: true },
 ];
 
 function pick(row: EpochRow, key: string): number | null {
@@ -442,6 +444,8 @@ export function CurveChart({ curves }: { curves: CurveSeries[] }) {
               className={i === shown ? "on" : ""}
               onClick={() => setShown(i)}
             >
+              {groupOf(c, i, curves.length) === "M" ? "маски: "
+                : groupOf(c, i, curves.length) === "B" ? "рамки: " : ""}
               {c.y_label} / {c.x_label}
             </button>
           ))}
@@ -494,6 +498,11 @@ export function CurveChart({ curves }: { curves: CurveSeries[] }) {
       </p>
     </div>
   );
+}
+
+/** Рамки или маски: у прогонов до пометки — по положению среди восьми кривых. */
+function groupOf(c: CurveSeries, i: number, total: number) {
+  return c.group ?? (total === 8 ? (i < 4 ? "B" : "M") : undefined);
 }
 
 export function ConfusionMatrix({

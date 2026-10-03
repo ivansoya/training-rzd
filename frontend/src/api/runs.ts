@@ -122,6 +122,8 @@ export interface CurveSeries {
   y: number[][];
   x_label: string;
   y_label: string;
+  /** У сегментации: B — кривые по рамкам, M — по маскам. */
+  group?: "B" | "M";
 }
 
 export interface EpochRow {
