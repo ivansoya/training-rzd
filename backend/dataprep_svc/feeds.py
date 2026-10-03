@@ -214,7 +214,7 @@ def images_for(picked, split_of, part, binding):
             img for img in picked.images
             # Своя половина: таг не повод утащить проверочный кадр в обучение.
             if split_of.get(img.id, "train") == part
-            and picked.tags_of.get(img.id, ()) & want
+            and picked.tags_of.get(img.id, frozenset()) & want
         ]
     return [
         img for img in picked.images

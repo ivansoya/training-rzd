@@ -44,11 +44,14 @@ RAIN = uuid.uuid5(uuid.NAMESPACE_OID, "tag:rain")
 
 @pytest.fixture
 def picked():
-    """Четыре кадра: два ночных, один дождливый, один без тагов."""
+    """Четыре кадра: два ночных, один дождливый, один без тагов.
+
+    Кадра без тагов нет в tags_of вовсе — как в настоящей выборке
+    (selection строит её только из кадров с тагами)."""
     images = [FakeImage(n) for n in ("a", "b", "c", "d")]
     a, b, c, d = images
     return FakePick(images, {
-        a.id: {NIGHT}, b.id: {NIGHT, RAIN}, c.id: {RAIN}, d.id: set(),
+        a.id: {NIGHT}, b.id: {NIGHT, RAIN}, c.id: {RAIN},
     })
 
 

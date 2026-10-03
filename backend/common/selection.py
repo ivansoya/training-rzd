@@ -194,7 +194,7 @@ def gather(db, project, sel) -> Selection:
     if picked_tags:
         kept_by_tag = []
         for img in images:
-            if out.tags_of.get(img.id, ()) & picked_tags:
+            if out.tags_of.get(img.id, frozenset()) & picked_tags:
                 kept_by_tag.append(img)
             else:
                 out.no_tag += 1
