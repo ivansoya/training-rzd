@@ -132,6 +132,8 @@ export default function AgentPreview({
       } catch (e) {
         const err = e as Error & { status?: number; payload?: { superseded?: boolean } };
         if (err.name === "AbortError" || err.payload?.superseded) return;
+        // Прошлый кадр с рамками под ошибкой читался бы как ответ на эту правку.
+        setResult(null);
         setProblem(err.message);
       } finally {
         if (!ctrl.signal.aborted) setBusy(false);
