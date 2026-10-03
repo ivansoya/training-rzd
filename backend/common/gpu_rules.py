@@ -120,26 +120,4 @@ def fresh_enough(seen_at, now, stale_seconds) -> bool:
     return now - seen <= timedelta(seconds=stale_seconds)
 
 
-def touch(db, device_ids):
-    if not device_ids:
-        return
-    for row in db.execute(
-        select(GpuDevice).where(GpuDevice.id.in_(device_ids))
-    ).scalars():
-        row.seen_at = utcnow()
-    db.commit()
-
-
-def note_sam2(db, device_id, workers, per_worker_mb):
-    """Постоянная бронь полуавтомата.
-
-    Колонкой, а не строкой брони на сессию: сессии приходят и уходят десятками
-    в час, а память процесс держит всё время, пока жив хоть один его воркер.
-    """
-    row = db.get(GpuDevice, device_id)
-    if row is None:
-        return
-    row.sam2_reserve_mb = max(0, int(workers) * int(per_worker_mb))
-    db.commit()
-
 

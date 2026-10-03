@@ -136,6 +136,26 @@ def discover(db, host=None):
     return ids
 
 
+def note_sam2(db, device_uuid, mb) -> bool:
+    """Постоянная бронь полуавтомата на карте: память его живых воркеров.
+
+    Колонкой, а не бронью на сессию: сессии приходят и уходят десятками в час,
+    а память держит процесс, пока он жив. Карта — по UUID; одна карта на
+    стенде — она и есть.
+    """
+    rows = db.execute(select(GpuDevice).where(GpuDevice.enabled.is_(True))).scalars().all()
+    row = next((r for r in rows if device_uuid and r.uuid_str == device_uuid), None)
+    if row is None and len(rows) == 1:
+        row = rows[0]
+    if row is None:
+        return False
+    row.sam2_reserve_mb = max(0, int(mb))
+    db.commit()
+    # Память освободилась — ждущие могли стать допустимыми.
+    pump(db)
+    return True
+
+
 def _smi_uuids():
     """UUID карт от nvidia-smi по порядку индексов. torch 2.3 их не отдаёт."""
     try:

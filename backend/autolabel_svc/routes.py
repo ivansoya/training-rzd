@@ -142,11 +142,15 @@ def open_session():
     # Параметры модели клиенту не доверяем: по ним выбирались веса и устройство,
     # а каждый новый набор поднимал свой процесс на карте.
     params = {}
+    session = None
     try:
         session = manager.open(user_id, model, params)
         info = session.worker.call("info", {})
     except WorkerError as exc:
-        return jsonify({"error": str(exc)}), 503
+        # Сессию на сломанном воркере не оставляем: клиенту нечем было её закрыть.
+        if session is not None:
+            manager.close(session.id, user_id)
+        return jsonify({"error": str(exc), "code": exc.code}), 503
     return jsonify({"session_id": session.id, "model": model, "info": info}), 201
 
 
@@ -176,7 +180,7 @@ def warm(session_id):
             )
         )
     except WorkerError as exc:
-        return jsonify({"error": str(exc)}), 503
+        return jsonify({"error": str(exc), "code": exc.code}), 503
 
 
 WANT = {"box", "polygon"}
@@ -239,7 +243,7 @@ def predict(session_id):
             )
         )
     except WorkerError as exc:
-        return jsonify({"error": str(exc)}), 503
+        return jsonify({"error": str(exc), "code": exc.code}), 503
 
 
 @bp.get("/health")

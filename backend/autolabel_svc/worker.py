@@ -14,6 +14,25 @@
 """
 import traceback
 
+# Ответ на этот id — не запрос, а «модель поднялась» (или нет).
+READY = "__ready__"
+
+
+def _gpu_report() -> dict:
+    """Какая карта и сколько памяти взял процесс после загрузки модели."""
+    try:
+        import torch
+
+        if not torch.cuda.is_available():
+            return {}
+        props = torch.cuda.get_device_properties(0)
+        return {
+            "uuid": str(getattr(props, "uuid", "") or "") or None,
+            "reserved_mb": int(torch.cuda.memory_reserved(0) // (1024 * 1024)),
+        }
+    except Exception:  # noqa: BLE001
+        return {}
+
 
 def build_runner(model: str, params: dict):
     # Импорт внутри функции: тяжёлые зависимости не должны грузиться в веб-процессе.
@@ -29,15 +48,17 @@ def worker_main(model, params, requests, results):
     try:
         runner = build_runner(model, params)
     except Exception as exc:  # noqa: BLE001
-        # Не смогли поднять модель — сообщаем об этом на каждый запрос, иначе
-        # клиент будет ждать ответа от мёртвого процесса до таймаута.
+        # Не смогли поднять модель — сообщаем менеджеру сразу и на каждый
+        # запрос, иначе клиент ждал бы ответа от мёртвого процесса до таймаута.
         error = f"{exc}"
+        results.put((READY, {"ok": False, "error": error, "trace": traceback.format_exc()}))
         while True:
             msg = requests.get()
             if msg is None:
                 return
             results.put((msg[0], {"ok": False, "error": error}))
 
+    results.put((READY, {"ok": True, **_gpu_report()}))
     while True:
         msg = requests.get()
         if msg is None:

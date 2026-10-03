@@ -24,6 +24,9 @@ import type {
  * Кадром может быть и изображение таски, и кадр размечаемого видео — хук
  * работает со ссылкой на кадр и не знает, что за ней стоит.
  */
+const OPEN_RETRIES = 3;
+const OPEN_PAUSE_MS = 15_000;
+
 export type AutoState = "off" | "starting" | "ready" | "error";
 
 // Раз в минуту напоминаем о себе: сессию снимает молчание, а разметчик может
@@ -71,6 +74,9 @@ export function useAutoLabel(
   const [state, setState] = useState<AutoState>("starting");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Модель не поднялась (503): сервер погасил сломанный процесс, следующая
+  // попытка поднимет новый. Пробуем ещё OPEN_RETRIES раз с паузой.
+  const [attempt, setAttempt] = useState(0);
   const session = useRef<string | null>(null);
   const warmed = useRef<Set<string>>(new Set());
 
@@ -111,6 +117,12 @@ export function useAutoLabel(
       })
       .catch((e) => {
         if (!alive) return;
+        const status = (e as { status?: number }).status;
+        if (status === 503 && attempt < OPEN_RETRIES) {
+          setError(`${(e as Error).message} Повторю через ${OPEN_PAUSE_MS / 1000} с.`);
+          window.setTimeout(() => alive && setAttempt((n) => n + 1), OPEN_PAUSE_MS);
+          return;
+        }
         setError((e as Error).message);
         setState("error");
       });
@@ -123,7 +135,7 @@ export function useAutoLabel(
       if (session.current) close(session.current);
       session.current = null;
     };
-  }, []);
+  }, [attempt]);
 
   /** Новая сессия взамен потерянной. Кэш прогретых кадров при этом обнуляется:
    *  эмбеддинги жили в том процессе, которого больше нет. */
