@@ -391,7 +391,7 @@ def build(db, job, *, on_beat=None):
     warnings.extend(sel_lib.coverage_warnings(
         (name, per_class[i]["train"], per_class[i]["val"])
         for i, name in enumerate(names)
-    ))
+    ), mode=sel["split_mode"])
 
     report = {
         "warnings": warnings,

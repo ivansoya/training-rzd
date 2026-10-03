@@ -61,6 +61,9 @@ export default function TrainSetWizard() {
   const [kind, setKind] = useState<AnnKind>("bbox");
   const [mode, setMode] = useState<SplitMode>("balanced");
   const [ratio, setRatio] = useState(0.2);
+  // Зерно деления — одно на предпросмотр и сборку: раньше предпросмотр делил
+  // с нулём, а сборка — с зерном из имени, и таблица расходилась с собранным.
+  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 2 ** 31));
   const [tags, setTags] = useState<Tag[]>([]);
   // Строки сборки. Стартовое состояние — «всё как есть»: по строке на
   // половину, кадры своей половины, без графа. Ровно то, что набор делал до
@@ -103,9 +106,10 @@ export default function TrainSetWizard() {
       ann_type: kind,
       split_mode: mode,
       val_ratio: ratio,
+      seed,
       feeds,
     }),
-    [datasets, parts, picked, kind, mode, ratio, feeds]
+    [datasets, parts, picked, kind, mode, ratio, seed, feeds]
   );
 
   // Предпросмотр считается на каждое изменение — по тому же коду, которым
@@ -388,6 +392,15 @@ export default function TrainSetWizard() {
                     aria-label="Доля проверки"
                   />
                   <b>{Math.round(ratio * 100)} %</b>
+                </div>
+              )}
+              {mode !== "manual" && (
+                <div className="t-kv" style={{ marginBottom: 12 }}>
+                  <span>Перемешивание <small style={{ color: "var(--faint)" }}>№ {seed}</small></span>
+                  <button type="button" className="mag-ghost mag-ghost-inline"
+                    onClick={() => setSeed(Math.floor(Math.random() * 2 ** 31))}>
+                    Перемешать по-другому
+                  </button>
                 </div>
               )}
 

@@ -234,3 +234,10 @@ def test_покрытие_с_генератором_видит_и_тонкую_�
     rows = (r for r in [("a", 5, 0), ("b", 4, 1)])
     out = coverage_warnings(rows)
     assert len(out) == 2 and "b" in out[1]
+
+
+def test_совет_только_про_доступное():
+    rows = [("a", 5, 0)]
+    assert "оглядкой" in coverage_warnings(rows, mode="random")[0]
+    assert "оглядкой" not in coverage_warnings(rows, mode="balanced")[0]
+    assert "Перемешать по-другому" in coverage_warnings(rows)[0]

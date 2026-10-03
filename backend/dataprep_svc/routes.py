@@ -1057,7 +1057,7 @@ def preview_set(code):
             (c.name, per_class.get(i, {}).get("train", 0),
              per_class.get(i, {}).get("val", 0))
             for i, c in enumerate(picked.classes)
-        ))
+        ), mode=sel["split_mode"])
 
         # Строки сборки: сколько кадров возьмёт каждая и во сколько образцов
         # превратит. Без этих чисел кнопка «Собрать» обещает вслепую — а
