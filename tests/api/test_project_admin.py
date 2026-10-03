@@ -196,3 +196,22 @@ def test_зритель_не_становится_исполнителем(api, 
     res = api.post(f"{BASE_URL}/api/projects/{project['code']}/tasks",
                    json={"name": tag(), "assignee_id": vid})
     assert res.status_code == 400, res.text
+
+
+def test_редактор_не_удаляет_чужое_обучение(api, db, project):
+    editor = person(db)
+    join(api, editor, project["code"], "editor")
+    with db.cursor() as cur:
+        cur.execute(
+            "INSERT INTO train_runs (id, project_id, name, base_model, task, params, device,"
+            " status, epochs, created_at, created_by)"
+            " SELECT gen_random_uuid(), p.id, 'чужое', 'yolo11n.pt', 'detect', '{}', 'cuda:0',"
+            " 'done', 1, now(), m.user_id FROM projects p JOIN project_members m"
+            " ON m.project_id = p.id AND m.role = 'admin' WHERE p.code = %s RETURNING id",
+            (project["code"],),
+        )
+        run_id = cur.fetchone()[0]
+    url = f"{BASE_URL}/api/projects/{project['code']}/runs/{run_id}"
+    assert editor.delete(url).status_code == 403
+    assert editor.post(f"{url}/stop").status_code == 403
+    assert api.delete(url).status_code == 200

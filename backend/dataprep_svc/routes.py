@@ -18,7 +18,7 @@ from sqlalchemy.exc import IntegrityError
 
 from common import agent_graph
 from common import selection as sel_lib
-from common.auth import current_user, has_role, project_by_code, role_in
+from common.auth import current_user, has_role, may_manage, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
     GRAPH_KINDS, AgentExamples, AgentWeights, AugGraph, AugGraphUse, AugGraphVersion,
@@ -36,6 +36,8 @@ from dataprep_svc import samples as samples_lib, testframe
 from dataprep_svc.graph import plan as planlib
 from dataprep_svc.graph import schema
 from dataprep_svc.graph.schema import GraphError
+
+NOT_YOURS = "Удалять и останавливать чужое может администратор проекта."
 
 bp = Blueprint("dataprep", __name__)
 
@@ -1387,6 +1389,8 @@ def delete_set(code, set_id):
         tset = db.get(TrainSet, _uuid(set_id))
         if tset is None or tset.project_id != project.id:
             return jsonify({"error": "Набор не найден."}), 404
+        if not may_manage(db, user, project, tset):
+            return jsonify({"error": NOT_YOURS}), 403
         # Законченные обучения набор переживают (set_id станет NULL), а идущее
         # читает его файлы прямо сейчас: снести их — уронить обучение на
         # середине эпохи. Сперва его останавливают.

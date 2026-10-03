@@ -11,7 +11,7 @@ from flask import Blueprint, Response, jsonify, request, send_file
 from sqlalchemy import select
 
 from common import config, gpu, live
-from common.auth import current_user, has_role, project_by_code, role_in
+from common.auth import current_user, has_role, may_manage, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
     GpuDevice, TrainEpoch, TrainRun, TrainSet, TrainSetFeed, User, utcnow,
@@ -19,6 +19,8 @@ from common.models import (
 from common.web import InputError, int_field, json_body
 from common.storage import load_json
 from training_svc import metrics as metrics_lib, trainer
+
+NOT_YOURS = "Удалять и останавливать чужое может администратор проекта."
 
 bp = Blueprint("training", __name__)
 
@@ -377,6 +379,8 @@ def stop_run(code, run_id):
         run = db.get(TrainRun, _uuid(run_id))
         if run is None or run.project_id != project.id:
             return jsonify({"error": "Обучение не найдено."}), 404
+        if not may_manage(db, user, project, run):
+            return jsonify({"error": NOT_YOURS}), 403
         if run.status in ("done", "error", "stopped"):
             return jsonify({"ok": True, "status": run.status})
         run.cancel_requested = True
@@ -414,6 +418,8 @@ def delete_run(code, run_id):
         run = db.get(TrainRun, _uuid(run_id))
         if run is None or run.project_id != project.id:
             return jsonify({"error": "Обучение не найдено."}), 404
+        if not may_manage(db, user, project, run):
+            return jsonify({"error": NOT_YOURS}), 403
         if run.status in ("running", "preparing", "stopping"):
             return jsonify({
                 "error": "Обучение ещё идёт. Сперва остановите его."

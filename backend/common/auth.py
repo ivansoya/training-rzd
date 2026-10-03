@@ -58,3 +58,9 @@ def has_role(role: str | None, needed: str) -> bool:
     if role is None:
         return False
     return ROLE_RANK.get(role, -1) >= ROLE_RANK[needed]
+
+
+def may_manage(db, user: User, project: Project, obj) -> bool:
+    """Удалить или остановить чужое (набор, обучение) может только админ проекта;
+    редактор управляет тем, что создал сам."""
+    return getattr(obj, "created_by", None) == user.id or role_in(db, user, project) == "admin"
