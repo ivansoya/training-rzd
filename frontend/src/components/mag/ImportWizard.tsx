@@ -253,7 +253,9 @@ export default function ImportWizard() {
               <span className="sub">Zip с YOLO-разметкой: data.yaml, images/, labels/</span>
             </div>
             {blocked ? (
-              <p className="mag-hint mag-warn">{blocked}</p>
+              <p className="mag-hint mag-warn">
+                {blocked} <Link to={`/projects/${code}/classes`}>Открыть классы</Link>
+              </p>
             ) : uploadPct === null ? (
               <div className="mag-drop">
                 <input

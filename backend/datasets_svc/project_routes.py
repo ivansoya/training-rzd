@@ -181,13 +181,27 @@ def start_import(code):
 def _classes_block(db, project):
     """Второй архив в проект пока не поддержан: его class_index столкнётся с
     уже заведёнными классами. Отказываем явно, а не падаем на записи."""
-    if db.execute(
+    total = db.execute(
         select(func.count()).select_from(LabelClass)
         .where(LabelClass.project_id == project.id)
-    ).scalar_one():
-        return ("В проекте уже есть классы. Импорт второго архива "
-                "появится позже — вместе со сверкой классов.")
-    return None
+    ).scalar_one()
+    if not total:
+        return None
+    used = db.execute(
+        select(func.count(func.distinct(LabelClass.id)))
+        .where(LabelClass.project_id == project.id)
+        .where(or_(
+            select(Annotation.id).where(Annotation.class_id == LabelClass.id).exists(),
+            select(VideoTrack.id).where(VideoTrack.class_id == LabelClass.id).exists(),
+            select(VideoAnnotation.id).where(VideoAnnotation.class_id == LabelClass.id).exists(),
+        ))
+    ).scalar_one()
+    # Выход из тупика (например, после удаления последнего датасета) — назвать.
+    if used:
+        return (f"В проекте уже есть классы ({total}, с разметкой — {used}). Второй архив "
+                "в проект с классами пока не импортируется: сверки классов ещё нет.")
+    return (f"В проекте остались классы без разметки ({total}). Удалите их во вкладке "
+            "«Классы» — после этого архив можно будет загрузить.")
 
 
 def _import_blocked(db, project):
