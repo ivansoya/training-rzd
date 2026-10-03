@@ -15,7 +15,7 @@ SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 SMTP_STARTTLS = os.environ.get("SMTP_STARTTLS", "") == "1"
 MAIL_FROM = os.environ.get("MAIL_FROM", "Магистраль ML <no-reply@magistral.local>")
 # Base URL the user's browser can open (the dev server / public site).
-APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:5173")
+APP_BASE_URL = os.environ.get("APP_BASE_URL", "http://localhost:8080")
 
 
 def _send(msg: EmailMessage) -> None:

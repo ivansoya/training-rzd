@@ -48,8 +48,8 @@ services:
       - SMTP_HOST=mailpit
       - SMTP_PORT=1025
       - MAIL_FROM=Магистраль ML <no-reply@magistral.local>
-      # Address the confirmation links point at (dev server during development).
-      - APP_BASE_URL=http://localhost:5173
+      # Куда ведут ссылки подтверждения: стенд на 8080; для Vite — APP_BASE_URL=http://localhost:5173 в .env.
+      - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8080}
     depends_on:
       db:
         condition: service_healthy
