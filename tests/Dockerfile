@@ -25,6 +25,11 @@ RUN mkdir -p /opt/e2e \
     && npm init -y > /dev/null \
     && npm install --no-audit --no-fund @playwright/test@1.49.1
 
+# Настоящий Chrome: в Chromium из Playwright нет H.264, и без него проверки
+# покадровой точности пропускались. Под Linux ARM64 Chrome не собирают —
+# там остаётся Chromium и пропуски.
+RUN if [ "$(dpkg --print-architecture)" = "amd64" ]; then         cd /opt/e2e && npx playwright install --with-deps chrome         && rm -rf /var/lib/apt/lists/*;     fi
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     # Прогоны читают исходники из примонтированных каталогов, а не из образа:

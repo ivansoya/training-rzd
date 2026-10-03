@@ -445,6 +445,8 @@ if __name__ == "__main__":
         sample.ensure()
         # Длинный ролик нужен перегонам: в коротком все кадры умещаются в один.
         sample.ensure_long()
+        # Высокий — ступеням качества: у ролика 240p их нет вовсе.
+        sample.ensure_tall()
     except Exception as exc:  # noqa: BLE001
         print(f"Не удалось подготовить тестовый ролик: {exc}")
     app.run(host="0.0.0.0", port=8090, threaded=True)

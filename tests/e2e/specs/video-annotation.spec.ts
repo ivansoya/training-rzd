@@ -17,6 +17,8 @@ const MAILPIT = process.env.TEST_MAILPIT_URL || "http://mailpit:8025";
 const SAMPLE = process.env.TEST_SAMPLE_VIDEO || "/tmp/magistral-sample-30f.mp4";
 
 const LONG_SAMPLE = process.env.TEST_SAMPLE_LONG || "/tmp/magistral-sample-300f.mp4";
+// 1024×768: у ролика 240p ступеней качества нет вовсе — переключать нечего.
+const TALL_SAMPLE = process.env.TEST_SAMPLE_TALL || "/tmp/magistral-sample-tall.mp4";
 
 function tag(): string {
   return "test-" + Math.random().toString(16).slice(2, 10);
@@ -87,12 +89,8 @@ function frameMark(editor: Locator): Promise<number> {
   });
 }
 
-function readLongSample(): Buffer {
-  return readFileSync(LONG_SAMPLE);
-}
-
 /** Проект, класс, таска и загруженный длинный ролик — всё через API. */
-async function longClip(page: Page) {
+async function longClip(page: Page, sample = LONG_SAMPLE) {
   await signIn(page);
   const project = await (
     await page.request.post("/api/projects", { data: { name: tag() } })
@@ -105,7 +103,7 @@ async function longClip(page: Page) {
 
   const upload = await page.request.post(`/api/tasks/${task.id}/videos`, {
     multipart: {
-      file: { name: "sample-300f.mp4", mimeType: "video/mp4", buffer: readLongSample() },
+      file: { name: "sample-300f.mp4", mimeType: "video/mp4", buffer: readFileSync(sample) },
       mode: "annotate",
     },
   });
@@ -117,6 +115,31 @@ async function longClip(page: Page) {
 async function pickQuality(editor: Locator, label: string) {
   await editor.getByRole("button", { name: "Качество" }).click();
   await editor.locator(".mag-ved-quality-menu").getByText(label, { exact: true }).click();
+}
+
+/** Орган управления по подписи справки: всплывашек (`title`) у них больше нет. */
+function control(editor: Locator, text: string): Locator {
+  return editor.locator(`[data-ht^="${text}"]`);
+}
+
+/** Шкала кадров над дорожками — она же ползунок перемотки. */
+function slider(editor: Locator): Locator {
+  return editor.getByRole("slider", { name: "Кадр" });
+}
+
+/** Номер кадра, который показывает интерфейс. */
+async function uiFrame(editor: Locator): Promise<number> {
+  return Number(await slider(editor).getAttribute("aria-valuenow"));
+}
+
+/** Перейти на кадр клавишами шкалы: Home, затем десятками и единицами. */
+async function seek(editor: Locator, frame: number) {
+  const ruler = slider(editor);
+  await ruler.focus();
+  await ruler.press("Home");
+  for (let i = 0; i < Math.floor(frame / 10); i += 1) await ruler.press("Shift+ArrowRight");
+  for (let i = 0; i < frame % 10; i += 1) await ruler.press("ArrowRight");
+  await expect.poll(() => uiFrame(editor)).toBe(frame);
 }
 
 async function openEditor(page: Page, project: { code: string }, task: { id: string }) {
@@ -245,7 +268,7 @@ test("видео размечается треком и объект остаё�
     expect(await drawn(frame)).toBeTruthy();
   }).toPass();
 
-  await editor.getByTitle(/Трек-бокс/).click();
+  await control(editor, "Трек-бокс").click();
 
   const box = await frame.boundingBox();
   if (!box) throw new Error("Кадр не отрисовался");
@@ -256,8 +279,7 @@ test("видео размечается треком и объект остаё�
 
   // Объект появился и в списке слева, и дорожкой внизу — значит сервер его
   // принял и отдал обратно.
-  await expect(editor.locator(".mag-ved-obj")).toHaveCount(1);
-  await expect(editor.locator(".g-lane")).toHaveCount(1);
+  await expect(editor.locator(".vt-row[data-track-id]")).toHaveCount(1);
 
   const saved = await (
     await page.request.get(`/api/tasks/${task.id}/videos/${video.id}/annotations`)
@@ -270,7 +292,7 @@ test("видео размечается треком и объект остаё�
   expect(detail.videos[0].tracks).toBe(1);
 });
 
-test("нарезаемое видео открывает нарезку, а не редактор разметки", async ({ page }) => {
+test("нарезаемое видео живёт во вкладке «Кадры» и открывает нарезку", async ({ page }) => {
   await signIn(page);
   const project = await (
     await page.request.post("/api/projects", { data: { name: tag() } })
@@ -287,13 +309,15 @@ test("нарезаемое видео открывает нарезку, а не
   });
 
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
-  await page.getByRole("button", { name: /^Видео/ }).click();
-  await expect(page.getByText("нарезка")).toBeVisible();
-  await page.getByRole("button", { name: "Нарезать" }).click();
+  await page.getByRole("button", { name: /^Кадры/ }).click();
+  const block = page.locator(".g-block").first();
+  await expect(block.getByText("нарезка")).toBeVisible();
+  await block.getByRole("button", { name: "Нарезать" }).click();
+  await expect(page.locator(".mag-cut")).toBeVisible();
   await expect(page.getByRole("dialog", { name: "Разметка видео" })).toHaveCount(0);
 });
 
-test("режим спрашивают до отправки файла", async ({ page }) => {
+test("режим ролика задаёт вкладка, куда его добавили", async ({ page }) => {
   await signIn(page);
   const project = await (
     await page.request.post("/api/projects", { data: { name: tag() } })
@@ -303,14 +327,22 @@ test("режим спрашивают до отправки файла", async (
   ).json();
   await page.request.post(`/api/tasks/${task.id}/status`, { data: { status: "in_progress" } });
 
+  const modes = async () =>
+    ((await (await page.request.get(`/api/tasks/${task.id}`)).json()).videos as { mode: string }[])
+      .map((v) => v.mode)
+      .sort();
+
+  // Диалога «что делать с видео» больше нет: вкладка «Видео» — для разметки,
+  // «Кадры» — для нарезки. Файловое поле на странице одно — у открытой вкладки.
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
   await page.getByRole("button", { name: /^Видео/ }).click();
   await page.setInputFiles('input[type="file"][accept="video/*"]', SAMPLE);
+  await expect(page.locator(".g-block").first().getByText("размечается")).toBeVisible();
 
-  const dialog = page.getByRole("dialog", { name: "Что делать с видео" });
-  await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("Нарезать на кадры")).toBeVisible();
-  await expect(dialog.getByText("Размечать видео")).toBeVisible();
+  await page.getByRole("button", { name: /^Кадры/ }).click();
+  await page.setInputFiles('input[type="file"][accept="video/*"]', SAMPLE);
+  await expect(page.locator(".g-block").getByText("нарезка")).toBeVisible();
+  await expect.poll(modes).toEqual(["annotate", "cut"]);
 });
 
 function readSample(): Buffer {
@@ -355,8 +387,8 @@ test("разметка закрывается и становится кадра
   await page.getByRole("button", { name: /^Кадры/ }).click();
   const block = page.locator(".g-block").first();
   await expect(block).toBeVisible();
-  await expect(block.getByText("из разметки видео")).toBeVisible();
-  await expect(block.getByRole("button", { name: "Размечать" })).toBeVisible();
+  await expect(block.getByText("Кадры из разметки «sample.mp4»")).toBeVisible();
+  await expect(block.getByRole("button", { name: "Проверить" })).toBeVisible();
 });
 
 test("шаг стрелкой показывает соседний кадр, а не соседний примерно", async ({ page }) => {
@@ -369,13 +401,13 @@ test("шаг стрелкой показывает соседний кадр, а
 
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(0);
 
-  const forward = editor.getByTitle(/Кадр вперёд/);
+  const forward = control(editor, "Кадр вперёд");
   for (const expected of [1, 2, 3]) {
     await forward.click();
     await expect.poll(() => frameMark(editor), { timeout: 15_000 }).toBe(expected);
   }
 
-  const back = editor.getByTitle(/Кадр назад/);
+  const back = control(editor, "Кадр назад");
   await back.click();
   await expect.poll(() => frameMark(editor), { timeout: 15_000 }).toBe(2);
 });
@@ -390,11 +422,11 @@ test("прыжок по шкале грузит нужный перегон", as
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(0);
 
   // 200 лежит во втором перегоне: проверяется и прыжок, и подгрузка.
-  await editor.locator(".mag-ved-scrub").fill("200");
+  await seek(editor, 200);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(200);
 
   // Назад через две границы перегонов — туда, где уже были.
-  await editor.locator(".mag-ved-scrub").fill("5");
+  await seek(editor, 5);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(5);
 });
 
@@ -408,39 +440,37 @@ test("граница перегона не теряет и не задваива
 
   // Встаём перед стыком и переходим его шагами: 119 — последний кадр первого
   // перегона, 120 — первый кадр второго.
-  await editor.locator(".mag-ved-scrub").fill("118");
+  await seek(editor, 118);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(118);
 
-  const forward = editor.getByTitle(/Кадр вперёд/);
+  const forward = control(editor, "Кадр вперёд");
   for (const expected of [119, 120, 121]) {
     await forward.click();
     await expect.poll(() => frameMark(editor), { timeout: 20_000 }).toBe(expected);
   }
 
-  await editor.getByTitle(/Кадр назад/).click();
+  await control(editor, "Кадр назад").click();
   await expect.poll(() => frameMark(editor), { timeout: 20_000 }).toBe(120);
 });
 
-test("исходное качество показывает тот же кадр крупнее", async ({ page }) => {
+test("ступень качества меняет картинку, но не кадр", async ({ page }) => {
   test.skip(
     !(await decodesH264(page)),
     "Браузер стенда не разжимает H.264: проверка идёт API-тестом"
   );
-  const { project, task } = await longClip(page);
+  const { project, task } = await longClip(page, TALL_SAMPLE);
   const editor = await openEditor(page, project, task);
-  await editor.locator(".mag-ved-scrub").fill("77");
+  await seek(editor, 77);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(77);
 
-  const canvas = editor.locator(".mag-cv-frame canvas").first();
-  const before = await canvas.evaluate((el: HTMLCanvasElement) => el.width);
-
-  await pickQuality(editor, "Исходное");
-  await expect
-    .poll(() => canvas.evaluate((el: HTMLCanvasElement) => el.width), { timeout: 60_000 })
-    .toBeGreaterThan(before);
-
-  // Кадр обязан остаться тем же: иначе «резкость» уводила бы разметчика.
-  expect(await frameMark(editor)).toBe(77);
+  // Холст всегда в координатах исходника — о ступени говорит запрошенный перегон.
+  for (const [label, q] of [["480p", "480"], ["Исходное", "src"]]) {
+    const asked = page.waitForRequest((r) => /\/chunks\/\d+\?q=/.test(r.url()) && r.url().endsWith(`q=${q}`));
+    await pickQuality(editor, label);
+    await asked;
+    // Кадр обязан остаться тем же: иначе «резкость» уводила бы разметчика.
+    await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(77);
+  }
 });
 
 test("проигрывание не срывает декодер", async ({ page }) => {
@@ -452,15 +482,13 @@ test("проигрывание не срывает декодер", async ({ pag
   const editor = await openEditor(page, project, task);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(0);
 
-  const play = editor.getByTitle(/Играть/);
+  const play = control(editor, "Играть");
   await play.click();
   await page.waitForTimeout(3000);
   await play.click();
 
   // Ролик и правда шёл, а не стоял на месте.
-  const at = Number(
-    (await editor.locator(".mag-ved-time").first().innerText()).split("·")[1].trim()
-  );
+  const at = await uiFrame(editor);
   expect(at).toBeGreaterThan(10);
 
   // Ни одного срыва разжатия: раньше здесь падало «нужен опорный кадр» —
@@ -481,26 +509,22 @@ test("проигрывание проходит границу перегона 
   const editor = await openEditor(page, project, task);
 
   // Встаём незадолго до границы: перегон 0 кончается кадром 119.
-  await editor.locator(".mag-ved-scrub").fill("100");
+  await seek(editor, 100);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(100);
 
-  await editor.getByTitle(/Играть/).click();
+  await control(editor, "Играть").click();
   // Пока идёт ролик, время не имеет права убегать от картинки: раньше полоса
   // бежала вперёд, кадр замирал, и кусок ролика проходил незамеченным.
   const behind: number[] = [];
   for (let i = 0; i < 10; i += 1) {
     await page.waitForTimeout(200);
-    const ui = Number(
-      (await editor.locator(".mag-ved-time").first().innerText()).split("·")[1].trim()
-    );
+    const ui = await uiFrame(editor);
     behind.push(ui - (await frameMark(editor)));
   }
-  await editor.getByTitle(/Играть/).click();
+  await control(editor, "Играть").click();
   expect(Math.max(...behind), `отставание картинки по замерам: ${behind}`).toBeLessThanOrEqual(2);
 
-  const at = Number(
-    (await editor.locator(".mag-ved-time").first().innerText()).split("·")[1].trim()
-  );
+  const at = await uiFrame(editor);
   // Границу прошли — иначе тест ничего не проверил.
   expect(at).toBeGreaterThan(120);
   await expect(editor.locator(".mag-ed-err")).toHaveCount(0);
@@ -525,14 +549,14 @@ test("на ожидании кадр гаснет, и ничего не дёрг
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(0);
 
   // Строка времени не имеет права раздвигаться, когда загорается точка.
-  const before = await editor.locator(".mag-ved-scrub").boundingBox();
+  const before = await slider(editor).boundingBox();
 
-  await editor.locator(".mag-ved-scrub").fill("250");
+  await seek(editor, 250);
 
   const busy = editor.locator(".mag-ved-busy");
   await expect(busy).toBeVisible();
 
-  const during = await editor.locator(".mag-ved-scrub").boundingBox();
+  const during = await slider(editor).boundingBox();
   expect(Math.abs((during?.x ?? 0) - (before?.x ?? 0))).toBeLessThan(1);
 
   // Дождались — полоса ушла, кадр тот самый.
@@ -545,22 +569,22 @@ test("качество можно переключать подряд, и ред
     !(await decodesH264(page)),
     "Браузер стенда не разжимает H.264: проверка идёт API-тестом"
   );
-  const { project, task } = await longClip(page);
+  const { project, task } = await longClip(page, TALL_SAMPLE);
   const editor = await openEditor(page, project, task);
-  await editor.locator(".mag-ved-scrub").fill("150");
+  await seek(editor, 150);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(150);
 
   // Две ступени подряд: раньше перегон прежнего качества дописывался в кэш
   // уже после переключения, ожидание застывало и таймлайн переставал двигать
   // кадр — ползунок ездит, картинка стоит.
   await pickQuality(editor, "Исходное");
-  await pickQuality(editor, "360p");
+  await pickQuality(editor, "480p");
 
   await expect.poll(() => frameMark(editor), { timeout: 60_000 }).toBe(150);
   await expect(editor.locator(".mag-ed-err")).toHaveCount(0);
 
   // И редактор жив: шаг вперёд показывает следующий кадр.
-  await editor.getByTitle(/Кадр вперёд/).click();
+  await control(editor, "Кадр вперёд").click();
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(151);
 });
 
@@ -568,7 +592,7 @@ test("кнопки плеера не меняют размер и не двиг�
   const { project, task } = await shortClip(page);
   const editor = await openEditor(page, project, task);
 
-  const scrub = editor.locator(".mag-ved-scrub");
+  const scrub = editor.getByRole("slider", { name: "Кадр" });
   const before = await scrub.boundingBox();
 
   // ▶ превращается в ⏸ — символы разной ширины, и раньше от этого ехал ряд.
@@ -592,7 +616,7 @@ test("справка подсвечивает управление и переч
   const editor = await openEditor(page, project, task);
 
   // Всплывающих подсказок на органах управления не осталось — они мешали.
-  for (const area of [".mag-ed-head", ".mag-ed-rail", ".mag-ved-bottom"]) {
+  for (const area of [".mag-ed-head", ".mag-ed-rail", ".mag-ved-transport"]) {
     expect(await editor.locator(`${area} [title]`).count(), area).toBe(0);
   }
 
@@ -613,31 +637,23 @@ test("справка подсвечивает управление и переч
 });
 
 test("шкала ролика и дорожки объектов одной ширины", async ({ page }) => {
-  const { project, task } = await shortClip(page);
+  const { project, task, video } = await shortClip(page);
+  // Дорожка появляется вместе с объектом — заводим его через API.
+  await page.request.post(`/api/tasks/${task.id}/videos/${video.id}/tracks`, {
+    data: { class_index: 0, frame_no: 0, geometry: { x: 10, y: 90, w: 60, h: 60 } },
+  });
   const editor = await openEditor(page, project, task);
 
-  // Ползунок и дорожки стоят в одной сетке: их полосы обязаны совпадать
-  // по краям, иначе «объект появляется здесь» указывает не туда.
-  const ruler = await editor.locator(".mag-ved-ruler .g-lane-track").boundingBox();
+  // Шкала, дорожка видео и дорожки объектов стоят в одной сетке: их полосы
+  // обязаны совпадать по краям, иначе «объект появляется здесь» указывает не туда.
+  const ruler = await editor.getByRole("slider", { name: "Кадр" }).boundingBox();
+  const reel = await editor.locator(".vt-video").boundingBox();
+  const lane = await editor.locator(".vt-row .vt-lane").first().boundingBox();
   expect(ruler, "нет шкалы ролика").toBeTruthy();
-
-  // Дорожки появляются вместе с объектами; пока их нет, сверяем саму сетку.
-  const name = await editor.locator(".mag-ved-ruler .g-lane-name").boundingBox();
-  const state = await editor.locator(".mag-ved-ruler .g-lane-state").boundingBox();
-  expect(name?.width).toBeGreaterThan(0);
-  expect(state?.width).toBeGreaterThan(0);
-
-  // Сверяем с внутренней областью дорожки: метки треков лежат внутри её
-  // рамки, значит и шкала ролика обязана начинаться там же.
-  const inner = await editor
-    .locator(".mag-ved-ruler .g-lane-track")
-    .evaluate((el) => {
-      const box = el.getBoundingClientRect();
-      return { x: box.x + el.clientLeft, width: el.clientWidth };
-    });
-  const scrub = await editor.locator(".mag-ved-scrub").boundingBox();
-  expect(Math.abs((scrub?.x ?? 0) - inner.x)).toBeLessThan(0.6);
-  expect(Math.abs((scrub?.width ?? 0) - inner.width)).toBeLessThan(0.6);
+  for (const [name, box] of [["видео", reel], ["объект", lane]] as const) {
+    expect(Math.abs((box?.x ?? 0) - (ruler?.x ?? 0)), name).toBeLessThan(0.6);
+    expect(Math.abs((box?.width ?? 0) - (ruler?.width ?? 0)), name).toBeLessThan(0.6);
+  }
 });
 
 test("окно объектов показывает, на каких кадрах они есть", async ({ page }) => {
@@ -684,7 +700,11 @@ test("одиночный объект превращается в трек и у
   );
 
   const editor = await openEditor(page, project, task);
-  const box = editor.locator(".mag-cv-box").first();
+  const frame = editor.locator(".mag-cv-frame canvas").first();
+  await expect(async () => {
+    expect(await drawn(frame)).toBeTruthy();
+  }).toPass();
+  const box = editor.locator(".mag-cv-hit").first();
   await expect(box).toBeVisible();
 
   // Правая кнопка на объекте — меню с превращением в трек.
@@ -692,17 +712,17 @@ test("одиночный объект превращается в трек и у
   await page.getByText("Сделать треком").click();
 
   // Одиночный ушёл, трек появился — и у него есть дорожка.
-  await expect(editor.locator(".g-lane")).toHaveCount(2); // шкала ролика + дорожка
+  await expect(editor.locator(".vt-row[data-track-id]")).toHaveCount(1);
   const saved = await (
     await page.request.get(`/api/tasks/${task.id}/videos/${video.id}/annotations`)
   ).json();
   expect(saved.tracks).toHaveLength(1);
   expect(saved.singles).toHaveLength(0);
 
-  // Теперь удалим трек через то же меню.
-  await editor.locator(".mag-cv-box").first().click({ button: "right" });
-  await page.getByText("Удалить трек целиком").click();
-  await expect(editor.locator(".mag-cv-box")).toHaveCount(0);
+  // Теперь удалим трек корзиной на его дорожке — она спрашивает подтверждение.
+  page.once("dialog", (d) => d.accept());
+  await editor.locator(".vt-trash").first().click();
+  await expect(editor.locator(".mag-cv-hit")).toHaveCount(0);
 
   const after = await (
     await page.request.get(`/api/tasks/${task.id}/videos/${video.id}/annotations`)

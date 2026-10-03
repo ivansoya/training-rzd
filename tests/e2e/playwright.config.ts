@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { defineConfig, devices } from "@playwright/test";
 
 /** Браузер ходит в тот же nginx, что и человек: отдельного стенда нет, и
@@ -31,5 +32,13 @@ export default defineConfig({
     trace: "retain-on-failure",
     video: "off",
   },
-  projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
+  // Chrome, если он есть в образе: только он разжимает H.264, без него
+  // проверки покадровой точности пропускаются (см. tests/Dockerfile).
+  projects: [{
+    name: "chromium",
+    use: {
+      ...devices["Desktop Chrome"],
+      ...(existsSync("/opt/google/chrome/chrome") ? { channel: "chrome" } : {}),
+    },
+  }],
 });
