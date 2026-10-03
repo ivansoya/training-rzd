@@ -249,6 +249,8 @@ services:
       - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
       # Сколько разметчиков живёт на одном процессе с моделью.
       - AUTOLABEL_USERS_PER_WORKER=5
+      # Потолок процессов с моделью на карте; сверх — 503 «полуавтомат занят».
+      - AUTOLABEL_MAX_WORKERS=3
       - SAM2_MODEL=sam2.1_hiera_small
       - SAM2_DEVICE=cuda
     depends_on:

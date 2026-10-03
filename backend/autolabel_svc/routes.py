@@ -11,7 +11,7 @@ from flask import Blueprint, jsonify, request
 
 from autolabel_svc.manager import WorkerError, manager
 from common import config
-from common.auth import current_user, has_role, role_in
+from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import Image, Project, Task, TaskVideo
 
@@ -111,18 +111,36 @@ def _video_frame(db, user, data):
     return str(user.id), path, None
 
 
+def _editor_of(code):
+    """(user_id, error): сессию держит только редактор проекта — иначе любой
+    вошедший поднимал бы процессы с моделью на общей карте."""
+    db = SessionLocal()
+    try:
+        user = current_user(db)
+        if user is None:
+            return None, (jsonify({"error": "Не выполнен вход."}), 401)
+        project = project_by_code(db, code) if code else None
+        if project is None or not has_role(role_in(db, user, project), "editor"):
+            return None, (jsonify({"error": "Полуавтомат доступен редактору проекта."}), 403)
+        return str(user.id), None
+    finally:
+        db.close()
+
+
 @bp.post("/sessions")
 def open_session():
     """Сессия на пользователя и модель. SAM2 открывают при входе в редактор,
     остальные модели — в момент первого обращения к ним."""
-    user_id, err = _caller()
+    data = request.get_json(silent=True) or {}
+    user_id, err = _editor_of(data.get("project"))
     if err:
         return err
-    data = request.get_json(silent=True) or {}
     model = data.get("model") or "sam2"
     if model not in MODELS:
         return jsonify({"error": f"Модель «{model}» не поддерживается."}), 400
-    params = data.get("params") or {}
+    # Параметры модели клиенту не доверяем: по ним выбирались веса и устройство,
+    # а каждый новый набор поднимал свой процесс на карте.
+    params = {}
     try:
         session = manager.open(user_id, model, params)
         info = session.worker.call("info", {})

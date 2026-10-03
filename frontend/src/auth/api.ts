@@ -1485,11 +1485,13 @@ export interface AutoShape {
   score: number;
 }
 
+/** Сессия полуавтомата в проекте: сервер пускает только редактора проекта,
+ *  а модель и устройство выбирает сам. */
 export async function openAutoSession(
-  model = "sam2",
-  params: Record<string, unknown> = {}
+  project: string,
+  model = "sam2"
 ): Promise<{ session_id: string; model: string; info: Record<string, unknown> }> {
-  return asJson(await post("auto/sessions", { model, params }));
+  return asJson(await post("auto/sessions", { model, project }));
 }
 
 export async function closeAutoSession(sessionId: string): Promise<void> {

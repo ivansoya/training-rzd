@@ -64,10 +64,11 @@ def tall(api, task, tall_video_file):
 
 
 @pytest.fixture
-def session_id(api):
+def session_id(api, project):
     """Сессия SAM2. Без модели проверять нечего — и это не повод падать:
     полуавтомат требует GPU, которого на сборочной машине может не быть."""
-    res = api.post(f"{BASE_URL}/api/auto/sessions", json={"model": "sam2"})
+    res = api.post(f"{BASE_URL}/api/auto/sessions",
+                   json={"model": "sam2", "project": project["code"]})
     if res.status_code == 503:
         pytest.skip(f"полуавтомат недоступен: {res.text}")
     assert res.status_code in (200, 201), res.text
@@ -135,3 +136,15 @@ def test_ответ_приходит_в_пикселях_разметчика(ap
     assert 0 <= got["x"] and got["x"] + got["w"] <= space["w"]
     assert 0 <= got["y"] and got["y"] + got["h"] <= space["h"]
     assert got["w"] > want["w"] / 2, "рамка вернулась в пикселях ступени качества"
+
+
+def test_сессию_открывает_только_редактор_проекта(api, db, project):
+    from test_project_admin import join, person
+
+    url = f"{BASE_URL}/api/auto/sessions"
+    assert api.post(url, json={"model": "sam2"}).status_code == 403
+    stranger = person(db)
+    assert stranger.post(url, json={"model": "sam2", "project": project["code"]}).status_code == 403
+    viewer = person(db)
+    join(api, viewer, project["code"], "viewer")
+    assert viewer.post(url, json={"model": "sam2", "project": project["code"]}).status_code == 403

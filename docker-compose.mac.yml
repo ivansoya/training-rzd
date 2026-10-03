@@ -253,6 +253,8 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
       - AUTOLABEL_USERS_PER_WORKER=5
+      # Потолок процессов с моделью на карте; сверх — 503 «полуавтомат занят».
+      - AUTOLABEL_MAX_WORKERS=3
       - SAM2_MODEL=sam2.1_hiera_tiny
       - SAM2_DEVICE=cpu
     depends_on:

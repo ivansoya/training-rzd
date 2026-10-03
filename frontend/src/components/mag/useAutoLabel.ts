@@ -42,7 +42,7 @@ function close(sessionId: string) {
   closing = closeAutoSession(sessionId).catch(() => undefined);
 }
 
-const open = () => closing.then(() => openAutoSession());
+const open = (project: string) => closing.then(() => openAutoSession(project));
 
 /** Сколько эффектов сессии сейчас «живы» — на всю страницу, а не на экземпляр.
  *  В строгом режиме React монтирует дважды, и уборка первого монтажа закрывала
@@ -62,8 +62,12 @@ export function useAutoLabel(
    *  само, и объявлять нечего; у кадра видео — размеры ролика, тогда как
    *  показывается ступень качества, которая мельче. Сервер пересчитает по
    *  этому размеру подсказки и вернёт обводку в нём же. */
-  space?: AutoSpace | null
+  space?: AutoSpace | null,
+  /** Код проекта: сессию полуавтомата сервер открывает только его редактору. */
+  project = ""
 ) {
+  const projectRef = useRef(project);
+  projectRef.current = project;
   const [state, setState] = useState<AutoState>("starting");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -87,7 +91,7 @@ export function useAutoLabel(
     mounted += 1;
     let alive = true;
     setState("starting");
-    open()
+    open(projectRef.current)
       .then(({ session_id }) => {
         // Сессия у пользователя одна на модель, и сервер на повторный запрос
         // отдаёт ту же самую. Поэтому закрывать её из устаревшего вызова
@@ -124,7 +128,7 @@ export function useAutoLabel(
   /** Новая сессия взамен потерянной. Кэш прогретых кадров при этом обнуляется:
    *  эмбеддинги жили в том процессе, которого больше нет. */
   const reopen = useCallback(async () => {
-    const { session_id } = await open();
+    const { session_id } = await open(projectRef.current);
     session.current = session_id;
     warmed.current.clear();
     return session_id;
@@ -188,7 +192,7 @@ export function useAutoLabel(
   useEffect(() => {
     if (state !== "ready") return;
     const id = window.setInterval(() => {
-      open()
+      open(projectRef.current)
         .then(({ session_id }) => {
           // Сервер перезапустили — сессия новая, прогрев придётся повторить.
           if (session_id !== session.current) {

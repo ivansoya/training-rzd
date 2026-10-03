@@ -20,6 +20,8 @@ from autolabel_svc.worker import worker_main
 # Порог держим настройкой, а не константой: вынос воркеров в отдельные
 # контейнеры запланирован, и к тому моменту число не должно быть вшито в код.
 USERS_PER_WORKER = int(os.environ.get("AUTOLABEL_USERS_PER_WORKER", "5"))
+# Потолок процессов с моделью: каждый держит 0,6–1,1 ГБ видеопамяти.
+MAX_WORKERS = int(os.environ.get("AUTOLABEL_MAX_WORKERS", "3"))
 SESSION_TTL = int(os.environ.get("AUTOLABEL_SESSION_TTL", "600"))
 REQUEST_TIMEOUT = int(os.environ.get("AUTOLABEL_TIMEOUT", "180"))
 SWEEP_EVERY = 30
@@ -120,6 +122,8 @@ class Manager:
                 continue
             if len(w.sessions) < USERS_PER_WORKER:
                 return w
+        if len(self._workers) >= MAX_WORKERS:
+            raise WorkerError("Полуавтомат занят: все места заняты. Попробуйте через пару минут.")
         worker = Worker(model, params)
         self._workers.append(worker)
         return worker
@@ -189,6 +193,7 @@ class Manager:
                 ],
                 "sessions": len(self._sessions),
                 "users_per_worker": USERS_PER_WORKER,
+                "max_workers": MAX_WORKERS,
                 "session_ttl": SESSION_TTL,
             }
 

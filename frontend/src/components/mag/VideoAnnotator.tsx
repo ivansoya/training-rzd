@@ -685,7 +685,8 @@ export default function VideoAnnotator({
     { video_id: video.id, frame_no: frame },
     { video_id: video.id, frame_no: Math.min(lastFrame, frame + 1) },
     ensureFrame,
-    video.width && video.height ? { w: video.width, h: video.height } : null
+    video.width && video.height ? { w: video.width, h: video.height } : null,
+    code
   );
 
   const clearAuto = useCallback(() => {

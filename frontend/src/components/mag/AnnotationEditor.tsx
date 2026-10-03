@@ -575,7 +575,10 @@ export default function AnnotationEditor({
 
   const auto = useAutoLabel(
     image ? { image_id: image.id } : null,
-    images[index + 1] ? { image_id: images[index + 1].id } : null
+    images[index + 1] ? { image_id: images[index + 1].id } : null,
+    undefined,
+    null,
+    code
   );
 
   /** Работает ли полуавтомат прямо сейчас. В «выборе» рисовать нечем, но сам
