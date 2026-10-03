@@ -4,16 +4,15 @@ Owns the database schema: the container entrypoint runs `alembic upgrade head`
 before gunicorn starts (see Dockerfile).
 """
 from flask import Flask
-from flask_cors import CORS
 
 from auth_svc.core import bp as core_bp
 from auth_svc.routes import bp as auth_bp
-from common import db
+from common import db, origin
 
 db.wait_for_db()
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+origin.guard(app)
 app.register_blueprint(auth_bp)
 app.register_blueprint(core_bp)
 

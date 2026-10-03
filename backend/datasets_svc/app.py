@@ -7,9 +7,8 @@ because an import needs the two at once: binaries on the volume, everything
 queryable in the database.
 """
 from flask import Flask
-from flask_cors import CORS
 
-from common import config, db, jobs
+from common import config, db, jobs, origin
 from datasets_svc.export_routes import bp as export_bp
 from datasets_svc.project_routes import bp as project_bp
 from datasets_svc.routes import bp
@@ -23,7 +22,7 @@ db.wait_for_db()
 app = Flask(__name__)
 # No upload cap: real datasets are several GB; a cap aborts mid-transfer.
 app.config["MAX_CONTENT_LENGTH"] = None
-CORS(app, supports_credentials=True)
+origin.guard(app)
 app.register_blueprint(bp)
 app.register_blueprint(project_bp)
 app.register_blueprint(task_bp)

@@ -5,16 +5,15 @@
 GPU, а модель нельзя грузить в каждый поток gunicorn.
 """
 from flask import Flask
-from flask_cors import CORS
 
 from autolabel_svc.routes import bp
-from common import config, db
+from common import config, db, origin
 
 config.ensure_dirs()
 db.wait_for_db()
 
 app = Flask(__name__)
-CORS(app, supports_credentials=True)
+origin.guard(app)
 app.register_blueprint(bp)
 
 

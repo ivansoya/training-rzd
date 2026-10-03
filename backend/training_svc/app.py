@@ -6,9 +6,8 @@
 может быть сколько угодно.
 """
 from flask import Flask
-from flask_cors import CORS
 
-from common import config, live
+from common import config, live, origin
 from common.db import wait_for_db
 from training_svc.agents import bp as agents_bp
 from training_svc.routes import bp
@@ -20,7 +19,7 @@ config.ensure_dirs()
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = None
-CORS(app)
+origin.guard(app)
 app.register_blueprint(bp)
 app.register_blueprint(agents_bp)
 

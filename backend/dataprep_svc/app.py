@@ -6,9 +6,8 @@
 минуты в перекладывание гигабайтов.
 """
 from flask import Flask
-from flask_cors import CORS
 
-from common import config
+from common import config, origin
 from common.db import wait_for_db
 from dataprep_svc.routes import bp
 
@@ -17,7 +16,7 @@ config.ensure_dirs()
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = None
-CORS(app)
+origin.guard(app)
 app.register_blueprint(bp)
 
 
