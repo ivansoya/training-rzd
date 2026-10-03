@@ -321,6 +321,37 @@ def resolve_weights(spec, on_progress=None):
     return spec
 
 
+# Ключи data.yaml, которые идут в ultralytics. Остальное отбрасываем: ключ
+# `download` ultralytics исполняет как Python, и любая инъекция в yaml — это код.
+DATA_KEYS = ("train", "val", "test", "nc", "names")
+
+
+def safe_data_yaml(src, out_dir):
+    """Очищенная копия data.yaml набора в каталоге прогона; возвращает её путь.
+
+    `path` ставится явно на каталог набора: копия лежит в другом месте, а пути
+    train/val в наборе относительные."""
+    import yaml
+
+    with open(src, encoding="utf-8") as fh:
+        data = yaml.safe_load(fh) or {}
+    if not isinstance(data, dict):
+        raise ValueError("data.yaml набора повреждён: ожидался словарь.")
+    clean = {"path": os.path.dirname(os.path.abspath(src))}
+    for key in DATA_KEYS:
+        value = data.get(key)
+        if value is None:
+            continue
+        if key in ("train", "val", "test") and not isinstance(value, str):
+            raise ValueError(f"data.yaml набора: «{key}» должен быть путём.")
+        clean[key] = value
+    os.makedirs(out_dir, exist_ok=True)
+    dst = os.path.join(out_dir, "data.yaml")
+    with open(dst, "w", encoding="utf-8") as fh:
+        yaml.safe_dump(clean, fh, allow_unicode=True, sort_keys=False)
+    return dst
+
+
 def _disable_builtin_albumentations():
     """Neutralize ultralytics' optional Albumentations block (Blur/CLAHE/…)."""
     try:

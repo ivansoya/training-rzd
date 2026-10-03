@@ -31,6 +31,7 @@ from common.models import (
     AugGraphVersion, Project, TrainSet, TrainSetSplit, utcnow,
 )
 from common import prep_queue as queue
+from common.storage import one_line
 from dataprep_svc import albu, engine, feeds, samples
 
 # Как часто отмечаемся в очереди. Чаще — лишние записи на том и в базу; реже —
@@ -103,7 +104,7 @@ def data_yaml(project, classes, splits):
     самого yaml, а с относительным ``path`` — от своей папки датасетов."""
     stamp = utcnow().strftime("%Y-%m-%d")
     lines = [
-        f"# Магистраль ML · проект «{project.name}» · собрано {stamp}",
+        f"# Магистраль ML · проект «{one_line(project.name)}» · собрано {stamp}",
         "train: images/train",
         "val: images/val",
     ]

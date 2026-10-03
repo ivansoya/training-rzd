@@ -125,6 +125,8 @@ def main():
     try:
         from ultralytics import YOLO
 
+        # В ultralytics — только белый список ключей: download в yaml исполняется как код.
+        data_yaml = trainer.safe_data_yaml(data_yaml, out_dir)
         trainer._disable_builtin_albumentations()
         trainer.pin_memory_policy()
         device = run.device

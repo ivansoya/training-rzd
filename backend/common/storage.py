@@ -4,6 +4,20 @@ import os
 import re
 
 
+# Управляющие символы и переводы строк Юникода: в однострочном поле они ломают
+# YAML и CSV, а перевод строки в data.yaml давал инъекцию ключей (в том числе download).
+_CONTROL = re.compile(r"[\x00-\x1f\x7f\x85  ]")
+
+
+def has_control(text):
+    return bool(_CONTROL.search(text or ""))
+
+
+def one_line(text):
+    """Строка без управляющих символов — для вставки в YAML, CSV, заголовки."""
+    return _CONTROL.sub(" ", text or "")
+
+
 def load_json(path, default):
     if not os.path.isfile(path):
         return default

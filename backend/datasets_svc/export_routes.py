@@ -44,7 +44,7 @@ from common import selection as sel_lib
 from common.auth import current_user
 from common.db import SessionLocal
 from common.models import Dataset, Project
-from common.storage import load_json, save_json, translit_slug
+from common.storage import load_json, one_line, save_json, translit_slug
 # Тот же разбор кода проекта и прав, что у остальных данных проекта.
 from datasets_svc.project_routes import _resolve
 
@@ -194,7 +194,7 @@ def _data_yaml(project, plan, offset_min=0):
     # по строке labels/ не отличить бокс от контура.
     kind = "сегментация" if plan.get("ann_type") == "polygon" else "боксы"
     lines = [
-        f"# Магистраль ML · проект «{project.name}» · выгружено {stamp}",
+        f"# Магистраль ML · проект «{one_line(project.name)}» · выгружено {stamp}",
         f"# Разметка: {kind}",
         "train: images/train",
         "val: images/val",

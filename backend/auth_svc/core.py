@@ -15,6 +15,7 @@ from auth_svc.routes import ROLE_LABELS
 from auth_svc.sessions import current_session, is_online
 from common import config
 from common.db import SessionLocal
+from common.storage import has_control
 from common.models import (
     AgentRun,
     Annotation,
@@ -259,6 +260,8 @@ def create_project():
     # Колонка projects.name — String(255): длиннее падало 500 в базе.
     if len(name) > PROJECT_NAME_MAX:
         return jsonify({"errors": {"name": f"Название длиннее {PROJECT_NAME_MAX} символов."}}), 400
+    if has_control(name):
+        return jsonify({"errors": {"name": "В названии не должно быть переносов строк и управляющих символов."}}), 400
 
     with SessionLocal() as db:
         _, user = current_session(db)
