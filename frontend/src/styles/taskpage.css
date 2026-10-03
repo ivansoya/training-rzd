@@ -14,6 +14,11 @@
   margin-bottom: 14px;
 }
 
+/* Ход агента — своим рядом: в колонке он сжимал название таски в три строки. */
+.mag-task-strip > .ag-progress {
+  grid-column: 1 / -1;
+}
+
 .mag-task-id p {
   margin: 3px 0 0;
   font-size: 12.5px;
