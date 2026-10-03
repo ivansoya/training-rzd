@@ -748,6 +748,7 @@ def _image_row(img, boxes, dataset=None):
         "height": img.height,
         "size_bytes": img.size_bytes,
         "annotations": len(boxes),
+        "rev": img.annotations_rev,
         "boxes": boxes,
     }
     if dataset is not None:
@@ -1560,6 +1561,13 @@ def move_class(code, class_id):
             update(VideoTrack)
             .where(VideoTrack.class_id == row.id)
             .values(class_id=target.id)
+        )
+        # Версия затронутых кадров растёт: открытый редактор со старыми
+        # классами получит 409 и не откатит перенос своим сохранением.
+        db.execute(
+            update(Image)
+            .where(Image.id.in_(select(Annotation.image_id).where(Annotation.class_id == row.id)))
+            .values(annotations_rev=Image.annotations_rev + 1)
         )
         db.execute(
             update(Annotation)

@@ -288,6 +288,11 @@ class Image(Base, AuditMixin):
     task_status: Mapped[str] = mapped_column(
         IMAGE_TASK_STATUS_ENUM, nullable=False, default="new", server_default="new"
     )
+    # Версия разметки кадра: растёт с каждой записью. Клиент присылает ту, что
+    # видел, и запись поверх чужой правки получает 409, а не стирает её молча.
+    annotations_rev: Mapped[int] = mapped_column(
+        sa.Integer, nullable=False, default=0, server_default="0"
+    )
     # Кадр из видео помнит источник и секунду: по одному кадру не всегда
     # понятно, что происходит, а «2:14 такого-то ролика» объясняет.
     source_video_id: Mapped[uuid.UUID | None] = mapped_column(

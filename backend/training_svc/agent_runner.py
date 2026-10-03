@@ -213,16 +213,25 @@ def execute(db, run):
 
 
 def _one(db, run, image_id, doc, order, models, weights, mapping, device):
-    """Один кадр. Возвращает число поставленных рамок."""
-    image = db.execute(
-        select(Image).where(Image.id == image_id).with_for_update()
-    ).scalar_one_or_none()
+    """Один кадр. Возвращает число поставленных рамок.
+
+    Модель считает без замка: держать строку кадра секунды значило бы стопорить
+    запись человека и ловить взаимную блокировку. Писать — под замком и только
+    если за это время кадр не тронули (статус и версия разметки прежние)."""
+    image = db.get(Image, image_id)
     if image is None or image.task_status != "new":
         db.rollback()
         return 0
-    predict, segment = frame_fns(os.path.join(config.DATA_DIR, image.file_path),
-                                 image.file_name, models, weights, device)
+    path, name, seen = os.path.join(config.DATA_DIR, image.file_path), image.file_name, image.annotations_rev
+    db.rollback()
+    predict, segment = frame_fns(path, name, models, weights, device)
     found = agent_graph.run(doc, predict, order, segment)
+    image = db.execute(
+        select(Image).where(Image.id == image_id).with_for_update()
+    ).scalar_one_or_none()
+    if image is None or image.task_status != "new" or image.annotations_rev != seen:
+        db.rollback()
+        return 0
     return _write(db, run, image, found, mapping)
 
 
@@ -479,6 +488,8 @@ def _write(db, run, image, found, mapping):
             agent_version_id=run.version_id, created_by=run.created_by,
         ))
         put += 1
+    # Открытый у человека редактор увидит 409, а не перезапишет рамки агента молча.
+    image.annotations_rev += 1
     db.commit()
     return put
 

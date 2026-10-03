@@ -18,6 +18,7 @@ import uuid
 
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import case, func, select
+from sqlalchemy.exc import OperationalError
 
 from common import attribution, config, jobs, tags, task_frames
 from common.auth import current_user, has_role, project_by_code, role_in
@@ -1105,6 +1106,34 @@ def cut_video(task_id, video_id):
         db.close()
 
 
+def _task_boxes(db, ids):
+    """{image_id: [рамка в формате редактора]} — для списка кадров и ответа 409."""
+    by_image = {i: [] for i in ids}
+    if not ids:
+        return by_image
+    found = db.execute(
+        select(Annotation, LabelClass.class_index, LabelClass.name,
+               LabelClass.color)
+        .join(LabelClass, LabelClass.id == Annotation.class_id)
+        .where(Annotation.image_id.in_(ids))
+    ).all()
+    authors, agents = _authorship(db, [row[0] for row in found])
+    for ann, idx, name, color in found:
+        wire = shapes.to_wire(ann.ann_type, ann.geometry)
+        if not wire:
+            continue
+        by_image[ann.image_id].append({
+            "id": str(ann.id), **wire,
+            "class_index": idx, "name": name, "color": color,
+            "source": ann.source,
+            "author": authors.get(ann.created_by),
+            # Рамка агента или поправленная рамка агента: что именно,
+            # говорит `source`.
+            "agent": agents.get(ann.agent_version_id),
+        })
+    return by_image
+
+
 @bp.get("/api/tasks/<task_id>/images")
 def task_images(task_id):
     db, task, project, user, role, err = _resolve_task(task_id)
@@ -1133,28 +1162,7 @@ def task_images(task_id):
         ).scalars().all()
 
         ids = [i.id for i in images]
-        by_image = {i: [] for i in ids}
-        if ids:
-            found = db.execute(
-                select(Annotation, LabelClass.class_index, LabelClass.name,
-                       LabelClass.color)
-                .join(LabelClass, LabelClass.id == Annotation.class_id)
-                .where(Annotation.image_id.in_(ids))
-            ).all()
-            authors, agents = _authorship(db, [row[0] for row in found])
-            for ann, idx, name, color in found:
-                wire = shapes.to_wire(ann.ann_type, ann.geometry)
-                if not wire:
-                    continue
-                by_image[ann.image_id].append({
-                    "id": str(ann.id), **wire,
-                    "class_index": idx, "name": name, "color": color,
-                    "source": ann.source,
-                    "author": authors.get(ann.created_by),
-                    # Рамка агента или поправленная рамка агента: что именно,
-                    # говорит `source`.
-                    "agent": agents.get(ann.agent_version_id),
-                })
+        by_image = _task_boxes(db, ids)
         img_tags = tags.of(db, "image", ids)
         return jsonify({
             "matched": matched,
@@ -1167,6 +1175,7 @@ def task_images(task_id):
                     "height": img.height,
                     "size_bytes": img.size_bytes,
                     "task_status": img.task_status,
+                    "rev": img.annotations_rev,
                     "accepted": img.dataset_id is not None,
                     "source_video_id": (
                         str(img.source_video_id) if img.source_video_id else None
@@ -1191,118 +1200,144 @@ def save_annotations(image_id):
     """Разметка кадра заменяется целиком.
 
     Так автосохранение остаётся простым и атомарным: на кадре редко бывает
-    больше полусотни боксов, а частичные обновления потребовали бы следить
-    за идентификаторами на клиенте и разбираться с гонками.
+    больше полусотни боксов. Гонки закрыты блокировкой строки кадра и версией
+    разметки (`rev`): запись поверх чужой правки получает 409 `stale`. Взаимная
+    блокировка с агентом повторяется — она не ошибка человека.
     """
-    db = SessionLocal()
-    try:
-        user = current_user(db)
-        if user is None:
-            return jsonify({"error": "Не выполнен вход."}), 401
-        iid = _uuid_or_none(image_id)
-        image = db.get(Image, iid) if iid else None
-        if image is None:
-            return jsonify({"error": "Изображение не найдено."}), 404
-        project = db.get(Project, image.project_id)
-        role = role_in(db, user, project)
-        if not has_role(role, "editor"):
-            return jsonify({"error": "Недостаточно прав в проекте."}), 403
-        if image.task_id:
-            task = db.get(Task, image.task_id)
-            if task.status == "closed":
-                return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
-            if not _may_work(task, user, role):
-                return jsonify({"error": "Это не ваша таска."}), 403
+    for attempt in range(3):
+        db = SessionLocal()
+        try:
+            return _save_annotations(db, image_id)
+        except OperationalError as exc:
+            db.rollback()
+            if getattr(exc.orig, "pgcode", None) != "40P01" or attempt == 2:
+                raise
+        finally:
+            db.close()
 
-        data = request.get_json(silent=True) or {}
-        by_index = {
-            c.class_index: c
-            for c in db.execute(
-                select(LabelClass).where(LabelClass.project_id == project.id)
-            ).scalars()
+
+def _save_annotations(db, image_id):
+    user = current_user(db)
+    if user is None:
+        return jsonify({"error": "Не выполнен вход."}), 401
+    iid = _uuid_or_none(image_id)
+    # Строка кадра под замком до конца записи: две записи одного кадра
+    # больше не перемешивают удаление и вставку (было 500 и deadlock).
+    image = db.execute(
+        select(Image).where(Image.id == iid).with_for_update()
+    ).scalar_one_or_none() if iid else None
+    if image is None:
+        return jsonify({"error": "Изображение не найдено."}), 404
+    project = db.get(Project, image.project_id)
+    role = role_in(db, user, project)
+    if not has_role(role, "editor"):
+        return jsonify({"error": "Недостаточно прав в проекте."}), 403
+    if image.task_id:
+        task = db.get(Task, image.task_id)
+        if task.status == "closed":
+            return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
+        if not _may_work(task, user, role):
+            return jsonify({"error": "Это не ваша таска."}), 403
+
+    data = request.get_json(silent=True) or {}
+    # Клиент шлёт версию, которую видел; без неё (агенты, старые клиенты) — без сверки.
+    seen = data.get("rev")
+    if seen is not None and seen != image.annotations_rev:
+        # Свежая разметка — в ответе: клиенту не нужен второй запрос, чтобы её показать.
+        return jsonify({
+            "error": "Кадр уже изменили — перечитайте его, правка поверх чужой стёрла бы её.",
+            "code": "stale",
+            "rev": image.annotations_rev,
+            "task_status": image.task_status,
+            "boxes": _task_boxes(db, [image.id])[image.id],
+        }), 409
+    by_index = {
+        c.class_index: c
+        for c in db.execute(
+            select(LabelClass).where(LabelClass.project_id == project.id)
+        ).scalars()
+    }
+    width = image.width or 0
+    height = image.height or 0
+
+    # Классы, которых в проекте больше нет. Раньше такой бокс молча
+    # пропускался — и открытый редактор, переживший удаление класса,
+    # терял разметку без единого слова: сохранение стирает всю разметку
+    # кадра и вставляет заново, так что «пропустить» здесь значит «стереть».
+    # Теперь честный отказ: человек перечитает кадр и увидит, что стало.
+    unknown = sorted({
+        raw.get("class_index") for raw in (data.get("boxes") or [])
+        if by_index.get(raw.get("class_index")) is None
+    }, key=lambda v: (v is None, v))
+    if unknown:
+        return jsonify({
+            "error": (
+                "Класс исчез из проекта, пока кадр был открыт. "
+                "Перечитайте разметку кадра."
+            ),
+            "code": "class_gone",
+            "class_index": unknown,
+        }), 409
+
+    fresh = []
+    clamped = 0
+    existing = {
+        str(a.id): {
+            "class_id": a.class_id, "ann_type": a.ann_type,
+            "geometry": a.geometry, "source": a.source,
+            "created_by": a.created_by, "agent_version_id": a.agent_version_id,
         }
-        width = image.width or 0
-        height = image.height or 0
+        for a in db.execute(
+            select(Annotation).where(Annotation.image_id == image.id)
+        ).scalars()
+    }
+    # Ключ запроса остался «boxes»: он давно в клиенте и в тестах, а под
+    # ним теперь идут обе фигуры. Что именно пришло, говорит `kind`.
+    for raw in data.get("boxes") or []:
+        cls = by_index[raw.get("class_index")]
+        parsed = shapes.from_wire(raw, width, height)
+        if parsed is None:
+            continue
+        ann_type, geometry, area = parsed
+        # Подрезку считаем только у боксов: у контура «сдвинулось ли что-то
+        # при подрезке» — вопрос к каждой точке, и складывать их в одно
+        # число значило бы отчитываться цифрой, которой нельзя верить.
+        if ann_type == "bbox" and (
+            round(float(raw.get("w", 0)), 2) != geometry["w"]
+            or round(float(raw.get("x", 0)), 2) != geometry["x"]
+        ):
+            clamped += 1
+        fresh.append({
+            "id": str(raw.get("id") or ""), "class_id": cls.id,
+            "ann_type": ann_type, "geometry": geometry, "area": area,
+            "source": raw.get("source"),
+        })
 
-        # Классы, которых в проекте больше нет. Раньше такой бокс молча
-        # пропускался — и открытый редактор, переживший удаление класса,
-        # терял разметку без единого слова: сохранение стирает всю разметку
-        # кадра и вставляет заново, так что «пропустить» здесь значит «стереть».
-        # Теперь честный отказ: человек перечитает кадр и увидит, что стало.
-        unknown = sorted({
-            raw.get("class_index") for raw in (data.get("boxes") or [])
-            if by_index.get(raw.get("class_index")) is None
-        }, key=lambda v: (v is None, v))
-        if unknown:
-            return jsonify({
-                "error": (
-                    "Класс исчез из проекта, пока кадр был открыт. "
-                    "Перечитайте разметку кадра."
-                ),
-                "code": "class_gone",
-                "class_index": unknown,
-            }), 409
+    # Разметка по-прежнему заменяется целиком, но автор переживает замену:
+    # нетронутая рамка агента остаётся его, поправленная — того, кто правил.
+    settled = attribution.settle(existing, fresh, user.id)
+    db.execute(
+        Annotation.__table__.delete().where(Annotation.image_id == image.id)
+    )
+    for item, row in zip(fresh, settled):
+        # Номер рамки прежний, если она пришла со своим: по нему редактор
+        # узнаёт её при следующем сохранении.
+        ann_id = _uuid_or_none(row.pop("id"))
+        db.add(Annotation(image_id=image.id, area=item["area"], **row,
+                          **({"id": ann_id} if ann_id else {})))
 
-        fresh = []
-        clamped = 0
-        existing = {
-            str(a.id): {
-                "class_id": a.class_id, "ann_type": a.ann_type,
-                "geometry": a.geometry, "source": a.source,
-                "created_by": a.created_by, "agent_version_id": a.agent_version_id,
-            }
-            for a in db.execute(
-                select(Annotation).where(Annotation.image_id == image.id)
-            ).scalars()
-        }
-        # Ключ запроса остался «boxes»: он давно в клиенте и в тестах, а под
-        # ним теперь идут обе фигуры. Что именно пришло, говорит `kind`.
-        for raw in data.get("boxes") or []:
-            cls = by_index[raw.get("class_index")]
-            parsed = shapes.from_wire(raw, width, height)
-            if parsed is None:
-                continue
-            ann_type, geometry, area = parsed
-            # Подрезку считаем только у боксов: у контура «сдвинулось ли что-то
-            # при подрезке» — вопрос к каждой точке, и складывать их в одно
-            # число значило бы отчитываться цифрой, которой нельзя верить.
-            if ann_type == "bbox" and (
-                round(float(raw.get("w", 0)), 2) != geometry["w"]
-                or round(float(raw.get("x", 0)), 2) != geometry["x"]
-            ):
-                clamped += 1
-            fresh.append({
-                "id": str(raw.get("id") or ""), "class_id": cls.id,
-                "ann_type": ann_type, "geometry": geometry, "area": area,
-                "source": raw.get("source"),
-            })
-
-        # Разметка по-прежнему заменяется целиком, но автор переживает замену:
-        # нетронутая рамка агента остаётся его, поправленная — того, кто правил.
-        settled = attribution.settle(existing, fresh, user.id)
-        db.execute(
-            Annotation.__table__.delete().where(Annotation.image_id == image.id)
-        )
-        for item, row in zip(fresh, settled):
-            # Номер рамки прежний, если она пришла со своим: по нему редактор
-            # узнаёт её при следующем сохранении.
-            ann_id = _uuid_or_none(row.pop("id"))
-            db.add(Annotation(image_id=image.id, area=item["area"], **row,
-                              **({"id": ann_id} if ann_id else {})))
-
-        # Статус кадра идёт за содержимым: появились боксы — размечен, стёрли
-        # все — снова нетронутый, если его не откладывали осознанно. У
-        # забракованного статус не трогаем, иначе он оживёт сам собой.
-        if image.task_id and image.task_status != "deleted":
-            if fresh:
-                image.task_status = "annotated"
-            elif image.task_status == "annotated":
-                image.task_status = "new"
-        db.commit()
-        return jsonify({"saved": len(fresh), "clamped": clamped,
-                        "task_status": image.task_status})
-    finally:
-        db.close()
+    # Статус кадра идёт за содержимым: появились боксы — размечен, стёрли
+    # все — снова нетронутый, если его не откладывали осознанно. У
+    # забракованного статус не трогаем, иначе он оживёт сам собой.
+    if image.task_id and image.task_status != "deleted":
+        if fresh:
+            image.task_status = "annotated"
+        elif image.task_status == "annotated":
+            image.task_status = "new"
+    image.annotations_rev += 1
+    db.commit()
+    return jsonify({"saved": len(fresh), "clamped": clamped,
+                    "task_status": image.task_status, "rev": image.annotations_rev})
 
 
 def _authorship(db, anns):
