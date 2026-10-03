@@ -11,6 +11,7 @@ import { plural } from "../ru";
 import VideoStrip from "./VideoStrip";
 import Sep from "../Sep";
 import Banner from "../Banner";
+import { NumInput } from "../NumInput";
 import { ScoutBand, taskColors, useScouts } from "../agents/scout";
 import { hasLayer } from "./useEscape";
 
@@ -51,10 +52,43 @@ export function fmtBytes(bytes: number | null | undefined): string {
   return `${v.toLocaleString("ru-RU", { maximumFractionDigits: 1 })} ${units[i]}`;
 }
 
-function parseTime(text: string, max: number): number {
-  const m = text.match(/^(\d+):(\d{1,2})$/);
-  if (!m) return 0;
-  return Math.min(max, (Number(m[1]) * 60 + Number(m[2])) * 1000);
+/** «1:05», «1:05.25» или голые секунды «65,5». Не время — null, а не ноль:
+ *  ноль превращал недонабранный конец участка в «0:00». */
+export function parseTime(text: string, max: number): number | null {
+  const m = text.trim().replace(",", ".").match(/^(?:(\d+):)?(\d+(?:\.\d*)?)$/);
+  if (!m || (m[1] !== undefined && Number(m[2]) >= 60)) return null;
+  return Math.min(max, Math.round((Number(m[1] || 0) * 60 + Number(m[2])) * 1000));
+}
+
+/** Время для правки: доли секунды показываем, только если они есть. */
+const fmtEdit = (ms: number) => (ms % 1000 ? fmtPrecise(ms) : fmtTime(ms));
+
+/** Поле времени с черновиком: разбор на уходе и по Enter, а не на каждой букве. */
+function TimeInput({ ms, max, disabled, onValue }: {
+  ms: number; max: number; disabled?: boolean; onValue: (ms: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const bad = draft !== null && parseTime(draft, max) === null;
+  const commit = () => {
+    const got = draft === null ? null : parseTime(draft, max);
+    if (got !== null) onValue(got);
+    setDraft(null);
+  };
+  return (
+    <input
+      type="text"
+      className={bad ? "bad" : undefined}
+      value={draft ?? fmtEdit(ms)}
+      disabled={disabled}
+      aria-invalid={bad}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") commit();
+        if (e.key === "Escape") setDraft(null);
+      }}
+    />
+  );
 }
 
 /** Участок нарезки. id, а не индекс: выбор не должен съезжать при удалении. */
@@ -1072,19 +1106,11 @@ export default function VideoCutModal({
               >
                 <div className="mag-seg-row">
                   <span className="mag-seg-dot" style={{ background: COLORS[i % COLORS.length] }} />
-                  <input
-                    type="text"
-                    value={fmtTime(s.start_ms)}
-                    disabled={!editable}
-                    onChange={(e) => patch(s.id, { start_ms: parseTime(e.target.value, duration) })}
-                  />
+                  <TimeInput ms={s.start_ms} max={duration} disabled={!editable}
+                    onValue={(ms) => patch(s.id, { start_ms: ms })} />
                   <span className="mag-seg-arr">→</span>
-                  <input
-                    type="text"
-                    value={fmtTime(s.end_ms)}
-                    disabled={!editable}
-                    onChange={(e) => patch(s.id, { end_ms: parseTime(e.target.value, duration) })}
-                  />
+                  <TimeInput ms={s.end_ms} max={duration} disabled={!editable}
+                    onValue={(ms) => patch(s.id, { end_ms: ms })} />
                   <span className="mag-cut-sp" />
                   {editable && (
                     <button className="mag-icon-btn" type="button" onClick={() => removeSeg(s.id)}>
@@ -1094,15 +1120,15 @@ export default function VideoCutModal({
                 </div>
                 <div className="mag-seg-row sub">
                   <label>шаг</label>
-                  <input
-                    type="number"
-                    min="0.1"
-                    step="0.1"
+                  <NumInput
+                    min={minStep / 1000}
+                    step={0.1}
+                    lazy
                     value={s.step_ms / 1000}
                     disabled={!editable}
-                    onChange={(e) =>
-                      patch(s.id, { step_ms: Math.max(minStep, Math.round(Number(e.target.value) * 1000)) })
-                    }
+                    onValue={(n) => {
+                      if (n !== undefined) patch(s.id, { step_ms: Math.max(minStep, Math.round(n * 1000)) });
+                    }}
                   />
                   <span className="mag-seg-unit">с</span>
                   <span className="mag-cut-sp" />

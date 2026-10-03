@@ -932,6 +932,11 @@
   width: 58px;
 }
 
+/* Недонабранное время: подсвечиваем, на уходе вернётся прежнее. */
+.mag-seg-row input.bad {
+  border-color: var(--red);
+}
+
 .mag-seg-row input:disabled {
   background: var(--sunk);
   color: var(--mag-muted);
