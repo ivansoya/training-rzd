@@ -203,7 +203,8 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
    нарезанное со всех разом. Строки прокручиваются тем же жёлобом, что и план. */
 /* Высота на три ролика с запасом: на 360px в жёлоб влезала полторы строки, и
    список читался как обрезок — не видно было даже, сколько там всего. */
-.g-reels { max-height: 720px; padding-right: 2px; }
+/* Составной селектор: `.g-plan-box` ниже по файлу иначе сжимал список до 216px. */
+.g-plan-box.g-reels { max-height: 720px; padding-right: 2px; }
 /* Общая строка тагов стоит НАД списком и вне жёлоба: она про весь блок, а
    уехав вместе с роликами при прокрутке, читалась бы как таг первого. */
 .g-reels-all { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px 14px; border: 1px dashed var(--rule); border-radius: 10px; }
