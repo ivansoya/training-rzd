@@ -87,10 +87,25 @@ def plan(segments, duration_ms):
     return sorted(moments)
 
 
-def estimate(segments, duration_ms, width, height):
+def plan_frames(segments, duration_ms, clock):
+    """План в кадрах: {номер кадра: первый момент плана, попавший на него}.
+
+    Моменты переводятся в кадры одним правилом (`FrameClock`): шаг меньше
+    периода кадра давал два момента на кадр и «+N нарежется» навсегда, а
+    момент за последним кадром — кадр, который не появится никогда.
+    """
+    frames = {}
+    for ms in plan(segments, duration_ms):
+        n = clock.frame(ms)
+        if n is not None and n not in frames:
+            frames[n] = ms
+    return frames
+
+
+def estimate(segments, duration_ms, width, height, clock=None):
     """Прикидка до запуска: сколько кадров и сколько места они займут."""
     try:
-        moments = plan(segments, duration_ms)
+        moments = plan_frames(segments, duration_ms, clock) if clock else plan(segments, duration_ms)
     except VideoError as exc:
         return {"error": str(exc)}
     # Кадр 1920×1400 в JPEG качества 88 весит примерно 0,6 МБ; масштабируем
@@ -101,54 +116,6 @@ def estimate(segments, duration_ms, width, height):
         "frames": len(moments),
         "size_bytes": int(len(moments) * per_frame),
     }
-
-
-def extract(video_path, moments, dest_dir, on_frame, progress=None):
-    """Достаёт кадры в указанные моменты и отдаёт их через ``on_frame``.
-
-    ``on_frame(index, time_ms, path)`` вызывается для каждого сохранённого
-    кадра; имя файла придумывает вызывающий, потому что оно завязано на id
-    записи в базе.
-    """
-    try:
-        import av
-    except ImportError as exc:  # noqa: BLE001
-        raise VideoError("Обработка видео недоступна на сервере.") from exc
-
-    os.makedirs(dest_dir, exist_ok=True)
-    targets = list(moments)
-    if not targets:
-        return 0
-
-    saved = 0
-    cursor = 0
-    with av.open(video_path) as container:
-        stream = container.streams.video[0]
-        stream.thread_type = "AUTO"
-        time_base = float(stream.time_base) if stream.time_base else 0.0
-        for frame in container.decode(stream):
-            if cursor >= len(targets):
-                break
-            pts = frame.pts
-            if pts is None or not time_base:
-                continue
-            now_ms = int(pts * time_base * 1000)
-            # Берём первый кадр, догнавший очередной момент, и сразу
-            # проматываем все моменты, которые он перекрыл.
-            if now_ms + 0.5 < targets[cursor]:
-                continue
-            time_ms = targets[cursor]
-            while cursor < len(targets) and targets[cursor] <= now_ms:
-                cursor += 1
-
-            img = frame.to_image()
-            on_frame(saved, time_ms, img)
-            saved += 1
-            if progress and saved % 10 == 0:
-                progress(saved, len(targets))
-    if progress:
-        progress(saved, len(targets))
-    return saved
 
 
 def count_frames(path):

@@ -250,6 +250,8 @@ export default function VideoCutModal({
 }) {
   const duration = video.duration_ms || 0;
   const frameMs = 1000 / (video.fps || 25);
+  // Шаг короче периода кадра давал два момента на один кадр.
+  const minStep = Math.max(100, Math.ceil(frameMs));
   const scouts = useScouts(taskId);
   const scout = scouts[video.id];
   const minSpan = Math.max(500, frameMs * 20);
@@ -669,12 +671,12 @@ export default function VideoCutModal({
     setError(null);
     setDone(null);
     setBusy(true);
-    // Что заказывали — снимаем ДО запуска: сразу после нарезки оценка уже
-    // другая, те же участки числятся нарезанными.
-    const plan = { added: est.add ?? 0, removed: est.remove ?? 0 };
     try {
       const { job_id } = await cutVideo(taskId, video.id, cutSegments);
-      await pollJob(job_id, () => {});
+      // Итог — что сделано, а не что заказывали: прикидка могла разойтись с
+      // кадрами ролика, и «прибавилось 1» при нуле в базе вводило в заблуждение.
+      const made = await pollJob<{ frames?: number; removed?: number }>(job_id, () => {});
+      const plan = { added: made?.frames ?? 0, removed: made?.removed ?? 0 };
       // Таску перечитываем сразу, не дожидаясь ухода из окна: числа на
       // карточке ролика должны сойтись к моменту возврата.
       onDone();
@@ -1021,7 +1023,7 @@ export default function VideoCutModal({
                                   if (e.key !== "Enter") return;
                                   e.preventDefault();
                                   patch(seg.id, {
-                                    step_ms: Math.max(100, Math.round(Number(custom) * 1000)),
+                                    step_ms: Math.max(minStep, Math.round(Number(custom) * 1000)),
                                   });
                                   setMenu(null);
                                 }}
@@ -1090,7 +1092,7 @@ export default function VideoCutModal({
                     value={s.step_ms / 1000}
                     disabled={!editable}
                     onChange={(e) =>
-                      patch(s.id, { step_ms: Math.max(100, Math.round(Number(e.target.value) * 1000)) })
+                      patch(s.id, { step_ms: Math.max(minStep, Math.round(Number(e.target.value) * 1000)) })
                     }
                   />
                   <span className="mag-seg-unit">с</span>

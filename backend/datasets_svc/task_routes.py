@@ -45,6 +45,7 @@ from common import shapes
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
 from datasets_svc import video_index
+from common.video_frames import FrameClock
 from datasets_svc import video_queue as queue
 
 bp = Blueprint("tasks", __name__)
@@ -926,8 +927,9 @@ def upload_video(task_id):
         # разом — весь пул. Теперь тяжёлое делает воркер, а загрузка
         # заканчивается ровно тогда, когда файл лёг на том.
         queue.enqueue(db, row.id, queue.KIND_STRIP)
-        if mode == "annotate":
-            queue.enqueue(db, row.id, queue.KIND_INDEX)
+        # Таблица кадров и ролику под нарезку: по ней момент плана переводится
+        # в кадр точно, как у плеера, а не прикидкой по частоте.
+        queue.enqueue(db, row.id, queue.KIND_INDEX)
         return jsonify({
             "id": str(vid), "file_name": row.file_name,
             "size_bytes": row.size_bytes, "mode": mode,
@@ -937,19 +939,28 @@ def upload_video(task_id):
         db.close()
 
 
-def _plan_diff(db, row, segments):
+def _clock(db, row):
+    """Момент ↔ кадр для ролика: по таблице кадров, а пока её нет — по частоте."""
+    index = video_index.get(db, row)
+    if index is not None:
+        return FrameClock(pts=index["pts"], time_base=index["time_base"])
+    return FrameClock(fps=row.fps, count=row.frame_count)
+
+
+def _plan_diff(db, row, segments, clock=None):
     """Что случится, если применить план к уже нарезанным кадрам.
 
-    Момент считается покрытым, если кадр с таким временем есть в любом
-    состоянии, включая забракованный: план не воскрешает то, что разметчик
-    выбросил осознанно. Принятое в датасет план не удаляет — это уже данные
-    проекта, а не таски.
+    Всё в номерах кадров: момент плана и нарезанный кадр сравниваются через
+    один `FrameClock`. Кадр считается покрытым в любом состоянии, включая
+    забракованный: план не воскрешает то, что разметчик выбросил осознанно.
+    Принятое в датасет план не удаляет — это уже данные проекта, а не таски.
     """
-    moments = videolib.plan(segments, row.duration_ms)
-    want = set(moments)
+    clock = clock or _clock(db, row)
+    want = videolib.plan_frames(segments, row.duration_ms, clock)
     rows = db.execute(
         select(
             Image.id,
+            Image.source_frame_no,
             Image.source_time_ms,
             Image.task_status,
             Image.dataset_id,
@@ -960,27 +971,37 @@ def _plan_diff(db, row, segments):
         .group_by(Image.id)
     ).all()
 
-    covered = {ms for _, ms, _, _, _ in rows if ms is not None}
+    def frame_of(no, ms):
+        # У кадров, нарезанных до номеров, есть только время.
+        return no if no is not None else clock.frame(ms)
+
+    covered = set()
     drop, doomed, annotated, kept = [], [], [], 0
-    for image_id, ms, status, dataset_id, boxes in rows:
-        if ms is None or ms in want or status == "deleted":
+    for image_id, no, ms, status, dataset_id, boxes in rows:
+        f = frame_of(no, ms)
+        if f is not None:
+            covered.add(f)
+        if (f is not None and f in want) or status == "deleted":
             continue
         if dataset_id is not None:
             kept += 1
             continue
         drop.append(image_id)
-        doomed.append(ms)
+        doomed.append(ms or 0)
         if boxes:
-            annotated.append({"ms": ms, "boxes": boxes})
+            annotated.append({"ms": ms or 0, "boxes": boxes})
     annotated.sort(key=lambda x: x["ms"])
     return {
-        "moments": moments,
-        "add": [m for m in moments if m not in covered],
+        "moments": sorted(want.values()),
+        "frames": len(want),
+        "add": sorted(f for f in want if f not in covered),
         "drop": drop,
         "doomed": sorted(doomed),
         "annotated": annotated,
         "kept_accepted": kept,
-        "existing": sorted(covered),
+        # Моменты плана, чей кадр уже есть: по ним плашки на таймлайне.
+        "existing": sorted(ms for f, ms in want.items() if f in covered),
+        "exact": clock.exact,
     }
 
 
@@ -996,10 +1017,11 @@ def estimate_cut(task_id, video_id):
         if row is None or row.task_id != task.id:
             return jsonify({"error": "Видео не найдено."}), 404
         segments = (request.get_json(silent=True) or {}).get("segments") or []
-        est = videolib.estimate(segments, row.duration_ms, row.width, row.height)
+        clock = _clock(db, row)
+        est = videolib.estimate(segments, row.duration_ms, row.width, row.height, clock)
         if est.get("error"):
             return jsonify(est)
-        diff = _plan_diff(db, row, segments)
+        diff = _plan_diff(db, row, segments, clock)
         est.update(
             add=len(diff["add"]),
             remove=len(diff["drop"]),
@@ -1007,6 +1029,8 @@ def estimate_cut(task_id, video_id):
             kept_accepted=diff["kept_accepted"],
             existing=diff["existing"],
             doomed=diff["doomed"],
+            # Без таблицы кадров число — прикидка по частоте; таблица строится.
+            exact=diff["exact"],
         )
         return jsonify(est)
     finally:
@@ -1019,8 +1043,11 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
         task = db.get(Task, task_id)
         row = db.get(TaskVideo, video_id)
         path = os.path.join(config.DATA_DIR, row.file_path)
-        diff = _plan_diff(db, row, segments)
-        moments = diff["add"]
+        # Режем по таблице кадров: ролики, загруженные до неё, получают её здесь.
+        index = video_index.ensure(db, row, path)
+        clock = FrameClock(pts=index["pts"], time_base=index["time_base"])
+        diff = _plan_diff(db, row, segments, clock)
+        frames = diff["add"]
         base = config.image_base_dir(task.project_id, task.id)
 
         # Сначала лишнее: кадра нет в плане — значит его не должно было быть.
@@ -1034,13 +1061,13 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
             db.delete(image)
         db.commit()
 
-        jobs.update(job_id, total=len(moments), message="Режу кадры", phase="cut")
+        jobs.update(job_id, total=len(frames), message="Режу кадры", phase="cut")
         created = []
         # Таги ролика читаем один раз: кадров десятки тысяч, и запрос на
         # каждый превратил бы нарезку в перекличку с базой.
         video_tags = tags.ids_of(db, "video", row.id)
 
-        def on_frame(index, time_ms, img):
+        def on_frame(frame_no, time_ms, img):
             image = Image(
                 project_id=task.project_id,
                 dataset_id=None,
@@ -1057,6 +1084,7 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
                 split="other",
                 source_video_id=row.id,
                 source_time_ms=time_ms,
+                source_frame_no=frame_no,
                 created_by=user_id,
             )
             db.add(image)
@@ -1070,8 +1098,8 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
             if len(created) % 25 == 0:
                 db.commit()
 
-        videolib.extract(path, moments, base, on_frame,
-                         progress=lambda d, t: jobs.update(job_id, processed=d))
+        videolib.extract_frames(path, frames, on_frame, pts=index["pts"],
+                                progress=lambda d, t: jobs.update(job_id, processed=d))
 
         # План, а не история: он и есть то, что должно быть нарезано, поэтому
         # перезаписывается целиком и при следующем открытии показывается как есть.
