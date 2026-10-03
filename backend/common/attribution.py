@@ -37,9 +37,11 @@ def settle(existing, incoming, user_id):
                     and old["ann_type"] == item["ann_type"]
                     and old["geometry"] == item["geometry"])
             if same:
+                # attributes (conf, оценка SAM) — только у нетронутой: после
+                # правки они уже не про эту геометрию. У рамок видео колонки нет.
                 rows.append({"id": item["id"], **{k: old[k] for k in (
                     "class_id", "ann_type", "geometry", "source",
-                    "created_by", "agent_version_id")}})
+                    "created_by", "agent_version_id", "attributes") if k in old}})
                 continue
             rows.append({
                 "id": item["id"],

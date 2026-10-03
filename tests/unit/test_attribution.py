@@ -73,3 +73,12 @@ def test_номер_рамки_переживает_сохранение():
                   [_in("a"), _in("b", geometry={"x": 1.0, "y": 1.0, "w": 9.0, "h": 9.0}),
                    _in("новая")], EDITOR)
     assert [r["id"] for r in rows] == ["a", "b", None]
+
+
+def test_attributes_агента_живут_у_нетронутой_рамки():
+    conf = {"conf": 0.91}
+    [kept] = settle({"a": _old(attributes=conf)}, [_in("a")], EDITOR)
+    assert kept["attributes"] == conf
+    moved = _in("a", geometry={"x": 11.0, "y": 20.0, "w": 100.0, "h": 50.0})
+    [edited] = settle({"a": _old(attributes=conf)}, [moved], EDITOR)
+    assert "attributes" not in edited

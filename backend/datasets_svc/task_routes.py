@@ -1293,6 +1293,7 @@ def _save_annotations(db, image_id):
             "class_id": a.class_id, "ann_type": a.ann_type,
             "geometry": a.geometry, "source": a.source,
             "created_by": a.created_by, "agent_version_id": a.agent_version_id,
+            "attributes": a.attributes,
         }
         for a in db.execute(
             select(Annotation).where(Annotation.image_id == image.id)
