@@ -293,6 +293,12 @@ export async function getProjectCost(code: string): Promise<ProjectCost> {
   return asJson(await fetch(`/api/projects/${encodeURIComponent(code)}/cost`));
 }
 
+export async function updateProject(
+  code: string, data: { name?: string; description?: string }
+): Promise<{ name: string; description: string | null }> {
+  return asJson(await patch(`projects/${encodeURIComponent(code)}`, data));
+}
+
 export async function deleteProject(code: string): Promise<void> {
   await asJson(await del(`projects/${encodeURIComponent(code)}`));
 }

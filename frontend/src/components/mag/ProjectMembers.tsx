@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
 import {
+  updateProject,
   deleteProject,
   getProjectCost,
   inviteToProject,
@@ -163,6 +164,11 @@ export default function ProjectMembers() {
         </div>
       )}
 
+      {isAdmin && (
+        <ProjectSettings code={project.code} name={project.name}
+          description={project.description} onSaved={async () => { await refresh(); await refreshMe(); }} />
+      )}
+
       <div className="mag-card">
         <div className="mag-card-h">
           <h4>{isAdmin ? "Выход и удаление" : "Выход из проекта"}</h4>
@@ -293,6 +299,51 @@ function InviteModal({
         </div>
       </form>
     </div>
+  );
+}
+
+// Название и описание проекта. Код не меняется: он в ссылках и выгрузках.
+function ProjectSettings({ code, name, description, onSaved }: {
+  code: string; name: string; description: string | null; onSaved: () => Promise<void>;
+}) {
+  const [draft, setDraft] = useState({ name, description: description ?? "" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => setDraft({ name, description: description ?? "" }), [name, description]);
+  const changed = draft.name.trim() !== name || draft.description.trim() !== (description ?? "");
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      await updateProject(code, { name: draft.name, description: draft.description });
+      await onSaved();
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="mag-card" onSubmit={save}>
+      <div className="mag-card-h"><h4>Проект</h4></div>
+      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
+      <div className="mag-field">
+        <label htmlFor="pr-name">Название</label>
+        <input id="pr-name" value={draft.name} maxLength={255}
+          onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
+      </div>
+      <div className="mag-field">
+        <label htmlFor="pr-desc">Описание</label>
+        <textarea id="pr-desc" rows={3} value={draft.description} maxLength={5000}
+          onChange={(e) => setDraft((d) => ({ ...d, description: e.target.value }))} />
+      </div>
+      <button className="mag-btn" type="submit" disabled={busy || !changed || !draft.name.trim()}>
+        {busy ? "Сохраняем…" : "Сохранить"}
+      </button>
+    </form>
   );
 }
 

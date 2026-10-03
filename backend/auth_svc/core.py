@@ -701,6 +701,35 @@ def project_cost(code):
         })
 
 
+@bp.patch("/projects/<code>")
+def update_project(code):
+    """Название и описание. Только админ; код проекта не меняется — он в ссылках."""
+    data = json_body()
+    with SessionLocal() as db:
+        _, user = current_session(db)
+        if user is None:
+            return jsonify({"error": "Не выполнен вход."}), 401
+        project, my = _project_as_member(db, user, code)
+        if project is None:
+            return jsonify({"error": "Проект не найден."}), 404
+        if my.role != "admin":
+            return jsonify({"error": "Менять проект может только администратор."}), 403
+        if "name" in data:
+            name = str_field(data, "name", max_len=4096)
+            if not name:
+                return jsonify({"errors": {"name": "Укажите название проекта."}}), 400
+            if len(name) > PROJECT_NAME_MAX:
+                return jsonify({"errors": {"name": f"Название длиннее {PROJECT_NAME_MAX} символов."}}), 400
+            if has_control(name):
+                return jsonify({"errors": {"name": "В названии не должно быть переносов строк и управляющих символов."}}), 400
+            project.name = name
+        if "description" in data:
+            project.description = str_field(data, "description", max_len=5000,
+                                            label="Описание") or None
+        db.commit()
+        return jsonify({"name": project.name, "description": project.description})
+
+
 @bp.delete("/projects/<code>")
 def delete_project(code):
     with SessionLocal() as db:
