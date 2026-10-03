@@ -57,6 +57,20 @@ def _is_image(name):
     return os.path.splitext(name)[1].lower() in config.IMAGE_EXTENSIONS
 
 
+def _NOT_LABELS(names):
+    """.txt, которые не метки: classes.txt, README и прочие служебные."""
+    return {n for n in names if os.path.basename(n).lower() in ("classes.txt", "readme.txt", "notes.txt")}
+
+
+def _label_for(image_member, label_members):
+    """Метка картинки: по раскладке YOLO (images → labels), а нет — рядом с ней."""
+    for candidate in (_label_member_for(image_member),
+                      os.path.splitext(image_member)[0] + ".txt"):
+        if candidate and candidate in label_members:
+            return candidate
+    return None
+
+
 def _label_member_for(image_member):
     """`a/images/train/x.jpg` -> `a/labels/train/x.txt`, matching YOLO layout."""
     parts = image_member.replace("\\", "/").split("/")
@@ -170,7 +184,7 @@ def scan(zip_path, progress=None):
         if not yaml_member:
             raise ImportError_("В архиве нет .yaml конфигурации")
         try:
-            cfg = parse_yaml_config(zf.read(yaml_member).decode("utf-8", "replace"))
+            cfg = parse_yaml_config(zf.read(yaml_member).decode("utf-8-sig", "replace"))
         except Exception as exc:  # noqa: BLE001
             raise ImportError_(f"Не разобран {yaml_member}: {exc}") from exc
 
@@ -180,6 +194,7 @@ def scan(zip_path, progress=None):
         image_members.sort()
 
         label_members = {m for m in members if m.endswith(".txt")}
+        used_labels = set()
 
         manifest = []
         counts = {}                 # class_index -> annotations found
@@ -209,15 +224,17 @@ def scan(zip_path, progress=None):
                 _note(skipped, member, "файл не читается как изображение")
                 continue
 
-            label_member = _label_member_for(member)
-            if label_member is None or label_member not in label_members:
+            label_member = _label_for(member, label_members)
+            if label_member is None:
                 without_labels += 1
                 manifest.append({"image": member, "split": split_of(member), "shapes": []})
                 splits[split_of(member)] += 1
                 continue
 
-            text = zf.read(label_member).decode("utf-8", "replace")
+            # utf-8-sig: BOM от «Блокнота» иначе делал первую строку «нечисловой».
+            text = zf.read(label_member).decode("utf-8-sig", "replace")
             shapes, shape_clipped, error = _parse_label_text(text)
+            used_labels.add(label_member)
             if error is not None:
                 _note(skipped, label_member, error)
                 continue
@@ -257,6 +274,9 @@ def scan(zip_path, progress=None):
         "clipped": clipped,
         "kinds": kinds,
         "skipped": len(skipped),
+        # Метки, к которым не нашлось картинки: раньше молча пропадали, а их
+        # кадры уходили фоном.
+        "orphan_labels": len(label_members - used_labels - _NOT_LABELS(label_members)),
         "skipped_examples": skipped[:MAX_EXAMPLES],
         "classes": classes,
     }
