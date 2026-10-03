@@ -36,8 +36,9 @@ import { NumInput } from "../NumInput";
 import Sep from "../Sep";
 import {
   CYRILLIC, LIMITS, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODEL, TEXT_MODELS, TITLES, YOLOE_MB, agentClasses,
-  carryClasses, isExamples, keepWired, mergeInputs, offLimits, promptsOf, rowTarget, rowsOf, switchTextModel, textConfDefault,
-  textModel, upstream, type FilterRow, type Limit, type NetRow, type PromptRow,
+  carryClasses, exampleConfDefault, isExamples, keepWired, mergeInputs, offLimits, promptsOf, rowTarget, rowsOf,
+  switchTextModel, textConfDefault, withConf,
+  textModel, upstream, type FilterRow, type Limit, type NetRow, type PromptRow, type TextModel,
 } from "./agentDoc";
 import { agentNodeTypes, type AgentNodeData } from "./AgentNodes";
 import AgentPreview from "./AgentPreview";
@@ -789,6 +790,7 @@ function NodePanel({
             readOnly={readOnly}
             colorOf={colorOf}
             nodeConf={num(p.conf, textConfDefault(model))}
+            model={model}
             sets={sets}
             onSet={onSet}
             onRows={(rows) => onChange({ prompts: rows })}
@@ -904,6 +906,7 @@ function PromptTable({
   readOnly,
   colorOf,
   nodeConf,
+  model,
   sets,
   onSet,
   onRows,
@@ -912,6 +915,7 @@ function PromptTable({
   readOnly: boolean;
   colorOf: Map<string, { color: string; sources: unknown[] }>;
   nodeConf: number;
+  model: TextModel;
   sets: Map<string, api.ExampleSet>;
   onSet: (set: api.ExampleSet) => void;
   onRows: (rows: PromptRow[]) => void;
@@ -1096,8 +1100,8 @@ function PromptTable({
           onClose={() => setDialog(false)}
           onDone={(made, agentName) => {
             onSet(made);
-            // Образцы шкалой ниже слов: у YOLOE лучший F1 по ним при 0,05–0,15.
-            onRows([...rows, { kind: "examples", set: made.id, agent: agentName, on: true, conf: 0.1 }]);
+            onRows([...rows, withConf({ kind: "examples", set: made.id, agent: agentName, on: true },
+              exampleConfDefault(model))]);
             setOpen((old) => new Set(old).add(made.id));
             setDialog(false);
           }}

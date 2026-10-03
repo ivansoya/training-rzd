@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CYRILLIC, agentClasses, carryClasses, isExamples, keepWired, offLimits, rowTarget, switchTextModel, unfinished,
 } from "./agentDoc";
+import type { PromptRow } from "./agentDoc";
 
 describe("«Сеть по тексту»", () => {
   it("порог на умолчании переходит к умолчанию новой модели, правленый остаётся", () => {
@@ -88,5 +89,17 @@ describe("правка графа", () => {
     expect(unfinished({ nodes: [frame, net({ weights: "w", classes: [{ agent: "a", on: false }] }), out], edges: wires }))
       .toMatch("класс");
     expect(unfinished({ nodes: [frame, ok, out], edges: wires })).toBeNull();
+  });
+});
+
+describe("порог строк-образцов", () => {
+  it("у SAM 3 пусто, у YOLOE 0,1; смена модели переносит нетронутый порог", () => {
+    const rows = [{ kind: "examples" as const, set: "a", agent: "X", on: true, conf: 0.1 },
+      { kind: "examples" as const, set: "b", agent: "Y", on: true, conf: 0.3 }];
+    const got = switchTextModel({ model: "l", prompts: rows }, "sam3") as { prompts: PromptRow[] };
+    expect(got.prompts[0].conf).toBeUndefined();
+    expect(got.prompts[1].conf).toBe(0.3);
+    const back = switchTextModel({ model: "sam3", prompts: got.prompts }, "l") as { prompts: PromptRow[] };
+    expect(back.prompts[0].conf).toBe(0.1);
   });
 });

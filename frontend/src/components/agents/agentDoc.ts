@@ -40,12 +40,33 @@ export const YOLOE_MB: Record<string, number> = { s: 31, m: 70, l: 79, x: 172 };
 /** Кириллица в промте: модель понимает английский — предупредить, не запрещать. */
 export const CYRILLIC = /[а-яё]/i;
 
+/** Порог строки с образцами по умолчанию. У YOLOE лучший F1 по образцам при
+ *  0,05–0,15; у SAM 3 пусто — действует порог узла (0,1 давал сотни ложных масок). */
+export const exampleConfDefault = (model: TextModel): number | undefined =>
+  model === "sam3" ? undefined : 0.1;
+
+/** Строка с образцами на пороге `conf`; undefined — без своего порога. */
+export function withConf(r: PromptRow, conf: number | undefined): PromptRow {
+  const { conf: _drop, ...rest } = r;
+  return conf === undefined ? rest : { ...rest, conf };
+}
+
 /** Смена модели «Сети по тексту»: порог, стоявший на умолчании прежней
- *  модели, переходит на умолчание новой; правленый человеком остаётся. */
+ *  модели, переходит на умолчание новой; правленый человеком остаётся.
+ *  То же с порогами строк-образцов. */
 export function switchTextModel(p: Record<string, unknown>, next: TextModel) {
   const was = textConfDefault(textModel(p));
   const conf = typeof p.conf === "number" && Number.isFinite(p.conf) ? p.conf : was;
-  return { model: next, conf: conf === was ? textConfDefault(next) : conf };
+  const from = exampleConfDefault(textModel(p));
+  const to = exampleConfDefault(next);
+  const rows = p.prompts as PromptRow[] | undefined;
+  const prompts = rows?.map((r) =>
+    isExamples(r) && (r.conf ?? undefined) === from ? withConf(r, to) : r);
+  return {
+    model: next,
+    conf: conf === was ? textConfDefault(next) : conf,
+    ...(prompts ? { prompts } : {}),
+  };
 }
 
 export const promptsOf = (node: { params?: Record<string, unknown> }) =>
