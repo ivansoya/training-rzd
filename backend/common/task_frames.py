@@ -97,3 +97,20 @@ def video_payload(db, video):
         for t in tracks
     ]
     return payload, singles
+
+
+def settle_status(db, image_ids):
+    """Кадры, у которых не осталось объектов, перестают числиться «размеченными».
+
+    То же правило, что при записи разметки: кадр в датасете — фоновый пример,
+    черновик — снова нетронутый. Зовётся после удаления разметки мимо редактора.
+    """
+    if not image_ids:
+        return
+    left = select(Annotation.id).where(Annotation.image_id == Image.id)
+    for image in db.execute(
+        select(Image).where(
+            Image.id.in_(image_ids), Image.task_status == "annotated", ~exists(left)
+        )
+    ).scalars():
+        image.task_status = "empty" if image.dataset_id else "new"

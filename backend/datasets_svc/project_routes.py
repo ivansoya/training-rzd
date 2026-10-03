@@ -16,7 +16,7 @@ from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
-from common import config, jobs, live, tags
+from common import config, jobs, live, tags, task_frames
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
@@ -1666,7 +1666,18 @@ def delete_class(code, class_id):
                 "code": "confirm_required",
                 **usage,
             }), 409
+        touched = list(db.execute(
+            select(Annotation.image_id).where(Annotation.class_id == row.id).distinct()
+        ).scalars())
         db.delete(row)
+        db.flush()
+        if touched:
+            # Разметка кадров изменилась мимо редактора: версия растёт, статус — по остатку.
+            db.execute(
+                update(Image).where(Image.id.in_(touched))
+                .values(annotations_rev=Image.annotations_rev + 1)
+            )
+            task_frames.settle_status(db, touched)
         db.commit()
         live.notify(db, "classes", project.id, project.id)
         return jsonify({
