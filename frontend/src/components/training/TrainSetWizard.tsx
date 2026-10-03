@@ -83,6 +83,7 @@ export default function TrainSetWizard() {
   const [computing, setComputing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [perSample, setPerSample] = useState(0);
 
   useEffect(() => {
     if (!code) return;
@@ -98,6 +99,15 @@ export default function TrainSetWizard() {
     });
     aug.projectGraphs(code).then((got) => setGraphs([...got.graphs, ...got.mine]));
     listTags(code).then((got) => setTags(got.tags)).catch(() => setTags([]));
+    // Вес образца по уже собранным наборам: исходник ×1,15 завышал оценку вдвое.
+    sets
+      .listSets(code)
+      .then(({ sets: rows }) => {
+        const done = rows.filter((s) => s.status === "ready" && (s.counts?.written ?? 0) > 0);
+        const n = done.reduce((a, s) => a + (s.counts?.written ?? 0), 0);
+        setPerSample(n ? done.reduce((a, s) => a + s.size_bytes, 0) / n : 0);
+      })
+      .catch(() => setPerSample(0));
   }, [code]);
 
   const spec = useMemo(
@@ -160,7 +170,7 @@ export default function TrainSetWizard() {
   const linked = (preview?.feeds || [])
     .filter((f) => f.source_node === null)
     .reduce((sum, f) => sum + f.samples, 0);
-  const estimate = Math.round((samplesOut - linked) * perImage * 1.15);
+  const estimate = Math.round((samplesOut - linked) * (perSample || perImage * 1.15));
 
   const build = async () => {
     if (!code) return;
@@ -676,7 +686,8 @@ export default function TrainSetWizard() {
               </div>
               <div className="t-kv">
                 <span>займёт на диске</span>
-                <b>≈ {bytes(Math.max(0, estimate))}</b>
+                {/* Без собранных наборов мерить не по чему — оценка сверху. */}
+                <b>{perSample ? "≈" : "до"} {bytes(Math.max(0, estimate))}</b>
               </div>
             </div>
           )}

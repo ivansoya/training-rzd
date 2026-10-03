@@ -290,6 +290,7 @@ def build(db, job, *, on_beat=None):
         name = sample_name(image.id, prefix_of(unit) + item.sid, ext)
         dst = os.path.join(root, "images", split, name)
         size_bytes += albu.imwrite_rgb(dst, item.image)
+        counts["written"] += 1
         _write_label(root, split, name, lines)
         _note(manifest, image, split, name, lines, False, item.sid, item.ops)
         counts["samples"] += 1
@@ -358,6 +359,7 @@ def build(db, job, *, on_beat=None):
                     written, linked = link_or_copy(src, dst)
                     size_bytes += 0 if linked else written
                     linked_bytes += written if linked else 0
+                    counts["written"] += 0 if linked else 1
                     _write_label(root, split, name, lines)
                     _note(manifest, image, split, name, lines, linked, "", ())
                     counts["samples"] += 1
@@ -426,6 +428,8 @@ def build(db, job, *, on_beat=None):
         "val": counts["val"],
         "annotations": counts["annotations"],
         "background": counts["background"],
+        # Записано файлами, а не ссылкой: по ним мастер оценивает вес будущих наборов.
+        "written": counts["written"],
         "source_images": len(picked.images),
         "classes": len(names),
         "warnings": len(warnings),

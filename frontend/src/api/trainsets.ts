@@ -136,6 +136,8 @@ export interface TrainSet {
     annotations: number;
     /** Кадров-фона (без разметки). У наборов до 08.09.2026 поля нет. */
     background?: number;
+    /** Образцов, записанных файлом, а не ссылкой. У старых наборов поля нет. */
+    written?: number;
     source_images: number;
     classes: number;
     warnings: number;
