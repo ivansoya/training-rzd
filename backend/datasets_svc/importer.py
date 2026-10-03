@@ -37,6 +37,7 @@ import zipfile
 
 from PIL import Image as PilImage
 
+from common import images
 from common import config
 from common.datasets import find_yaml_member, parse_yaml_config, split_of
 from common import polygon as polylib
@@ -342,12 +343,21 @@ def extract_image(zf, member, dest_path, thumb_path):
         data = zf.read(member)
         with PilImage.open(io.BytesIO(data)) as img:
             img.load()
-            width, height = img.size
-            thumb = img.convert("RGB")
+            # Разметка YOLO — в повёрнутом кадре (каким его видит человек), и
+            # размеры для пересчёта рамок нужны его же. Перекодируем только
+            # такие кадры: остальные лежат байт в байт, без пережатия.
+            turned = images.needs_turn(img)
+            pic = images.upright(img).convert("RGB") if turned else img.convert("RGB")
+            width, height = pic.size
+            thumb = pic.copy()
             thumb.thumbnail(
                 (config.THUMB_MAX_SIDE, config.THUMB_MAX_SIDE), PilImage.LANCZOS
             )
             thumb.save(thumb_path, "JPEG", quality=config.THUMB_QUALITY)
+            if turned:
+                buf = io.BytesIO()
+                pic.save(buf, "JPEG", quality=95)
+                data = buf.getvalue()
     except Exception:  # noqa: BLE001
         return None
     with open(dest_path, "wb") as fh:

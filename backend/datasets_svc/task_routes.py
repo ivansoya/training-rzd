@@ -20,7 +20,7 @@ from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import OperationalError
 
-from common import attribution, config, jobs, tags, task_frames
+from common import attribution, config, images, jobs, tags, task_frames
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
@@ -804,7 +804,8 @@ def _save_upload(db, task, user, file, base):
     dest = os.path.join(base, "images", f"{image.id}.jpg")
     try:
         with PilImage.open(file.stream) as img:
-            rgb = img.convert("RGB")
+            # Перекодирование теряет тег поворота — поворачиваем сами, иначе кадр набок.
+            rgb = images.upright(img).convert("RGB")
             rgb.save(dest, "JPEG", quality=88)
             thumb = rgb.copy()
             thumb.thumbnail(
