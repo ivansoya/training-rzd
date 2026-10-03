@@ -350,12 +350,14 @@ def main():
 
     except KeyboardInterrupt:
         run.status = "stopped"
+        trainer.adopt_weights(run)
         run.finished_at = utcnow()
         db.commit()
         live.notify(db, "run", run.id, run.project_id, s="stopped")
     except Exception as exc:  # noqa: BLE001
         run.status = "error"
         run.error = str(exc)[:2000]
+        trainer.adopt_weights(run)
         run.finished_at = utcnow()
         db.commit()
         live.notify(db, "run", run.id, run.project_id, s="error")

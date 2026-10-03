@@ -454,6 +454,25 @@ def beat_of(run):
     return run.lease_until or run.started_at or run.created_at
 
 
+def adopt_weights(run) -> bool:
+    """Веса прерванного обучения — в строку рана, иначе их не скачать.
+
+    Остановка и гибель процесса обходили запись `weights_path`: best.pt лежал
+    на томе, а кнопки «Скачать веса» не было."""
+    if run.weights_path:
+        return True
+    from common import config
+
+    folder = os.path.join(config.run_dir(run.project_id, run.id), "train", "weights")
+    for name in ("best.pt", "last.pt"):
+        path = os.path.join(folder, name)
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            run.weights_path = os.path.relpath(path, config.DATA_DIR)
+            run.weights_bytes = os.path.getsize(path)
+            return True
+    return False
+
+
 def close_orphan(db, run, verdict, now):
     """Закрыть ран без исполнителя: состояние, причина, бронь, событие."""
     from common import gpu, live
@@ -461,6 +480,7 @@ def close_orphan(db, run, verdict, now):
     run.status = verdict
     if verdict == "error":
         run.error = ORPHAN_TEXT
+    adopt_weights(run)
     run.phase = None
     run.finished_at = now
     db.commit()

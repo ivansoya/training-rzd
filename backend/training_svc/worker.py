@@ -257,6 +257,7 @@ def watch_run(run_id, proc, lease_id, sig):
                 run.status = "stopped" if run.cancel_requested else "error"
                 if run.status == "error":
                     run.error = "Процесс обучения завершился неожиданно."
+                trainer.adopt_weights(run)
                 run.finished_at = utcnow()
                 db.commit()
             if run.peak_vram_mb:
