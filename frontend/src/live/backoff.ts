@@ -15,6 +15,9 @@ export function nextDelay(attempt: number): number {
   return Math.min(raw, MAX_MS);
 }
 
+// Из опроса раз в полминуты пробуем вернуться к потоку: места освобождаются.
+export const RETRY_LIVE_MS = 30_000;
+
 export function shouldFallBack(attempt: number): boolean {
   return attempt >= GIVE_UP_AFTER;
 }

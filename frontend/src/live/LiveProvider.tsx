@@ -19,7 +19,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { nextDelay, pollEvery, shouldFallBack } from "./backoff";
+import { nextDelay, pollEvery, RETRY_LIVE_MS, shouldFallBack } from "./backoff";
 
 export interface LiveEvent {
   k: string;              // что за сущность: "run", "prep", "set"
@@ -137,9 +137,9 @@ export function LiveProvider({
         tries += 1;
         setAttempts(tries);
         if (shouldFallBack(tries)) {
-          toPolling(
-            "Живая связь занята — обновляю опросом раз в полторы секунды."
-          );
+          toPolling("Живая связь занята — обновляю опросом и пробую вернуться.");
+          // Опрос — временный режим: потоку дать ещё попытку, места освобождаются.
+          timer = window.setTimeout(connect, RETRY_LIVE_MS);
           return;
         }
         timer = window.setTimeout(connect, nextDelay(tries));
@@ -179,13 +179,22 @@ export function LiveProvider({
         /* сеть моргнула — придём снова */
       }
       const every = pollEvery(busy, document.hidden);
-      timer = window.setTimeout(tick, every || 5000);
+      // Вкладка в фоне молчит, пока её снова не покажут.
+      if (every) timer = window.setTimeout(tick, every);
+    };
+    const onVisible = () => {
+      if (!document.hidden) {
+        window.clearTimeout(timer);
+        void tick();
+      }
     };
 
     tick();
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       alive = false;
       window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [mode, code, emit]);
 
