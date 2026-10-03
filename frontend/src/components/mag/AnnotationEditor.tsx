@@ -827,6 +827,10 @@ export default function AnnotationEditor({
           if (autoPrev) commitAuto();
           else go(1);
           break;
+        // Enter нативно нажал бы кнопку в фокусе — «Удалить» забраковала бы следующий кадр.
+        case "Enter":
+        case "NumpadEnter":
+          break;
         case "ArrowRight": go(1); break;
         case "ArrowLeft": go(-1); break;
         case "KeyV":
