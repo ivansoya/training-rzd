@@ -617,7 +617,9 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
             tick(dict(stats))
 
         if wanted:
-            video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted, on_frame)
+            # Номера — по таблице кадров ролика, как у разметки и закрытия.
+            video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted,
+                                        on_frame, pts=video_frames.unpack_pts(video.frame_index))
         if mode == "scout":
             last = _last_frame(video)
             db.execute(VideoScout.__table__.delete().where(VideoScout.video_id == video.id))

@@ -64,9 +64,6 @@ bp = Blueprint("video_annotation", __name__)
 # Ста двадцати (ровно перегон) хватает на то, ради чего кэш и заведён: вернуться
 # к кадру, с которым только что работали.
 FRAME_CACHE_PER_VIDEO = 120
-# За один прогрев больше этого не распаковываем: запрос не должен висеть
-# минутами, а окно такого размера и не нужно.
-PREFETCH_MAX = 400
 
 
 # --------------------------------------------------------------------------- #
@@ -1256,64 +1253,6 @@ def move_key(track_id, frame_no):
         cls = db.get(LabelClass, track.class_id)
         track.class_index = cls.class_index if cls else None
         return jsonify(_track_json(track, keys))
-    finally:
-        db.close()
-
-
-@bp.post("/api/tasks/<task_id>/videos/<video_id>/frames/prefetch")
-def prefetch_frames(task_id, video_id):
-    """Распаковать окно кадров одним проходом декодера.
-
-    Подряд идущие кадры примерно в восемьдесят раз дешевле одиночных: перемотка
-    к каждому стоит сотни миллисекунд, а последовательный проход — единицы.
-    Поэтому редактор просит не по кадру, а окно вокруг текущего места, и
-    дальше берёт кадры обычными запросами, попадая в этот кэш.
-    """
-    db, task, project, user, role, video = _resolve_video(task_id, video_id)
-    if db is None:
-        return video
-    try:
-        data = request.get_json(silent=True) or {}
-        try:
-            start = max(0, int(data.get("from", 0)))
-            end = int(data.get("to", 0))
-        except (TypeError, ValueError):
-            return jsonify({"error": "Границы окна должны быть числами."}), 400
-        last = _last_frame(video)
-        if last is not None:
-            end = min(end, last)
-        if end < start:
-            return jsonify({"ready": 0, "decoded": 0})
-        if end - start + 1 > PREFETCH_MAX:
-            return jsonify({
-                "error": f"За один раз распаковываем не больше {PREFETCH_MAX} кадров."
-            }), 400
-
-        folder = _frame_dir(task, video.id)
-        os.makedirs(folder, exist_ok=True)
-        missing = [
-            n for n in range(start, end + 1)
-            if not os.path.exists(_frame_file(task, video, n))
-        ]
-        if not missing:
-            return jsonify({"ready": end - start + 1, "decoded": 0})
-
-        source = os.path.join(config.DATA_DIR, video.file_path)
-        if not os.path.exists(source):
-            return jsonify({"error": "Файл видео не найден."}), 404
-
-        def on_frame(frame_no, _time_ms, img):
-            path = _frame_file(task, video, frame_no)
-            tmp = path + ".part"
-            img.convert("RGB").save(tmp, "JPEG", quality=88)
-            os.replace(tmp, path)
-
-        try:
-            decoded = videolib.extract_frames(source, missing, on_frame)
-        except videolib.VideoError as exc:
-            return jsonify({"error": str(exc)}), 400
-        _trim_cache(folder)
-        return jsonify({"ready": end - start + 1, "decoded": decoded})
     finally:
         db.close()
 

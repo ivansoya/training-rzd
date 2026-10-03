@@ -1427,19 +1427,6 @@ export interface MaterializePreview {
   error?: string;
 }
 
-/** Прогрев окна кадров: сервер распаковывает их одним проходом декодера.
- *  Подряд идущие кадры примерно в восемьдесят раз дешевле одиночных. */
-export async function prefetchFrames(
-  taskId: string,
-  videoId: string,
-  from: number,
-  to: number
-): Promise<{ ready: number; decoded: number }> {
-  return asJson(
-    await post(`tasks/${taskId}/videos/${videoId}/frames/prefetch`, { from, to })
-  );
-}
-
 /** Закрыть разметку ролика: план становится обычными кадрами таски. */
 export async function closeVideoAnnotation(
   taskId: string,

@@ -82,41 +82,6 @@ def test_отрицательный_кадр_отвергается(api, task, v
     assert res.status_code == 400
 
 
-def test_окно_кадров_греется_одним_проходом(api, task, video):
-    """Подряд идущие кадры декодируются в разы дешевле одиночных — на этом
-    держится быстрая перемотка."""
-    url = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/prefetch"
-    res = api.post(url, json={"from": 0, "to": 20})
-    assert res.status_code == 200, res.text
-    body = res.json()
-    assert body["ready"] == 21
-    assert body["decoded"] >= 1
-
-    # Повторный прогрев того же окна ничего не декодирует: всё уже на месте.
-    again = api.post(url, json={"from": 0, "to": 20}).json()
-    assert again["decoded"] == 0
-
-
-def test_окно_подрезается_длиной_ролика(api, task, video):
-    """Запрос за конец ролика — не ошибка: на краю таймлайна это обычное дело,
-    и окно просто упирается в последний кадр."""
-    res = api.post(
-        f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/prefetch",
-        json={"from": 0, "to": 5000},
-    )
-    assert res.status_code == 200, res.text
-    assert res.json()["ready"] == 30      # столько кадров в ролике и есть
-
-
-def test_окно_наизнанку_ничего_не_делает(api, task, video):
-    res = api.post(
-        f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/prefetch",
-        json={"from": 20, "to": 5},
-    )
-    assert res.status_code == 200
-    assert res.json() == {"ready": 0, "decoded": 0}
-
-
 # --- треки ----------------------------------------------------------------- #
 def make_track(api, task, video, label_class, frame_no=0, geometry=None):
     res = api.post(

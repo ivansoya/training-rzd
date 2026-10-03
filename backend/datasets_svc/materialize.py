@@ -27,6 +27,7 @@ from common.models import (
     VideoTrack,
 )
 from common import polygon as polylib
+from datasets_svc import video_index
 from datasets_svc import video as videolib
 from common import video_tracks as tracklib
 
@@ -201,6 +202,10 @@ def run_video(db, task, video, user_id, progress=None):
             f"Файл ролика «{video.file_name}» не найден — доставать кадры неоткуда."
         )
 
+    # Номер кадра — позиция в таблице кадров ролика, как у `/frame` и перегонов.
+    # Закрытие — фоновая работа, так что недостроенную таблицу строим здесь же.
+    index = video_index.ensure(db, video, source)
+
     base = config.image_base_dir(task.project_id, task.id)
     created = {}
     # Кадр, на котором одни нетронутые рамки агента, уходит в таску новым —
@@ -241,15 +246,27 @@ def run_video(db, task, video, user_id, progress=None):
 
     # Одним проходом декодера: фоновые кадры перемешаны с размеченными, и
     # второй проход по тому же ролику стоил бы столько же, сколько первый.
-    videolib.extract_frames(source, sorted(set(by_frame) | empty_set), on_frame)
+    wanted = set(by_frame) | empty_set
+    videolib.extract_frames(source, sorted(wanted), on_frame, pts=index["pts"])
+    missing = sorted(wanted - set(created))
+    if missing:
+        # Кадр не дошёл — разметка на нём потерялась бы молча. Лучше не
+        # записать ничего: вызывающий откатит строки, файлы убираем сами.
+        for image_id in created.values():
+            for sub in ("images", "thumbs", "preview"):
+                try:
+                    os.remove(os.path.join(base, sub, f"{image_id}.jpg"))
+                except OSError:
+                    pass
+        raise videolib.VideoError(
+            f"Не достались кадры {', '.join(map(str, missing[:5]))}"
+            f"{' и ещё ' + str(len(missing) - 5) if len(missing) > 5 else ''} — "
+            "ничего не записано."
+        )
 
     boxes = 0
     for frame_no, planned in sorted(by_frame.items()):
-        image_id = created.get(frame_no)
-        if image_id is None:
-            # Кадр не дошёл: декодер до него не добрался (номер за концом
-            # ролика). Молча пропускаем — разметки без картинки не бывает.
-            continue
+        image_id = created[frame_no]
         for item in planned:
             geometry = item["geometry"]
             ann_type = item.get("ann_type") or "bbox"
