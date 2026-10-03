@@ -10,12 +10,12 @@ image_id, а редактор заранее греет текущий кадр 
 уточнил» и сегментация появятся поверх готового протокола.
 """
 import os
-import urllib.request
+import zipfile
 
 import numpy as np
 
 from autolabel_svc import space as spacelib
-from common import config, contours
+from common import config, contours, download
 from common.contours import DETAIL_AUTO
 WEIGHTS_URL = "https://dl.fbaipublicfiles.com/segment_anything_2/092824/"
 # Имя веса -> (файл, конфиг внутри пакета sam2).
@@ -46,12 +46,11 @@ def ensure_weights(name: str) -> str:
     target_dir = config.auto_weights_dir("sam2")
     os.makedirs(target_dir, exist_ok=True)
     path = os.path.join(target_dir, file_name)
-    if os.path.exists(path) and os.path.getsize(path) > 0:
-        return path
-    tmp = path + ".part"
-    urllib.request.urlretrieve(WEIGHTS_URL + file_name, tmp)
-    os.replace(tmp, path)
-    return path
+    # Длина с сервера, докачка, таймаут и замок: прежний urlretrieve висел без
+    # таймаута, писал в общий .part и брал любой непустой обрезок (папка весов
+    # общая с агентом — обрезок застревал у обоих). Чекпойнт torch — это zip.
+    return download.ensure_file(WEIGHTS_URL + file_name, path, zipfile.is_zipfile,
+                                timeout=60)
 
 
 class Sam2Runner:

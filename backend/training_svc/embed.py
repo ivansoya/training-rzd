@@ -33,10 +33,9 @@ import struct
 import threading
 import time
 import zipfile
-from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from common import config
+from common import config, download
 
 log = logging.getLogger("training.embed")
 
@@ -87,7 +86,6 @@ DOWNLOAD_ATTEMPTS = int(os.environ.get("EMBED_DOWNLOAD_ATTEMPTS", "6"))
 # шесть раз по минуте — это те самые «нажал, и ничего».
 STALL_LIMIT = int(os.environ.get("EMBED_STALL_LIMIT", "2"))
 DOWNLOAD_TIMEOUT = int(os.environ.get("EMBED_DOWNLOAD_TIMEOUT", "40"))
-_CHUNK = 1 << 20
 
 _model = None
 _lock = threading.Lock()
@@ -112,15 +110,7 @@ def checkpoints_dir():
 
 def _expected_size(url):
     """Длина файла на сервере. ``None`` — сервер не ответил."""
-    try:
-        with urlopen(
-            Request(url, method="HEAD", headers={"User-Agent": "magistral"}),
-            timeout=DOWNLOAD_TIMEOUT,
-        ) as r:
-            length = r.headers.get("Content-Length")
-            return int(length) if length else None
-    except (HTTPError, URLError, OSError, ValueError):
-        return None
+    return download.expected_size(url, timeout=DOWNLOAD_TIMEOUT, opener=urlopen)
 
 
 def _well_formed(path, kind):
@@ -152,53 +142,11 @@ def _looks_whole(path, expected, kind):
 
 def _download(url, part, expected, kind, on_progress):
     """Скачать в ``part`` с докачкой. ``None`` — источник не отдал файл."""
-    last = None
-    stalls = 0
-    for attempt in range(1, DOWNLOAD_ATTEMPTS + 1):
-        have = os.path.getsize(part) if os.path.exists(part) else 0
-        if have > expected:
-            os.remove(part)
-            have = 0
-        before = have
-        try:
-            if have < expected:
-                headers = {"User-Agent": "magistral"}
-                if have:
-                    headers["Range"] = f"bytes={have}-"
-                if on_progress is not None:
-                    on_progress(have, expected)
-                with urlopen(Request(url, headers=headers),
-                             timeout=DOWNLOAD_TIMEOUT) as r:
-                    # Сервер мог не понять Range и прислать всё с начала.
-                    mode = "ab" if (have and r.status == 206) else "wb"
-                    if mode == "wb":
-                        have = 0
-                    with open(part, mode) as fh:
-                        while True:
-                            buf = r.read(_CHUNK)
-                            if not buf:
-                                break
-                            fh.write(buf)
-                            have += len(buf)
-                            if on_progress is not None:
-                                on_progress(have, expected)
-            if have == expected and _well_formed(part, kind):
-                return part
-            last = f"получено {have} байт из {expected}"
-            if have == expected:
-                # Длина сошлась, но формат не тот — сервер отдал не то. С нуля.
-                os.remove(part)
-                have = 0
-        except (HTTPError, URLError, OSError) as exc:
-            last = str(exc)
-        stalls = stalls + 1 if have <= before else 0
-        log.warning("веса %s, попытка %d/%d не удалась: %s",
-                    url, attempt, DOWNLOAD_ATTEMPTS, last)
-        if stalls >= STALL_LIMIT:
-            log.warning("источник %s не отдаёт ни байта — идём к следующему", url)
-            break
-        time.sleep(min(30, 2 ** attempt))
-    return None
+    return download.fetch(
+        url, part, expected, lambda p: _well_formed(p, kind), on_progress=on_progress,
+        attempts=DOWNLOAD_ATTEMPTS, stall_limit=STALL_LIMIT, timeout=DOWNLOAD_TIMEOUT,
+        opener=urlopen, sleep=time.sleep,
+    )
 
 
 def ensure_weights(on_progress=None):
