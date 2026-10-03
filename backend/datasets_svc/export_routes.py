@@ -166,6 +166,7 @@ def _plan(db, project, sel):
         "no_tag": picked.no_tag,
         "ann_type": want,
         "background": picked.background,
+        "background_parts": picked.background_parts,
         "splits": {s: counts[s] for s in sel_lib.FIXED_SPLITS if counts[s]},
         "val_ratio": round(ratio, 4),
         "warnings": warnings,

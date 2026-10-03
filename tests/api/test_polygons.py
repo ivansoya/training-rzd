@@ -412,3 +412,26 @@ def test_jpg_и_png_с_одной_основой_не_делят_файл_раз
     with zipfile.ZipFile(io.BytesIO(dl.content)) as zf:
         labels = [n for n in zf.namelist() if n.startswith("labels/") and "collide" in n]
     assert len(labels) == len(set(labels)) == 2, labels
+
+
+def test_фон_выгрузки_разложен_по_родам(api, task, project, label_class):
+    code = project["code"]
+    other = api.post(f"{BASE_URL}/api/projects/{code}/classes", json={"name": "цистерна"}).json()
+    for i in range(3):
+        buf = io.BytesIO()
+        PilImage.new("RGB", (100, 80), (20, 40, 60 + i)).save(buf, "JPEG")
+        buf.seek(0)
+        api.post(f"{BASE_URL}/api/tasks/{task['id']}/images",
+                 files={"files": (f"bg{i}.jpg", buf, "image/jpeg")})
+    rows = sorted(api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"],
+                  key=lambda r: r["file_name"])
+    save(api, rows[0]["id"], [{"class_index": label_class["class_index"], "x": 5, "y": 5, "w": 20, "h": 20}])
+    save(api, rows[1]["id"], [{"class_index": other["class_index"], "x": 5, "y": 5, "w": 20, "h": 20}])
+    assert api.patch(f"{BASE_URL}/api/images/{rows[2]['id']}/task-status",
+                     json={"status": "empty"}).status_code == 200
+    accept(api, task["id"])
+    datasets = api.get(f"{BASE_URL}/api/projects/{code}").json()["datasets"]
+    plan = api.post(f"{BASE_URL}/api/projects/{code}/export/preview", json={
+        "datasets": [d["id"] for d in datasets], "classes": [label_class["id"]]}).json()
+    # Кадр с чужим классом — не «без разметки», а «только другие классы».
+    assert plan["background_parts"] == {"marked": 1, "bare": 0, "other": 1}

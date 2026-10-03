@@ -7,7 +7,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { getClasses, getProject } from "../../auth/api";
+import { backgroundWords, getProject } from "../../auth/api";
+import { classesIn } from "../../api/datasets";
 import type { LabelClass, ProjectDetail } from "../../auth/api";
 import * as aug from "../../api/aug";
 import * as sets from "../../api/trainsets";
@@ -90,7 +91,8 @@ export default function TrainSetWizard() {
       setDatasets(got.datasets.map((d) => d.id));
       setName(`${got.project.name} — набор`);
     });
-    getClasses(code).then((got) => {
+    // Счёт по датасетам: разметка из тасок в набор не идёт.
+    classesIn(code, "any").then((got) => {
       setClasses(got.classes);
       setPicked(got.classes.filter((c) => c.annotations > 0).map((c) => c.id));
     });
@@ -494,7 +496,7 @@ export default function TrainSetWizard() {
                         ))}
                         {preview.background > 0 && (
                           <tr className="t-bg-row">
-                            <td>фон <Sep /> кадры без разметки</td>
+                            <td>фон <Sep /> {backgroundWords(preview.background_parts) || "кадры без разметки"}</td>
                             <td>{ru(preview.background_split?.train ?? 0)}</td>
                             <td>{ru(preview.background_split?.val ?? 0)}</td>
                             <td className="t-dash">—</td>
@@ -622,7 +624,9 @@ export default function TrainSetWizard() {
                 )}
                 {preview.background > 0 && (
                   <div className="t-kv">
-                    <span>без разметки — идут фоном</span>
+                    <span title={backgroundWords(preview.background_parts)}>
+                      фон — пустой файл разметки
+                    </span>
                     <b>
                       {ru(preview.background)}
                       {preview.background_split && (

@@ -129,7 +129,8 @@ class Selection:
 
     __slots__ = (
         "classes", "export_id", "images", "anns", "by_image",
-        "dropped", "background", "no_size", "wrong_kind", "no_tag", "ann_type",
+        "dropped", "background", "background_parts", "no_size", "wrong_kind",
+        "no_tag", "ann_type",
         "rarest_of", "classes_of", "tags_of",
     )
 
@@ -141,6 +142,8 @@ class Selection:
         self.by_image = {}
         self.dropped = 0
         self.background = 0
+        # Фон трёх родов: помечен «пусто», не размечен вовсе, размечен другими классами.
+        self.background_parts = {"marked": 0, "bare": 0, "other": 0}
         self.no_size = 0
         self.wrong_kind = 0
         # Отсеяно фильтром по тагам. Число говорящее: «выбрал «ночь» и
@@ -241,6 +244,8 @@ def gather(db, project, sel) -> Selection:
         kept.append(img)
     out.images = kept
     out.by_image = {img.id: img for img in kept}
+    if out.background:
+        _background_parts(db, sel, out)
 
     # Класс каждого уцелевшего кадра и его самый редкий класс. Группа кадра —
     # именно редчайший: раскидывая группы по отдельности, мы не даём редкому
@@ -258,6 +263,25 @@ def gather(db, project, sel) -> Selection:
             if cids else "~background"   # фон — своя группа, делится отдельно
         )
     return out
+
+
+def _background_parts(db, sel, out):
+    """Разложить фон по родам: «без разметки» про кадр с чужими классами — неправда."""
+    labelled = set(db.execute(
+        select(Annotation.image_id)
+        .join(Image, Annotation.image_id == Image.id)
+        .where(Image.dataset_id.in_(sel["datasets"]))
+        .distinct()
+    ).scalars())
+    for img in out.images:
+        if out.anns.get(img.id):
+            continue
+        if img.task_status == "empty":
+            out.background_parts["marked"] += 1
+        elif img.id in labelled:
+            out.background_parts["other"] += 1
+        else:
+            out.background_parts["bare"] += 1
 
 
 # --------------------------------------------------------------------------- #

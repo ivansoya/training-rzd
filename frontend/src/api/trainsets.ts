@@ -1,6 +1,7 @@
 // Обучающие наборы: предпросмотр по шагам мастера и сама сборка.
 
 import { del, get, post } from "./http";
+import type { BackgroundParts } from "../auth/api";
 
 export type SplitMode = "manual" | "random" | "balanced" | "smart";
 export type AnnKind = "bbox" | "polygon";
@@ -93,6 +94,7 @@ export interface Preview {
   groups: number | null;
   /** Куда легли кадры-фон: они делятся вместе со всеми, и это тоже итог. */
   background_split: { train: number; val: number };
+  background_parts?: BackgroundParts;
   /** Сколько миллисекунд считалось деление — для подписи, пока ждём. */
   split_ms: number;
   embeddings: {

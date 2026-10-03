@@ -1674,6 +1674,23 @@ export interface ExportClassRow {
   annotations: number;
 }
 
+/** Из чего состоит фон: помечен «пусто», не размечен, размечен только другими классами. */
+export interface BackgroundParts {
+  marked: number;
+  bare: number;
+  other: number;
+}
+
+/** «помечены «пусто» 5, без разметки 3, только другие классы 51» — без нулевых частей. */
+export function backgroundWords(p: BackgroundParts | undefined): string {
+  if (!p) return "";
+  return [
+    p.marked ? `помечены «пусто» ${p.marked}` : "",
+    p.bare ? `не размечены ${p.bare}` : "",
+    p.other ? `размечены только другими классами ${p.other}` : "",
+  ].filter(Boolean).join(", ");
+}
+
 export interface ExportPreview {
   classes: ExportClassRow[];
   images: number;
@@ -1691,6 +1708,7 @@ export interface ExportPreview {
   ann_type: "bbox" | "polygon";
   /** Кадры без разметки: идут в выгрузку фоном, с пустым файлом. */
   background: number;
+  background_parts: BackgroundParts;
   splits: Record<string, number>;
   val_ratio: number;
   warnings: string[];

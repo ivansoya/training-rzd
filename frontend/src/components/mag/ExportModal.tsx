@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pollJob } from "../../api/jobs";
+import { classesIn } from "../../api/datasets";
 import {
   exportDownloadUrl,
-  getClasses,
+  backgroundWords,
   previewExport,
   startExport,
 } from "../../auth/api";
@@ -75,7 +76,8 @@ export default function ExportModal({ detail, onClose }: Props) {
   useEscape(onClose);
 
   useEffect(() => {
-    getClasses(code)
+    // Счёт по датасетам: разметка в тасках не выгружается, а класс по ней выбирался.
+    classesIn(code, "any")
       .then(({ classes: rows }) => {
         setClasses(rows);
         // По умолчанию — то, что реально размечено: остальное дало бы классы
@@ -405,7 +407,12 @@ export default function ExportModal({ detail, onClose }: Props) {
                 </p>
               )}
               {preview.empty > 0 && (
-                <p>Без разметки, фоном: {count(preview.empty, "кадр", "кадра", "кадров")}.</p>
+                <p>
+                  Фоном, с пустым файлом: {count(preview.empty, "кадр", "кадра", "кадров")}
+                  {backgroundWords(preview.background_parts) &&
+                    ` — ${backgroundWords(preview.background_parts)}`}
+                  .
+                </p>
               )}
             </div>
           )}

@@ -1104,6 +1104,7 @@ def preview_set(code):
             "dropped": picked.dropped,
             "no_tag": picked.no_tag,
             "background": picked.background,
+            "background_parts": picked.background_parts,
             "no_size": picked.no_size,
             "wrong_kind": picked.wrong_kind,
             "classes": [
