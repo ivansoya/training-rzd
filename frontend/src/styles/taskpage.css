@@ -348,11 +348,24 @@
 }
 
 .mag-cut-stage {
+  position: relative;
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
   min-height: 0;
+}
+
+/* Плеер не играет формат: объяснение поверх чёрного кадра. */
+.mag-cut-unplayable {
+  position: absolute;
+  inset: auto 16px 16px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: rgba(15, 15, 21, 0.88);
+  color: #f7f7f8;
+  font-size: 13px;
+  line-height: 1.4;
 }
 
 .mag-cut-stage video {

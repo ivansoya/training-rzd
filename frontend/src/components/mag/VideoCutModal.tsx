@@ -273,6 +273,8 @@ export default function VideoCutModal({
    *  нарезки не меняются, и без него оценка осталась бы вчерашней. */
   const [applied, setApplied] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  // Плеер не играет формат (AVI, HEVC без декодера): говорим это, а не молчим чёрным.
+  const [unplayable, setUnplayable] = useState(false);
   const [at, setAt] = useState(startAtMs || 0);
   const [playing, setPlaying] = useState(false);
   const [rate, setRate] = useState(1);
@@ -722,7 +724,14 @@ export default function VideoCutModal({
                 onPlay={() => setPlaying(true)}
                 onPause={() => setPlaying(false)}
                 onTimeUpdate={(e) => setAt((e.target as HTMLVideoElement).currentTime * 1000)}
+                onError={() => setUnplayable(true)}
               />
+              {unplayable && (
+                <div className="mag-cut-unplayable" role="alert">
+                  Браузер не воспроизводит этот формат — плеер останется чёрным.
+                  Участки можно отметить по киноленте ниже: кадры нарежет сервер.
+                </div>
+              )}
               {/* Скрытый плеер под подсказки: перематывать основной нельзя. */}
               <video
                 ref={peekRef}

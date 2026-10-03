@@ -36,6 +36,7 @@ import ClassMenu from "./ClassMenu";
 import TrackLanes from "./TrackLanes";
 import type { LaneAction } from "./TrackLanes";
 import { useAutoLabel } from "./useAutoLabel";
+import { isUnplayable } from "./clipReader";
 import AutoStatus from "./AutoStatus";
 import { useClip, useClipFrame, usePlayback } from "./useClip";
 import type { Clip } from "./useClip";
@@ -236,7 +237,6 @@ export default function VideoAnnotator({
   const draftTimer = useRef<number>();
   const pendingCommit = useRef<(() => void) | null>(null);
 
-  const frozen = readOnly || !data?.editable;
 
   // --- кадры и проигрывание ------------------------------------------------ #
   // Ступень качества: исходное или уменьшенное. Хранится здесь, а не в
@@ -265,6 +265,9 @@ export default function VideoAnnotator({
     if (clip.manifest && !quality) setQuality(clip.manifest.quality);
   }, [clip.manifest, quality]);
   const shown = useClipFrame(clip.reader, frame, quality);
+  // Ролик, который браузер не разжимает, — чёрный холст: рисовать на нём нечего.
+  const unplayable = isUnplayable(clip.error) || isUnplayable(shown.error);
+  const frozen = readOnly || !data?.editable || unplayable;
   const onPlayFrame = useCallback((f: number) => setFrame(f), []);
   // Проигрывание ждёт картинку: пока показан не тот кадр, время стоит. Иначе
   // полоса убегает вперёд, кадр замирает, и кусок ролика проходит незамеченным.
@@ -969,7 +972,7 @@ export default function VideoAnnotator({
         {(error || clip.error || shown.error) && (
           <span className="mag-ed-err">
             {error || clip.error || shown.error}
-            {clip.error && (
+            {clip.error && !unplayable && (
               // Бэкенд могли перезапустить под рукой. Раньше единственным
               // выходом была перезагрузка страницы — вместе с несохранённым.
               <button type="button" className="mag-ed-retry" onClick={clip.retry}>

@@ -102,6 +102,21 @@ export class ClipError extends Error {}
 /** Отказ, который не надо повторять сразу: сервер сказал, что не смог. */
 export class ClipFailure extends ClipError {}
 
+/** Браузер не умеет разжимать кодек ролика: повтор не поможет, рисовать не по чему. */
+export class UnsupportedVideo extends ClipFailure {
+  constructor(codec?: string) {
+    super(
+      `Браузер не умеет разжимать этот ролик${codec ? ` (кодек ${codec})` : ""}. ` +
+        "Откройте разметку в Chrome или Edge с аппаратным декодированием видео " +
+        "или перекодируйте ролик в H.264."
+    );
+  }
+}
+
+/** Отказ из тех, что повтором не лечатся: видео в этом браузере не показать. */
+export const isUnplayable = (message: string | null | undefined) =>
+  !!message && /не умеет разжимать/.test(message);
+
 /** Разжатие застряло. Повторяемо: обычно хватает завести декодер заново.
  *
  * Отдельный тип нужен затем, чтобы такое не показывали человеку как поломку:
@@ -461,6 +476,7 @@ export class ClipReader {
     const task = (async () => {
       const bytes = await this.pull(chunk, quality);
       const parts = demux(bytes);
+      await this.checkCodec(parts.codec, parts.description);
       if (parts.samples.length !== chunk.count) {
         throw new ClipError(
           `В перегоне ${chunk.n} разобралось ${parts.samples.length} кадров ` +
@@ -840,6 +856,22 @@ export class ClipReader {
   /** Границы кольца на текущее разжатие: что вне — закрываем сразу. */
   private keep = { from: 0, to: 0 };
 
+  /** Кодеки, про которые браузер уже ответил: спрашиваем по разу на ролик. */
+  private codecs = new Map<string, Promise<boolean>>();
+
+  /** До настройки декодера: иначе отказ приходил сырым английским «… is not supported.». */
+  private async checkCodec(codec: string, description: Uint8Array) {
+    if (typeof VideoDecoder.isConfigSupported !== "function") return;
+    let answer = this.codecs.get(codec);
+    if (!answer) {
+      answer = VideoDecoder.isConfigSupported({ codec, description })
+        .then((r) => r.supported !== false)
+        .catch(() => true);   // не ответил — пусть решает сам декодер
+      this.codecs.set(codec, answer);
+    }
+    if (!(await answer)) throw new UnsupportedVideo(codec);
+  }
+
   private makeDecoder(): VideoDecoder {
     const decoder: VideoDecoder = new VideoDecoder({
       output: (frame) => {
@@ -863,7 +895,9 @@ export class ClipReader {
           свой: this.active?.decoder === decoder,
           что: String(err),
         });
-        if (this.active?.decoder === decoder) this.active.failure = err;
+        if (this.active?.decoder === decoder) {
+          this.active.failure = /not supported/i.test(String(err)) ? new UnsupportedVideo() : err;
+        }
         this.waiting?.resolve();
       },
     });
