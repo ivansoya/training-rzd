@@ -37,9 +37,12 @@ function ago(iso: string | null) {
 function Card({
   device,
   onLimit,
+  onKill,
 }: {
   device: Device;
   onLimit: (data: { reserved_mb?: number; max_heavy?: number }) => void;
+  /** Снять идущую задачу — только staff; без него кнопок нет. */
+  onKill?: (leaseId: string) => void;
 }) {
   const used = device.sam2_reserve_mb + device.held_mb;
   const pct = (mb: number) => `${(mb / device.total_mb) * 100}%`;
@@ -101,6 +104,11 @@ function Card({
           <span key={h.id}>
             <u style={{ background: COLOUR[h.kind] ?? "var(--dim)" }} />
             {h.title ?? KIND[h.kind] ?? h.kind} <b>{gb(h.granted_mb)}</b>
+            {onKill && (
+              <button type="button" className="mag-ghost mag-ghost-inline" onClick={() => onKill(h.id)}>
+                Снять
+              </button>
+            )}
           </span>
         ))}
         <span>
@@ -224,6 +232,10 @@ export default function HardwarePage() {
         <Card
           key={`${d.id}-${rev}`}
           device={d}
+          onKill={state.staff ? async (id) => {
+            await api.killLease(id).catch((e) => setActionError((e as Error).message));
+            refresh();
+          } : undefined}
           onLimit={async (data) => {
             try {
               await api.setLimits(d.id, data);
