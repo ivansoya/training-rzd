@@ -127,6 +127,8 @@ def claim_run(db):
         return None
     run.status = "preparing"
     run.worker_id = me()
+    # Первый пульс: иначе ран, долго ждавший в очереди, сразу выглядит сиротой.
+    run.lease_until = utcnow()
     db.commit()
     return run
 
