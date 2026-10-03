@@ -19,7 +19,9 @@ from common import config, jobs, live, tags
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
+    AgentRun,
     Annotation,
+    DataprepJob,
     Dataset,
     Image,
     ImageTag,
@@ -1071,6 +1073,21 @@ def delete_dataset(code, dataset_id):
                 "error": f"Датасет держат незакрытые таски: {names}. Закройте их.",
                 "code": "dataset_held",
                 **usage,
+            }), 409
+        # Сборка набора и агент читают файлы кадров: стирать их под работающим нельзя.
+        busy = []
+        if db.execute(select(func.count()).select_from(DataprepJob).where(
+                DataprepJob.project_id == project.id,
+                DataprepJob.status.in_(("queued", "running")))).scalar_one():
+            busy.append("идёт подготовка данных")
+        if db.execute(select(func.count()).select_from(AgentRun).where(
+                AgentRun.project_id == project.id,
+                AgentRun.status.in_(("queued", "waiting_gpu", "running")))).scalar_one():
+            busy.append("работает агент разметки")
+        if busy:
+            return jsonify({
+                "error": f"Сейчас {', '.join(busy)}. Дождитесь окончания и удалите датасет.",
+                "code": "project_busy",
             }), 409
         rows = db.execute(
             select(Image.id, Image.task_id).where(Image.dataset_id == dataset.id)
