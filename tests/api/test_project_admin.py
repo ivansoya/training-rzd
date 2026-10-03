@@ -215,3 +215,17 @@ def test_редактор_не_удаляет_чужое_обучение(api, d
     assert editor.delete(url).status_code == 403
     assert editor.post(f"{url}/stop").status_code == 403
     assert api.delete(url).status_code == 200
+
+
+def test_таги_кадра_правит_исполнитель_а_не_любой_редактор(api, db, project, task):
+    buf = io.BytesIO()
+    PilImage.new("RGB", (64, 64)).save(buf, "JPEG")
+    buf.seek(0)
+    api.post(f"{BASE_URL}/api/tasks/{task['id']}/images",
+             files={"files": ("t.jpg", buf, "image/jpeg")})
+    image_id = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"][0]["id"]
+    editor = person(db)
+    join(api, editor, project["code"], "editor")
+    url = f"{BASE_URL}/api/images/{image_id}/tags"
+    assert editor.put(url, json={"tags": []}).status_code == 403
+    assert api.put(url, json={"tags": []}).status_code == 200

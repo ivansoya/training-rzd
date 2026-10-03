@@ -1529,11 +1529,11 @@ def set_image_tags(image_id):
             return jsonify({"error": "Кадр не найден в таске."}), 404
         project = db.get(Project, image.project_id)
         role = role_in(db, user, project)
-        if not has_role(role, "editor"):
+        # Тот же круг, что у разметки и статуса кадра: исполнитель или админ.
+        # Закрытие таски тагам не помеха — это паспорт кадра, а не работа над ним.
+        if not _may_work(db.get(Task, image.task_id), user, role):
             return jsonify({"error": "Недостаточно прав."}), 403
-        want = tags.valid_ids(db, project.id, (
-            request.get_json(silent=True) or {}
-        ).get("tags"))
+        want = tags.valid_ids(db, project.id, json_body().get("tags"))
         tags.set_for(db, "image", image.id, want)
         db.commit()
         return jsonify({"tags": [str(t) for t in want]})
