@@ -876,3 +876,10 @@ button.t-feed-x:hover { color: var(--danger); }
   .t-run > * { min-width: 0; }
   .t-run-head h2, .t-run-sub { overflow-wrap: anywhere; }
 }
+
+/* Подсказка над строками сборки: откуда берутся графы. */
+.t-feed-hint {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  color: var(--dim);
+}

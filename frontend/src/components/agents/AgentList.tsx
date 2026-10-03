@@ -105,7 +105,8 @@ export default function AgentList() {
       ) : agents?.length === 0 ? (
         <div className="mag-empty-big">
           <b>Агентов пока нет.</b>
-          <p>Кадр, сеть со своими весами и выход.</p>
+          <p>Кадр, сеть со своими весами и выход. Веса берутся из прогонов
+            обучения проекта — сперва обучите модель во вкладке «Обучение».</p>
           <button className="mag-btn" type="button" disabled={making} onClick={create}>
             Собрать первого агента
           </button>

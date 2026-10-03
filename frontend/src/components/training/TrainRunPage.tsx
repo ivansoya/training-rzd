@@ -184,6 +184,13 @@ export default function TrainRunPage() {
                 Скачать веса
               </a>
             )}
+            {/* Следующий шаг цепочки: веса этого прогона выбирают в редакторе агента. */}
+            {run.has_weights && (
+              <Link className="mag-ghost mag-ghost-inline" to="/agents"
+                title="Веса прогона выбираются в узле «Сеть» редактора агента">
+                Сделать агента →
+              </Link>
+            )}
             {run.can_manage !== false && !busy && code && runId && (
               <button
                 type="button"

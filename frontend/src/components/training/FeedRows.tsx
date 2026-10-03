@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import type { GraphSummary } from "../../api/aug";
 import type { FeedBinding, FeedPreview, FeedRow } from "../../api/trainsets";
 import type { Tag } from "../../api/tags";
@@ -89,6 +90,13 @@ export default function FeedRows({
 
   return (
     <div className="t-feeds">
+      {/* Без графов выпадашка пуста, и откуда они берутся, не видно. */}
+      {!graphs.some((g) => g.version_id) && (
+        <p className="t-feed-hint">
+          Графов аугментаций пока нет — кадры пойдут как есть.{" "}
+          <Link to="/augment">Собрать граф</Link>
+        </p>
+      )}
       {mine.map((row, index) => {
         const sources = sourcesOf(row.graph_version_id);
         const many = row.bindings.length > 1;

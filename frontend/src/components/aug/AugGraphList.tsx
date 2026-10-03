@@ -123,7 +123,8 @@ export default function AugGraphList() {
         ) : (
           <div className="mag-empty-big">
             <b>Графов пока нет.</b>
-            <p>Источник, пара аугментаций и выход.</p>
+            <p>Источник, пара аугментаций и выход. Готовый граф подключают к набору
+              во вкладке проекта «Обучение».</p>
             <button className="mag-btn" type="button" disabled={making}
               onClick={create}>
               Собрать первый граф
