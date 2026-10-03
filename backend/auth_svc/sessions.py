@@ -1,4 +1,5 @@
 """Cookie-session helpers shared by the auth and core blueprints."""
+import os
 from datetime import datetime, timedelta, timezone
 
 from flask import request
@@ -10,6 +11,8 @@ from common.models import AuthSession, User, utcnow
 # Younger than this = "online"; last_seen writes are throttled to once a minute.
 ONLINE_WINDOW = timedelta(minutes=2)
 LAST_SEEN_THROTTLE = timedelta(seconds=60)
+# За TLS-терминатором — COOKIE_SECURE=1: кука не уйдёт по голому http.
+COOKIE_SECURE = os.environ.get("COOKIE_SECURE", "") == "1"
 
 
 def set_cookie(resp, token: str):
@@ -19,6 +22,7 @@ def set_cookie(resp, token: str):
         max_age=int(SESSION_TTL.total_seconds()),
         httponly=True,
         samesite="Lax",
+        secure=COOKIE_SECURE,
         path="/",
     )
 

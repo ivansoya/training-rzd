@@ -56,6 +56,8 @@ services:
       - MAIL_FROM=Магистраль ML <no-reply@magistral.local>
       # Куда ведут ссылки подтверждения: стенд на 8080; для Vite — APP_BASE_URL=http://localhost:5173 в .env.
       - APP_BASE_URL=${APP_BASE_URL:-http://localhost:8080}
+      # 1 — за HTTPS: кука сессии с флагом Secure.
+      - COOKIE_SECURE=${COOKIE_SECURE:-0}
     depends_on:
       db:
         condition: service_healthy
@@ -278,7 +280,8 @@ services:
       - training
       - autolabel
     ports:
-      - "8080:80"
+      # Только с этой машины; открыть в сеть — APP_BIND=0.0.0.0 (и TLS перед ним).
+      - "${APP_BIND:-127.0.0.1}:8080:80"
 
   # Прогон тестов и отчёт на http://localhost:8090. Только для разработки:
   #   docker compose -f docker-compose.mac.yml --profile dev up -d tests

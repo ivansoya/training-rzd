@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from auth_svc import mailer
 from auth_svc.security import hash_password, hash_token, new_session_token, verify_password
 from auth_svc.security import SESSION_COOKIE
-from auth_svc.sessions import current_session, set_cookie, start_session
+from auth_svc.sessions import COOKIE_SECURE, current_session, set_cookie, start_session
 from common.db import SessionLocal
 from common.models import (
     AuthSession,
@@ -203,7 +203,8 @@ def logout():
             db.delete(sess)
             db.commit()
     resp = make_response(jsonify({"ok": True}))
-    resp.delete_cookie(SESSION_COOKIE, path="/")
+    resp.delete_cookie(SESSION_COOKIE, path="/", secure=COOKIE_SECURE, httponly=True,
+                       samesite="Lax")
     return resp
 
 
