@@ -211,11 +211,13 @@ def classes(doc):
     return [{"name": n, "sources": s} for n, s in found.items()]
 
 
-def check(doc, weights=None, sam3=None, examples=None):
+def check(doc, weights=None, sam3=None, examples=None, clamp=False):
     """Проверить форму. `weights` — {id: число классов в весах} у владельца;
     без него файлы весов не сверяются (черновик, тесты). `sam3` — лежат ли
     веса SAM 3 на томе; None — не сверять. `examples` — {id набора: готов ли}
-    у владельца; None — не сверять.
+    у владельца; None — не сверять. `clamp` — числа вне `LIMITS` не отвергать,
+    а зажимать в пределы (правит `doc` на месте): так запускаются версии,
+    сохранённые до появления пределов.
 
     Возвращает узлы в порядке прогона.
     """
@@ -237,7 +239,7 @@ def check(doc, weights=None, sam3=None, examples=None):
             raise AgentGraphError(f"{title(node)}: неизвестный тип {node.get('type')!r}.")
         # Числа — раньше проводов: «Входов 9» иначе всплыло бы как «вход i2
         # ни к чему не подключён» — правдой, но не про то.
-        _check_numbers(node)
+        _check_numbers(node, clamp)
         by_id[node["id"]] = node
 
     for kind, word in (("frame", "«Кадра»"), ("output", "«Выхода»")):
@@ -299,8 +301,9 @@ def _decimal(v):
     return f"{v:g}".replace(".", ",")
 
 
-def _check_numbers(node):
-    """Числа узла — в пределах `LIMITS`. Пусто — умолчание, это не ошибка."""
+def _check_numbers(node, clamp=False):
+    """Числа узла — в пределах `LIMITS`. Пусто — умолчание, это не ошибка.
+    С `clamp` неверное зажимается в пределы, а нечисло сбрасывается в умолчание."""
     params = node.get("params") or {}
     for key, (label, lo, hi, whole) in LIMITS.get(node["type"], {}).items():
         raw = params.get(key)
@@ -308,6 +311,13 @@ def _check_numbers(node):
             continue
         value = None if isinstance(raw, bool) else num(raw)
         if value is None or not lo <= value <= hi or (whole and value != int(value)):
+            if clamp:
+                if value is None:
+                    params.pop(key, None)
+                else:
+                    value = min(max(value, lo), hi)
+                    params[key] = int(round(value)) if whole else value
+                continue
             kind = "целое" if whole else "число"
             now = _decimal(value) if value is not None else repr(raw)
             raise AgentGraphError(f"{title(node)}: «{label}» — {kind} от {_decimal(lo)} до {_decimal(hi)}, "
@@ -315,11 +325,16 @@ def _check_numbers(node):
     if node["type"] == "filter":
         lo, hi = num(params.get("min_side")), num(params.get("max_side"))
         if lo is not None and hi is not None and lo > hi:
-            raise AgentGraphError(f"{title(node)}: «Сторона от» больше, чем «Сторона до».")
+            if not clamp:
+                raise AgentGraphError(f"{title(node)}: «Сторона от» больше, чем «Сторона до».")
+            params["max_side"] = params["min_side"]
         for row in params.get("classes") or []:
             conf = num(row.get("conf"), 0) if isinstance(row, dict) else None
             if conf is None or not 0 <= conf <= 1:
-                raise AgentGraphError(f"{title(node)}: порог класса — число от 0 до 1.")
+                if not clamp:
+                    raise AgentGraphError(f"{title(node)}: порог класса — число от 0 до 1.")
+                if isinstance(row, dict):
+                    row["conf"] = min(max(conf or 0, 0), 1)
 
 
 def _check_text(node, sam3, examples):

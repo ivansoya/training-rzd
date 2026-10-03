@@ -483,3 +483,23 @@ def test_подпись_узла_в_ошибке_различает_две_се�
 def test_ноль_не_подменяется_умолчанием():
     # уверенность 0 — «всё подряд»; прогон берёт её через num, а не через `or`
     assert ag.num(0, 0.25) == 0 and ag.num(None, 0.25) == 0.25 and ag.num("", 0.25) == 0.25
+
+
+def test_прогон_зажимает_старые_числа_а_не_отвергает():
+    # версия, сохранённая до пределов, должна запускаться
+    doc = _doc()
+    doc["nodes"][1]["params"].update(conf=7, imgsz=0, overlap="много")
+    ag.check(doc, clamp=True)
+    p = doc["nodes"][1]["params"]
+    assert p["conf"] == 1 and p["imgsz"] == 320 and "overlap" not in p
+
+
+def test_прогон_зажимает_фильтр():
+    doc = _doc()
+    doc["nodes"].insert(5, {"id": "flt", "type": "filter", "params": {
+        "min_side": 500, "max_side": 10, "classes": [{"cls": "вагон", "on": True, "conf": 5}]}})
+    doc["edges"][-1] = {"from": "n", "out": "out", "to": "flt", "in": "in"}
+    doc["edges"].append({"from": "flt", "out": "out", "to": "o", "in": "in"})
+    ag.check(doc, clamp=True)
+    p = doc["nodes"][5]["params"]
+    assert p["max_side"] == 500 and p["classes"][0]["conf"] == 1
