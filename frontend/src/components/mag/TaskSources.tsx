@@ -99,7 +99,7 @@ export interface SourceBlock {
   /** Число рядом с заголовком. Отдельным полем, а не внутри строки: между
    *  ними стоит разделитель, нарисованный CSS. */
   count?: number;
-  kind: "files" | "cut";
+  kind: "files" | "cut" | "annotate";
   /** Все нарезаемые ролики таски — блок у них общий. Резать каждый приходится
    *  отдельно (у ролика свой план), а размечают нарезанное со всех разом:
    *  кадр от кадра ничем не отличается, и делить их по происхождению значило
@@ -117,10 +117,8 @@ export interface SourceBlock {
 /** Источники вкладки «Кадры» по времени появления: ранний сверху — так список
  *  читается как история работы, а не как случайный набор.
  *
- * Ролики режима разметки сюда не попадают: у них своя вкладка со своим
- * редактором, и деление у нас по роду работы, а не по тому, откуда взялась
- * картинка. Кадры, которые остаются после закрытия их разметки, видно в
- * «Прогрессе» — материализация ставит им состояние «размечено».
+ * Размечаемый ролик появляется здесь блоком, когда его разметку закрыли:
+ * кадры с рамками агента приходят «на проверку», и принять их надо пачкой.
  */
 export function buildSources(task: TaskDetail): SourceBlock[] {
   const out: SourceBlock[] = [];
@@ -165,6 +163,20 @@ export function buildSources(task: TaskDetail): SourceBlock[] {
         (counts.new || 0) + (counts.annotated || 0) + (counts.empty || 0) +
         (counts.skipped || 0),
       bornAt: Number.isFinite(bornAt) ? bornAt : 0,
+    });
+  }
+
+  for (const video of task.videos.filter((v) => v.mode !== "cut")) {
+    const own: SourceCounts = (task.by_source || {})[video.id] || {};
+    const total = (own.new || 0) + (own.annotated || 0) + (own.empty || 0) + (own.skipped || 0);
+    if (!total && !own.deleted) continue;
+    out.push({
+      key: video.id,
+      title: `Кадры из разметки «${video.file_name}»`,
+      kind: "annotate",
+      counts: own,
+      total,
+      bornAt: at(video.created_at),
     });
   }
   return out.sort((a, b) => a.bornAt - b.bornAt);
@@ -258,7 +270,9 @@ export function SourceCard({
           <VideoStrip className="g-block-poster" taskId={taskId} videoId={videos[0].id} />
         )}
         <h4>{block.title}{block.count !== undefined && <><Sep />{block.count}</>}</h4>
-        <span className="g-chip">{videos.length ? "нарезка" : "изображения"}</span>
+        <span className="g-chip">
+          {videos.length ? "нарезка" : block.kind === "annotate" ? "разметка ролика" : "изображения"}
+        </span>
         <span className="g-sp" />
         {block.counts.first_at && (
           <span className="g-when">
@@ -275,7 +289,7 @@ export function SourceCard({
         )}
         {editable && total > 0 && (
           <button className="mag-btn mag-btn-inline" type="button" onClick={onAnnotate}>
-            Размечать
+            {block.kind === "annotate" ? "Проверить" : "Размечать"}
           </button>
         )}
       </div>
