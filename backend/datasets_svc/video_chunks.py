@@ -121,6 +121,20 @@ class VideoError(Exception):
     pass
 
 
+class UnrecoverableVideoError(VideoError):
+    """Дело в самом файле: повтор даст то же самое. Без попыток и без
+    остальных ступеней — раньше битый ролик занимал медленный воркер на
+    девять заходов (3 попытки × 3 ступени)."""
+
+
+def _is_bad_data(exc):
+    try:
+        import av.error
+        return isinstance(exc, av.error.InvalidDataError)
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _av():
     try:
         import av
@@ -578,7 +592,7 @@ def make_variant(video_path, index, quality, dest_path, progress=None):
                 if progress and expected % CHUNK_FRAMES == 0:
                     progress(expected, total)
         if expected != total:
-            raise VideoError(
+            raise UnrecoverableVideoError(
                 f"В копии {quality} оказалось {expected} кадров вместо {total}."
             )
         written = writer.finish()
@@ -590,7 +604,8 @@ def make_variant(video_path, index, quality, dest_path, progress=None):
     except Exception as exc:  # noqa: BLE001
         if writer is not None:
             writer.abort()
-        raise VideoError(f"Не удалось сделать копию {quality}.") from exc
+        kind = UnrecoverableVideoError if _is_bad_data(exc) else VideoError
+        raise kind(f"Не удалось сделать копию {quality}.") from exc
 
     if progress:
         progress(total, total)

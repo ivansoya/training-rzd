@@ -20,7 +20,7 @@ API, поэтому пятеро разметчиков, открывших хо
 import os
 from datetime import timedelta
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
 from common.models import VideoAsset, VideoJob, utcnow
@@ -164,6 +164,19 @@ def finish(db, job, error=None):
     job.error = str(error)[:2000] if error else None
     job.finished_at = utcnow()
     job.lease_until = None
+    db.commit()
+
+
+def drop_siblings(db, job, error):
+    """Остальные копии и нарезки того же ролика в очереди — туда же: файл тот же."""
+    db.execute(
+        update(VideoJob)
+        .where(
+            VideoJob.video_id == job.video_id, VideoJob.id != job.id,
+            VideoJob.kind.in_((KIND_VARIANT, KIND_CHUNKSET)), VideoJob.status == "queued",
+        )
+        .values(status="error", error=str(error)[:2000], finished_at=utcnow())
+    )
     db.commit()
 
 

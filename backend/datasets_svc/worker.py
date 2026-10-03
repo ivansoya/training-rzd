@@ -23,6 +23,8 @@ import threading
 import time
 
 from common import config, db as dblib
+from sqlalchemy import select
+
 from common.db import SessionLocal
 from common.models import TaskVideo
 from datasets_svc import video as videolib
@@ -65,12 +67,15 @@ class _Beat:
         if now - self.at < BEAT_EVERY:
             return
         self.at = now
+        job_id = self.job.id
         try:
             queue.beat(self.db, self.job, processed, total or self.total)
         except Exception:  # noqa: BLE001
             # Отметка — удобство, а не условие работы. Не смогли записать —
-            # работа всё равно должна доделаться.
-            log.warning("не удалось отметить ход задачи %s", self.job.id)
+            # работа всё равно должна доделаться; сессию откатываем, иначе
+            # следующий же запрос упал бы PendingRollbackError.
+            self.db.rollback()
+            log.warning("не удалось отметить ход задачи %s", job_id)
 
 
 # --------------------------------------------------------------------------- #
@@ -376,9 +381,28 @@ def run_job(db, job):
     if not os.path.exists(path):
         queue.finish(db, job, "Файл видео не найден.")
         return
+    video_id = video.id
     result = HANDLERS[job.kind](db, job, video, path)
+    # Ролик могли удалить, пока шла работа: то, что она успела написать, — сирота.
+    if db.execute(select(TaskVideo.id).where(TaskVideo.id == video_id)).first() is None:
+        _drop_leftovers(os.path.dirname(path), video_id)
+        return
     queue.finish(db, job)
     log.info("готово: %s %s %s", job.kind, job.quality or "", result)
+
+
+def _drop_leftovers(folder, video_id):
+    import glob
+    import shutil
+
+    for leftover in glob.glob(os.path.join(folder, f"{video_id}_*")):
+        if os.path.isdir(leftover):
+            shutil.rmtree(leftover, ignore_errors=True)
+        else:
+            try:
+                os.remove(leftover)
+            except OSError:
+                pass
 
 
 def _public(exc):
@@ -422,17 +446,26 @@ def loop(kinds, name):
                 continue
             log.info("%s взял %s %s %s", name, job.kind, job.quality or "",
                      job.chunk_no if job.chunk_no >= 0 else "")
+            job_id = job.id
             try:
                 run_job(db, job)
             except Exception as exc:  # noqa: BLE001
+                # Сессия могла остаться в незавершённой транзакции: откат —
+                # первым, до логирования, иначе падал уже сам обработчик.
+                db.rollback()
                 # Ни одна работа не должна валить воркер: он на то и отдельный,
                 # чтобы битый ролик стоил битого ролика, а не всей очереди.
-                log.exception("задача %s упала", job.id)
-                # Сессия могла остаться в незавершённой транзакции — тогда
-                # отметка об отказе не записалась бы, и задача висела бы
-                # «в работе» до истечения аренды.
-                db.rollback()
-                requeued = queue.release(db, job, _public(exc))
+                log.exception("задача %s упала", job_id)
+                job = db.get(queue.VideoJob, job_id)
+                if job is None:
+                    # Задачу унесло вместе с удалённым роликом — отмечать нечего.
+                    continue
+                if isinstance(exc, chunklib.UnrecoverableVideoError):
+                    queue.finish(db, job, _public(exc))
+                    queue.drop_siblings(db, job, _public(exc))
+                    requeued = False
+                else:
+                    requeued = queue.release(db, job, _public(exc))
                 if not requeued:
                     _mark_failed(db, job, _public(exc))
                 log.warning(
