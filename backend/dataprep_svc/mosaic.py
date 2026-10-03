@@ -12,6 +12,8 @@
 Считающая часть (``cells``, ``fit_into``) не трогает картинок и закрыта
 числами в ``tests/unit/test_mosaic.py``.
 """
+import random
+
 from dataprep_svc import engine
 from dataprep_svc.graph import schema
 
@@ -89,3 +91,20 @@ def compose(node, parts, index):
         prev=first,
         step={"node": node["id"], "cells": len(parts)},
     )
+
+
+def spread(lists, seed):
+    """Списки источников такта, каждый со своим сдвигом по зерну набора.
+
+    При одинаковых привязках списки совпадали, и «Слияние сеткой» клеило кадр
+    сам с собой. Сдвиги ненулевые и разные — в одной сетке один кадр не
+    встретится дважды; от зерна — пересборка тем же зерном даёт то же.
+    """
+    lists = [list(x) for x in lists]
+    n = min((len(x) for x in lists), default=0)
+    if n < 2:
+        return lists
+    rng = random.Random(f"{seed}:spread")
+    shifts = [0] + rng.sample(range(1, n), min(len(lists) - 1, n - 1))
+    shifts += [0] * (len(lists) - len(shifts))
+    return [x[s:] + x[:s] for x, s in zip(lists, shifts)]

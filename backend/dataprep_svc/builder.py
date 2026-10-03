@@ -32,7 +32,7 @@ from common.models import (
 )
 from common import prep_queue as queue
 from common.storage import one_line
-from dataprep_svc import albu, engine, feeds, samples
+from dataprep_svc import albu, engine, feeds, mosaic, samples
 
 # Как часто отмечаемся в очереди. Чаще — лишние записи на том и в базу; реже —
 # полоса прогресса начинает выглядеть зависшей.
@@ -304,7 +304,7 @@ def build(db, job, *, on_beat=None):
                 # оказались бы заполнены вместе. Строка одна, значит и
                 # половина одна: train и val в одну сетку не попадают.
                 compiled = compiled_of[group[0]["graph_version_id"]]
-                for tick in zip_longest(*(u["images"] for u in group)):
+                for tick in zip_longest(*mosaic.spread([u["images"] for u in group], tset.seed)):
                     beat()
                     feed, owner = {}, {}
                     for unit, image in zip(group, tick):

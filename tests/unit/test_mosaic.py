@@ -142,3 +142,10 @@ def test_тактами_идут_только_графы_с_сеткой():
     work = feeds.work(units, {"v1": with_mosaic, "v2": plain})
     assert [len(g) for g in work] == [2, 1, 1, 1]
     assert {g[0]["part"] for g in work[:2]} == {"train", "val"}
+
+
+def test_одинаковые_привязки_не_клеят_кадр_сам_с_собой():
+    frames = list(range(10))
+    a, b = mosaic.spread([frames, frames], seed=7)
+    assert all(x != y for x, y in zip(a, b))
+    assert mosaic.spread([frames, frames], seed=7) == [a, b]
