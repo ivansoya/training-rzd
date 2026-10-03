@@ -11,6 +11,9 @@ import uuid
 
 _DIR = None
 _lock = threading.Lock()
+# Подметаем не только при старте: сервис живёт неделями, а джобы копились.
+SWEEP_EVERY = 600
+_swept = [0.0]
 
 
 def configure(directory):
@@ -35,6 +38,8 @@ def _write(job_id, data):
 def create(job_type, total=0, message="", *, project_id=None, owner=None):
     """`project_id` и `owner` решают, кому джобу показывать (`/api/jobs/<id>`)."""
     job_id = uuid.uuid4().hex[:12]
+    if time.time() - _swept[0] > SWEEP_EVERY:
+        _cleanup_old()
     _write(job_id, {
         "id": job_id,
         "type": job_type,
@@ -74,17 +79,23 @@ def get(job_id):
 
 
 def _cleanup_old(max_age=3600):
-    """Drop job files older than `max_age` seconds."""
+    """Drop finished job files older than `max_age` seconds."""
     now = time.time()
+    _swept[0] = now
     try:
         for f in os.listdir(_DIR):
             if not f.endswith(".json"):
                 continue
             full = os.path.join(_DIR, f)
             try:
-                if now - os.path.getmtime(full) > max_age:
-                    os.remove(full)
-            except OSError:
+                if now - os.path.getmtime(full) <= max_age:
+                    continue
+                # Идущую джобу не трогаем, даже если она давно молчит.
+                with open(full, encoding="utf-8") as fh:
+                    if json.load(fh).get("status") == "running":
+                        continue
+                os.remove(full)
+            except (OSError, ValueError):
                 pass
     except OSError:
         pass

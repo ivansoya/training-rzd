@@ -17,6 +17,7 @@
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -26,6 +27,8 @@ from flask import Flask, Response, jsonify
 
 ROOT = "/work"
 REPORT_DIR = "/tmp/reports"
+# Том данных смонтирован и сюда (compose): уборка стирает папки тестовых проектов.
+DATA_DIR = os.environ.get("DATA_DIR", "/app/data")
 # Сколько строк вывода держим. Хвоста хватает, чтобы понять причину падения,
 # а полный лог упавшего Playwright — это мегабайты в каждом ответе /state.
 KEEP_LINES = 600
@@ -173,7 +176,10 @@ def _wipe_test_data():
         with psycopg2.connect(dsn) as conn:
             conn.autocommit = True
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM projects WHERE name LIKE 'test-%%'")
+                cur.execute("DELETE FROM projects WHERE name LIKE 'test-%%' RETURNING id")
+                # Строки уходят каскадом, папки на томе — нет: стираем их следом.
+                for (pid,) in cur.fetchall():
+                    shutil.rmtree(os.path.join(DATA_DIR, "projects", str(pid)), ignore_errors=True)
                 cur.execute("DELETE FROM users WHERE login LIKE 'test-%%'")
     except Exception as exc:  # noqa: BLE001
         print(f"Уборка после сквозных не удалась: {exc}")
