@@ -7,6 +7,7 @@ import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
 import Sep from "../Sep";
 import { count, ru } from "../ru";
+import { useAutosave } from "./useAutosave";
 
 const GREY = { name: "", color: "#9aa4ae" };
 
@@ -64,11 +65,10 @@ export default function ImageViewer({
   const [menu, setMenu] = useState<{ i: number; x: number; y: number } | null>(null);
   const [scale, setScale] = useState(1);
   const [filmH, setFilmH] = useState(164);
-  const [saved, setSaved] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  // Счётчик «перечитать кадр»: отброшенная правка возвращает записанную разметку.
+  const [reloadKey, setReloadKey] = useState(0);
 
   const canvas = useRef<CanvasHandle>(null);
-  const dirty = useRef(false);
 
   const byIndex = useMemo(() => {
     const m = new Map<number, LabelClass>();
@@ -101,47 +101,54 @@ export default function ImageViewer({
       }))
     );
     setSelected(null);
-    dirty.current = false;
-    setSaved(true);
-  }, [image?.id]);
+    autosave.settle(image?.rev);
+  }, [image?.id, reloadKey]);
 
   useEffect(() => {
     if (active === null && classes.length) setActive(classes[0].class_index);
   }, [classes, active]);
 
-  const flush = useCallback(async () => {
-    if (!dirty.current || !image) return;
-    dirty.current = false;
-    try {
-      const res = await saveAnnotations(image.id, boxes);
-      setSaved(true);
-      onSaved?.({
-        ...image,
-        annotations: res.saved,
-        boxes: boxes.map((b, i) => ({
-          ...b,
-          id: b.id ?? `new-${i}`,
-          name: labelOf(b.class_index).name,
-          color: labelOf(b.class_index).color,
-          source: "human",
-        })),
-      });
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [boxes, image, labelOf, onSaved]);
+  // Запись — общим useAutosave, как в редакторе таски. Раньше флаг снимался
+  // до ответа и после отказа не возвращался: правка пропадала молча.
+  const live = useRef({ image, labelOf, onSaved, boxes });
+  live.current = { image, labelOf, onSaved, boxes };
+  const autosave = useAutosave<DatasetImage["boxes"][number]>(async (rev) => {
+    const { image: img, labelOf: lo, onSaved: saved, boxes: snap } = live.current;
+    if (!img) return rev;
+    const res = await saveAnnotations(img.id, snap, rev);
+    saved?.({
+      ...img,
+      annotations: res.saved,
+      rev: res.rev,
+      boxes: snap.map((b, i) => ({
+        ...b,
+        id: b.id ?? `new-${i}`,
+        name: lo(b.class_index).name,
+        color: lo(b.class_index).color,
+        source: "human",
+      })),
+    });
+    return res.rev;
+  });
+  const { flush, touch, state: saveState, error: saveErr } = autosave;
 
-  useEffect(() => {
-    if (!dirty.current) return;
-    setSaved(false);
-    const h = setTimeout(flush, 600);
-    return () => clearTimeout(h);
-  }, [boxes, flush]);
+  // Отказ или чужая правка: показать то, что записано. При «stale» свежая
+  // разметка пришла в ответе сервера.
+  const fresh = autosave.stale;
+  const settle = autosave.settle;
+  const discard = useCallback(() => {
+    const img = live.current.image;
+    if (img && fresh) {
+      live.current.onSaved?.({ ...img, boxes: fresh.boxes, rev: fresh.rev, annotations: fresh.boxes.length });
+    }
+    settle(fresh?.rev ?? img?.rev);
+    setReloadKey((k) => k + 1);
+  }, [fresh, settle]);
 
   const edit = useCallback((next: CanvasShape[]) => {
     setBoxes(next);
-    dirty.current = true;
-  }, []);
+    touch();
+  }, [touch]);
 
   // Класс при выделенном боксе меняет его: правка чужой разметки в просмотре —
   // чаще всего именно «класс не тот».
@@ -152,9 +159,9 @@ export default function ImageViewer({
       setBoxes((prev) =>
         prev.map((b, i) => (i === target ? { ...b, class_index: ci } : b))
       );
-      dirty.current = true;
+      touch();
     },
-    [selected, editing]
+    [selected, editing, touch]
   );
 
   // В режиме страниц загружена одна страница, но листает человек всю выборку:
@@ -169,11 +176,12 @@ export default function ImageViewer({
       const next = index + delta;
       if (next < 0 || next >= images.length) {
         if (!(delta < 0 ? canPrev : canNext) || !onEdge) return;
-        await flush();
+        // С незаписанной правкой с кадра не уходим: на экране видно почему.
+        if (!(await flush())) return;
         onEdge(delta);
         return;
       }
-      await flush();
+      if (!(await flush())) return;
       onIndex(next);
       // У края загруженного окна просим следующую порцию заранее.
       if (onNeedMore && next >= images.length - 3) onNeedMore();
@@ -192,7 +200,7 @@ export default function ImageViewer({
       switch (e.code) {
         case "Escape":
           if (editing && tool === "box") setTool("select");
-          else flush().then(onClose);
+          else flush().then((ok) => ok && onClose());
           break;
         case "ArrowRight": go(1); break;
         case "ArrowLeft": go(-1); break;
@@ -258,12 +266,20 @@ export default function ImageViewer({
           {ru(base + index + 1)} из {ru(total)}
         </span>
         <span className="mag-v-sp" />
-        {error && <span className="mag-ed-err">{error}</span>}
-        {editing && (
-          <span className={saved ? "mag-ed-saved" : "mag-ed-saving"}>
-            {saved ? "сохранено" : "сохраняю…"}
+        {editing && (saveState === "stale" || saveState === "refused" ? (
+          <span className="mag-ed-unsaved">
+            {saveState === "stale" ? "кадр изменил другой человек" : `не сохранено: ${saveErr}`}
+            <button type="button" className="mag-ed-discard" onClick={discard}>
+              {saveState === "stale" ? "Показать его версию" : "Отбросить правку"}
+            </button>
           </span>
-        )}
+        ) : saveState === "failed" ? (
+          <span className="mag-ed-unsaved" title={saveErr || undefined}>не сохранено — повторяю</span>
+        ) : (
+          <span className={saveState === "saved" ? "mag-ed-saved" : "mag-ed-saving"}>
+            {saveState === "saved" ? "сохранено" : "сохраняю…"}
+          </span>
+        ))}
 
         {editing ? (
           <span className="mag-v-tools">
@@ -318,7 +334,7 @@ export default function ImageViewer({
           Скачать
         </a>
         <button className="mag-v-btn" type="button"
-          onClick={() => flush().then(onClose)} aria-label="Закрыть">
+          onClick={() => flush().then((ok) => ok && onClose())} aria-label="Закрыть">
           ✕
         </button>
       </div>
@@ -421,7 +437,7 @@ export default function ImageViewer({
           title: `${im.file_name} — ${count(im.annotations, "объект", "объекта", "объектов")}`,
         }))}
         index={index}
-        onPick={(i) => { flush(); onIndex(i); }}
+        onPick={(i) => { void flush().then((ok) => ok && onIndex(i)); }}
         storageKey="mag-film-h-view"
         onHeight={setFilmH}
       />

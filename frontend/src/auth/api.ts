@@ -120,13 +120,16 @@ export class ApiError extends Error {
   email?: string;
   fields?: Record<string, string>;
   status?: number;
-  constructor(message: string, code?: string, fields?: Record<string, string>, email?: string, status?: number) {
+  /** Тело ответа целиком: 409 «stale» несёт в нём свежую разметку кадра. */
+  data?: unknown;
+  constructor(message: string, code?: string, fields?: Record<string, string>, email?: string, status?: number, data?: unknown) {
     super(message);
     this.name = "ApiError";
     this.code = code;
     this.fields = fields;
     this.email = email;
     this.status = status;
+    this.data = data;
   }
 }
 
@@ -156,7 +159,7 @@ async function asJson<T>(res: Response): Promise<T> {
     const message =
       err.error || (err.errors && Object.values(err.errors)[0]) || `HTTP ${res.status}`;
     if (res.status === 401) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
-    throw new ApiError(message, err.code, err.errors, err.email, res.status);
+    throw new ApiError(message, err.code, err.errors, err.email, res.status, data);
   }
   return data as T;
 }
@@ -546,6 +549,8 @@ export interface DatasetImage {
   annotations: number;
   /** `id` — номер рамки в базе: сохранение по нему сохраняет автора. */
   boxes: (Box & { id?: string })[];
+  /** Версия разметки: запись с устаревшей получает 409 «stale». */
+  rev?: number;
 }
 
 export interface DatasetStats {
@@ -939,6 +944,8 @@ export interface TaskImage {
   tag_ids: string[];
   annotations: number;
   boxes: TaskBox[];
+  /** Версия разметки: запись с устаревшей получает 409 «stale». */
+  rev?: number;
 }
 
 /** Рамка кадра таски с подписью. `agent` — версия агента: при `source`
@@ -1553,13 +1560,15 @@ export async function saveAnnotations(
     x: number; y: number; w: number; h: number;
     kind?: "bbox" | "polygon";
     parts?: [number, number][][];
-  }[]
-): Promise<{ saved: number; clamped: number; task_status: string }> {
+  }[],
+  /** Версия, которую видел клиент; без неё сервер не сверяет. */
+  rev?: number
+): Promise<{ saved: number; clamped: number; task_status: string; rev: number }> {
   return asJson(
     await fetch(`/api/images/${imageId}/annotations`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ boxes }),
+      body: JSON.stringify({ boxes, rev }),
     })
   );
 }

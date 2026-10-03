@@ -20,6 +20,7 @@ import * as history from "./editHistory";
 import { empty, type History } from "./editHistory";
 import TagPicker from "./TagPicker";
 import { useEscape } from "./useEscape";
+import { useAutosave } from "./useAutosave";
 import type { Tag } from "../../api/tags";
 import { useAutoLabel } from "./useAutoLabel";
 import { useLive } from "../../live/LiveProvider";
@@ -94,11 +95,6 @@ const GREY = { name: "", color: "#9aa4ae" };
 let lastSave: Promise<unknown> = Promise.resolve();
 export function saveSettled(): Promise<void> {
   return lastSave.then(() => undefined, () => undefined);
-}
-
-/** Пауза перед повтором записи после сбоя: 1, 2, 4, 8, дальше 15 с. */
-function retryDelay(attempt: number): number {
-  return Math.min(15_000, 1000 * 2 ** Math.min(Math.max(attempt - 1, 0), 4));
 }
 
 /** Бокс как кольцо из четырёх точек.
@@ -220,14 +216,8 @@ export default function AnnotationEditor({
 
   const [scale, setScale] = useState(1);
   const [filmH, setFilmH] = useState(164);
-  // «failed» — запись не прошла: правка жива только здесь, её повторяют сами
-  // и с кадра без неё не уходят. «refused» — сервер отказал (4xx): повтор не
-  // поможет, человек решает — поправить или отбросить правку.
-  const [saveState, setSaveState] = useState<"saved" | "saving" | "failed" | "refused">("saved");
   // Счётчик «перечитать кадр»: отброшенная правка возвращает разметку с сервера.
   const [reloadKey, setReloadKey] = useState(0);
-  const [saveErr, setSaveErr] = useState<string | null>(null);
-  const [attempt, setAttempt] = useState(0);
   const [grid, setGrid] = useState(true);
   const [help, setHelp] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -236,14 +226,10 @@ export default function AnnotationEditor({
   useEscape(() => setHelp(false), help);
 
   const canvas = useRef<CanvasHandle>(null);
-  const dirty = useRef(false);
   // Разметка «как сейчас» — синхронно, мимо отрисовки: запись, отмена и уход
   // со страницы должны видеть последнюю правку, даже если React её ещё не
   // отрисовал (протяжка шлёт правки чаще, чем кадры экрана).
   const boxesRef = useRef<CanvasShape[]>(boxes);
-  // Очередь записей: вторая ждёт первую, иначе сервер мог бы принять их
-  // в обратном порядке, и старая разметка легла бы поверх новой.
-  const chain = useRef<Promise<boolean>>(Promise.resolve(true));
   const hist = useRef<History<CanvasShape[]>>(empty());
   // Жест мыши: «down» — нажали, «recorded» — снимок до жеста уже в истории.
   // Протяжка шлёт правку на каждое движение, а шаг отмены у неё один.
@@ -283,9 +269,7 @@ export default function AnnotationEditor({
     setAddTo(null);
     setSelected(null);
     setSelPart(null);
-    dirty.current = false;
-    setSaveState("saved");
-    setSaveErr(null);
+    autosave.settle(image?.rev);
     // Ошибка прошлого кадра к этому не относится.
     setError(null);
   }, [image?.id, reloadKey]);
@@ -330,71 +314,37 @@ export default function AnnotationEditor({
   /** Автосохранение: разметчик не должен помнить про кнопку «сохранить».
    *
    *  Отвечает, записано ли. Сбой не выбрасывает правку: она снова «грязная»,
-   *  на экране «не сохранено», запись повторяется сама с растущей паузой, а
-   *  переход на другой кадр и закрытие ждут успеха. Прежде флаг снимался до
-   *  запроса и после отказа не возвращался — правка тихо пропадала, а при
-   *  переходе на соседний кадр надпись показывала «сохранено». */
+   *  на экране «не сохранено», запись повторяется сама, а переход на другой
+   *  кадр и закрытие ждут успеха. Состояния и очередь — в общем useAutosave. */
+  const autosave = useAutosave<TaskBox>(async (rev) => {
+    const { image: img } = live.current;
+    if (!img) return rev;
+    const snap = boxesRef.current;
+    const res = await saveAnnotations(img.id, snap, rev);
+    const { labelOf: lo, meta: mt, onChanged: changed } = live.current;
+    changed(img.id, {
+      annotations: res.saved,
+      task_status: res.task_status as ImageTaskStatus,
+      rev: res.rev,
+      // Номер рамки — настоящий, если он был: по нему сервер узнаёт
+      // нетронутую рамку агента при следующем сохранении этого кадра.
+      boxes: snap.map((b, i) => ({
+        ...(mt.get(b.id ?? "") ?? { source: "human" }),
+        ...b,
+        id: b.id ?? `new-${i}`,
+        name: lo(b.class_index).name,
+        color: lo(b.class_index).color,
+      })),
+    });
+    return res.rev;
+  });
+  const { dirty, chain, touch, state: saveState, error: saveErr } = autosave;
+  const autoFlush = autosave.flush;
   const flush = useCallback((): Promise<boolean> => {
-    const run = async (): Promise<boolean> => {
-      const { image: img } = live.current;
-      if (!dirty.current || !img) return true;
-      const snap = boxesRef.current;
-      dirty.current = false;
-      setSaveState("saving");
-      try {
-        const res = await saveAnnotations(img.id, snap);
-        const { labelOf: lo, meta: mt, onChanged: changed } = live.current;
-        if (!dirty.current) setSaveState("saved");
-        setSaveErr(null);
-        setAttempt(0);
-        changed(img.id, {
-          annotations: res.saved,
-          task_status: res.task_status as ImageTaskStatus,
-          // Номер рамки — настоящий, если он был: по нему сервер узнаёт
-          // нетронутую рамку агента при следующем сохранении этого кадра.
-          boxes: snap.map((b, i) => ({
-            ...(mt.get(b.id ?? "") ?? { source: "human" }),
-            ...b,
-            id: b.id ?? `new-${i}`,
-            name: lo(b.class_index).name,
-            color: lo(b.class_index).color,
-          })),
-        });
-        return true;
-      } catch (e) {
-        dirty.current = true;
-        setSaveErr((e as Error).message);
-        const status = (e as { status?: number }).status;
-        // Отказ сервера повтором не лечится: бесконечный повтор держал кадр.
-        if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) {
-          setSaveState("refused");
-        } else {
-          setSaveState("failed");
-          setAttempt((n) => n + 1);
-        }
-        return false;
-      }
-    };
-    const p = chain.current.then(run, run);
-    chain.current = p;
+    const p = autoFlush();
     lastSave = p;
     return p;
-  }, []);
-
-  useEffect(() => {
-    if (!dirty.current) return;
-    setSaveState((s) => (s === "failed" ? s : "saving"));
-    const h = setTimeout(() => void flush(), 600);
-    return () => clearTimeout(h);
-  }, [boxes, flush]);
-
-  // Повтор после сбоя — сам, без новой правки: сеть вернулась, и незаписанное
-  // должно дойти, даже если человек больше ничего не трогает.
-  useEffect(() => {
-    if (saveState !== "failed") return;
-    const h = setTimeout(() => void flush(), retryDelay(attempt));
-    return () => clearTimeout(h);
-  }, [saveState, attempt, flush]);
+  }, [autoFlush]);
 
   // Ушли, не дождавшись паузы: «Назад», перезагрузка, закрытие вкладки. При
   // уходе внутри приложения редактор размонтируется, при перезагрузке —
@@ -411,7 +361,7 @@ export default function AnnotationEditor({
         fetch(`/api/images/${img.id}/annotations`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ boxes: boxesRef.current }),
+          body: JSON.stringify({ boxes: boxesRef.current, rev: autosave.rev.current }),
           keepalive,
         });
       const go = () => send(true).catch(() => send(false)).catch(() => undefined);
@@ -435,8 +385,8 @@ export default function AnnotationEditor({
     }
     boxesRef.current = next;
     setBoxes(next);
-    dirty.current = true;
-  }, []);
+    touch();
+  }, [touch]);
 
   // Жест мыши кончился. Пустой жест (клик рамкой без протяжки: рамку
   // добавили и сразу убрали как промах) шага отмены не оставляет.
@@ -466,11 +416,11 @@ export default function AnnotationEditor({
     hist.current = got.h;
     boxesRef.current = got.value;
     setBoxes(got.value);
-    dirty.current = true;
+    touch();
     // Номер выбранного мог указывать на объект, которого в снимке нет.
     setSelected(null);
     setSelPart(null);
-  }, [frozen]);
+  }, [frozen, touch]);
 
   // Выбор класса при выделенном боксе перекрашивает его: чаще всего класс
   // выбирают именно затем, чтобы исправить уже нарисованное.
@@ -497,11 +447,23 @@ export default function AnnotationEditor({
     if (await flush()) onClose();
   }, [flush, onClose]);
 
-  // Отказ сервера: правку не спасти — вернуть кадр к последнему записанному.
+  // Отказ сервера или чужая правка: свою не спасти — показать то, что записано.
+  // При «stale» свежая разметка пришла в ответе, второго запроса не нужно.
+  const fresh = autosave.stale;
+  const settle = autosave.settle;
   const discard = useCallback(() => {
-    dirty.current = false;
+    const img = live.current.image;
+    if (img && fresh) {
+      live.current.onChanged(img.id, {
+        boxes: fresh.boxes,
+        rev: fresh.rev,
+        annotations: fresh.boxes.length,
+        ...(fresh.task_status ? { task_status: fresh.task_status as ImageTaskStatus } : {}),
+      });
+    }
+    settle(fresh?.rev ?? img?.rev);
     setReloadKey((k) => k + 1);
-  }, []);
+  }, [fresh, settle]);
 
   // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет.
   const go = useCallback(
@@ -1038,7 +1000,14 @@ export default function AnnotationEditor({
         {auto.error && !autoPanel && autoOn && (
           <span className="mag-ed-err">{auto.error}</span>
         )}
-        {saveState === "refused" ? (
+        {saveState === "stale" ? (
+          <span className="mag-ed-unsaved">
+            кадр изменил другой человек
+            <button type="button" className="mag-ed-discard" onClick={discard}>
+              Показать его версию
+            </button>
+          </span>
+        ) : saveState === "refused" ? (
           <span className="mag-ed-unsaved">
             не сохранено: {saveErr}
             <button type="button" className="mag-ed-discard" onClick={discard}>

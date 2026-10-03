@@ -14,6 +14,7 @@ export interface ProjectImage {
   boxes: Box[];
   dataset_id: string;
   dataset_name: string;
+  rev?: number;
 }
 
 export interface ProjectImages {
