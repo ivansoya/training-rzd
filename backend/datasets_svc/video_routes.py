@@ -444,7 +444,7 @@ def _want_quality(db, video, index, quality):
     if quality == chunklib.SOURCE:
         # У исходного копии нет — оно и есть оригинал. Режем из него самого.
         queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=quality,
-                      total=index["count"])
+                      priority=queue.PRIORITY_CHUNKSET_NOW, total=index["count"])
         return state
 
     if state["file"] != "ready":
@@ -457,8 +457,9 @@ def _want_quality(db, video, index, quality):
                           total=index["count"])
         return state
 
+    # Ступень запросил человек — её нарезка впереди фоновых копий.
     queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=quality,
-                  total=index["count"])
+                  priority=queue.PRIORITY_CHUNKSET_NOW, total=index["count"])
     return state
 
 

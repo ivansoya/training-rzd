@@ -91,7 +91,7 @@ def _do_index(db, job, video, path):
         # Ролик мельче самой малой ступени: копий не будет, перегоны режем
         # прямо из него — их всё равно немного.
         queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=chunklib.SOURCE,
-                      total=index["count"])
+                      priority=queue.PRIORITY_CHUNKSET_NOW, total=index["count"])
     return {"frames": index["count"]}
 
 
@@ -131,7 +131,9 @@ def _do_variant(db, job, video, path):
     # выбрать можно только готовую ступень, а готовой она станет только если
     # её нарезать. Раз копия уже сделана, нарезка из неё — перекладывание
     # пакетов, и стоит она недорого.
+    first = job.quality == chunklib.default_for(index["height"])
     queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=job.quality,
+                  priority=queue.PRIORITY_CHUNKSET_NOW if first else None,
                   total=index["count"])
     return {"quality": job.quality, "bytes": made["size_bytes"]}
 
