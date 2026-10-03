@@ -221,11 +221,6 @@ def build(db, job, *, on_beat=None):
             with_masks=(want == "polygon"),
         )
 
-    # Порядок кадра в отборе: по нему «Разделитель долями» решает, в какую
-    # ветку уйдёт образец. Один и тот же у всех строк, чтобы пересборка тем же
-    # зерном давала тот же набор.
-    order = sorted(picked.images, key=lambda i: str(i.id))
-    rank_of = {img.id: i for i, img in enumerate(order)}
     # План: одна запись на (строка, источник). Считается до первой картинки —
     # из него же берётся и ожидаемое число образцов для полосы прогресса.
     units = feeds.plan_units(
@@ -304,10 +299,11 @@ def build(db, job, *, on_beat=None):
                 # оказались бы заполнены вместе. Строка одна, значит и
                 # половина одна: train и val в одну сетку не попадают.
                 compiled = compiled_of[group[0]["graph_version_id"]]
+                rank_in = [engine.ranks(u["images"]) for u in group]
                 for tick in zip_longest(*mosaic.spread([u["images"] for u in group], tset.seed)):
                     beat()
                     feed, owner = {}, {}
-                    for unit, image in zip(group, tick):
+                    for unit, image, rank_of in zip(group, tick, rank_in):
                         if image is None:
                             continue
                         base = sample_of(image, picked.anns.get(image.id, []),
@@ -333,6 +329,8 @@ def build(db, job, *, on_beat=None):
             split = unit["part"]
             compiled = compiled_of.get(unit["graph_version_id"])
             prefix = prefix_of(unit)
+            # Ранг внутри строки: «Разделитель долями» держит доли по нему.
+            rank_of = engine.ranks(unit["images"])
 
             for image in unit["images"]:
                 beat()

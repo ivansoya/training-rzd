@@ -77,6 +77,11 @@ def place(ordinal) -> float:
     return (ordinal * PHI) % 1.0
 
 
+def ranks(images):
+    """Порядковые номера 0..n-1 внутри своего потока: доли держатся только на сплошном ряду."""
+    return {img.id: i for i, img in enumerate(sorted(images, key=lambda i: str(i.id)))}
+
+
 class Compiled:
     """Готовый к исполнению план: узлы, порядок и провода."""
 
