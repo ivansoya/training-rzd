@@ -246,6 +246,9 @@ function Editor() {
     }
   }, [nodes, edges, groups]);
   const totals = plan.totals;
+  // Ответ сервера относится к отправленному графу: любая правка его снимает.
+  const docKey = useMemo(() => JSON.stringify(toDoc(nodes, edges)), [nodes, edges]);
+  useEffect(() => setProblem(null), [docKey]);
 
   const killWire = useCallback(
     (id: string) => setEdges((old) => old.filter((e) => e.id !== id)),
@@ -635,9 +638,8 @@ function Editor() {
   }, [graphId, graph, title]);
 
   const current = nodes.find((n) => n.id === selected) ?? null;
-  // Поломку графа показываем рядом с сорванной загрузкой: и то, и другое
-  // мешает сохранить версию, и человеку важно видеть, что именно.
-  const trouble = problem ?? plan.flaw;
+  // Сохранять мешает только поломка самого графа; отказ сервера — разовое событие.
+  const trouble = plan.flaw;
 
   return (
     <div className="g-ged">
@@ -733,6 +735,9 @@ function Editor() {
         {/* Без крестика: это не событие, а причина, по которой граф не
             сохраняется. Убрать её можно только починив граф. */}
         {trouble && <div className="mag-error">{trouble}</div>}
+        {problem && !trouble && (
+          <Banner className="mag-error" onClose={() => setProblem(null)}>{problem}</Banner>
+        )}
         {note && <Banner onClose={() => setNote(null)}>{note}</Banner>}
 
         <div className="g-canvas-body" ref={wrap} hidden={previewFull}>
