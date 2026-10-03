@@ -11,6 +11,7 @@ image_id, а редактор заранее греет текущий кадр 
 """
 import os
 import zipfile
+from collections import OrderedDict
 
 import numpy as np
 
@@ -73,8 +74,9 @@ class Sam2Runner:
         # image_id -> состояние кодировщика. Лезем во внутренние поля предиктора
         # осознанно: публичного способа переключаться между закодированными
         # кадрами у него нет, а перекодировать каждый клик — это секунды.
-        self._cache: dict[str, dict] = {}
-        self._order: list[str] = []
+        # LRU, а не очередь: кадр, по которому кликают, не должен вытесняться
+        # прогревом соседнего кадра другого разметчика того же процесса.
+        self._cache: OrderedDict[str, dict] = OrderedDict()
         self._current: str | None = None
 
     # -- кадры ------------------------------------------------------------ #
@@ -90,9 +92,8 @@ class Sam2Runner:
             "size": array.shape[:2],
         }
         self._cache[image_id] = state
-        self._order.append(image_id)
-        while len(self._order) > CACHE_SIZE:
-            self._cache.pop(self._order.pop(0), None)
+        while len(self._cache) > CACHE_SIZE:
+            self._cache.popitem(last=False)
         self._current = image_id
         return state
 
@@ -100,6 +101,7 @@ class Sam2Runner:
         state = self._cache.get(image_id)
         if state is None:
             return self._encode(image_path, image_id)
+        self._cache.move_to_end(image_id)
         if self._current != image_id:
             self.predictor._features = state["features"]
             self.predictor._orig_hw = state["orig_hw"]
@@ -116,7 +118,7 @@ class Sam2Runner:
         return {
             "model": self.name,
             "device": self.device,
-            "cached_images": len(self._order),
+            "cached_images": len(self._cache),
         }
 
     # -- предсказание ------------------------------------------------------ #
