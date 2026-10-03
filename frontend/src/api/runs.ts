@@ -49,7 +49,8 @@ export interface Run {
   queue_reason: string | null;
   task: "detect" | "segment";
   base_model: string;
-  device: string;
+  /** null — ещё не стартовал, устройство не выбрано. */
+  device: string | null;
   epochs: number;
   current_epoch: number;
   /** «weights» — качает предобученные веса на том перед первой эпохой;

@@ -21,7 +21,7 @@ from sqlalchemy import select
 
 from common import config, gpu, live
 from common.db import SessionLocal, wait_for_db
-from common.models import DataprepJob, TrainRun, TrainSet, utcnow
+from common.models import DataprepJob, GpuLease, TrainRun, TrainSet, utcnow
 from common import prep_queue
 from training_svc import agent_preview, agent_runner, embed, examples, trainer
 
@@ -183,16 +183,21 @@ def start_run(db, run) -> bool:
         live.notify(db, "run", run.id, run.project_id, s="error")
         return False
 
-    # Прошлая бронь этого рана больше не нужна: без отмены каждая попытка
-    # оставляла в очереди ещё одну запись, и они копились тысячами.
-    if run.gpu_lease_id:
-        gpu.cancel(db, run.gpu_lease_id, "Новая попытка")
-
-    lease = gpu.request(
-        db, holder="training", kind="train", want_mb=want, ref_id=run.id,
-        project_id=run.project_id, user_id=run.created_by, priority=40,
-        allow_cpu=True, title=f"Обучение «{run.name}»",
-    )
+    # Бронь из очереди переиспользуем: новая каждую секунду обнуляла время
+    # ожидания, и защита от голодания (она смотрит на возраст брони) не
+    # срабатывала никогда. Выданную фоновой накачкой — просто берём.
+    lease = db.get(GpuLease, run.gpu_lease_id) if run.gpu_lease_id else None
+    if lease is not None and lease.status == "queued" and lease.want_mb == want:
+        gpu.try_grant(db, lease.id)
+        db.refresh(lease)
+    elif lease is None or lease.status != "held" or lease.want_mb != want:
+        if lease is not None and lease.status in gpu.ACTIVE:
+            gpu.cancel(db, lease.id, "Новая попытка")
+        lease = gpu.request(
+            db, holder="training", kind="train", want_mb=want, ref_id=run.id,
+            project_id=run.project_id, user_id=run.created_by, priority=40,
+            allow_cpu=True, title=f"Обучение «{run.name}»",
+        )
     if lease.status != "held":
         run.status = "waiting_gpu"
         run.queue_reason = lease.reason

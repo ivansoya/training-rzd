@@ -190,6 +190,25 @@ def _best_epochs(db, runs):
     return out
 
 
+WAITING = ("queued", "waiting_gpu", "preparing")
+
+
+def _queue_reason(db, run):
+    """Почему ран «в очереди»: какой он по счёту и чей прогон впереди."""
+    if run.status != "queued":
+        return None
+    ahead = db.execute(
+        select(TrainRun).where(
+            TrainRun.status.in_(("queued", "waiting_gpu", "preparing", "running", "stopping")),
+            TrainRun.created_at < run.created_at,
+        ).order_by(TrainRun.created_at)
+    ).scalars().all()
+    if not ahead:
+        return "Ждёт свободного исполнителя — начнётся через несколько секунд."
+    busy = next((r for r in ahead if r.status in ("running", "preparing", "stopping")), ahead[0])
+    return f"В очереди {len(ahead) + 1}-м: впереди обучение «{busy.name}»."
+
+
 def _run_view(db, run, *, full=False, best=None):
     # Набор могли удалить: обучение живёт дальше, с весами и метриками.
     tset = db.get(TrainSet, run.set_id) if run.set_id else None
@@ -202,10 +221,11 @@ def _run_view(db, run, *, full=False, best=None):
         "id": str(run.id),
         "name": run.name,
         "status": run.status,
-        "queue_reason": run.queue_reason,
+        "queue_reason": run.queue_reason or _queue_reason(db, run),
         "task": run.task,
         "base_model": run.base_model,
-        "device": run.device,
+        # До старта устройство не выбрано: «cpu» в колонке — заглушка, а не решение.
+        "device": None if run.status in WAITING else run.device,
         "epochs": run.epochs,
         "current_epoch": run.current_epoch,
         "phase": run.phase,

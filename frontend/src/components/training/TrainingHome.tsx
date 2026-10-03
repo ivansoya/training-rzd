@@ -289,7 +289,7 @@ export default function TrainingHome() {
                       </span>
                     </div>
                     <div className="meta">
-                      {r.base_model} <Sep /> {r.device} <Sep />{" "}
+                      {r.base_model} <Sep /> {r.device ?? "ещё не стартовал"} <Sep />{" "}
                       {r.set ? `набор «${r.set.name}»` : "набор удалён"}
                       {r.author ? ` — ${r.author}` : ""}
                       {r.best_epoch !== null && (

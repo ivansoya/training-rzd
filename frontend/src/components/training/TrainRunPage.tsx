@@ -157,12 +157,13 @@ export default function TrainRunPage() {
 
         <div className="t-run-sub">
           {run.base_model} <Sep /> набор <b>{run.set?.name ?? "удалён"}</b><Sep />{" "}
-          {run.device === "cpu" ? "процессор" : `карта ${run.device}`}
+          {run.device === null ? "устройство выберется при старте"
+            : run.device === "cpu" ? "процессор" : `карта ${run.device}`}
           {run.author ? ` — запустил ${run.author}` : ""}
           {eta && <><Sep /> осталось примерно <b>{eta}</b></>}
         </div>
 
-        {run.status === "waiting_gpu" && run.queue_reason && (
+        {(run.status === "waiting_gpu" || run.status === "queued") && run.queue_reason && (
           <div className="t-warn">{run.queue_reason}</div>
         )}
         {run.error && <div className="mag-error">{run.error}</div>}
