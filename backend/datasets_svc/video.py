@@ -193,16 +193,21 @@ STRIP_FRAMES = 20
 STRIP_HEIGHT = 90
 
 
-def make_strip(video_path, dest_path, duration_ms):
+def make_strip(video_path, dest_path, duration_ms, fps=None):
     """Склеивает STRIP_FRAMES кадров в одну широкую картинку.
 
     Одна полоса вместо двадцати файлов: браузеру это один запрос, а нам —
     один путь. Порядка 200 КБ на ролик.
+
+    Не вышло — VideoError, а не тихий None: очередь считает попытки и держит
+    паузу, иначе битый ролик ставил ленту заново на каждый опрос клиента.
     """
     if not duration_ms:
-        return None
+        raise VideoError("У ролика нет длительности — ленты не будет.")
+    fps = fps or (probe(video_path).get("fps") or 25)
     step = max(1, duration_ms // STRIP_FRAMES)
-    moments = [i * step for i in range(STRIP_FRAMES) if i * step < duration_ms]
+    numbers = sorted({int(i * step * fps / 1000)
+                      for i in range(STRIP_FRAMES) if i * step < duration_ms})
     tiles = []
 
     def collect(_index, _time_ms, img):
@@ -211,11 +216,13 @@ def make_strip(video_path, dest_path, duration_ms):
         tiles.append(small.resize((w, STRIP_HEIGHT), PilImage.LANCZOS))
 
     try:
-        extract(video_path, moments, os.path.dirname(dest_path), collect)
-    except Exception:  # noqa: BLE001
-        return None
+        extract_frames(video_path, numbers, collect)
+    except VideoError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise VideoError("Ролик не декодируется — ленты не будет.") from exc
     if not tiles:
-        return None
+        raise VideoError("Ролик не дал ни кадра — ленты не будет.")
     total = sum(t.width for t in tiles)
     strip = PilImage.new("RGB", (total, STRIP_HEIGHT))
     x = 0

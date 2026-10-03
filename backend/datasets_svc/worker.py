@@ -101,7 +101,7 @@ def _do_strip(db, job, video, path):
     )
     if os.path.exists(dest):
         return {"skipped": True}
-    videolib.make_strip(path, dest, video.duration_ms)
+    videolib.make_strip(path, dest, video.duration_ms, video.fps)
     return {"strip": os.path.exists(dest)}
 
 

@@ -696,7 +696,14 @@ def video_strip(task_id, video_id):
             # десятка перемоток по исходнику — секунды в потоке, который в это
             # время не отвечает никому, а браузер успевает оборвать соединение
             # и показать значок битой картинки.
-            queue.enqueue(db, row.id, queue.KIND_STRIP)
+            # Недавний отказ — не ставим заново: битый ролик иначе крутил ленту
+            # на каждый опрос и душил подготовку чужих роликов.
+            if queue.enqueue(db, row.id, queue.KIND_STRIP) is None:
+                failure = queue.last_failure(db, row.id, queue.KIND_STRIP)
+                return jsonify({
+                    "status": "failed", "code": "strip_failed",
+                    "error": (failure.error if failure else None) or "Ленты не будет.",
+                }), 409
             return jsonify({
                 "status": "preparing",
                 "error": "Лента ещё готовится.",

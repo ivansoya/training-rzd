@@ -37,8 +37,14 @@ export default function VideoStrip({
     let live = true;
     let timer = 0;
     let made: string | null = null;
+    // Предел ожидания: ролик, который не клеится, не должен опрашиваться вечно.
+    let tries = 0;
 
     const ask = async () => {
+      if (++tries > 80) {
+        if (live) setGone(true);
+        return;
+      }
       try {
         const res = await fetch(videoStripUrl(taskId, videoId));
         if (!live) return;

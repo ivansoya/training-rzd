@@ -71,3 +71,32 @@ def test_закрытая_таска_не_принимает_ролик(api, tas
         res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/videos",
                        files={"file": ("again.mp4", fh, "video/mp4")}, data={"mode": "cut"})
     assert res.status_code == 409
+
+
+def _strip(api, task, video_id, timeout=60):
+    import time
+
+    url = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video_id}/strip"
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        res = api.get(url)
+        if res.status_code != 202:
+            return res
+        time.sleep(1)
+    return res
+
+
+def test_лента_склеивается(api, task, sample_video):
+    video = _cut_video(api, task, sample_video)
+    res = _strip(api, task, video["id"])
+    assert res.status_code == 200 and res.headers["Content-Type"] == "image/jpeg", res.text[:200]
+
+
+def test_битый_ролик_даёт_отказ_а_не_вечное_ожидание(api, task):
+    junk = b"\x00\x00\x00\x18ftypmp42" + b"\x00" * 4096
+    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/videos",
+                   files={"file": ("broken.mp4", junk, "video/mp4")}, data={"mode": "cut"})
+    if res.status_code != 201:
+        return  # сервер не принял файл вовсе — тоже честный отказ
+    res = _strip(api, task, res.json()["id"], timeout=120)
+    assert res.status_code in (404, 409), res.status_code
