@@ -35,7 +35,7 @@ def send_confirmation_email(to_email: str, token: str) -> bool:
     msg["From"] = MAIL_FROM
     msg["To"] = to_email
     msg.set_content(
-        f"Здравствуйте, {display_name}!\n\n"
+        "Здравствуйте!\n\n"
         f"Вы зарегистрировались в Магистраль ML. Чтобы завершить регистрацию,\n"
         f"подтвердите почту — откройте ссылку:\n\n"
         f"  {link}\n\n"
