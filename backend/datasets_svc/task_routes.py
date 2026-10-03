@@ -610,7 +610,12 @@ def _drop_video_files(path):
 
 
 def _close(db, task, user):
-    """Убираем черновое: неразмеченные кадры и исходники видео."""
+    """Закрытие доводит «Готово» до конца: размеченные и фоновые кадры уходят
+    в датасет, а убирается только черновое — нетронутые, отложенные и
+    забракованные кадры и исходники видео. Раньше удалялось всё без датасета,
+    и кадр, размеченный после «Готово», пропадал вместе с разметкой."""
+    accepted = _accept(db, task, user)
+    db.flush()
     drafts = db.execute(
         select(Image).where(Image.task_id == task.id, Image.dataset_id.is_(None))
     ).scalars().all()
@@ -634,7 +639,7 @@ def _close(db, task, user):
         video_index.forget(v.id)
         db.delete(v)
     _log(db, task, user, "closed", removed_images=removed, removed_videos=len(videos))
-    return {"removed_images": removed, "removed_videos": len(videos)}
+    return {**accepted, "removed_images": removed, "removed_videos": len(videos)}
 
 
 # --------------------------------------------------------------------------- #

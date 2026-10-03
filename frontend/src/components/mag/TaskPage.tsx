@@ -293,7 +293,10 @@ export default function TaskPage() {
       )) return;
     }
     if (to === "closed") {
-      const drafts = task.counts.total - task.counts.accepted + task.counts.deleted;
+      // Закрытие сначала принимает размеченные и фоновые кадры, удаляет только черновое.
+      const c = task.counts;
+      const toAccept = Math.max(0, c.annotated + c.empty - c.accepted);
+      const drafts = Math.max(0, c.total + c.deleted - c.accepted - toAccept);
       // Про ролики — только если они есть: «и исходное видео» у таски из
       // одних файлов пугало удалением того, чего не было.
       const videos = task.videos.length;
@@ -301,22 +304,26 @@ export default function TaskPage() {
         drafts ? count(drafts, "черновой кадр", "черновых кадра", "черновых кадров") : "",
         videos ? (videos === 1 ? "исходное видео" : `исходные видео (${videos})`) : "",
       ].filter(Boolean).join(" и ");
-      const msg = gone
-        ? `Закрыть таску? Будут удалены ${gone}. Действие необратимо.`
-        : "Закрыть таску?";
-      if (!window.confirm(msg)) return;
+      const parts = [
+        toAccept ? `${count(toAccept, "размеченный кадр уйдёт", "размеченных кадра уйдут", "размеченных кадров уйдут")} в датасет.` : "",
+        gone ? `Будут удалены ${gone} — это необратимо.` : "",
+      ].filter(Boolean);
+      if (!window.confirm(["Закрыть таску?", ...parts].join(" "))) return;
     }
     await guard(async () => {
       const res = await setTaskStatus(taskId, to);
-      if (res.accepted) {
+      if (to === "closed") {
+        const said = [
+          res.accepted ? `В проект ушло ${count(res.accepted, "кадр", "кадра", "кадров")} — датасет «${res.dataset}».` : "",
+          res.removed_images ? `${plural(res.removed_images, "Удалён", "Удалено", "Удалено")} ${count(res.removed_images, "черновой кадр", "черновых кадра", "черновых кадров")}.` : "",
+        ].filter(Boolean);
+        if (said.length) setNotice(said.join(" "));
+      } else if (res.accepted) {
         setNotice(
           `В проект ушло ${res.accepted} ${plural(res.accepted, "кадр", "кадра", "кадров")} — датасет «${res.dataset}».`
         );
       } else if (to === "done") {
         setNotice("Размеченных кадров пока нет — принимать нечего.");
-      } else if (res.removed_images !== undefined) {
-        const n = res.removed_images;
-        setNotice(`${plural(n, "Удалён", "Удалено", "Удалено")} ${count(n, "черновой кадр", "черновых кадра", "черновых кадров")}.`);
       }
       await load();
     });
