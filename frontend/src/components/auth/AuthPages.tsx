@@ -344,7 +344,7 @@ export default function AuthPages({ onSignedIn }: Props) {
                   maxLength={32}
                   error={fieldErrors.login}
                   autoComplete="username"
-                  placeholder="isoya"
+                  placeholder="ivanov"
                 />
                 <Field
                   id="re-name"
@@ -353,7 +353,7 @@ export default function AuthPages({ onSignedIn }: Props) {
                   onChange={edit(setRegName, "display_name")}
                   maxLength={128}
                   error={fieldErrors.display_name}
-                  placeholder="Иван Соя"
+                  placeholder="Иван Иванов"
                 />
               </div>
               <div className="mag-cols2">
