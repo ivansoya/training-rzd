@@ -117,6 +117,11 @@ async function pickQuality(editor: Locator, label: string) {
   await editor.locator(".mag-ved-quality-menu").getByText(label, { exact: true }).click();
 }
 
+/** Вкладка таски: «Видео на разметку» — кнопка, а не вкладка, хоть и начинается так же. */
+function tab(page: Page, name: string): Locator {
+  return page.locator(".mag-tab").filter({ hasText: new RegExp(`^${name}`) });
+}
+
 /** Орган управления по подписи справки: всплывашек (`title`) у них больше нет. */
 function control(editor: Locator, text: string): Locator {
   return editor.locator(`[data-ht^="${text}"]`);
@@ -144,7 +149,7 @@ async function seek(editor: Locator, frame: number) {
 
 async function openEditor(page: Page, project: { code: string }, task: { id: string }) {
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
-  await page.getByRole("button", { name: /^Видео/ }).click();
+  await tab(page, "Видео").click();
   await page.locator(".g-block").first().getByRole("button", { name: "Размечать" }).click();
   const editor = page.getByRole("dialog", { name: "Разметка видео" });
   await expect(editor).toBeVisible();
@@ -226,7 +231,7 @@ test("ролик виден в таске как размечаемый и от�
 
   // --- дальше только интерфейс ---
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
-  await page.getByRole("button", { name: /^Видео/ }).click();
+  await tab(page, "Видео").click();
 
   const card = page.locator(".g-block").first();
   await expect(card).toBeVisible();
@@ -259,7 +264,7 @@ test("видео размечается треком и объект остаё�
   );
   const { project, task, video } = await shortClip(page);
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
-  await page.getByRole("button", { name: /^Видео/ }).click();
+  await tab(page, "Видео").click();
   await page.locator(".g-block").first().getByRole("button", { name: "Размечать" }).click();
   const editor = page.getByRole("dialog", { name: "Разметка видео" });
   await expect(editor).toBeVisible();
@@ -309,7 +314,7 @@ test("нарезаемое видео живёт во вкладке «Кадр�
   });
 
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
-  await page.getByRole("button", { name: /^Кадры/ }).click();
+  await tab(page, "Кадры").click();
   const block = page.locator(".g-block").first();
   await expect(block.getByText("нарезка")).toBeVisible();
   await block.getByRole("button", { name: "Нарезать" }).click();
@@ -335,11 +340,11 @@ test("режим ролика задаёт вкладка, куда его до�
   // Диалога «что делать с видео» больше нет: вкладка «Видео» — для разметки,
   // «Кадры» — для нарезки. Файловое поле на странице одно — у открытой вкладки.
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
-  await page.getByRole("button", { name: /^Видео/ }).click();
+  await tab(page, "Видео").click();
   await page.setInputFiles('input[type="file"][accept="video/*"]', SAMPLE);
   await expect(page.locator(".g-block").first().getByText("размечается")).toBeVisible();
 
-  await page.getByRole("button", { name: /^Кадры/ }).click();
+  await tab(page, "Кадры").click();
   await page.setInputFiles('input[type="file"][accept="video/*"]', SAMPLE);
   await expect(page.locator(".g-block").getByText("нарезка")).toBeVisible();
   await expect.poll(modes).toEqual(["annotate", "cut"]);
@@ -377,14 +382,14 @@ test("разметка закрывается и становится кадра
   await page.request.patch(`/api/video-tracks/${track.id}`, { data: { export_step: 30 } });
 
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
-  await page.getByRole("button", { name: /^Видео/ }).click();
+  await tab(page, "Видео").click();
   await page.getByRole("button", { name: "Закрыть разметку" }).click();
 
   // Кадры появляются в таске до всякой сдачи — это обычные кадры.
   await expect(page.getByText(/Разметка .* закрыта/)).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText("разметка закрыта")).toBeVisible();
 
-  await page.getByRole("button", { name: /^Кадры/ }).click();
+  await tab(page, "Кадры").click();
   const block = page.locator(".g-block").first();
   await expect(block).toBeVisible();
   await expect(block.getByText("Кадры из разметки «sample.mp4»")).toBeVisible();
