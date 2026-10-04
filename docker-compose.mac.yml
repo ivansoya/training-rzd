@@ -65,6 +65,14 @@ services:
         condition: service_started
     expose:
       - "5000"
+    # Здоров — значит миграции уже применены: gunicorn стартует после alembic.
+    # Зависимые ждут именно этого, а не запуска контейнера, иначе ходили в старую схему.
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/auth/health', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
     # Том данных нужен ради одного: удаляя проект, auth уносит его папку
     # (кадры, наборы, обучения). Поручить это другому сервису значило бы
     # удалять строки и файлы в двух местах без общего ответа человеку.
@@ -93,7 +101,7 @@ services:
         condition: service_healthy
       # Migrations live in the auth service; wait for it to apply them.
       auth:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - yolo-data:/app/data
       # На macOS это bind в VM: каталог только стат-ится, ничего не читается
@@ -139,7 +147,7 @@ services:
       db:
         condition: service_healthy
       auth:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - yolo-data:/app/data
 
@@ -160,7 +168,7 @@ services:
       db:
         condition: service_healthy
       auth:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - yolo-data:/app/data
     expose:
@@ -185,7 +193,7 @@ services:
       db:
         condition: service_healthy
       auth:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - yolo-data:/app/data
 
@@ -211,7 +219,7 @@ services:
       db:
         condition: service_healthy
       auth:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - yolo-data:/app/data
     expose:
@@ -239,7 +247,7 @@ services:
       db:
         condition: service_healthy
       auth:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - yolo-data:/app/data
     # Никаких deploy.resources.reservations.devices: nvidia-рантайма на Mac
@@ -269,7 +277,7 @@ services:
       db:
         condition: service_healthy
       auth:
-        condition: service_started
+        condition: service_healthy
     volumes:
       - yolo-data:/app/data
     expose:
