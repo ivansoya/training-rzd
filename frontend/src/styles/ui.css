@@ -234,7 +234,7 @@
   font: 500 13px var(--font); cursor: pointer; justify-content: space-between; text-align: left;
   transition: background .12s, border-color .12s, box-shadow .12s;
 }
-.ui-select:hover:not(:disabled) { background: var(--hover); border-color: var(--input); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 10%, transparent); }
+.ui-select:hover:not(:disabled) { border-color: color-mix(in srgb, var(--ring) 55%, var(--input)); }
 .ui-select[data-state="open"] { border-color: var(--ring); }
 .ui-select[data-placeholder] .ui-select-v { color: var(--faint); }
 .ui-select:disabled { opacity: .5; cursor: not-allowed; }
@@ -256,6 +256,11 @@
 @keyframes ui-pop-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
 @keyframes ui-pop-in-up { from { opacity: 0; transform: translateY(6px) scale(.98); } }
 .ui-pop[data-side="top"] { animation-name: ui-pop-in-up; }
+/* Закрытие: Radix ждёт конца анимации по data-state="closed" */
+.ui-pop[data-state="closed"] { animation: ui-pop-out .12s ease-in forwards; pointer-events: none; }
+.ui-pop[data-state="closed"][data-side="top"] { animation-name: ui-pop-out-up; }
+@keyframes ui-pop-out { to { opacity: 0; transform: translateY(-6px) scale(.98); } }
+@keyframes ui-pop-out-up { to { opacity: 0; transform: translateY(6px) scale(.98); } }
 .ui-pop-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 6px; font-size: 12px; color: var(--faint); }
 .ui-pop-sep { height: 1px; background: var(--border); margin: 6px -6px; }
 
@@ -263,9 +268,10 @@
   display: flex; align-items: center; gap: 9px; width: 100%; min-height: 32px; padding: 6px 8px;
   border: 0; border-radius: var(--r); background: none; color: var(--fg); font: 13px var(--font);
   text-align: left; cursor: pointer; outline: none; user-select: none;
-  transition: background .12s, color .12s;
+  transition: box-shadow .12s, color .12s;
 }
-.ui-opt:hover:not(:disabled), .ui-opt[data-highlighted], .ui-opt:focus-visible { background: var(--hover); }
+/* Наведение — обводкой, без серой заливки */
+.ui-opt:hover:not(:disabled), .ui-opt[data-highlighted], .ui-opt:focus-visible, .ui-opt.on { background: none; color: var(--fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 55%, transparent); }
 .ui-opt[data-state="checked"], .ui-opt[aria-current] { font-weight: 500; }
 .ui-opt:disabled, .ui-opt[data-disabled] { opacity: .5; cursor: not-allowed; }
 .ui-opt > .ui-ic { color: var(--faint); }

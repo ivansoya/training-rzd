@@ -70,7 +70,6 @@
 .search { position: relative; width: 260px; flex: none; }
 .search-pop { position: absolute; top: calc(100% + 6px); right: 0; width: 360px; max-height: min(460px, 70vh); }
 .search-none { padding: 10px 8px; color: var(--muted-fg); font-size: 12.5px; }
-.ui-opt.on { background: var(--hover); }
 .bell { position: relative; }
 .bell-n {
   position: absolute; top: 2px; right: 2px; min-width: 15px; height: 15px; padding: 0 4px; border-radius: var(--r-full);
