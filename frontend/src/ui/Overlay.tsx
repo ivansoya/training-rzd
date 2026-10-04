@@ -6,6 +6,7 @@ import * as RS from "@radix-ui/react-select";
 import { cx } from "./cx";
 import { Icon } from "./Icon";
 import type { IconName } from "./Icon";
+import { useEscape } from "./useEscape";
 
 export interface SelectOption<T extends string> {
   value: T;
@@ -28,8 +29,11 @@ export function Select<T extends string>({ value, onChange, options, placeholder
   size?: "sm";
   id?: string;
 }) {
+  const [open, setOpen] = useState(false);
+  useEscape(() => setOpen(false), open);
   return (
-    <RS.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}>
+    <RS.Root value={value} onValueChange={(v) => onChange(v as T)} disabled={disabled}
+      open={open} onOpenChange={setOpen}>
       <RS.Trigger id={id} aria-label={label}
         className={cx("ui-select", full && "full", size === "sm" && "sm")}>
         {icon && <Icon name={icon} size={14} />}
@@ -71,6 +75,8 @@ export function Popover({ trigger, children, align = "start", width, open: openP
   const open = openProp ?? own;
   const set = (v: boolean) => { setOwn(v); onOpenChange?.(v); };
   const content = useRef<HTMLDivElement>(null);
+  // Верхний слой стопки Esc: закрывается он, а не окно под ним
+  useEscape(() => set(false), open);
   useEffect(() => {
     if (!open) return;
     const onScroll = (e: Event) => {
@@ -126,6 +132,7 @@ interface DialogProps {
 }
 
 export function Dialog({ open, onOpenChange, title, desc, children, footer, width, modalLock }: DialogProps) {
+  useEscape(() => onOpenChange(false), open);
   return (
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <RD.Portal>
@@ -152,6 +159,7 @@ export function Dialog({ open, onOpenChange, title, desc, children, footer, widt
 
 /** Боковая панель поверх страницы — правка записи без ухода из списка. */
 export function Sheet({ open, onOpenChange, title, desc, children, footer, width }: DialogProps) {
+  useEscape(() => onOpenChange(false), open);
   return (
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <RD.Portal>

@@ -5,7 +5,10 @@ import { useAuth } from "../auth/AuthGate";
 import ErrorBoundary from "../ErrorBoundary";
 import { LiveProvider } from "../../live/LiveProvider";
 import { Avatar, Empty, Icon, LinkButton, MenuItem, Popover, RailsMark, cx } from "../../ui";
+import Bell from "../shell/Bell";
 import GpuMeter from "../shell/GpuMeter";
+import MeMenu from "../shell/MeMenu";
+import SearchBox from "../shell/SearchBox";
 import { PROJECT_GROUPS, hrefOf, sectionOf } from "../shell/nav";
 import type { NavItem } from "../shell/nav";
 
@@ -136,6 +139,10 @@ export default function MagShell({ children }: { children: ReactNode }) {
               <><Link to="/agents">Мои агенты</Link><Icon name="chevR" size={14} /><b>Агент</b></>
             ) : <b>{section.label}</b>}
           </nav>
+          <span className="grow" />
+          <SearchBox projects={me.projects} project={project} />
+          <Bell />
+          <MeMenu />
         </header>
         <main id="workspace-content" className="shell-content" tabIndex={-1}>
           <ErrorBoundary resetKey={pathname}>

@@ -31,6 +31,7 @@ import AnnotationEditor, { saveSettled } from "./AnnotationEditor";
 import ShapeMini from "./ShapeMini";
 import { TaskState } from "./ProjectTasks";
 import { count, plural } from "../ru";
+import { describeTaskEvent } from "./taskEvents";
 import { SourceCard, VideoCard, buildSources } from "./TaskSources";
 import UploadImagesModal from "./UploadImagesModal";
 import { setImageTags, setVideoTags } from "../../api/tags";
@@ -931,7 +932,7 @@ export default function TaskPage() {
                     })}
                   </span>
                   <span className="mag-log-who">{e.user || "—"}</span>
-                  <span className="mag-log-what">{describe(e)}</span>
+                  <span className="mag-log-what">{describeTaskEvent(e.kind, e.payload)}</span>
                 </div>
               ))
             )}
@@ -988,15 +989,6 @@ export default function TaskPage() {
   );
 }
 
-// Состояние таски в событии лежит сырым значением; на экране — теми же
-// словами, что на карточках (STATUS_LABELS на сервере).
-const STATUS_WORD: Record<string, string> = {
-  queued: "на очереди",
-  in_progress: "в работе",
-  done: "готово",
-  updating: "изменение",
-  closed: "закрыто",
-};
 
 /** Незакрытый ролик одной строкой. Ролик с ошибкой плана или с прежними
  *  кадрами в таске читался как «x» (0) — будто размечать там нечего. */
@@ -1006,83 +998,3 @@ function pendingLabel(v: PendingVideo): string {
   return `«${v.file_name}» — ${count(v.frames, "кадр", "кадра", "кадров")}`;
 }
 
-/** Глагол прошедшего времени по числу: «принят 1 кадр», «принято 5 кадров». */
-const did = (n: number, one: string, many: string) => plural(n, one, many, many);
-
-/** Нарезаемый ролик: у него вопрос не «что размечено», а «что нарезано». */
-function describe(e: TaskEventItem): JSX.Element {
-  const p = e.payload as Record<string, string | number>;
-  const n = (k: string) => Number(p[k]) || 0;
-  switch (e.kind) {
-    case "created":
-      return <>Таска создана{p.assignee ? <>, исполнитель — <b>{p.assignee}</b></> : null}</>;
-    case "assigned":
-      return <>Исполнитель — <b>{p.assignee ?? "снят"}</b></>;
-    case "images_added":
-      return (
-        <>
-          {did(n("added"), "Загружено", "Загружено")}{" "}
-          <b>{count(n("added"), "изображение", "изображения", "изображений")}</b>
-          {p.skipped ? `, пропущено ${p.skipped}` : ""}
-        </>
-      );
-    case "video_added":
-      return <>Добавлено видео <b>{p.file}</b>{p.mode === "annotate" ? " для разметки" : " для нарезки"}</>;
-    case "video_cut":
-      return (
-        <>
-          {did(n("frames"), "Нарезан", "Нарезано")}{" "}
-          <b>{count(n("frames"), "кадр", "кадра", "кадров")}</b> из {p.file}, участков: {p.segments}
-        </>
-      );
-    case "video_annotation_closed":
-      return (
-        <>
-          Разметка <b>{p.file}</b> закрыта: {count(n("frames"), "кадр", "кадра", "кадров")},{" "}
-          {count(n("boxes"), "объект", "объекта", "объектов")}
-        </>
-      );
-    case "video_annotation_reopened":
-      return <>Разметка <b>{p.file}</b> открыта заново</>;
-    case "video_frames_dropped":
-      return (
-        <>
-          {did(n("removed"), "Убран", "Убрано")}{" "}
-          <b>{count(n("removed"), "кадр", "кадра", "кадров")}</b> ролика {p.file}
-          {p.kept ? `, оставлено принятых: ${p.kept}` : ""}
-        </>
-      );
-    case "accepted":
-      return (
-        <>
-          {did(n("accepted"), "Принят", "Принято")}{" "}
-          <b>{count(n("accepted"), "кадр", "кадра", "кадров")}</b> в датасет «{p.dataset}»
-        </>
-      );
-    case "done":
-      return <>Переведена в готово, принимать было нечего</>;
-    case "closed":
-      return (
-        <>
-          Закрыта: {did(n("removed_images"), "удалён", "удалено")}{" "}
-          <b>{count(n("removed_images"), "кадр", "кадра", "кадров")}</b>
-          {n("removed_videos") ? ` и ${n("removed_videos")} видео` : ""}
-        </>
-      );
-    case "image_deleted":
-      return <>Забракован кадр {p.file}</>;
-    case "image_restored":
-      return <>Кадр {p.file} вернули в работу</>;
-    case "class_moved":
-      return (
-        <>
-          Класс разметки сменён: <b>{p.from}</b> → <b>{p.to}</b>
-          {p.tracks ? <>, треков: {p.tracks}</> : null}
-        </>
-      );
-    case "status":
-      return <>Состояние: <b>{STATUS_WORD[String(p.status)] ?? p.status}</b></>;
-    default:
-      return <>{e.kind}</>;
-  }
-}

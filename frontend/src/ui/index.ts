@@ -13,3 +13,6 @@ export { Check, Field, Input, Range, Switch, Textarea, TriCheck, nextTri } from 
 export type { Tri } from "./Form";
 export { Dialog, MenuItem, Popover, Select, Sheet } from "./Overlay";
 export type { SelectOption } from "./Overlay";
+export { LineChart, Spark, linePath } from "./Charts";
+export type { LineSeries } from "./Charts";
+export { hasLayer, useEscape } from "./useEscape";

@@ -116,7 +116,8 @@
 .ui-card-h { padding: 16px 18px 0; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .ui-card-t { margin: 0; font-size: 14px; font-weight: 600; }
 .ui-card-d { margin: 2px 0 0; color: var(--muted-fg); font-size: 12.5px; }
-.ui-card-a { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.ui-card-h > div:first-child { min-width: 0; }
+.ui-card-a { display: flex; gap: 8px; align-items: center; flex: none; }
 .ui-card-b { padding: 16px 18px; }
 .ui-card-b.flush { padding: 8px 0 0; }
 
@@ -288,3 +289,10 @@
 @keyframes ui-sheet-in { from { translate: 24px 0; opacity: 0; } }
 .ui-sheet:focus { outline: none; }
 .ui-sheet-b { flex: 1; overflow: auto; padding: 16px 18px; display: flex; flex-direction: column; gap: 16px; }
+
+/* ---------- графики ---------- */
+.ui-spark { display: block; flex: none; overflow: visible; }
+.ui-chart { width: 100%; height: auto; display: block; overflow: visible; }
+.ui-chart-grid { stroke: var(--border); stroke-width: 1; }
+.ui-chart-ax { fill: var(--faint); font: 10px var(--mono); }
+.ui-chart-rest { fill: var(--muted); opacity: .5; }

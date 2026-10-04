@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, Outlet, useOutletContext, useParams } from "react-router-dom";
+import { Link, Outlet, useMatch, useOutletContext, useParams } from "react-router-dom";
 import { ApiError, errorText, getProject } from "../../auth/api";
 import { useAuth } from "../auth/AuthGate";
 import { plural, ru } from "../ru";
@@ -37,6 +37,8 @@ export default function ProjectShell() {
 
   const { me, refresh: refreshMe } = useAuth();
   const shown = useRef(false);
+  // Переписанные экраны рисуют свою шапку и поля сами; старым — прежняя обёртка.
+  const redesigned = Boolean(useMatch("/projects/:code"));
 
   const refresh = useCallback(async () => {
     if (!code) return;
@@ -87,6 +89,8 @@ export default function ProjectShell() {
   if (!detail) return <div className="mag-content mag-empty">Загружаем проект…</div>;
 
   const { project, stats } = detail;
+
+  if (redesigned) return <Outlet context={{ detail, refresh } satisfies ProjectContext} />;
 
   // Живая связь поднята в MagShell: она нужна и страницам вне этой оболочки.
   return (

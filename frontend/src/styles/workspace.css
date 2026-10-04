@@ -392,18 +392,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .g-label { font: 600 12px/1.4 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; color: var(--dim); }
 .t-chip { padding: 7px 10px; font-size: 12px; border-radius: 6px; border-color: var(--rule); }
 .t-chip.on { background: var(--accent-soft); border-color: #F94D4D54; color: var(--ink); }
-.workspace-overview { display: grid; grid-template-columns: minmax(0,1.5fr) minmax(270px,1fr); gap: 22px; align-items: start; }
-.workspace-overview > .mag-card { margin: 0; }
-.workspace-overview-side { display: flex; flex-direction: column; gap: 22px; }
-.workspace-overview-side .mag-card { margin: 0; }
-.workspace-next { display: flex; justify-content: space-between; align-items: center; gap: 14px; padding: 15px 0; border-bottom: 1px solid var(--rule); text-decoration: none; color: var(--ink); }
-.workspace-next:first-of-type { padding-top: 0; }
-.workspace-next:last-of-type { border-bottom: 0; }
-.workspace-next b { display: block; font-size: 14px; font-weight: 550; }
-.workspace-next small { display: block; color: var(--dim); font-size: 12px; margin-top: 6px; }
-.workspace-next:hover b, .workspace-next:hover > span:last-child { color: var(--accent-text); }
-.workspace-overview-side .mag-link { display: block; margin-top: 16px; font-size: 13px; }
-.workspace-overview-side .mag-ghost { margin-top: 20px; }
 /* ===== Строка класса со шкалой: обзор проекта и прогресс разметки =====
    Сетка, а не flex. Пока шкала была `flex: 1`, её длина зависела от длины
    имени слева и ширины числа справа: у «Человека» с 87 разметками шкала
@@ -493,7 +481,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   .mag-ved .mag-tool { min-height: 43px; }
 }
 @media(max-width:900px) {
-  .workspace-overview { grid-template-columns: 1fr; }
   :root { --workspace-width: 0px; --workspace-header: 56px; }
   /* Раздел не сжимается вместе с длинным названием проекта (сжатие делится
      пропорционально ширине — раздел уходил в 8 px), а держит свой потолок. */

@@ -29,33 +29,6 @@
   background: var(--mag-red);
 }
 
-.mag-import-banner {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  background: var(--card);
-  border: 1px solid #f3c9c9;
-  border-left: 3px solid var(--mag-red);
-  border-radius: 10px;
-  padding: 14px 16px;
-  margin-bottom: 14px;
-  flex-wrap: wrap;
-}
-
-.mag-import-banner b {
-  display: block;
-  font-size: 14px;
-}
-
-.mag-import-banner span {
-  font-size: 12.5px;
-  color: var(--mag-muted);
-}
-
-.mag-import-banner .mag-btn {
-  margin-left: auto;
-}
-
 /* --- шаг мастера --- */
 .mag-step {
   display: grid;

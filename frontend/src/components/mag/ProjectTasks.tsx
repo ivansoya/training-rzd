@@ -148,7 +148,7 @@ export function Progress({ counts }: { counts: TaskSummary["counts"] }) {
   );
 }
 
-function CreateTaskModal({
+export function CreateTaskModal({
   isAdmin,
   onClose,
   onCreated,
