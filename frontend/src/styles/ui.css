@@ -232,9 +232,9 @@
   display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px 0 12px; min-width: 0;
   border: 1px solid var(--border); border-radius: var(--r); background: var(--card); color: var(--fg);
   font: 500 13px var(--font); cursor: pointer; justify-content: space-between; text-align: left;
-  transition: background .12s, border-color .12s;
+  transition: background .12s, border-color .12s, box-shadow .12s;
 }
-.ui-select:hover:not(:disabled) { background: var(--hover); border-color: var(--input); }
+.ui-select:hover:not(:disabled) { background: var(--hover); border-color: var(--input); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 10%, transparent); }
 .ui-select[data-state="open"] { border-color: var(--ring); }
 .ui-select[data-placeholder] .ui-select-v { color: var(--faint); }
 .ui-select:disabled { opacity: .5; cursor: not-allowed; }
@@ -248,10 +248,14 @@
   max-height: var(--radix-popover-content-available-height, 360px); overflow: auto;
   background: var(--card); border: 1px solid var(--border); border-radius: var(--r-lg);
   box-shadow: var(--shadow-pop); padding: 6px; color: var(--fg); font-size: 13px;
-  animation: ui-pop-in .12s ease-out;
+  animation: ui-pop-in .16s cubic-bezier(.2, .8, .2, 1);
+  transform-origin: var(--radix-popover-content-transform-origin, var(--radix-select-content-transform-origin, top));
 }
 .ui-select-pop { min-width: var(--radix-select-trigger-width); max-height: min(360px, var(--radix-select-content-available-height)); }
-@keyframes ui-pop-in { from { opacity: 0; transform: translateY(-2px); } }
+/* Список проявляется и съезжает от кнопки: вниз — сверху, вверх — снизу */
+@keyframes ui-pop-in { from { opacity: 0; transform: translateY(-6px) scale(.98); } }
+@keyframes ui-pop-in-up { from { opacity: 0; transform: translateY(6px) scale(.98); } }
+.ui-pop[data-side="top"] { animation-name: ui-pop-in-up; }
 .ui-pop-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 6px 6px; font-size: 12px; color: var(--faint); }
 .ui-pop-sep { height: 1px; background: var(--border); margin: 6px -6px; }
 
@@ -259,6 +263,7 @@
   display: flex; align-items: center; gap: 9px; width: 100%; min-height: 32px; padding: 6px 8px;
   border: 0; border-radius: var(--r); background: none; color: var(--fg); font: 13px var(--font);
   text-align: left; cursor: pointer; outline: none; user-select: none;
+  transition: background .12s, color .12s;
 }
 .ui-opt:hover:not(:disabled), .ui-opt[data-highlighted], .ui-opt:focus-visible { background: var(--hover); }
 .ui-opt[data-state="checked"], .ui-opt[aria-current] { font-weight: 500; }
