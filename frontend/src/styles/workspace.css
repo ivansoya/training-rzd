@@ -255,7 +255,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .g-node.selected, .react-flow__node.selected .g-node { border-color: var(--red); box-shadow: 0 0 0 1px var(--red); }
 .mag-account { gap: 24px; }
 .mag-account h2 { font-size: 21px; font-weight: 600; }
-.mag-friend-row, .mag-invite-row { padding-block: 14px; border-color: var(--rule); }
+.mag-invite-row { padding-block: 14px; border-color: var(--rule); }
 
 /* Auth keeps the existing forms, validation, registration and resend flows. */
 .mag-auth { grid-template-columns: minmax(0,1fr) minmax(420px,1fr); background: var(--paper); max-width: var(--workspace-max); margin: 0 auto; }

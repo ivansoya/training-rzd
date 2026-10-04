@@ -682,97 +682,6 @@
   max-width: 100%;
 }
 
-/* Ответ на клик мимо модалки, когда придраться не к чему: она не закрывается,
-   но и молчать нельзя — иначе клик выглядит как сломанный. */
-.mag-modal-nudge {
-  animation: mag-nudge 0.36s ease;
-}
-
-@keyframes mag-nudge {
-  0%, 100% { transform: translateX(0); }
-  20% { transform: translateX(-6px); }
-  45% { transform: translateX(5px); }
-  70% { transform: translateX(-3px); }
-}
-
-.mag-modal-2col {
-  width: 780px;
-  max-width: 100%;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  padding: 0;
-}
-
-.mag-modal-left {
-  padding: 22px;
-  border-right: 1px solid var(--mag-line);
-}
-
-/* Тот же размер, что у `.mag-modal > h1` в workspace.css: заголовок двухколоночной
-   модалки лежит глубже и под то правило не попадает. */
-.mag-modal-left h1 {
-  font-size: 24px;
-  margin: 0 0 8px;
-  font-weight: 650;
-}
-
-.mag-modal-right {
-  background: var(--mag-bg);
-  padding: 22px;
-  display: flex;
-  flex-direction: column;
-}
-
-.mag-modal-right h3 {
-  font-size: 13px;
-  margin: 0 0 2px;
-}
-
-.mag-modal-right .mag-sub {
-  margin-bottom: 14px;
-  font-size: 12px;
-}
-
-.mag-modal-friends {
-  overflow-y: auto;
-  max-height: 300px;
-}
-
-.mag-friend-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  background: var(--card);
-  border: 1px solid var(--mag-line);
-  border-radius: 8px;
-  padding: 8px 10px;
-  margin-bottom: 7px;
-  cursor: pointer;
-}
-
-.mag-friend-row input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
-  accent-color: var(--mag-red);
-}
-
-.mag-friend-name {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.mag-friend-name b {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.mag-friend-name span {
-  font-size: 11px;
-  color: var(--mag-muted);
-}
-
-.mag-friend-row select,
 .mag-invite-row select {
   border: 1px solid var(--rule);
   border-radius: 7px;
@@ -781,23 +690,6 @@
   font-size: 12px;
   font-family: inherit;
   padding: 6px 8px;
-}
-
-.mag-friend-row select {
-  width: 130px;
-  margin-left: auto;
-}
-
-/* Подвал двухколоночной модалки — часть её сетки. Одноколоночные модалки
-   разделов оформляют свой подвал сами (project.css). */
-.mag-modal-2col .mag-modal-foot {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: 14px 22px;
-  border-top: 1px solid var(--mag-line);
-  background: var(--sunk);
 }
 
 /* --- страница проекта (П2: паспорт слева) --- */
@@ -1000,15 +892,6 @@
 @media (max-width: 900px) {
   .mag-pp {
     grid-template-columns: 1fr;
-  }
-
-  .mag-modal-2col {
-    grid-template-columns: 1fr;
-  }
-
-  .mag-modal-left {
-    border-right: none;
-    border-bottom: 1px solid var(--mag-line);
   }
 
   .mag-statrow {

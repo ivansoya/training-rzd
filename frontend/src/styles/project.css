@@ -717,17 +717,11 @@
 }
 
 /* Компактные селекты, которые общий вид перебил бы своей высотой */
-.mag .mag-friend-row select,
 .mag .mag-invite-row select {
   font-size: 12px;
   padding: 6px 24px 6px 8px;
   border-radius: 7px;
   background-position: right 7px center;
-}
-
-.mag .mag-friend-row select {
-  width: 130px;
-  margin-left: auto;
 }
 
 /* ===== Курсор и выделение =====

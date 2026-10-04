@@ -1,216 +1,145 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { ApiError, createProject, getFriends } from "../../auth/api";
 import type { FriendEntry } from "../../auth/api";
-import { initials } from "../auth/AccountPage";
-import { useEscape } from "./useEscape";
-import Sep from "../Sep";
-import Banner from "../Banner";
-import { useBackdrop } from "../useBackdrop";
-import { useDialog } from "../useDialog";
+import { Avatar, Button, Check, Dialog, Field, Input, Notice, Select, Textarea } from "../../ui";
 
-interface Props {
+type Role = "editor" | "admin" | "viewer";
+
+const ROLES: { value: Role; label: string }[] = [
+  { value: "editor", label: "Редактор" },
+  { value: "admin", label: "Администратор" },
+  { value: "viewer", label: "Просмотр" },
+];
+
+/** Друзей больше — появляется поиск по ним. */
+const SEARCH_FROM = 6;
+
+const norm = (s: string) => s.toLocaleLowerCase("ru").replace(/ё/g, "е").trim();
+
+/** Новый проект: название, описание и сразу — кого из друзей позвать и с какой ролью. */
+export default function CreateProjectModal({ onClose, onCreated }: {
   onClose: () => void;
   onCreated: (code: string) => void;
-}
-
-interface Pick {
-  checked: boolean;
-  role: string;
-}
-
-export default function CreateProjectModal({ onClose, onCreated }: Props) {
+}) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [friends, setFriends] = useState<FriendEntry[]>([]);
-  const [picks, setPicks] = useState<Record<string, Pick>>({});
-  const [filter, setFilter] = useState("");
+  const [friends, setFriends] = useState<FriendEntry[] | null>(null);
+  // Отмеченные друзья и их роли; роль помнится и после снятия отметки
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [roles, setRoles] = useState<Record<string, Role>>({});
+  const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  const [nudge, setNudge] = useState(false);
-  const nameRef = useRef<HTMLInputElement>(null);
-  const dialogRef = useDialog<HTMLFormElement>();
+  const [fields, setFields] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    getFriends()
-      .then((f) => setFriends(f.friends))
-      .catch(() => {});
+    getFriends().then((f) => setFriends(f.friends)).catch(() => setFriends([]));
   }, []);
 
-  useEscape(onClose);
+  const shown = useMemo(() => {
+    const q = norm(query);
+    return (friends ?? []).filter((f) => !q || norm(`${f.user.display_name} ${f.user.login}`).includes(q));
+  }, [friends, query]);
 
-  // Клик мимо модалки больше не закрывает её — слишком легко потерять набранное.
-  // Вместо этого показываем, чего не хватает; всё заполнено — просто дёргаем.
-  function handleBackdrop() {
+  const toggle = (id: string, on: boolean) => setPicked((prev) => {
+    const next = new Set(prev);
+    if (on) next.add(id);
+    else next.delete(id);
+    return next;
+  });
+
+  async function submit(e?: FormEvent) {
+    e?.preventDefault();
+    if (busy) return;
     if (!name.trim()) {
-      setFieldErrors((prev) => ({ ...prev, name: "Укажите название проекта." }));
-      nameRef.current?.focus();
+      setFields({ name: "Укажите название проекта." });
       return;
     }
-    setNudge(true);
-    window.setTimeout(() => setNudge(false), 400);
-  }
-
-  const visibleFriends = useMemo(() => {
-    const q = filter.trim().toLowerCase();
-    if (!q) return friends;
-    return friends.filter(
-      (f) =>
-        f.user.display_name.toLowerCase().includes(q) ||
-        f.user.login.toLowerCase().includes(q)
-    );
-  }, [friends, filter]);
-
-  const selectedCount = Object.values(picks).filter((p) => p.checked).length;
-
-  function setPick(userId: string, patch: Partial<Pick>) {
-    setPicks((prev) => {
-      const base = prev[userId] ?? { checked: false, role: "editor" };
-      return { ...prev, [userId]: { ...base, ...patch } };
-    });
-  }
-
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setFieldErrors({});
     setBusy(true);
+    setError(null);
+    setFields({});
     try {
-      const invites = Object.entries(picks)
-        .filter(([, p]) => p.checked)
-        .map(([user_id, p]) => ({ user_id, role: p.role }));
-      const { code: created } = await createProject({ name, description, invites });
-      onCreated(created);
+      const invites = [...picked].map((user_id) => ({ user_id, role: roles[user_id] ?? "editor" }));
+      const { code } = await createProject({ name: name.trim(), description: description.trim(), invites });
+      onCreated(code);
     } catch (err) {
-      if (err instanceof ApiError && err.fields) setFieldErrors(err.fields);
+      if (err instanceof ApiError && err.fields) setFields(err.fields);
       else setError((err as Error).message);
-    } finally {
       setBusy(false);
     }
   }
 
+  // Набранное жалко терять: щелчок мимо окна его не закрывает
+  const dirty = Boolean(name.trim() || description.trim() || picked.size);
+
   return (
-    <div className="mag-backdrop" {...useBackdrop(handleBackdrop)}>
-      <form
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="np-title"
-        tabIndex={-1}
-        className={
-          nudge
-            ? "mag-modal mag-modal-2col mag-modal-nudge"
-            : "mag-modal mag-modal-2col"
-        }
-        onSubmit={handleSubmit}
-      >
-        <div className="mag-modal-left">
-          <h1 id="np-title">Новый проект</h1>
-          <p className="mag-sub">
-            Код проекта присвоится автоматически. Датасет загрузим на странице
-            проекта.
-          </p>
-          {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
-          <div className={fieldErrors.name ? "mag-field invalid" : "mag-field"}>
-            <label htmlFor="np-name">Название</label>
-            <input
-              id="np-name"
-              type="text"
-              ref={nameRef}
-              value={name}
-              maxLength={255}
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }} width={560} modalLock={dirty}
+      title="Новый проект"
+      desc="Код проекта присвоится сам. Данные добавите на странице проекта — импортом архива или через таски."
+      footer={<>
+        <Button variant="ghost" onClick={onClose}>Отмена</Button>
+        <Button variant="primary" disabled={busy} onClick={() => submit()}>
+          {busy ? "Создаём…" : picked.size ? `Создать и пригласить (${picked.size})` : "Создать проект"}
+        </Button>
+      </>}>
+      <form className="stack-v np-form" onSubmit={submit}>
+        {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+        <Field label="Название" error={fields.name}>
+          {(id) => (
+            <Input id={id} value={name} maxLength={255} placeholder="Варан КЗТ" data-autofocus invalid={Boolean(fields.name)}
               onChange={(e) => {
                 setName(e.target.value);
-                // Подсветка гаснет, как только человек начал отвечать на неё.
-                if (fieldErrors.name) {
-                  setFieldErrors(({ name: _drop, ...rest }) => rest);
-                }
-              }}
-            />
-            {fieldErrors.name && (
-              <div className="mag-field-error">{fieldErrors.name}</div>
-            )}
-          </div>
-          <div className="mag-field">
-            <label htmlFor="np-desc">Описание</label>
-            <textarea
-              id="np-desc"
-              rows={3}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-        </div>
+                if (fields.name) setFields(({ name: _drop, ...rest }) => rest);
+              }} />
+          )}
+        </Field>
+        <Field label="Описание" error={fields.description} hint="Необязательно: что размечаем и зачем.">
+          {(id) => <Textarea id={id} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} />}
+        </Field>
+        {/* Enter в названии создаёт проект */}
+        <button type="submit" hidden />
+      </form>
 
-        <div className="mag-modal-right">
-          <h3>Пригласить участников</h3>
-          <p className="mag-sub">
-            Из друзей — одним кликом. Остальных пригласите по логину со
-            страницы проекта.
-          </p>
-          <div className="mag-field">
-            <input
-              type="text"
-              aria-label="Поиск по друзьям"
-              placeholder="Поиск по друзьям…"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-            />
+      <section className="np-team">
+        <div className="np-team-h">
+          <div>
+            <b>Пригласить участников</b>
+            <p className="t-xs t-muted">Друзей — отсюда, остальных — по логину со страницы проекта.</p>
           </div>
-          <div className="mag-modal-friends">
-            {friends.length === 0 && (
-              <div className="mag-empty">
-                Список друзей пуст — добавьте друзей в кабинете, чтобы звать их
-                в проекты одним кликом.
-              </div>
-            )}
-            {friends.length > 0 && visibleFriends.length === 0 && (
-              <div className="mag-empty">Никого не нашлось.</div>
-            )}
-            {visibleFriends.map((f) => {
-              const pick = picks[f.user.id];
+          {(friends?.length ?? 0) > SEARCH_FROM && (
+            <Input icon="search" className="np-search" type="search" placeholder="Найти друга" aria-label="Найти друга"
+              value={query} onChange={(e) => setQuery(e.target.value)} />
+          )}
+        </div>
+        {friends === null ? (
+          <p className="t-sm t-muted">Загружаем друзей…</p>
+        ) : friends.length === 0 ? (
+          <p className="np-none">Друзей пока нет — добавьте их в личном кабинете, и звать в проекты можно будет одним щелчком.</p>
+        ) : shown.length === 0 ? (
+          <p className="np-none">Никого не нашлось.</p>
+        ) : (
+          <ul className="np-friends">
+            {shown.map((f) => {
+              const on = picked.has(f.user.id);
               return (
-                <label key={f.user.id} className="mag-friend-row">
-                  <input
-                    type="checkbox"
-                    checked={pick?.checked || false}
-                    onChange={(e) => setPick(f.user.id, { checked: e.target.checked })}
-                  />
-                  <span className="mag-ava">{initials(f.user.display_name)}</span>
-                  <span className="mag-friend-name">
-                    <b>{f.user.display_name}</b>
-                    <span>{f.user.login} <Sep /> друг</span>
-                  </span>
-                  <select
-                    aria-label={`Роль: ${f.user.display_name}`}
-                    value={pick?.role || "editor"}
-                    disabled={!pick?.checked}
-                    onChange={(e) => setPick(f.user.id, { role: e.target.value })}
-                  >
-                    <option value="editor">Редактор</option>
-                    <option value="admin">Администратор</option>
-                    <option value="viewer">Просмотр</option>
-                  </select>
-                </label>
+                <li key={f.user.id} className={on ? "on" : undefined}>
+                  <Check checked={on} onChange={(v) => toggle(f.user.id, v)}>
+                    <Avatar name={f.user.display_name} size={28} />
+                    <span className="np-who">
+                      <b className="t-ell">{f.user.display_name}</b>
+                      <span className="t-ell">{f.user.login}</span>
+                    </span>
+                  </Check>
+                  <Select size="sm" label={`Роль: ${f.user.display_name}`} disabled={!on}
+                    value={roles[f.user.id] ?? "editor"} options={ROLES}
+                    onChange={(v) => setRoles((r) => ({ ...r, [f.user.id]: v }))} />
+                </li>
               );
             })}
-          </div>
-        </div>
-
-        <div className="mag-modal-foot">
-          <button className="mag-ghost mag-ghost-inline" type="button" onClick={onClose}>
-            Отмена
-          </button>
-          <button className="mag-btn mag-btn-inline" type="submit" disabled={busy}>
-            {busy
-              ? "Создаём…"
-              : selectedCount > 0
-                ? `Создать и пригласить (${selectedCount})`
-                : "Создать проект"}
-          </button>
-        </div>
-      </form>
-    </div>
+          </ul>
+        )}
+      </section>
+    </Dialog>
   );
 }

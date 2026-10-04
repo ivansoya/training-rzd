@@ -40,3 +40,22 @@ test("проекты карточками и пустые датасеты", asy
   await page.goto(`/projects/${project.code}?view=frames`);
   await expect(page).toHaveURL(new RegExp(`/projects/${project.code}/datasets$`));
 });
+
+test("новый проект окном", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/");
+  await page.getByRole("button", { name: "Новый проект" }).first().click();
+  const dialog = page.getByRole("dialog", { name: "Новый проект" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByText("Друзей пока нет")).toBeVisible();
+
+  // Пустое название — подсказка у поля, окно не закрывается
+  await dialog.getByRole("button", { name: "Создать проект" }).click();
+  await expect(dialog.getByText("Укажите название проекта.")).toBeVisible();
+
+  const name = tag();
+  await dialog.getByLabel("Название").fill(name);
+  await dialog.getByLabel("Название").press("Enter");
+  await expect(page).toHaveURL(/\/projects\/[A-Z0-9]+$/);
+  await expect(page.getByRole("heading", { level: 1, name: "Обзор" })).toBeVisible();
+});
