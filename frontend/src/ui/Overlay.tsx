@@ -119,6 +119,14 @@ export function MenuItem({ icon, children, onSelect, danger, disabled, hint, sel
   );
 }
 
+/** Фокус при открытии — в поле с autoFocus, иначе на само окно, а не на крестик в шапке. */
+function focusInside(e: Event) {
+  e.preventDefault();
+  const box = e.currentTarget as HTMLElement;
+  const wanted = box.querySelector<HTMLElement>("[autofocus], [data-autofocus]");
+  (wanted ?? box).focus();
+}
+
 interface DialogProps {
   open: boolean;
   onOpenChange: (v: boolean) => void;
@@ -127,29 +135,46 @@ interface DialogProps {
   children?: ReactNode;
   footer?: ReactNode;
   width?: number;
+  /** Фиксированная высота: окно не прыгает от шага к шагу. */
+  height?: number;
   /** Не закрывать щелчком мимо: в окне идёт работа, которую жалко потерять. */
   modalLock?: boolean;
+  /** false — окно не закрыть ни крестиком, ни Esc, ни щелчком мимо, пока идёт работа. */
+  closable?: boolean;
+  /** Над телом окна: шаги мастера и т. п. */
+  above?: ReactNode;
+  /** Тело без полей и своей прокрутки — раскладку делает содержимое. */
+  bare?: boolean;
+  className?: string;
 }
 
-export function Dialog({ open, onOpenChange, title, desc, children, footer, width, modalLock }: DialogProps) {
-  useEscape(() => onOpenChange(false), open);
+export function Dialog({ open, onOpenChange, title, desc, children, footer, width, height, modalLock,
+  closable = true, above, bare, className }: DialogProps) {
+  useEscape(() => { if (closable) onOpenChange(false); }, open);
+  const style = { ...(width ? { width: `min(${width}px, calc(100vw - 32px))` } : {}),
+    ...(height ? { height: `min(${height}px, calc(100dvh - 48px))` } : {}) };
   return (
-    <RD.Root open={open} onOpenChange={onOpenChange}>
+    <RD.Root open={open} onOpenChange={(v) => { if (v || closable) onOpenChange(v); }}>
       <RD.Portal>
         <RD.Overlay className="ui-scrim" />
-        <RD.Content className="ui-dialog" style={width ? { width } : undefined}
-          onPointerDownOutside={modalLock ? (e) => e.preventDefault() : undefined}>
+        <RD.Content className={cx("ui-dialog", className)} style={style}
+          onEscapeKeyDown={closable ? undefined : (e) => e.preventDefault()}
+          onPointerDownOutside={modalLock || !closable ? (e) => e.preventDefault() : undefined}
+          onOpenAutoFocus={focusInside}>
           <div className="ui-dialog-h">
             <div>
               <RD.Title className="ui-dialog-t">{title}</RD.Title>
               {desc ? <RD.Description className="ui-dialog-d">{desc}</RD.Description>
                 : <RD.Description className="ui-sr">{typeof title === "string" ? title : ""}</RD.Description>}
             </div>
-            <RD.Close className="ui-btn ui-btn-ghost ui-btn-sm ui-btn-icon" aria-label="Закрыть">
-              <Icon name="x" />
-            </RD.Close>
+            {closable && (
+              <RD.Close className="ui-btn ui-btn-ghost ui-btn-sm ui-btn-icon" aria-label="Закрыть">
+                <Icon name="x" />
+              </RD.Close>
+            )}
           </div>
-          {children != null && <div className="ui-dialog-b">{children}</div>}
+          {above}
+          {children != null && <div className={bare ? "ui-dialog-bare" : "ui-dialog-b"}>{children}</div>}
           {footer && <div className="ui-dialog-f">{footer}</div>}
         </RD.Content>
       </RD.Portal>
@@ -164,7 +189,7 @@ export function Sheet({ open, onOpenChange, title, desc, children, footer, width
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <RD.Portal>
         <RD.Overlay className="ui-scrim" />
-        <RD.Content className="ui-sheet" style={width ? { width } : undefined}>
+        <RD.Content className="ui-sheet" style={width ? { width } : undefined} onOpenAutoFocus={focusInside}>
           <div className="ui-dialog-h">
             <div>
               <RD.Title className="ui-dialog-t">{title}</RD.Title>

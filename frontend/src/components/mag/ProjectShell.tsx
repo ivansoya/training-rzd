@@ -38,7 +38,9 @@ export default function ProjectShell() {
   const { me, refresh: refreshMe } = useAuth();
   const shown = useRef(false);
   // Переписанные экраны рисуют свою шапку и поля сами; старым — прежняя обёртка.
-  const redesigned = Boolean(useMatch("/projects/:code"));
+  const atOverview = Boolean(useMatch("/projects/:code"));
+  const atImport = Boolean(useMatch("/projects/:code/import"));
+  const redesigned = atOverview || atImport;
 
   const refresh = useCallback(async () => {
     if (!code) return;

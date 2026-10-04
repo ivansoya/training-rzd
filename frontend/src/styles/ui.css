@@ -311,3 +311,47 @@
 .ui-chart-grid { stroke: var(--border); stroke-width: 1; }
 .ui-chart-ax { fill: var(--faint); font: 10px var(--mono); }
 .ui-chart-rest { fill: var(--muted); opacity: .5; }
+
+/* ---------- окно: тело на всю высоту ---------- */
+.ui-dialog-b { flex: 1; }
+.ui-dialog-b > * { flex-shrink: 0; }
+.ui-dialog-bare { flex: 1; min-height: 0; display: flex; overflow: hidden; }
+
+/* ---------- кольцо загрузки ---------- */
+.ui-ring { position: relative; flex: none; }
+.ui-ring > svg { width: 100%; height: 100%; rotate: -90deg; display: block; }
+.ui-ring > svg circle { fill: none; stroke-width: 5; }
+.ui-ring-t { stroke: var(--hover); }
+.ui-ring-v { stroke: var(--primary); stroke-linecap: round; transition: stroke-dashoffset .25s linear; }
+.ui-ring.done .ui-ring-v { stroke: var(--st-done); }
+.ui-ring.bad .ui-ring-v { stroke: var(--destructive); }
+.ui-ring-c { position: absolute; inset: 0; display: grid; place-items: center; }
+.ui-ring-c b { font: 600 30px var(--mono); letter-spacing: -.02em; }
+.ui-ring-c small { font-size: 14px; color: var(--muted-fg); font-weight: 500; }
+.ui-ring.done .ui-ring-c .ui-ic { width: 40px; height: 40px; color: var(--st-done); stroke-width: 2.25; }
+.ui-ring.bad .ui-ring-c .ui-ic { width: 40px; height: 40px; color: var(--destructive); stroke-width: 2.25; }
+
+/* ---------- бейдж-сообщение ---------- */
+.ui-pill {
+  --t: var(--st-empty);
+  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--r-full);
+  font-size: 12px; font-weight: 500; white-space: nowrap; max-width: 100%;
+  background: color-mix(in srgb, var(--t) 13%, transparent);
+  border: 1px solid color-mix(in srgb, var(--t) 30%, transparent);
+  color: color-mix(in srgb, var(--t) 70%, var(--fg));
+}
+.ui-pill .ui-ic { color: var(--t); }
+.ui-pill.warn { --t: var(--st-skip); }
+.ui-pill.bad { --t: var(--destructive); }
+.ui-pill.ok { --t: var(--st-done); }
+.ui-pills { display: flex; flex-wrap: wrap; gap: 6px; }
+
+/* ---------- чип-переключатель ---------- */
+.ui-chiptg {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px; border-radius: var(--r);
+  border: 1px solid var(--border); background: var(--card); color: var(--muted-fg); font: 500 12.5px var(--font);
+  cursor: pointer; transition: border-color .12s, color .12s;
+}
+.ui-chiptg:hover:not(:disabled) { color: var(--fg); border-color: color-mix(in srgb, var(--ring) 55%, var(--input)); }
+.ui-chiptg[aria-pressed="true"] { border-color: var(--ring); color: var(--fg); background: color-mix(in srgb, var(--hover) 60%, var(--card)); }
+.ui-chiptg:disabled { opacity: .55; cursor: not-allowed; }

@@ -1,312 +1,78 @@
-/* Экспорт проекта: слева выбор (датасеты и классы), справа — что получится.
-   Обе колонки скроллятся сами, высота модалки не зависит от числа классов. */
+/* Окно экспорта: слева что выгружать, справа как и что получится. Только токены. */
 
-.mag-exp {
-  width: 940px;
-  max-width: 100%;
-  padding: 0;
-  display: grid;
-  grid-template-columns: 1fr 340px;
-  /* Строка списков тянется, подвал — по содержимому: иначе длинный список
-     классов вырастил бы модалку выше экрана. */
-  grid-template-rows: minmax(0, 1fr) auto;
-  max-height: min(720px, calc(100vh - 48px));
-  overflow: hidden;
+/* Кнопка «Экспорт» в старой шапке проекта — пока её показывают непереписанные вкладки */
+.mag-pass-export { align-self: center; }
+
+.exp .ui-dialog-bare { border-top: 1px solid var(--border); }
+.exp-l { flex: 1; min-width: 0; overflow: auto; padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 18px; scrollbar-gutter: stable; }
+.exp-l.locked { opacity: .55; }
+.exp-l > * { flex-shrink: 0; }
+.exp-r {
+  width: 320px; flex: none; overflow: auto; padding: 14px 18px 18px; display: flex; flex-direction: column; gap: 16px;
+  background: var(--bg); border-left: 1px solid var(--border); scrollbar-gutter: stable;
 }
 
-.mag-exp-pick,
-.mag-exp-side {
-  padding: 22px;
-  min-height: 0;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
+.exp-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; font-weight: 500; color: var(--faint); margin-bottom: 8px; }
+.exp-h button, .exp-acts button {
+  border: 0; background: none; color: var(--muted-fg); font: 12px var(--font); padding: 2px 6px; border-radius: var(--r-sm); cursor: pointer;
 }
+.exp-h button:hover:not(:disabled), .exp-acts button:hover:not(:disabled) { color: var(--fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 55%, transparent); }
+.exp-h button:disabled { opacity: .5; cursor: not-allowed; }
+.exp-acts { display: flex; gap: 2px; }
 
-.mag-exp-side {
-  background: var(--mag-bg);
-  border-left: 1px solid var(--mag-line);
-}
+.exp-list { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; }
+.exp-ds { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 38px; padding: 6px 12px; border-top: 1px solid var(--border); }
+.exp-ds:first-child { border-top: 0; }
 
-.mag-exp-pick h1 {
-  font-size: 16px;
-  margin: 0 0 2px;
-  font-weight: 750;
+/* Класс выбирается строкой; образец цвета — сам переключатель: залит — в выгрузке, контур — нет */
+.exp-cls {
+  display: grid; grid-template-columns: 16px minmax(0, 1fr) 120px 76px; align-items: center; gap: 10px;
+  width: 100%; min-height: 44px; padding: 6px 12px; border: 0; border-top: 1px solid var(--border);
+  background: transparent; color: var(--muted-fg); font: 13px var(--font); text-align: left; cursor: pointer;
+  box-shadow: inset 3px 0 transparent; transition: background .12s, box-shadow .12s, color .12s;
 }
+.exp-cls:first-child { border-top: 0; }
+.exp-cls.on { color: var(--fg); background: color-mix(in srgb, var(--hover) 55%, transparent); box-shadow: inset 3px 0 var(--cc); }
+.exp-cls:disabled { cursor: not-allowed; }
+.exp-pick {
+  width: 16px; height: 16px; border-radius: var(--r-sm); border: 1.5px solid color-mix(in srgb, var(--cc) 55%, var(--input));
+  transition: background .12s, border-color .12s, box-shadow .12s;
+}
+.exp-cls:hover:not(:disabled) .exp-pick { border-color: var(--cc); box-shadow: 0 0 0 3px color-mix(in srgb, var(--cc) 18%, transparent); }
+.exp-cls.on .exp-pick { background: var(--cc); border-color: var(--cc); }
+.exp-n { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.exp-n small { font-size: 11.5px; color: var(--faint); }
+.exp-cls:not(.on) .exp-n small { opacity: .7; }
+.exp-tv { display: flex; height: 6px; border-radius: 3px; overflow: hidden; gap: 1px; background: var(--hover); }
+.exp-tv i { display: block; height: 100%; }
+.exp-num { font: 500 12px var(--mono); text-align: right; color: var(--muted-fg); white-space: nowrap; }
+.exp-num b { color: var(--fg); font-weight: 500; }
+.exp-num .zero { color: var(--destructive); }
+.exp-more {
+  border: 0; border-top: 1px solid var(--border); background: none; color: var(--muted-fg); font: 12.5px var(--font);
+  padding: 9px 12px; text-align: left; cursor: pointer;
+}
+.exp-more:hover { color: var(--fg); }
 
-.mag-exp-h {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12.5px;
-  font-weight: 650;
-  color: var(--mag-muted);
-  margin: 16px 0 8px;
-}
+.exp-field { display: flex; flex-direction: column; gap: 8px; }
+.exp-field > span { font-size: 12px; color: var(--faint); font-weight: 500; }
+.exp-field .ui-seg { display: flex; }
+.exp-field .ui-seg button { flex: 1; justify-content: center; }
 
-.mag-exp-pick > .mag-sub {
-  margin: 0;
-  font-size: 12.5px;
-}
+.exp-sum { display: flex; flex-direction: column; gap: 10px; }
+.exp-nums { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.exp-nums div { display: flex; flex-direction: column; }
+.exp-nums b { font: 600 24px var(--mono); letter-spacing: -.02em; }
+.exp-nums span { font-size: 12px; color: var(--muted-fg); }
 
-.mag-exp-acts {
-  margin-left: auto;
-  display: flex;
-  gap: 6px;
-}
-
-.mag-exp-acts button {
-  border: 1px solid var(--mag-edge);
-  background: var(--card);
-  border-radius: 6px;
-  padding: 2px 8px;
-  font: inherit;
-  font-size: 10.5px;
-  letter-spacing: 0;
-  text-transform: none;
-  color: var(--mag-muted);
-  cursor: pointer;
-}
-
-.mag-exp-acts button:hover {
-  color: var(--mag-ink);
-  border-color: var(--mag-muted);
-}
-
-.mag-exp-list {
-  border: 1px solid var(--mag-line);
-  border-radius: 8px;
-  background: var(--card);
-  overflow: auto;
-  flex: 0 0 auto;
-}
-
-/* Классов бывает под сотню — список получает всё, что осталось от колонки. */
-.mag-exp-classes {
-  flex: 1 1 auto;
-  min-height: 120px;
-}
-
-.mag-exp-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--mag-line);
-  cursor: pointer;
-  font-size: 13px;
-}
-
-.mag-exp-row:last-child {
-  border-bottom: none;
-}
-
-.mag-exp-row:hover {
-  background: var(--mag-bg);
-}
-
-.mag-exp-row input[type="checkbox"] {
-  width: 15px;
-  height: 15px;
-  accent-color: var(--mag-red);
-  cursor: pointer;
-}
-
-.mag-exp-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-  flex: none;
-}
-
-.mag-exp-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mag-exp-num,
-.mag-exp-split {
-  font: 600 11px ui-monospace, Menlo, Consolas, monospace;
-  color: var(--mag-muted);
-  flex: none;
-}
-
-/* Пока выбор не посчитан, справа стоит число разметок; после подсчёта — как
-   класс лёг на train/val. Это и есть обещанная табличка. */
-.mag-exp-split b {
-  color: var(--mag-ink);
-  font-weight: 700;
-}
-
-.mag-exp-seg {
-  display: flex;
-  gap: 4px;
-  background: var(--card);
-  border: 1px solid var(--mag-edge);
-  border-radius: 8px;
-  padding: 3px;
-}
-
-.mag-exp-seg button {
-  flex: 1 1 0;
-  border: none;
-  background: none;
-  border-radius: 6px;
-  padding: 6px 4px;
-  font: inherit;
-  font-size: 12px;
-  color: var(--mag-muted);
-  cursor: pointer;
-}
-
-.mag-exp-seg button.on {
-  background: var(--mag-graphite);
-  color: var(--on-acc);
-  font-weight: 650;
-}
-
-.mag-exp-seg button:disabled {
-  color: #b4bcc5;
-  cursor: not-allowed;
-}
-
-.mag-exp-hint {
-  margin: 8px 0 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--mag-muted);
-}
-.mag-exp-hint p { margin: 0; }
-
-.mag-exp-slider {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 10px;
-}
-
-.mag-exp-slider input {
-  flex: 1 1 auto;
-  accent-color: var(--mag-red);
-}
-
-.mag-exp-slider span {
-  font-size: 11.5px;
-  color: var(--mag-muted);
-  white-space: nowrap;
-}
-
-.mag-exp-sum {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin-top: 18px;
-  padding: 12px 14px;
-  background: var(--card);
-  border: 1px solid var(--mag-line);
-  border-radius: 8px;
-}
-
-.mag-exp-sum b {
-  display: block;
-  font-size: 16px;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-}
-
-.mag-exp-sum span {
-  font-size: 11.5px;
-  color: var(--mag-muted);
-}
-
-.mag-exp-warn {
-  margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: 7px;
-  border: 1px solid #f0d48a;
-  background: #fdf6e3;
-  color: #7a5a00;
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.mag-exp-progress {
-  position: relative;
-  margin-top: 14px;
-  height: 26px;
-  border-radius: 7px;
-  background: var(--card);
-  border: 1px solid var(--mag-line);
-  overflow: hidden;
-}
-
-.mag-exp-progress i {
-  position: absolute;
-  inset: 0 auto 0 0;
-  background: rgba(226, 26, 26, 0.16);
-  transition: width 0.2s ease;
-}
-
-.mag-exp-progress span {
-  position: relative;
-  display: block;
-  line-height: 24px;
-  text-align: center;
-  font-size: 11.5px;
-  color: var(--mag-ink);
-}
-
-.mag-exp-done {
-  margin-top: 14px;
-  padding: 10px 12px;
-  border-radius: 7px;
-  border: 1px solid #b7e0c2;
-  background: #f0f9f3;
-}
-
-.mag-exp-done b {
-  display: block;
-  font-size: 13px;
-}
-
-.mag-exp-done span {
-  font-size: 11.5px;
-  color: var(--mag-muted);
-}
-
-.mag-exp .mag-modal-foot {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 10px;
-  padding: 14px 22px;
-  border-top: 1px solid var(--mag-line);
-  background: var(--sunk);
-}
-
-/* Скачивание — ссылка, а не кнопка: браузер сам заберёт файл с куками. */
-.mag-exp .mag-modal-foot a.mag-btn {
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-}
-
-.mag-pass-export {
-  align-self: center;
-}
+.exp-stage { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; text-align: center; padding-block: 8px; }
+.exp-stage b { font-size: 14px; font-weight: 600; }
+.exp-stage span { font-size: 12.5px; color: var(--muted-fg); overflow-wrap: anywhere; }
 
 @media (max-width: 860px) {
-  .mag-exp {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) auto auto;
-  }
-
-  .mag-exp-side {
-    border-left: none;
-    border-top: 1px solid var(--mag-line);
-  }
+  .exp .ui-dialog-bare { flex-direction: column; overflow: auto; }
+  .exp-l, .exp-r { overflow: visible; }
+  .exp-r { width: auto; border-left: 0; border-top: 1px solid var(--border); }
+  .exp-cls { grid-template-columns: 16px minmax(0, 1fr) 76px; }
+  .exp-tv { display: none; }
 }

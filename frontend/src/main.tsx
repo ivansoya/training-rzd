@@ -14,7 +14,7 @@ import TrainSetWizard from "./components/training/TrainSetWizard";
 import AuthGate from "./components/auth/AuthGate";
 import ConfirmPage from "./components/auth/ConfirmPage";
 import DatasetPage from "./components/mag/DatasetPage";
-import ImportWizard from "./components/mag/ImportWizard";
+import { ImportRoute } from "./components/mag/ImportDialog";
 import RoleGate from "./components/mag/RoleGate";
 import MagShell from "./components/mag/MagShell";
 import ProjectClasses from "./components/mag/ProjectClasses";
@@ -92,6 +92,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="classes" element={<ProjectClasses />} />
                   <Route path="tags" element={<ProjectTags />} />
                   <Route path="members" element={<ProjectMembers />} />
+                  {/* Импорт — окно поверх обзора; адрес держит его открытым после перезагрузки */}
+                  <Route path="import" element={<ImportRoute />} />
                   <Route path="tasks" element={<ProjectTasks />} />
                   <Route path="aug" element={<ProjectAug />} />
                   <Route path="training" element={<TrainingHome />} />
@@ -134,16 +136,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   element={
                     <MagShell>
                       <TaskPage />
-                    </MagShell>
-                  }
-                />
-                <Route
-                  path="/projects/:code/import"
-                  element={
-                    <MagShell>
-                      <RoleGate need="admin" what="Импортировать архив">
-                        <ImportWizard />
-                      </RoleGate>
                     </MagShell>
                   }
                 />

@@ -29,155 +29,6 @@
   background: var(--mag-red);
 }
 
-/* --- шаг мастера --- */
-.mag-step {
-  display: grid;
-  grid-template-columns: 26px 1fr;
-  gap: 14px;
-  align-items: start;
-  background: var(--card);
-  border: 1px solid var(--mag-line);
-  border-radius: 10px;
-  padding: 14px 18px;
-  margin-bottom: 10px;
-}
-
-.mag-step.now {
-  border-color: rgba(226, 26, 26, 0.45);
-  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.07);
-}
-
-.mag-step.todo {
-  background: var(--sunk);
-}
-
-.mag-step-num {
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font: 700 12px ui-monospace, Menlo, Consolas, monospace;
-  margin-top: 1px;
-}
-
-.mag-step.done .mag-step-num {
-  background: var(--mag-graphite);
-  color: var(--on-acc);
-}
-
-.mag-step.now .mag-step-num {
-  background: var(--mag-red);
-  color: var(--on-acc);
-}
-
-.mag-step.todo .mag-step-num {
-  background: var(--hair);
-  color: var(--faint);
-}
-
-.mag-step-main {
-  min-width: 0;
-}
-
-.mag-step-h {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  flex-wrap: wrap;
-}
-
-.mag-step-h b {
-  font-size: 14px;
-  font-weight: 700;
-}
-
-.mag-step-h .sub {
-  font-size: 12.5px;
-  color: var(--mag-muted);
-}
-
-/* width: auto — `.mag-btn` и `.mag-ghost` в auth.css во всю ширину (кнопки
-   форм входа), и в шапке шага «Импортировать» растягивался на 1070 px. */
-.mag-step-h .mag-btn,
-.mag-step-h .mag-ghost,
-.mag-step-h .mag-more {
-  margin-left: auto;
-  width: auto;
-  margin-top: 0;
-}
-
-/* Статистика пройденного шага: он не висит пустой, а отчитывается цифрами */
-.mag-facts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 22px;
-  margin-top: 9px;
-}
-
-.mag-fact {
-  font-size: 12px;
-  color: var(--mag-muted);
-  white-space: nowrap;
-}
-
-.mag-fact b {
-  color: var(--mag-ink);
-  font-weight: 700;
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  margin-right: 5px;
-}
-
-.mag-fact.warn,
-.mag-fact.warn b {
-  color: var(--skip);
-}
-
-.mag-fact.bad,
-.mag-fact.bad b {
-  color: var(--mag-red-dark);
-}
-
-.mag-more {
-  background: none;
-  border: 0;
-  padding: 0;
-  font-family: inherit;
-  font-size: 12.5px;
-  color: var(--mag-red);
-  cursor: pointer;
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-.mag-skipped {
-  margin: 10px 0 0;
-  padding: 10px 12px;
-  list-style: none;
-  background: var(--sunk);
-  border: 1px solid var(--mag-line);
-  border-radius: 8px;
-  font-size: 12px;
-  max-height: 190px;
-  overflow-y: auto;
-}
-
-.mag-skipped li {
-  padding: 2px 0;
-  color: var(--mag-muted);
-}
-
-.mag-skipped code {
-  color: var(--mag-ink);
-  font-size: 11.5px;
-}
-
-.mag-skipped .rest {
-  font-style: italic;
-}
-
 /* --- прогресс --- */
 .mag-progress {
   margin-top: 11px;
@@ -230,110 +81,11 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* --- выбор архива --- */
-.mag-drop {
-  margin-top: 12px;
-  border: 1px dashed var(--rule);
-  border-radius: 9px;
-  padding: 24px;
-  text-align: center;
-}
-
-.mag-drop input[type="file"] {
-  display: none;
-}
-
-.mag-drop p {
-  margin: 10px 0 0;
-  font-size: 12px;
-  color: var(--mag-muted);
-}
-
-.mag-ds-name {
-  max-width: 380px;
-  margin: 14px 0 6px;
-}
-
-/* --- таблица классов --- */
-.mag-classes {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.mag-classes th {
-  text-align: left;
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--mag-muted);
-  padding: 0 10px 8px 0;
-  border-bottom: 1px solid var(--mag-line);
-}
-
-.mag-classes td {
-  padding: 6px 10px 6px 0;
-  border-bottom: 1px solid #f0f2f5;
-  vertical-align: middle;
-}
-
-.mag-classes td:last-child,
-.mag-classes th:last-child {
-  padding-right: 0;
-}
-
-.mag-classes input[type="text"] {
-  width: 100%;
-  box-sizing: border-box;
-  border: 1px solid var(--rule);
-  border-radius: 7px;
-  padding: 6px 9px;
-  font-family: inherit;
-  font-size: 12.5px;
-  background: var(--card);
-  color: var(--mag-ink);
-}
-
-.mag-classes input[type="text"]:focus {
-  outline: none;
-  border-color: var(--mag-red);
-  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
-}
-
-/* Класс без названия — та самая работа, ради которой человек здесь */
-.mag-classes input[type="text"].blank {
-  border-color: var(--mag-red);
-  background: color-mix(in srgb, var(--red) 8%, var(--card));
-}
-
-.mag-classes input[type="color"] {
-  width: 26px;
-  height: 26px;
-  padding: 0;
-  border: 1px solid var(--rule);
-  border-radius: 5px;
-  background: none;
-}
-
 .mag-cls-id {
   width: 46px;
   font: 700 12px ui-monospace, Menlo, Consolas, monospace;
   color: var(--mag-muted);
   font-variant-numeric: tabular-nums;
-}
-
-/* Ячейка остаётся ячейкой: `display: flex` на <td> выбрасывал её из строки
-   таблицы (она вставала ниже соседей). Полоса и число — во вложенном ряду. */
-.mag-cls-count {
-  width: 170px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-.mag-cls-count > .mag-cls-row {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  justify-content: flex-end;
 }
 
 .mag-cls-bar {
@@ -356,55 +108,6 @@
   background: #c9d0d7;
 }
 
-.mag-cls-count .zero {
-  color: var(--faint);
-}
-
-/* --- суперклассы --- */
-.mag-sc-add {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 14px;
-  flex-wrap: wrap;
-}
-
-.mag-sc-add .mag-ghost {
-  width: auto;
-  margin-top: 0;
-}
-
-.mag-sc-add input {
-  border: 1px solid var(--rule);
-  border-radius: 7px;
-  padding: 7px 10px;
-  font-family: inherit;
-  font-size: 12.5px;
-  width: 200px;
-}
-
-.mag-sc-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-
-.mag-sc-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: 1px solid var(--mag-line);
-  border-radius: 999px;
-  padding: 3px 10px;
-  font-size: 12px;
-}
-
-.mag-sc-chip i {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
-}
-
 /* Изображение без разметки — негативный пример, а не потеря */
 .mag-pager {
   display: flex;
@@ -417,17 +120,60 @@
   font-variant-numeric: tabular-nums;
 }
 
-.mag-sm {
-  padding: 5px 10px;
-  font-size: 12px;
-}
 
-@media (max-width: 700px) {
-  .mag-step {
-    padding: 12px 14px;
-  }
+/* ---------- Окно импорта: один размер на всех шагах ---------- */
+.imp .ui-dialog-b { padding-top: 16px; }
+.imp-steps { padding: 12px 18px 14px; border-bottom: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+.imp-steps-h { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; font-size: 13px; }
+.imp-steps-h b { font-weight: 500; }
+.imp-steps-h b.ok { color: var(--st-done); }
+.imp-steps-h b.bad { color: var(--destructive); }
+.imp-steps-h span { font-size: 12px; color: var(--faint); }
+/* Шаги — нейтральные: красный остаётся только у кольца прогресса */
+.imp-steps-bar { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.imp-steps-bar i { height: 4px; border-radius: var(--r-full); background: var(--hover); }
+.imp-steps-bar i.on { background: color-mix(in srgb, var(--muted-fg) 55%, var(--hover)); }
+.imp-steps-bar i.cur { background: var(--fg); }
+.imp-steps-bar i.ok { background: var(--st-done); }
+.imp-steps-bar i.bad { background: var(--destructive); }
 
-  .mag-cls-count {
-    width: 110px;
-  }
+.imp-stage { flex: 1 0 auto; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; }
+.imp-stage-t { display: flex; flex-direction: column; gap: 4px; align-items: center; }
+.imp-stage-t b { font-size: 15px; font-weight: 600; }
+.imp-stage-t span { font-size: 12.5px; color: var(--muted-fg); }
+.imp-center { justify-content: center; }
+.imp-link { font-size: 12.5px; color: var(--fg); text-decoration: underline; text-decoration-color: var(--input); text-underline-offset: 3px; align-self: center; }
+
+.imp-drop {
+  width: 100%; max-width: 520px; cursor: pointer; border: 1.5px dashed var(--input); border-radius: var(--r-lg); padding: 40px 20px;
+  display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; color: var(--muted-fg); font-size: 13px;
+  transition: border-color .12s;
 }
+.imp-drop:hover { border-color: color-mix(in srgb, var(--ring) 55%, var(--input)); }
+.imp-drop .ui-ic { color: var(--faint); }
+.imp-drop b { color: var(--fg); font-size: 14px; }
+
+.imp-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.imp-stat { border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 12px; display: flex; flex-direction: column; gap: 2px; }
+.imp-stat b { font: 600 18px var(--mono); }
+.imp-stat span { font-size: 12px; color: var(--muted-fg); }
+.imp-skips { font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--r-md); }
+.imp-skips-h { font-size: 12px; color: var(--faint); font-weight: 500; }
+.imp-skips code { font: 500 12px var(--mono); color: var(--fg); }
+
+.imp-l { font-size: 12.5px; font-weight: 500; }
+.imp-tbl { border: 1px solid var(--border); border-radius: var(--r-md); overflow-x: auto; }
+.imp-tbl .ui-table td { height: 44px; padding: 0 8px; }
+.imp-tbl .ui-table th { padding: 0 8px; }
+.imp-id { font: 500 12px var(--mono); color: var(--faint); width: 36px; }
+.imp-blank { border-color: color-mix(in srgb, var(--st-skip) 60%, var(--input)); }
+.imp-sw { width: 28px; height: 28px; border-radius: var(--r); border: 1px solid var(--border); background: var(--card); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.imp-sw:hover { border-color: color-mix(in srgb, var(--ring) 55%, var(--input)); }
+.imp-sw i { width: 14px; height: 14px; border-radius: 3px; background: var(--cc); }
+.imp-cnt { width: 170px; }
+.imp-cnt { white-space: nowrap; }
+.imp-cnt > * { vertical-align: middle; }
+.imp-bar { display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; margin-right: 8px; }
+.imp-bar i { display: block; height: 100%; background: var(--c1); }
+
+.imp-confirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }

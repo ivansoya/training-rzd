@@ -5,8 +5,8 @@ import { createTask, listTasks } from "../../auth/api";
 import type { TaskSummary } from "../../auth/api";
 import { initials } from "../auth/AccountPage";
 import { useProject } from "./ProjectShell";
-import { plural } from "../ru";
-import { useEscape } from "./useEscape";
+import { count, plural } from "../ru";
+import { Button, Dialog, Field, Input, Notice, Select } from "../../ui";
 import Sep from "../Sep";
 import Banner from "../Banner";
 
@@ -159,21 +159,22 @@ export function CreateTaskModal({
 }) {
   const { detail } = useProject();
   const [name, setName] = useState("");
-  const [assignee, setAssignee] = useState("");
-  const [dataset, setDataset] = useState("");
+  // Radix не принимает пустое значение: «me» и «new» — «я сам» и «новый датасет»
+  const [assignee, setAssignee] = useState("me");
+  const [dataset, setDataset] = useState("new");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEscape(onClose);
 
-  async function submit(e: FormEvent) {
-    e.preventDefault();
+  async function submit(e?: FormEvent) {
+    e?.preventDefault();
+    if (busy || !name.trim()) return;
     setBusy(true);
     setError(null);
     try {
       const task = await createTask(detail.project.code, {
         name: name.trim(),
-        assignee_id: assignee || null,
-        target_dataset_id: dataset || null,
+        assignee_id: assignee === "me" ? null : assignee,
+        target_dataset_id: dataset === "new" ? null : dataset,
       });
       onCreated(task.id);
     } catch (err) {
@@ -183,73 +184,36 @@ export function CreateTaskModal({
     }
   }
 
+  const people = isAdmin ? detail.members.filter((m) => m.role !== "viewer") : [];
   return (
-    <div className="mag-backdrop">
-      <form className="mag-modal" onClick={(e) => e.stopPropagation()} onSubmit={submit}>
-        <h1>Новая таска</h1>
-        <p className="mag-sub">
-          Кадры попадут в проект, когда вы переведёте таску в «готово».
-        </p>
-        {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
-
-        <div className="mag-field">
-          <label htmlFor="nt-name">Название</label>
-          <input
-            id="nt-name"
-            type="text"
-            value={name}
-            placeholder="Съёмка 12 августа"
-            maxLength={255}
-            onChange={(e) => setName(e.target.value)}
-            autoFocus
-          />
-        </div>
-
-        <div className="mag-field">
-          <label htmlFor="nt-who">Исполнитель</label>
-          <select
-            id="nt-who"
-            value={assignee}
-            disabled={!isAdmin}
-            onChange={(e) => setAssignee(e.target.value)}
-          >
-            <option value="">Я сам</option>
-            {isAdmin &&
-              detail.members.filter((m) => m.role !== "viewer").map((m) => (
-                <option key={m.id} value={m.id}>
-                  {/* Тире, а не <Sep />: <option> держит только текст, разметка
-                      в нём не рисуется, и имя слипалось с ролью. */}
-                  {`${m.display_name} — ${m.role_label}`}
-                </option>
-              ))}
-          </select>
-          {!isAdmin && (
-            <p className="mag-role-hint">Назначать других может администратор.</p>
-          )}
-        </div>
-
-        <div className="mag-field">
-          <label htmlFor="nt-ds">Готовые кадры пойдут в датасет</label>
-          <select id="nt-ds" value={dataset} onChange={(e) => setDataset(e.target.value)}>
-            <option value="">Новый, с именем таски</option>
-            {detail.datasets.map((d) => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-          </select>
-          <p className="mag-role-hint">
-            Спрашиваем один раз: на «готово» вопросов больше не будет.
-          </p>
-        </div>
-
-        <div className="mag-modal-foot">
-          <button className="mag-ghost" type="button" onClick={onClose}>
-            Отмена
-          </button>
-          <button className="mag-btn" type="submit" disabled={busy || !name.trim()}>
-            Создать и загрузить кадры
-          </button>
-        </div>
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }} width={520}
+      title="Новая таска" desc="Кадры попадут в проект, когда вы переведёте таску в «Готово»."
+      footer={
+        <>
+          <span className="grow" />
+          <Button variant="ghost" onClick={onClose}>Отмена</Button>
+          <Button variant="primary" disabled={busy || !name.trim()} onClick={() => submit()}>Создать и загрузить кадры</Button>
+        </>
+      }>
+      <form className="stack-v" style={{ gap: 14 }} onSubmit={submit}>
+        {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+        <Field label="Название">
+          {(id) => <Input id={id} value={name} placeholder="Съёмка 12 августа" maxLength={255} data-autofocus
+            onChange={(e) => setName(e.target.value)} />}
+        </Field>
+        <Field label="Исполнитель" hint={isAdmin ? undefined : "Назначать других может администратор."}>
+          {(id) => <Select id={id} full value={assignee} onChange={setAssignee} disabled={!isAdmin} label="Исполнитель"
+            options={[{ value: "me", label: "Я сам" },
+              ...people.map((m) => ({ value: m.id, label: m.display_name, hint: m.role_label }))]} />}
+        </Field>
+        <Field label="Готовые кадры пойдут в датасет" hint="Спрашиваем один раз: на «Готово» вопросов больше не будет.">
+          {(id) => <Select id={id} full value={dataset} onChange={setDataset} label="Датасет для готовых кадров"
+            options={[{ value: "new", label: "Новый, с именем таски", hint: name.trim() ? `«${name.trim()}»` : "имя появится вместе с названием таски" },
+              ...detail.datasets.map((d) => ({ value: d.id, label: d.name, hint: count(d.images_count, "кадр", "кадра", "кадров") }))]} />}
+        </Field>
+        {/* Enter в названии создаёт таску */}
+        <button type="submit" hidden />
       </form>
-    </div>
+    </Dialog>
   );
 }

@@ -4,7 +4,7 @@ export { Icon, RailsMark } from "./Icon";
 export type { IconName } from "./Icon";
 export { AnchorButton, Button, Kbd, LinkButton, buttonClass } from "./Button";
 export type { ButtonProps, ButtonVariant } from "./Button";
-export { Avatar, Avatars, Badge, Chip, Dot, Legend, Progress, StackBar, Swatch } from "./Marks";
+export { Avatar, Avatars, Badge, Chip, ChipToggle, Dot, Legend, Pill, Progress, Ring, StackBar, Swatch } from "./Marks";
 export type { StackPart } from "./Marks";
 export { Seg, Tabs } from "./Nav";
 export type { SegOption, TabItem } from "./Nav";

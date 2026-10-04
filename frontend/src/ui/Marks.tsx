@@ -110,3 +110,66 @@ export function Legend({ items }: { items: { label: ReactNode; color: string; ki
     </div>
   );
 }
+
+/** Кольцо загрузки: прогресс 0–1, «готово» или «ошибка». */
+export function Ring({ value = 0, tone, label, size = 140 }: {
+  value?: number;
+  tone?: "done" | "bad";
+  label: string;
+  size?: number;
+}) {
+  const R = 54;
+  const C = 2 * Math.PI * R;
+  const pct = Math.round(Math.min(1, Math.max(0, value)) * 100);
+  return (
+    <div className={cx("ui-ring", tone)} style={{ width: size, height: size }}
+      role={tone ? "img" : "progressbar"} aria-label={label}
+      aria-valuemin={tone ? undefined : 0} aria-valuemax={tone ? undefined : 100}
+      aria-valuenow={tone ? undefined : pct}>
+      <svg viewBox="0 0 128 128" aria-hidden="true">
+        <circle cx="64" cy="64" r={R} className="ui-ring-t" />
+        <circle cx="64" cy="64" r={R} className="ui-ring-v"
+          style={tone ? undefined : { strokeDasharray: C, strokeDashoffset: C * (1 - pct / 100) }} />
+      </svg>
+      <div className="ui-ring-c">
+        {tone === "done" ? <Icon name="tick" size={40} />
+          : tone === "bad" ? <Icon name="x" size={40} />
+            : <b>{pct}<small> %</small></b>}
+      </div>
+    </div>
+  );
+}
+
+/** Бейдж-сообщение: подсказка, предупреждение, ошибка или успех — вместо сплошной строки. */
+export function Pill({ tone = "info", icon, children, title }: {
+  tone?: "info" | "warn" | "bad" | "ok";
+  icon?: IconName;
+  children: ReactNode;
+  title?: string;
+}) {
+  const auto: IconName = tone === "ok" ? "tick" : tone === "info" ? "info" : "alert";
+  return (
+    <span className={cx("ui-pill", tone)} title={title}>
+      <Icon name={icon ?? auto} size={13} />
+      {children}
+    </span>
+  );
+}
+
+/** Чип-переключатель: таги, короткие наборы вариантов. */
+export function ChipToggle({ pressed, onToggle, children, count, disabled, title }: {
+  pressed: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+  count?: ReactNode;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button type="button" className="ui-chiptg" aria-pressed={pressed} disabled={disabled} title={title}
+      onClick={onToggle}>
+      {children}
+      {count != null && <span className="ui-count">{count}</span>}
+    </button>
+  );
+}

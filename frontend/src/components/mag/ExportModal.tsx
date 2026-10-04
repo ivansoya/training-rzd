@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { pollJob } from "../../api/jobs";
 import { classesIn } from "../../api/datasets";
 import {
@@ -14,14 +15,13 @@ import type {
   LabelClass,
   ProjectDetail,
 } from "../../auth/api";
-import { formatBytes } from "./ProjectShell";
-import { useEscape } from "./useEscape";
 import { listTags } from "../../api/tags";
 import type { Tag } from "../../api/tags";
-import Sep from "../Sep";
-import { count, plural } from "../ru";
-import Banner from "../Banner";
-import { useBackdrop } from "../useBackdrop";
+import {
+  AnchorButton, Button, Check, ChipToggle, Dialog, Legend, Notice, Pill, Range, Ring, Seg, StackBar,
+} from "../../ui";
+import { formatBytes } from "./ProjectShell";
+import { count, plural, ru } from "../ru";
 
 interface Props {
   detail: ProjectDetail;
@@ -32,29 +32,16 @@ interface Props {
 // setup с текстом ошибки, чтобы можно было поправить выбор и повторить.
 type Phase = "setup" | "packing" | "ready";
 
-const FORMATS = [
-  { id: "yolo", label: "YOLO", ok: true },
-  { id: "coco", label: "COCO", ok: false },
-  { id: "voc", label: "VOC", ok: false },
-];
-const TYPES = [
-  { id: "bbox", label: "Боксы", ok: true },
-  { id: "polygon", label: "Сегментация", ok: true },
-  { id: "mask", label: "Маски", ok: false },
-];
 const SOON = "Появится позже — такой разметки в проекте пока нет";
 
+/** Экспорт проекта: слева что выгружать, справа как и что получится. */
 export default function ExportModal({ detail, onClose }: Props) {
   const code = detail.project.code;
   const [classes, setClasses] = useState<LabelClass[]>([]);
-  const [pickedDs, setPickedDs] = useState<Set<string>>(
-    () => new Set(detail.datasets.map((d) => d.id))
-  );
+  const [pickedDs, setPickedDs] = useState<Set<string>>(() => new Set(detail.datasets.map((d) => d.id)));
   const [pickedCls, setPickedCls] = useState<Set<string>>(new Set());
+  const [showUnused, setShowUnused] = useState(false);
   // Таги СУЖАЮТ отбор и работают «любым из»: ничего не отмечено — берём всё.
-  // Умолчание именно пустое: экспорт без оглядки на таги — обычный случай,
-  // а «выбрать все таги» и «не выбирать ни одного» дали бы разное, стоило бы
-  // появиться кадру вовсе без тагов.
   const [tags, setTags] = useState<Tag[]>([]);
   const [pickedTags, setPickedTags] = useState<string[]>([]);
   const [resplit, setResplit] = useState(false);
@@ -68,39 +55,29 @@ export default function ExportModal({ detail, onClose }: Props) {
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [nudge, setNudge] = useState(false);
-  // Порядковый номер запроса: ответы предпросмотра приходят вразнобой, и
-  // устаревший не должен затереть свежий.
+  // Ответы предпросмотра приходят вразнобой — устаревший не затирает свежий.
   const seq = useRef(0);
-
-  useEscape(onClose);
 
   useEffect(() => {
     // Счёт по датасетам: разметка в тасках не выгружается, а класс по ней выбирался.
     classesIn(code, "any")
       .then(({ classes: rows }) => {
         setClasses(rows);
-        // По умолчанию — то, что реально размечено: остальное дало бы классы
-        // без единого примера.
+        // По умолчанию — то, что реально размечено: иначе классы без единого примера.
         setPickedCls(new Set(rows.filter((c) => c.annotations > 0).map((c) => c.id)));
       })
       .catch((e) => setError((e as Error).message));
-    listTags(code)
-      .then(({ tags: rows }) => setTags(rows))
-      .catch(() => setTags([]));   // без тагов экспорт работает как прежде
+    listTags(code).then(({ tags: rows }) => setTags(rows)).catch(() => setTags([]));
   }, [code]);
 
-  const options: ExportOptions = useMemo(
-    () => ({
-      datasets: [...pickedDs],
-      classes: [...pickedCls],
-      tags: pickedTags,
-      split_mode: resplit ? "resplit" : "keep",
-      val_ratio: valRatio,
-      ann_type: annType,
-    }),
-    [pickedDs, pickedCls, pickedTags, resplit, valRatio, annType]
-  );
+  const options: ExportOptions = useMemo(() => ({
+    datasets: [...pickedDs],
+    classes: [...pickedCls],
+    tags: pickedTags,
+    split_mode: resplit ? "resplit" : "keep",
+    val_ratio: valRatio,
+    ann_type: annType,
+  }), [pickedDs, pickedCls, pickedTags, resplit, valRatio, annType]);
 
   useEffect(() => {
     if (phase !== "setup") return;
@@ -119,40 +96,28 @@ export default function ExportModal({ detail, onClose }: Props) {
           setPreviewKey(JSON.stringify(options));
           setError(null);
         })
-        .catch((e) => {
-          if (seq.current === mine) setError((e as Error).message);
-        })
-        .finally(() => {
-          if (seq.current === mine) setPending(false);
-        });
+        .catch((e) => { if (seq.current === mine) setError((e as Error).message); })
+        .finally(() => { if (seq.current === mine) setPending(false); });
     }, 250);
     return () => window.clearTimeout(h);
   }, [code, options, phase]);
 
-  const toggle = useCallback((set: Set<string>, id: string) => {
+  const toggle = (set: Set<string>, id: string) => {
     const next = new Set(set);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    if (next.has(id)) next.delete(id); else next.add(id);
     return next;
-  }, []);
-
-  function handleBackdrop() {
-    setNudge(true);
-    window.setTimeout(() => setNudge(false), 400);
-  }
+  };
 
   async function run() {
     setError(null);
     setPhase("packing");
     setProgress(0);
     try {
-      // Смещение часового пояса — ради даты в имени архива: сервер живёт по
-      // UTC, и ночью по Москве архив назывался вчерашним числом.
+      // Смещение часового пояса — ради даты в имени архива: сервер живёт по UTC.
       const body = { ...options, tz_offset: -new Date().getTimezoneOffset() };
       const { job_id } = await startExport(code, body);
       const res = await pollJob<ExportResult>(job_id, (job) =>
-        setProgress(job.total ? job.processed / job.total : 0)
-      );
+        setProgress(job.total ? job.processed / job.total : 0));
       setResult(res);
       setPhase("ready");
     } catch (e) {
@@ -161,310 +126,216 @@ export default function ExportModal({ detail, onClose }: Props) {
     }
   }
 
-  const rows = preview?.classes ?? [];
-  const byId = new Map(rows.map((r) => [r.class_index, r]));
-  const canRun =
-    previewKey === JSON.stringify(options) &&
-    options.datasets.length > 0 &&
-    options.classes.length > 0 &&
-    (preview?.images ?? 0) > 0;
+  const locked = phase !== "setup";
+  const byIndex = new Map((preview?.classes ?? []).map((r) => [r.class_index, r]));
+  const maxTotal = Math.max(1, ...(preview?.classes ?? []).map((r) => r.train + r.val + r.test));
+  const canRun = previewKey === JSON.stringify(options) && options.datasets.length > 0
+    && options.classes.length > 0 && (preview?.images ?? 0) > 0;
+  const used = classes.filter((c) => c.annotations > 0 || pickedCls.has(c.id));
+  const unused = classes.length - used.length;
+  const visible = showUnused ? classes : used;
+
+  const summary = preview && options.datasets.length && options.classes.length ? (
+    <div className="exp-sum">
+      <div className="exp-nums">
+        <div><b>{ru(preview.images)}</b><span>{plural(preview.images, "кадр", "кадра", "кадров")}</span></div>
+        <div><b>{ru(preview.annotations)}</b><span>{plural(preview.annotations, "разметка", "разметки", "разметок")}</span></div>
+      </div>
+      <StackBar height={8} label="Деление на обучение и проверку" parts={[
+        { label: "train", value: preview.splits.train ?? 0, color: "var(--c1)" },
+        { label: "val", value: preview.splits.val ?? 0, color: "var(--c2)" },
+        // Сплит «test» встречается редко, но если он есть — кадры уедут в свою папку
+        ...(preview.splits.test ? [{ label: "test", value: preview.splits.test, color: "var(--c3)" }] : []),
+      ]} />
+      <Legend items={[
+        { label: <>train <b className="ui-mono">{ru(preview.splits.train ?? 0)}</b></>, color: "var(--c1)" },
+        { label: <>val <b className="ui-mono">{ru(preview.splits.val ?? 0)}</b></>, color: "var(--c2)" },
+        ...(preview.splits.test ? [{ label: <>test <b className="ui-mono">{ru(preview.splits.test)}</b></>, color: "var(--c3)" }] : []),
+      ]} />
+      {/* Пропуск по роду разметки — словами и с единицами: «пропущено 412» читается как поломка */}
+      {preview.wrong_kind > 0 && (
+        <p className="ui-hint">
+          Не идут {preview.ann_type === "polygon"
+            ? `${count(preview.wrong_kind, "бокс", "бокса", "боксов")} — в сегментацию идут только контуры`
+            : count(preview.wrong_kind, "объект неподходящего вида", "объекта неподходящего вида", "объектов неподходящего вида")}
+          {preview.dropped > 0 && `; ${count(preview.dropped, "кадр", "кадра", "кадров")}, где больше ничего нет, ${plural(preview.dropped, "не идёт", "не идут", "не идут")} целиком`}.
+        </p>
+      )}
+      {preview.empty > 0 && (
+        <p className="ui-hint">
+          {phase === "ready"
+            ? count(preview.empty, "кадр ушёл", "кадра ушли", "кадров ушли")
+            : count(preview.empty, "кадр уйдёт", "кадра уйдут", "кадров уйдут")} фоном, с пустым файлом разметки
+          {backgroundWords(preview.background_parts) && ` — ${backgroundWords(preview.background_parts)}`}.
+        </p>
+      )}
+      {pickedTags.length > 0 && preview.no_tag > 0 && (
+        <p className="ui-hint">Только кадры с отмеченными тагами — {count(preview.no_tag, "кадр отсеян", "кадра отсеяно", "кадров отсеяно")}.</p>
+      )}
+      {preview.warnings.length > 0 && (
+        <div className="ui-pills">{preview.warnings.map((w) => <Pill key={w} tone="warn">{w}</Pill>)}</div>
+      )}
+    </div>
+  ) : (
+    <Notice tone="warn">Отметьте хотя бы один датасет и класс — иначе выгружать нечего.</Notice>
+  );
+
+  const right = phase === "packing" ? (
+    <>
+      {summary}
+      <div className="exp-stage">
+        <Ring value={progress} label="Сборка архива" />
+        <b>Собираю архив…</b>
+      </div>
+    </>
+  ) : phase === "ready" && result ? (
+    <>
+      {summary}
+      <div className="exp-stage">
+        <Ring tone="done" label="Архив готов" />
+        <b>Архив готов</b>
+        <span>{result.file_name} · {formatBytes(result.size_bytes)}</span>
+      </div>
+    </>
+  ) : (
+    <>
+      <div className="exp-field">
+        <span>Формат</span>
+        <Seg label="Формат" value="yolo" onChange={() => undefined} options={[
+          { value: "yolo", label: "YOLO" },
+          { value: "coco", label: "COCO", disabled: true, title: SOON },
+          { value: "voc", label: "VOC", disabled: true, title: SOON },
+        ]} />
+      </div>
+      <div className="exp-field">
+        <span>Тип разметки</span>
+        <Seg label="Тип разметки" value={annType} onChange={(v) => setAnnType(v as "bbox" | "polygon")} options={[
+          { value: "bbox", label: "Боксы", title: "Рамка на объект. Контур сводится к охватывающей рамке" },
+          { value: "polygon", label: "Сегментация", title: "Контур на объект. Боксы в такую выгрузку не идут" },
+          { value: "mask", label: "Маски", disabled: true, title: SOON },
+        ]} />
+      </div>
+      <div className="exp-field">
+        <span>Обучение и проверка</span>
+        <Seg label="Обучение и проверка" value={resplit ? "1" : "0"} onChange={(v) => setResplit(v === "1")} options={[
+          { value: "0", label: "Как в проекте" },
+          { value: "1", label: "Поделить заново" },
+        ]} />
+        {resplit ? (
+          <>
+            <div className="row between t-sm"><span className="t-muted">На проверку</span><span className="ui-mono">{Math.round(valRatio * 100)} %</span></div>
+            <Range min={5} max={50} step={1} value={Math.round(valRatio * 100)} aria-label="Доля на проверку"
+              onChange={(e) => setValRatio(Number(e.target.value) / 100)} />
+          </>
+        ) : <p className="ui-hint">Сплит кадра берётся из проекта; кадры без сплита делятся в той же пропорции.</p>}
+      </div>
+      <hr className="ov-sep" />
+      {summary}
+    </>
+  );
 
   return (
-    <div className="mag-backdrop" {...useBackdrop(handleBackdrop)}>
-      <div
-        className={nudge ? "mag-modal mag-exp mag-modal-nudge" : "mag-modal mag-exp"}
-      >
-        <div className="mag-exp-pick">
-          <h1>Экспорт проекта</h1>
-          <h3 className="mag-exp-h">Датасеты</h3>
-          <div className="mag-exp-list">
-            {detail.datasets.map((d) => (
-              <label key={d.id} className="mag-exp-row">
-                <input
-                  type="checkbox"
-                  checked={pickedDs.has(d.id)}
-                  disabled={phase !== "setup"}
-                  onChange={() => setPickedDs((s) => toggle(s, d.id))}
-                />
-                <span className="mag-exp-name">{d.name}</span>
-                <span className="mag-exp-num">{d.images_count}</span>
-              </label>
-            ))}
-            {detail.datasets.length === 0 && (
-              <div className="mag-empty">В проекте пока нет датасетов.</div>
-            )}
-          </div>
-
-          {tags.length > 0 && (
-            <>
-              <h3 className="mag-exp-h">
-                Таги
-                {pickedTags.length > 0 && (
-                  <span className="mag-exp-acts">
-                    <button type="button" onClick={() => setPickedTags([])}>
-                      снять
-                    </button>
-                  </span>
-                )}
-              </h3>
-              <div className="t-pick">
-                {tags.map((t) => (
-                  <button
-                    key={t.id}
-                    type="button"
-                    disabled={phase !== "setup"}
-                    className={`t-chip${pickedTags.includes(t.id) ? " on" : ""}`}
-                    onClick={() =>
-                      setPickedTags((prev) =>
-                        prev.includes(t.id)
-                          ? prev.filter((x) => x !== t.id)
-                          : [...prev, t.id]
-                      )
-                    }
-                  >
-                    {t.name}
-                    <span>{t.images ?? 0}</span>
-                  </button>
-                ))}
-              </div>
-              <p className="mag-sub">
-                {pickedTags.length
-                  ? `Только кадры с этими тагами${
-                      preview?.no_tag ? ` — ${preview.no_tag} отсеяно` : ""
-                    }.`
-                  : "Ничего не отмечено — берём кадры со всеми тагами и без них."}
-              </p>
-            </>
+    <Dialog open onOpenChange={(v) => { if (!v) onClose(); }} width={940} height={760} className="exp"
+      title="Экспорт проекта" desc={`${detail.project.name} · архив с изображениями и разметкой`} bare
+      footer={
+        <>
+          <span className="grow t-sm t-muted">{phase === "setup" ? (pending ? "Считаю предпросмотр…" : preview ? "Предпросмотр пересчитан" : "") : ""}</span>
+          <Button variant="ghost" onClick={onClose}>{phase === "ready" ? "Закрыть" : "Отмена"}</Button>
+          {phase === "ready" && result ? (
+            <AnchorButton variant="primary" icon="download" href={exportDownloadUrl(code, result.job_id)} download={result.file_name}>
+              Скачать архив
+            </AnchorButton>
+          ) : (
+            <Button variant="primary" icon="download" disabled={!canRun || phase === "packing" || pending} onClick={run}>
+              {phase === "packing" ? "Собираю…" : "Экспортировать"}
+            </Button>
           )}
+        </>
+      }>
+      <div className={locked ? "exp-l locked" : "exp-l"} aria-disabled={locked || undefined}>
+        {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+        <section>
+          <div className="exp-h">
+            <span>Датасеты</span>
+            <button type="button" disabled={locked} onClick={() => setPickedDs(new Set(detail.datasets.map((d) => d.id)))}>все</button>
+          </div>
+          {detail.datasets.length === 0 ? <p className="ui-hint">В проекте пока нет датасетов.</p> : (
+            <div className="exp-list">
+              {detail.datasets.map((d) => (
+                <div key={d.id} className="exp-ds">
+                  <Check checked={pickedDs.has(d.id)} disabled={locked}
+                    onChange={() => setPickedDs((s) => toggle(s, d.id))}>{d.name}</Check>
+                  <span className="ui-mono t-xs t-muted">{ru(d.images_count)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
 
-          <h3 className="mag-exp-h">
-            Классы
-            <span className="mag-exp-acts">
-              <button
-                type="button"
-                onClick={() => setPickedCls(new Set(classes.map((c) => c.id)))}
-              >
-                все
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setPickedCls(
-                    new Set(classes.filter((c) => c.annotations > 0).map((c) => c.id))
-                  )
-                }
-              >
-                с разметкой
-              </button>
-              <button type="button" onClick={() => setPickedCls(new Set())}>
-                снять
-              </button>
+        {tags.length > 0 && (
+          <section>
+            <div className="exp-h">
+              <span>Таги</span>
+              {pickedTags.length > 0 && <button type="button" disabled={locked} onClick={() => setPickedTags([])}>снять</button>}
+            </div>
+            <div className="ui-pills">
+              {tags.map((t) => (
+                <ChipToggle key={t.id} pressed={pickedTags.includes(t.id)} count={t.images ?? 0} disabled={locked}
+                  onToggle={() => setPickedTags((prev) => prev.includes(t.id) ? prev.filter((x) => x !== t.id) : [...prev, t.id])}>
+                  {t.name}
+                </ChipToggle>
+              ))}
+            </div>
+            <p className="ui-hint">{pickedTags.length
+              ? "Только кадры хотя бы с одним из отмеченных тагов."
+              : "Ничего не отмечено — берутся кадры со всеми тагами и без них."}</p>
+          </section>
+        )}
+
+        <section>
+          <div className="exp-h">
+            <span>Классы <span className="t-faint">· щелчок по строке — в выгрузку или из неё · train / val</span></span>
+            <span className="exp-acts">
+              <button type="button" disabled={locked} onClick={() => setPickedCls(new Set(classes.map((c) => c.id)))}>все</button>
+              <button type="button" disabled={locked} onClick={() => setPickedCls(new Set(classes.filter((c) => c.annotations > 0).map((c) => c.id)))}>с разметкой</button>
+              <button type="button" disabled={locked} onClick={() => setPickedCls(new Set())}>снять</button>
             </span>
-          </h3>
-          <div className="mag-exp-list mag-exp-classes">
-            {classes.map((c) => {
-              const row = pickedCls.has(c.id) ? byId.get(c.class_index) : undefined;
+          </div>
+          <div className="exp-list">
+            {visible.map((c) => {
+              const on = pickedCls.has(c.id);
+              const row = on ? byIndex.get(c.class_index) : undefined;
+              const total = row ? row.train + row.val + row.test : 0;
               return (
-                <label key={c.id} className="mag-exp-row">
-                  <input
-                    type="checkbox"
-                    checked={pickedCls.has(c.id)}
-                    disabled={phase !== "setup"}
-                    onChange={() => setPickedCls((s) => toggle(s, c.id))}
-                  />
-                  <i className="mag-exp-dot" style={{ background: c.color }} />
-                  <span className="mag-exp-name">{c.name}</span>
+                <button key={c.id} type="button" className={`exp-cls${on ? " on" : ""}`} disabled={locked}
+                  style={{ "--cc": c.color } as CSSProperties} aria-pressed={on}
+                  title={on ? "Убрать из выгрузки" : "Добавить в выгрузку"}
+                  onClick={() => setPickedCls((s) => toggle(s, c.id))}>
+                  <span className="exp-pick" aria-hidden="true" />
+                  <span className="exp-n"><span className="t-ell">{c.name}</span><small>{c.superclass_name ?? "без группы"}</small></span>
                   {row ? (
-                    <span className="mag-exp-split">
-                      <b>{row.train}</b>/<b>{row.val}</b>
+                    <span className="exp-tv" style={{ width: `${Math.max(6, (total / maxTotal) * 100)}%` }} title={`train ${row.train} · val ${row.val}`}>
+                      <i style={{ flex: row.train || 0.001, background: "var(--c1)" }} />
+                      <i style={{ flex: row.val || 0.001, background: "var(--c2)" }} />
                     </span>
-                  ) : (
-                    <span className="mag-exp-num">{c.annotations}</span>
-                  )}
-                </label>
+                  ) : <span />}
+                  <span className="exp-num">
+                    {row ? <><b>{ru(row.train)}</b> / <span className={row.val ? undefined : "zero"}
+                      title={row.val ? undefined : "В проверку не попало ни одного объекта — метрика по классу не посчитается"}>{ru(row.val)}</span></>
+                      : c.annotations ? ru(c.annotations) : "нет разметки"}
+                  </span>
+                </button>
               );
             })}
-          </div>
-        </div>
-
-        <div className="mag-exp-side">
-          <h3 className="mag-exp-h">Формат</h3>
-          <div className="mag-exp-seg">
-            {FORMATS.map((f) => (
-              <button
-                key={f.id}
-                type="button"
-                className={f.id === "yolo" ? "on" : ""}
-                disabled={!f.ok}
-                title={f.ok ? undefined : SOON}
-              >
-                {f.label}
+            {!showUnused && unused > 0 && (
+              <button type="button" className="exp-more" onClick={() => setShowUnused(true)}>
+                Показать ещё {count(unused, "класс", "класса", "классов")} без разметки
               </button>
-            ))}
-          </div>
-
-          <h3 className="mag-exp-h">Тип разметки</h3>
-          <div className="mag-exp-seg">
-            {TYPES.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={t.id === annType ? "on" : ""}
-                // Во время сборки род разметки заперт, как и остальной выбор:
-                // переключение меняло подпись уже собираемого архива.
-                disabled={!t.ok || phase !== "setup"}
-                title={
-                  t.ok
-                    ? t.id === "polygon"
-                      ? "Контур на объект. Боксы в такую выгрузку не идут"
-                      : "Рамка на объект. Контур сводится к охватывающей рамке"
-                    : SOON
-                }
-                onClick={() => t.ok && setAnnType(t.id as "bbox" | "polygon")}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-
-          <h3 className="mag-exp-h">Обучение и проверка</h3>
-          <div className="mag-exp-seg">
-            <button
-              type="button"
-              className={resplit ? "" : "on"}
-              disabled={phase !== "setup"}
-              onClick={() => setResplit(false)}
-            >
-              Как в проекте
-            </button>
-            <button
-              type="button"
-              className={resplit ? "on" : ""}
-              disabled={phase !== "setup"}
-              onClick={() => setResplit(true)}
-            >
-              Поделить заново
-            </button>
-          </div>
-          {/* «Как в проекте» берёт сплит кадра, а кадры вне сплита делит в той
-              же пропорции; «Поделить заново» не смотрит на прежние сплиты. */}
-          {resplit && (
-            <div className="mag-exp-slider">
-              <input
-                type="range"
-                min={5}
-                max={50}
-                step={1}
-                value={Math.round(valRatio * 100)}
-                disabled={phase !== "setup"}
-                onChange={(e) => setValRatio(Number(e.target.value) / 100)}
-              />
-              <span>на проверку {Math.round(valRatio * 100)}%</span>
-            </div>
-          )}
-
-          <div className="mag-exp-sum">
-            <div>
-              <b>{preview ? preview.images.toLocaleString("ru-RU") : "—"}</b>
-              <span>изображений</span>
-            </div>
-            <div>
-              <b>{preview ? preview.annotations.toLocaleString("ru-RU") : "—"}</b>
-              <span>разметок</span>
-            </div>
-            <div>
-              <b>{preview?.splits.train ?? 0}</b>
-              <span>train</span>
-            </div>
-            <div>
-              <b>{preview?.splits.val ?? 0}</b>
-              <span>val</span>
-            </div>
-            {/* Сплит «test» в проекте пока не встречается, но если он есть —
-                кадры уедут в свою папку, и молчать об этом нельзя. */}
-            {!!preview?.splits.test && (
-              <div>
-                <b>{preview.splits.test}</b>
-                <span>test</span>
-              </div>
             )}
           </div>
-          {/* Пропуск по роду разметки называем словами и с единицами:
-              «пропущено 412» без причины читается как поломка. Прежде здесь
-              стояли и «не того рода: 4» (кадры, без единиц), и «боксов: 8»
-              (объекты), и то же третьей строкой в предупреждениях сервера. */}
-          {preview && (preview.wrong_kind > 0 || preview.empty > 0) && (
-            <div className="mag-exp-hint">
-              {preview.wrong_kind > 0 && (
-                <p>
-                  Не идут{" "}
-                  {preview.ann_type === "polygon"
-                    ? `${count(preview.wrong_kind, "бокс", "бокса", "боксов")} — в сегментацию идут только контуры`
-                    : count(preview.wrong_kind, "объект неподходящего вида", "объекта неподходящего вида", "объектов неподходящего вида")}
-                  {preview.dropped > 0 &&
-                    `; ${count(preview.dropped, "кадр", "кадра", "кадров")}, где больше ничего нет, ${plural(preview.dropped, "не идёт", "не идут", "не идут")} целиком`}
-                  .
-                </p>
-              )}
-              {preview.empty > 0 && (
-                <p>
-                  Фоном, с пустым файлом: {count(preview.empty, "кадр", "кадра", "кадров")}
-                  {backgroundWords(preview.background_parts) &&
-                    ` — ${backgroundWords(preview.background_parts)}`}
-                  .
-                </p>
-              )}
-            </div>
-          )}
-
-          {preview?.warnings.map((w) => (
-            <div key={w} className="mag-exp-warn">
-              {w}
-            </div>
-          ))}
-          {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
-
-          {phase === "packing" && (
-            <div className="mag-exp-progress">
-              <i style={{ width: `${Math.round(progress * 100)}%` }} />
-              <span>Собираю архив… {Math.round(progress * 100)}%</span>
-            </div>
-          )}
-          {phase === "ready" && result && (
-            <div className="mag-exp-done">
-              <b>Готово</b>
-              <span>
-                {count(result.images, "изображение", "изображения", "изображений")} <Sep />{" "}
-                {formatBytes(result.size_bytes)}
-              </span>
-            </div>
-          )}
-        </div>
-
-        <div className="mag-modal-foot">
-          <button className="mag-ghost mag-ghost-inline" type="button" onClick={onClose}>
-            {phase === "ready" ? "Закрыть" : "Отмена"}
-          </button>
-          {phase === "ready" && result ? (
-            <a
-              className="mag-btn mag-btn-inline"
-              href={exportDownloadUrl(code, result.job_id)}
-              download={result.file_name}
-            >
-              Скачать архив
-            </a>
-          ) : (
-            <button
-              className="mag-btn mag-btn-inline"
-              type="button"
-              disabled={!canRun || phase === "packing" || pending}
-              onClick={run}
-            >
-              {phase === "packing" ? "Собираю…" : "Экспортировать"}
-            </button>
-          )}
-        </div>
+        </section>
       </div>
-    </div>
+      <div className="exp-r">{right}</div>
+    </Dialog>
   );
 }
