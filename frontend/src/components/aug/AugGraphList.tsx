@@ -94,7 +94,7 @@ export default function AugGraphList() {
     <div className="mag-content">
       <div className="mag-pass-strip">
         <div className="mag-pass-id">
-          <h1 className="mag-h1">{archived ? "Аугментации — архив" : "Аугментации"}</h1>
+          <h1 className="mag-h1">{archived ? "Мои графы — архив" : "Мои графы"}</h1>
         </div>
         <div className="mag-pass-export g-lib-acts">
           <button

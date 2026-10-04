@@ -45,8 +45,9 @@ export default function MagShell({ children }: { children: ReactNode }) {
   const section = code
     ? projectLinks.find(([suffix]) => suffix && lowerPath.startsWith((projectPath + suffix).toLowerCase()))?.[1]
       ?? (pathname.includes("/trainsets/") ? "Обучающий набор" : pathname.endsWith("/import") ? "Импорт" : "Обзор проекта")
-    : pathname.startsWith("/augment") ? "Библиотека аугментаций"
-      : pathname.startsWith("/agents") ? "Агенты разметки"
+    // Одно имя на меню, заголовок и вкладку браузера — как в меню слева.
+    : pathname.startsWith("/augment") ? "Мои графы"
+      : pathname.startsWith("/agents") ? "Мои агенты"
       : pathname.startsWith("/hardware") ? "Оборудование"
         : pathname.startsWith("/account") ? "Личный кабинет" : "Проекты";
 

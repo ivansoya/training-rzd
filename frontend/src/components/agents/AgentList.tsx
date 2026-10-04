@@ -83,7 +83,7 @@ export default function AgentList() {
     <div className="mag-content">
       <div className="mag-pass-strip">
         <div className="mag-pass-id">
-          <h1 className="mag-h1">{archived ? "Агенты разметки — архив" : "Агенты разметки"}</h1>
+          <h1 className="mag-h1">{archived ? "Мои агенты — архив" : "Мои агенты"}</h1>
         </div>
         <button className="mag-ghost mag-ghost-inline" type="button" aria-pressed={archived}
           onClick={() => setArchived((v) => !v)}>
