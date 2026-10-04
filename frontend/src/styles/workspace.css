@@ -95,6 +95,9 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-role, .mag-code-badge, .t-pill { border-radius: 5px; letter-spacing: 0; text-transform: none; font-size: 12px; box-shadow: none; }
 .mag-role { background: var(--hair); color: var(--dim); border: 1px solid var(--rule); }
 .mag-role.admin { background: var(--accent-soft); color: var(--accent-text); }
+/* Два класса, как в auth.css: иначе светлые плашки ролей перебивали тёмную тему. */
+.mag-role.editor { background: var(--hair); color: var(--ink); }
+.mag-role.viewer { background: transparent; color: var(--dim); }
 .mag-importing { color: var(--skip); font-size: 12px; }
 .mag-ava { background: var(--hair); color: var(--ink); border: 1px solid var(--rule); border-radius: 8px; }
 .mag-ava.on::after { box-shadow: none; }
