@@ -58,15 +58,30 @@ def _may_see(db, user, job) -> bool:
 _storage_cache = {"t": 0.0, "data": None}
 
 
-def _dir_size(path):
-    total = 0
-    for root, _dirs, files in os.walk(path):
-        for f in files:
-            try:
-                total += os.path.getsize(os.path.join(root, f))
-            except OSError:
-                pass
-    return total
+def _sizes(path, inner):
+    """Байты под `path` и под вложенным `inner` — за один проход по тому.
+
+    Жёсткая ссылка (кадр в наборе) считается один раз: по паре (устройство,
+    inode). `inner` обходится первым — общий файл засчитывается проектам."""
+    seen = set()
+
+    def walk(top, skip=None):
+        n = 0
+        for root, dirs, files in os.walk(top):
+            if skip:
+                dirs[:] = [d for d in dirs if os.path.join(root, d) != skip]
+            for f in files:
+                try:
+                    st = os.lstat(os.path.join(root, f))
+                except OSError:
+                    continue
+                if (st.st_dev, st.st_ino) not in seen:
+                    seen.add((st.st_dev, st.st_ino))
+                    n += st.st_size
+        return n
+
+    part = walk(inner)
+    return part + walk(path, skip=os.path.normpath(inner)), part
 
 
 @bp.get("/api/storage")
@@ -89,12 +104,13 @@ def storage():
     if HOST_STAT_PATH and os.path.isdir(HOST_STAT_PATH):
         stat_path = HOST_STAT_PATH
     du = shutil.disk_usage(stat_path)
+    data_bytes, projects_bytes = _sizes(DATA_DIR, PROJECTS_DIR)
     data = {
         # Всё, что платформа держит на общем томе: кадры проектов, обучающие
         # наборы, веса, проверочные ролики. Именно это число падает, когда
         # что-то удаляют, — виртуальный диск хоста при этом не сжимается.
-        "data_bytes": _dir_size(DATA_DIR),
-        "projects_bytes": _dir_size(PROJECTS_DIR),
+        "data_bytes": data_bytes,
+        "projects_bytes": projects_bytes,
         "disk_total": du.total,
         "disk_free": du.free,
         "disk_used": du.used,

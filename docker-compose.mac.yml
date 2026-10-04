@@ -98,7 +98,7 @@ services:
       - yolo-data:/app/data
       # На macOS это bind в VM: каталог только стат-ится, ничего не читается
       # построчно, так что медленный проброс тут не мешает.
-      - ./:/hoststat:ro
+      - ./.hoststat:/hoststat:ro
     expose:
       - "5000"
 
