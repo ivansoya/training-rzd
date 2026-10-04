@@ -636,6 +636,9 @@ export interface LabelClass {
   superclass_id: string | null;
   superclass_name: string | null;
   annotations: number;
+  // Только у списка без ?dataset=: кадры и боксы по сплитам среди кадров датасетов
+  images?: number;
+  split?: { train: number; val: number; other: number };
 }
 
 export interface SuperclassItem {

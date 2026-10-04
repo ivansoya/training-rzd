@@ -73,12 +73,14 @@ export function Chip({ icon, children, onRemove, removeLabel, tone, title }: {
   );
 }
 
-export function Progress({ value, max = 1, label }: { value: number; max?: number; label?: string }) {
+export function Progress({ value, max = 1, label, color }: {
+  value: number; max?: number; label?: string; color?: string;
+}) {
   const p = max > 0 ? Math.min(100, Math.max(0, (value / max) * 100)) : 0;
   return (
     <div className="ui-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
       aria-valuenow={Math.round(p)} aria-label={label}>
-      <i style={{ width: `${p}%` }} />
+      <i style={{ width: `${p}%`, ...(color ? { background: color } : {}) }} />
     </div>
   );
 }

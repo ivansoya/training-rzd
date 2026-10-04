@@ -127,10 +127,6 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag-pass-nums span { font-size: 12px; margin-top: 10px; color: var(--dim); }
 .mag-pass-export { grid-column: 2; grid-row: 1; }
 
-.workspace-project-search { display: flex; align-items: center; gap: 15px; margin-bottom: 22px; }
-.workspace-project-search input { width: min(380px,100%); padding: 10px 13px; border: 1px solid var(--control-edge); background: var(--sunk); color: var(--ink); border-radius: 8px; font-size: 14px; }
-.workspace-project-search span { color: var(--dim); font-size: 12px; }
-
 /* Разделитель строки — элемент, а не символ. Точка в тексте съезжала с базовой
    линии и на плотной строке читалась как опечатка. */
 .sep { display: inline-block; flex-shrink: 0; width: 1px; height: .9em; margin-inline: 9px; vertical-align: -.12em; background: var(--rule); }
@@ -146,12 +142,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-cls-name > span { color: var(--dim); }
 .mag-cls-bar { background: var(--hair); }
 .mag-cls-n { color: var(--ink); font-variant-numeric: tabular-nums; font-size: 13px; }
-.mag-group { border-color: var(--rule); border-radius: 12px; }
-/* Куда упадёт перетаскиваемый класс. Групп на экране больше трёх, и без
-   подсветки промах виден только по результату — уже после запроса. */
-.mag-group.drop { border-color: var(--red); background: var(--accent-soft); }
-.mag-classes-table tr[draggable=true] { cursor: grab; }
-.mag-group-h { padding: 16px; background: var(--sunk); font-size: 14px; }
+
 .mag-ds-head { gap: 13px; flex-wrap: wrap; margin-bottom: 20px; }
 .mag-ds-head h1, .mag-ds-head h2 { letter-spacing: -.5px; }
 .mag-tabs, .mag-vtabs, .t-tabs { border-bottom: 1px solid var(--rule); background: transparent; gap: 8px; margin-bottom: 24px; padding: 0 0 10px; }
@@ -603,66 +594,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   .mag-pager-step > span { font-size: 14px; }
 }
 
-/* ===== Справочник тагов ===== */
-/* Строка — один предмет, а не три куска по углам. Раньше чип-таблетка жалась
-   к левому краю, число и два одинаково-красных действия — к правому, и между
-   ними лежала пустота во всю карточку: связь имени с его весом читалась в
-   последнюю очередь. */
-.mag-tagrow {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  min-height: 56px;
-  padding: 10px 12px;
-  margin: 0 -12px;
-  border-radius: 10px;
-  border-top: 1px solid var(--rule);
-}
-.mag-tagrow:first-of-type { border-top: 0; }
-.mag-tagrow:hover { background: var(--hair); }
-
-.mag-tagrow-name { min-width: 0; flex: 1; }
-.mag-tagrow-name b {
-  display: block;
-  font-size: 14px;
-  font-weight: 550;
-  color: var(--ink);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-/* Вес тага — под именем и тише его: сколько кадров за ним стоит, важно
-   знать перед удалением, но искать глазами человек будет имя. */
-.mag-tagrow-name small {
-  display: block;
-  margin-top: 3px;
-  font-size: 12px;
-  color: var(--dim);
-  font-variant-numeric: tabular-nums;
-}
-
-.mag-tagrow-acts { display: flex; gap: 6px; flex-shrink: 0; }
-/* Действия редкие — переименовывают таг раз в жизни. Поэтому они приглушены,
-   пока строка не под курсором, и никогда не исчезают совсем: с клавиатуры
-   фокус их проявляет так же, как мышь. */
-.mag-rowbtn {
-  padding: 6px 11px;
-  border: 1px solid transparent;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--faint);
-  font: inherit;
-  font-size: 13px;
-  cursor: pointer;
-}
-.mag-tagrow:hover .mag-rowbtn, .mag-rowbtn:focus-visible { color: var(--dim); border-color: var(--rule); }
-.mag-rowbtn:hover { color: var(--ink); background: var(--card); border-color: var(--control-edge); }
-/* Красным — только необратимое, и только под курсором. Пока оба действия были
-   красными всегда, «Удалить» ничем не отличалось от «Переименовать». */
-.mag-rowbtn.danger:hover { color: var(--danger); border-color: #A36973; background: #38272E; }
-
-.mag-tagrow-edit { display: flex; align-items: center; gap: 10px; width: 100%; }
-.mag-tagrow-edit .mag-input { flex: 1; min-width: 0; }
 
 /* ===== Кто сейчас в сети ===== */
 /* Отдельный предмет рядом с заголовком, а не приписка внутри него: состав

@@ -241,65 +241,6 @@
   padding-top: 10px;
 }
 
-.mag-zero {
-  color: var(--faint);
-}
-
-/* ===== Редактор классов: группы по суперклассам ===== */
-.mag-group {
-  border: 1px solid var(--mag-edge);
-  border-radius: 9px;
-  overflow: hidden;
-  margin-bottom: 10px;
-}
-
-.mag-group-h {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  background: var(--sunk);
-  border-bottom: 1px solid var(--mag-edge);
-  font-size: 13px;
-  font-weight: 700;
-}
-
-.mag-group-n {
-  margin-left: auto;
-  font-weight: 500;
-  font-size: 11.5px;
-  color: var(--mag-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.mag-group-empty {
-  padding: 14px;
-  font-size: 12.5px;
-  color: var(--mag-muted);
-}
-
-.mag-classes-table {
-  padding: 0 14px;
-}
-
-.mag-classes-table td {
-  padding: 8px 12px 8px 0;
-}
-
-.mag-classes-table td:first-child {
-  padding-left: 14px;
-}
-
-/* Последняя ячейка подтаблицы — кнопка «Изменить»; общий .mag-table обнуляет
-   ей правый отступ, из-за чего она липла к рамке группы. */
-.mag-classes-table td:last-child {
-  padding-right: 14px;
-}
-
-.mag-classes-table td.swatch {
-  width: 42px;
-}
-
 /* ===== Участники ===== */
 .mag-members {
   display: grid;
@@ -383,69 +324,6 @@
  * остаться справа, где его и ищут. */
 .mag-modal-foot .mag-btn.mag-danger {
   margin-right: 0;
-}
-
-/* Пара «Удалить» и «Перенести разметку…» держится вместе слева. */
-.mag-foot-left {
-  display: flex;
-  gap: 10px;
-  margin-right: auto;
-}
-
-.mag-foot-left .mag-danger {
-  margin-right: 0;
-}
-
-/* ===== Судьба класса ===== */
-.mag-fate-table {
-  margin: 4px 0 14px;
-}
-
-.mag-fate-table td {
-  padding: 5px 0;
-  color: var(--mag-muted);
-}
-
-.mag-fate-table td.num {
-  text-align: right;
-  color: var(--ink);
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-}
-
-.mag-fate-choice {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-/* Переключатель приходится называть полным путём: `.mag-field label` объявлен
- * блочным, а `.mag-field input` — во всю ширину, с рамкой и отступами. Оба
- * правила специфичнее одиночного класса, и без этого подпись уезжала под
- * кружок, а сам кружок растягивался полосой во всю модалку. */
-.mag-field label.mag-fate-opt {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-bottom: 0;
-  cursor: pointer;
-  font-weight: 400;
-  font-size: 13.5px;
-}
-
-.mag-field .mag-fate-opt input[type="radio"] {
-  width: 15px;
-  height: 15px;
-  flex: none;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: none;
-}
-
-.mag-fate-opt input:disabled + span {
-  opacity: 0.45;
-  cursor: default;
 }
 
 .mag-hint.mag-warn {
@@ -537,7 +415,6 @@
   width: calc(100% - 28px);
 }
 
-/* ===== Свой выбор цвета ===== */
 /* ===== Заголовки одноколоночных модалок ===== */
 .mag-modal > h1 {
   margin: 0 0 5px;
@@ -601,121 +478,6 @@
   width: auto;
 }
 
-/* ===== Выбор цвета: спектр ===== */
-.mag-picker {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.mag-sl {
-  position: relative;
-  height: 150px;
-  border-radius: 9px;
-  cursor: crosshair;
-  touch-action: none;
-  box-shadow: inset 0 0 0 1px rgba(29, 35, 41, 0.12);
-}
-
-.mag-sl:focus-visible,
-.mag-hue:focus-visible {
-  outline: 2px solid var(--mag-red);
-  outline-offset: 2px;
-}
-
-.mag-sl-dot {
-  position: absolute;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  border: 2px solid var(--card);
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.35);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
-.mag-hue {
-  position: relative;
-  height: 16px;
-  border-radius: 8px;
-  cursor: pointer;
-  touch-action: none;
-  background: linear-gradient(
-    to right,
-    #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%
-  );
-  box-shadow: inset 0 0 0 1px rgba(29, 35, 41, 0.12);
-}
-
-.mag-hue-knob {
-  position: absolute;
-  top: 50%;
-  width: 18px;
-  height: 18px;
-  border-radius: 50%;
-  background: var(--card);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
-  transform: translate(-50%, -50%);
-  pointer-events: none;
-}
-
-.mag-hex {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-}
-
-.mag-hex-eye {
-  width: 30px;
-  height: 30px;
-  border-radius: 7px;
-  flex-shrink: 0;
-  box-shadow: inset 0 0 0 1px rgba(29, 35, 41, 0.15);
-}
-
-.mag-hex input {
-  width: 130px;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  padding: 7px 11px;
-  font: 600 13px ui-monospace, Menlo, Consolas, monospace;
-  background: var(--card);
-  color: var(--mag-ink);
-  text-transform: lowercase;
-}
-
-.mag-hex input:focus {
-  outline: none;
-  border-color: var(--mag-red);
-  box-shadow: 0 0 0 3px rgba(226, 26, 26, 0.12);
-}
-
-.mag-hex-err {
-  font-size: 11.5px;
-  color: var(--mag-red-dark);
-}
-
-/* Палитра под спектром — быстрый способ взять заведомо годный цвет */
-.mag-swatches {
-  display: grid;
-  grid-template-columns: repeat(12, 1fr);
-  gap: 6px;
-}
-
-.mag-swatch.pick {
-  width: 100%;
-  height: 22px;
-  border: 0;
-  padding: 0;
-  border-radius: 5px;
-  cursor: pointer;
-}
-
-.mag-swatch.pick.on {
-  outline: 2px solid var(--mag-ink);
-  outline-offset: 2px;
-}
-
 /* Компактные селекты, которые общий вид перебил бы своей высотой */
 .mag .mag-invite-row select {
   font-size: 12px;
@@ -731,29 +493,23 @@
 .mag label,
 .mag button,
 .mag .mag-tab,
-.mag .mag-group-h,
 .mag .mag-table th,
 .mag .mag-pass-nums span,
 .mag .mag-step-num,
 .mag .mag-role,
 .mag .mag-importing,
-.mag .mag-swatch,
-.mag .mag-sl,
-.mag .mag-hue,
-.mag .mag-hex-eye {
+.mag .mag-swatch {
   user-select: none;
   -webkit-user-select: none;
 }
 
 .mag label,
-.mag .mag-swatch,
-.mag .mag-hex-eye {
+.mag .mag-swatch {
   cursor: default;
 }
 
 .mag button:not(:disabled),
 .mag .mag-tab,
-.mag .mag-swatch.pick,
 .mag a.mag-link {
   cursor: pointer;
 }

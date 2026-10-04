@@ -4,9 +4,8 @@ import { useNavigate, useParams } from "react-router-dom";
 import { pollJob } from "../../api/jobs";
 import { cancelImport, commitImport, getClasses, getImport } from "../../auth/api";
 import type { ImportState, LabelClass, ScannedClass } from "../../auth/api";
-import { Button, Dialog, Field, Icon, Input, LinkButton, Pill, Popover, Ring, Select } from "../../ui";
+import { Button, ColorPicker, Dialog, Field, Icon, Input, LinkButton, Pill, Popover, Ring, Select } from "../../ui";
 import { count, plural, ru } from "../ru";
-import ColorPicker from "./ColorPicker";
 import { clearUpload, startUpload, useUpload } from "./importUpload";
 import ProjectOverview from "./ProjectOverview";
 import { formatBytes, useProject } from "./ProjectShell";
@@ -15,8 +14,8 @@ import { roleAtLeast, useProjectRole } from "./useProjectRole";
 // Цвета для классов без своего — тот же список, что у сервера: класс выглядит
 // одинаково до записи и после.
 const PALETTE = [
-  "#e21a1a", "#1f6feb", "#e8590c", "#1a7f4b", "#8957e5", "#0b7285",
-  "#c2255c", "#5c7cfa", "#f08c00", "#2b8a3e", "#862e9c", "#0c8599",
+  "#e5484d", "#0090ff", "#f76b15", "#29a383", "#6e56cf", "#00a2c7",
+  "#d6409f", "#3e63dd", "#ffc53d", "#46a758", "#8e4ec6", "#7ce2fe",
 ];
 const STEPS = ["Загрузка", "Разбор", "Классы", "Запись"];
 

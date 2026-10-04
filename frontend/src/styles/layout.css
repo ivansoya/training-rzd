@@ -282,6 +282,35 @@ a.pcard:hover { border-color: var(--input); }
 .fr-more:hover .fr-more-in b { scale: 1.12; }
 .fr-more:hover .fr-more-in span { opacity: 1; }
 
+/* ---------- классы: таблица и панель ---------- */
+.cls-split { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.cls-card > .ui-card-b { padding: 0; }
+.cls-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.cls-q { width: 220px; max-width: 100%; }
+.cls-gbtn .ui-btn-l { max-width: 180px; overflow: hidden; text-overflow: ellipsis; }
+.cls-row { cursor: pointer; }
+.cls-row:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+.cls-row .ui-swatch { flex: none; }
+.cls-n { font-weight: 500; max-width: 32ch; }
+.cls-tbl .ui-progress { width: 70px; flex: none; }
+.cls-tbl td:last-child { width: 130px; }
+.cls-panel .ui-card-h { padding-bottom: 14px; border-bottom: 1px solid var(--border); align-items: center; }
+.cls-panel .ui-card-b { display: flex; flex-direction: column; gap: 16px; }
+.cls-form { display: flex; flex-direction: column; gap: 16px; }
+.cls-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.cls-fate { display: flex; flex-direction: column; gap: 10px; }
+.cls-sep { height: 1px; border: 0; margin: 0 0 6px; background: var(--border); }
+.cls-gpop { display: flex; flex-direction: column; }
+.cls-gopt { display: flex; align-items: center; gap: 2px; }
+.cls-gopt > .ui-opt { flex: 1; min-width: 0; }
+.cls-gname { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.cls-gname .ui-count { margin-left: auto; }
+
+.tag-tbl .tag-n { font-weight: 500; }
+.tag-tbl .tag-in { width: 260px; }
+.tag-tbl .tag-acts { width: 1%; white-space: nowrap; }
+.tag-tbl .tag-acts .row { justify-content: flex-end; }
+
 /* ---------- просмотр кадра поверх страницы ---------- */
 .lbx {
   position: fixed; inset: 0; z-index: 70; display: grid; gap: 10px;
@@ -321,6 +350,7 @@ a.pcard:hover { border-color: var(--input); }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .g3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .g-7-5 { grid-template-columns: minmax(0, 1fr); }
+  .cls-split { grid-template-columns: minmax(0, 1fr); }
   .lbx-b { grid-template-columns: 40px minmax(0, 1fr) 40px; }
   .lbx-s { display: none; }
 }

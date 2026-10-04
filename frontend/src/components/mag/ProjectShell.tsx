@@ -41,7 +41,8 @@ export default function ProjectShell() {
   const atOverview = Boolean(useMatch("/projects/:code"));
   const atImport = Boolean(useMatch("/projects/:code/import"));
   const atDatasets = Boolean(useMatch("/projects/:code/datasets"));
-  const redesigned = atOverview || atImport || atDatasets;
+  const atClasses = Boolean(useMatch("/projects/:code/classes")) || Boolean(useMatch("/projects/:code/tags"));
+  const redesigned = atOverview || atImport || atDatasets || atClasses;
 
   const refresh = useCallback(async () => {
     if (!code) return;

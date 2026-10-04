@@ -108,6 +108,31 @@ export function Check({ checked, onChange, children, disabled, indeterminate, ti
   );
 }
 
+/** Вариант выбора карточкой: заголовок, подсказка и поля, которые нужны только выбранному. */
+export function Radio({ name, checked, onChange, title, hint, disabled, children }: {
+  name: string;
+  checked: boolean;
+  onChange: () => void;
+  title: ReactNode;
+  hint?: ReactNode;
+  disabled?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className={cx("ui-radio-c", checked && "on", disabled && "disabled")}>
+      <label>
+        <input type="radio" className="ui-radio ui-ctl" name={name} checked={checked}
+          disabled={disabled} onChange={onChange} />
+        <span className="ui-radio-t">
+          <b>{title}</b>
+          {hint && <span className="ui-hint">{hint}</span>}
+        </span>
+      </label>
+      {checked && children && <div className="ui-radio-x">{children}</div>}
+    </div>
+  );
+}
+
 export type Tri = "in" | "ex" | null;
 
 /** Три состояния: нужен, исключить, неважно. Щелчок идёт по кругу. */

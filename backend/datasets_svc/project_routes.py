@@ -47,9 +47,10 @@ bp = Blueprint("projects", __name__)
 
 # Class colours the wizard offers when data.yaml brings none. Distinct at a
 # glance on a photo, which rules out anything pale.
+# Same scale as the UI palette (Radix step 9); neighbours alternate in hue.
 PALETTE = [
-    "#e21a1a", "#1f6feb", "#e8590c", "#1a7f4b", "#8957e5", "#0b7285",
-    "#c2255c", "#5c7cfa", "#f08c00", "#2b8a3e", "#862e9c", "#0c8599",
+    "#e5484d", "#0090ff", "#f76b15", "#29a383", "#6e56cf", "#00a2c7",
+    "#d6409f", "#3e63dd", "#ffc53d", "#46a758", "#8e4ec6", "#7ce2fe",
 ]
 # Images written between commits: a batch keeps memory flat on a 100k dataset
 # without making progress look frozen.
@@ -1524,9 +1525,28 @@ def list_classes(code):
                 counts_q = counts_q.where(Image.dataset_id == ds.id)
         counts = dict(db.execute(counts_q).all()) if rows else {}
 
+        # Экрану «Классы» — кадры и сплиты; считаются только кадры датасетов, черновики тасок — нет
+        spread = {}
+        if not scope and rows:
+            for cid, split, boxes, images in db.execute(
+                select(Annotation.class_id, Image.split, func.count(Annotation.id),
+                       func.count(func.distinct(Image.id)))
+                .join(Image, Image.id == Annotation.image_id)
+                .where(Image.project_id == project.id, Image.dataset_id.isnot(None))
+                .group_by(Annotation.class_id, Image.split)
+            ).all():
+                row = spread.setdefault(cid, {"images": 0, "split": {"train": 0, "val": 0, "other": 0}})
+                row["split"][split if split in ("train", "val") else "other"] += boxes
+                row["images"] += images  # кадр лежит ровно в одном сплите — суммы не задваиваются
+
+        def extra(r):
+            if scope:
+                return {}
+            return spread.get(r.id, {"images": 0, "split": {"train": 0, "val": 0, "other": 0}})
+
         return jsonify({
             "classes": [
-                _class_json(r, counts.get(r.id, 0), by_id.get(r.superclass_id))
+                {**_class_json(r, counts.get(r.id, 0), by_id.get(r.superclass_id)), **extra(r)}
                 for r in rows
             ],
             "superclasses": [

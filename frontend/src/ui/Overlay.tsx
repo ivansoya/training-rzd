@@ -62,7 +62,7 @@ export function Select<T extends string>({ value, onChange, options, placeholder
 
 /** Всплывающая панель у кнопки. Закрывается Esc, щелчком мимо и прокруткой страницы. */
 export function Popover({ trigger, children, align = "start", width, open: openProp, onOpenChange,
-  className }: {
+  className, yieldFocus }: {
   trigger: ReactElement;
   children: ReactNode | ((close: () => void) => ReactNode);
   align?: "start" | "center" | "end";
@@ -70,6 +70,8 @@ export function Popover({ trigger, children, align = "start", width, open: openP
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   className?: string;
+  /** Пункт открывает поле в другом месте — фокус остаётся там, а не возвращается на кнопку. */
+  yieldFocus?: boolean;
 }) {
   const [own, setOwn] = useState(false);
   const open = openProp ?? own;
@@ -91,7 +93,11 @@ export function Popover({ trigger, children, align = "start", width, open: openP
       <RP.Trigger asChild>{trigger}</RP.Trigger>
       <RP.Portal>
         <RP.Content ref={content} align={align} sideOffset={6} collisionPadding={8}
-          className={cx("ui-pop", className)} style={width ? { width } : undefined}>
+          className={cx("ui-pop", className)} style={width ? { width } : undefined}
+          onCloseAutoFocus={yieldFocus ? (e) => {
+            const now = document.activeElement;
+            if (now && now !== document.body && !content.current?.contains(now)) e.preventDefault();
+          } : undefined}>
           {typeof children === "function" ? children(() => set(false)) : children}
         </RP.Content>
       </RP.Portal>
