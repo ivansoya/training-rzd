@@ -44,6 +44,18 @@ import "./styles/agents.css";
 import "./styles/gabarit.css";
 import "./styles/workspace.css";
 import "./styles/timeline.css";
+// Редизайн: шрифты со своего домена (CSP: font-src 'self'), токены с мостом к
+// старым переменным, примитивы и каркас — последними, чтобы выигрывать порядком.
+import "@fontsource/onest/400.css";
+import "@fontsource/onest/500.css";
+import "@fontsource/onest/600.css";
+import "@fontsource/onest/700.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
+import "@fontsource/jetbrains-mono/600.css";
+import "./styles/tokens.css";
+import "./styles/ui.css";
+import "./styles/layout.css";
 
 // Один сайт. Старое приложение на /tools удалено вместе со своими файловыми
 // датасетами: всё, что оно умело, живёт теперь внутри проектов.

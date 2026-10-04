@@ -116,7 +116,6 @@
      копия значений здесь однажды разъехалась бы с первой. Своё у редактора
      только то, чего нет снаружи, — поверхности вокруг кадра. */
   --paper: #0F0F15;
-  --card: #1F1E29;
   --sunk: #16151E;
 }
 
@@ -549,12 +548,12 @@ select {
 .mag-field input,
 .mag-field textarea,
 .mag-field select,
-.mag input[type="text"],
-.mag input[type="search"],
-.mag input[type="email"],
-.mag input[type="password"],
-.mag input[type="number"],
-.mag textarea,
+.mag input[type="text"]:where(:not(.ui-ctl)),
+.mag input[type="search"]:where(:not(.ui-ctl)),
+.mag input[type="email"]:where(:not(.ui-ctl)),
+.mag input[type="password"]:where(:not(.ui-ctl)),
+.mag input[type="number"]:where(:not(.ui-ctl)),
+.mag textarea:where(:not(.ui-ctl)),
 .mag select {
   background: var(--sunk);
   border-color: var(--rule);
@@ -563,15 +562,15 @@ select {
 
 .mag-field input::placeholder,
 .mag-field textarea::placeholder,
-.mag input::placeholder,
-.mag textarea::placeholder {
+.mag input:where(:not(.ui-ctl))::placeholder,
+.mag textarea:where(:not(.ui-ctl))::placeholder {
   color: var(--faint);
 }
 
 .mag-field input:focus,
 .mag-field textarea:focus,
-.mag input:focus,
-.mag textarea:focus,
+.mag input:where(:not(.ui-ctl)):focus,
+.mag textarea:where(:not(.ui-ctl)):focus,
 .mag select:focus {
   border-color: var(--red);
   box-shadow: 0 0 0 3px rgba(255, 77, 77, 0.18);

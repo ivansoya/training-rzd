@@ -63,7 +63,7 @@ body {
 }
 
 /* ===== Органы ввода ===== */
-input[type="radio"] {
+input[type="radio"]:where(:not(.ui-ctl)) {
   accent-color: var(--red);
   width: 15px;
   height: 15px;
@@ -71,7 +71,7 @@ input[type="radio"] {
 }
 
 /* Свой флажок: без рамки, подсвечивается при наведении и нажатии. */
-input[type="checkbox"] {
+input[type="checkbox"]:where(:not(.ui-ctl)) {
   appearance: none;
   -webkit-appearance: none;
   width: 18px;
@@ -86,25 +86,25 @@ input[type="checkbox"] {
   transition: background 0.15s, box-shadow 0.15s, transform 0.08s;
 }
 
-input[type="checkbox"]:hover {
+input[type="checkbox"]:where(:not(.ui-ctl)):hover {
   background: var(--rule);
   box-shadow: 0 0 0 3px rgba(255, 77, 77, 0.16);
 }
 
-input[type="checkbox"]:active {
+input[type="checkbox"]:where(:not(.ui-ctl)):active {
   transform: scale(0.9);
 }
 
-input[type="checkbox"]:checked,
-input[type="checkbox"]:checked:hover {
+input[type="checkbox"]:where(:not(.ui-ctl)):checked,
+input[type="checkbox"]:where(:not(.ui-ctl)):checked:hover {
   background: var(--red);
 }
 
-input[type="checkbox"]:checked:hover {
+input[type="checkbox"]:where(:not(.ui-ctl)):checked:hover {
   box-shadow: 0 0 0 3px rgba(255, 77, 77, 0.26);
 }
 
-input[type="checkbox"]:checked::after {
+input[type="checkbox"]:where(:not(.ui-ctl)):checked::after {
   content: "";
   position: absolute;
   left: 6px;
@@ -116,7 +116,7 @@ input[type="checkbox"]:checked::after {
   transform: rotate(45deg);
 }
 
-input[type="checkbox"]:focus-visible {
+input[type="checkbox"]:where(:not(.ui-ctl)):focus-visible {
   outline: 2px solid var(--red);
   outline-offset: 2px;
 }

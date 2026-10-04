@@ -1,15 +1,3 @@
-/* Focused editing: no second application sidebar and no minimap. */
-/* Редактор графа — инструмент: шапки ужаты до одной строки, место холсту. */
-.workspace.workspace-graph { --workspace-width: 0px; --workspace-header: 44px; }
-.workspace-graph .mag-topbar.workspace-topbar { padding-inline: 16px; }
-.workspace-graph .g-canvas-top { min-height: 44px; padding: 5px 12px; gap: 10px; }
-.workspace-graph .g-canvas-top .ttl { font-size: 14px; }
-.workspace-graph .g-canvas-top .mag-btn,
-.workspace-graph .g-canvas-top select { padding-top: 5px; padding-bottom: 5px; font-size: 12.5px; }
-.workspace-graph .g-pal-search { padding: 6px 10px; }
-.workspace-graph .g-pal-search input { min-height: 31px; }
-.workspace-graph .workspace-sidebar { display: none; }
-.workspace-graph .g-ged { left: 0; }
 .t-tabs > .mag-btn { width: auto; flex: 0 0 auto; white-space: nowrap; }
 
 /* A vertical scrollbar must not consume the tool labels' horizontal space. */
@@ -103,5 +91,5 @@
 .vt-drop-track:hover:not(:disabled) { border-color: #A36973; background: #38272E; }
 .vt-empty { margin: 0 calc(var(--vt-right) * -1) 0 calc(var(--vt-left) * -1); padding: 7px 0 0; font-size: 12px; line-height: 1.4; color: var(--dim); text-align: center; }
 @media(max-height:800px) { .vt-timeline { max-height: 220px; } }
-@media(max-width:900px) { .mag-ved { grid-template-columns: 84px minmax(0,1fr) 250px; }.workspace-graph .g-ged { height: calc(100dvh - 56px); } }
+@media(max-width:900px) { .mag-ved { grid-template-columns: 84px minmax(0,1fr) 250px; } }
 @media(max-width:600px) { .mag-ved { grid-template-columns: 84px minmax(0,1fr); }.vt-timeline { --vt-left: 86px; --vt-right: 40px; }.vt-name { width: 62px; }.vt-trash { left: calc(100% + 8px); width: 24px; } }

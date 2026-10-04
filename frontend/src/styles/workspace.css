@@ -28,9 +28,9 @@ button, a, input, select, textarea { -webkit-tap-highlight-color: transparent; }
 :where(a,button,input,select,textarea,[tabindex]):focus-visible { outline: 2px solid var(--accent-text); outline-offset: 3px; }
 :where(button,a,input,select,textarea) { transition: background-color .15s, border-color .15s, color .15s; }
 input::placeholder, textarea::placeholder { color: var(--faint); opacity: 1; }
-input[type=checkbox] { border: 1px solid var(--control-edge); background: var(--sunk); border-radius: 4px; flex-shrink: 0; }
-input[type=checkbox]:checked { background: var(--red); border-color: var(--red); }
-input[type=checkbox]:checked::after { border-color: var(--on-acc); }
+input[type=checkbox]:where(:not(.ui-ctl)) { border: 1px solid var(--control-edge); background: var(--sunk); border-radius: 4px; flex-shrink: 0; }
+input[type=checkbox]:where(:not(.ui-ctl)):checked { background: var(--red); border-color: var(--red); }
+input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--on-acc); }
 :where(button,input,select,textarea):disabled { cursor: not-allowed; }
 .mag :is(.mag-btn,.mag-ghost,.mag-ed-btn) { box-shadow: none; text-shadow: none; }
 /* Кегль, поля и рамка у главной и второстепенной кнопок ОДИНАКОВЫ — разными
@@ -103,36 +103,13 @@ input[type=checkbox]:checked::after { border-color: var(--on-acc); }
 .mag-ava.on::after { box-shadow: none; }
 
 /* Stable left navigation and a single context header. */
-.workspace { padding-left: var(--workspace-width); padding-top: var(--workspace-header); min-height: 100dvh; }
-.workspace-sidebar { position: fixed; inset: 0 auto 0 0; z-index: 40; width: var(--workspace-width); background: var(--card); border-right: 1px solid var(--rule); display: flex; flex-direction: column; padding: 0 14px 20px; overflow-y: auto; }
-.workspace-brand { min-height: 84px; flex-shrink: 0; text-decoration: none; color: var(--ink); font-size: 17px; font-weight: 650; letter-spacing: -.5px; padding: 0 6px; }
-.workspace-brand i { width: 28px; height: 28px; border-radius: 8px; }
-.workspace-brand small { font: 11px var(--mono); color: var(--dim); letter-spacing: 0; }
-.workspace-nav { display: flex; flex-direction: column; gap: 5px; margin: 15px 0; }
-.workspace-caption { padding: 0 12px; margin-bottom: 9px; color: var(--faint); font-size: 11px; letter-spacing: .03em; }
-.workspace-link { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 9px 10px; color: var(--dim); text-decoration: none; font-size: 13px; border: 1px solid transparent; border-radius: 7px; }
-.workspace-link:hover { color: var(--ink); background: var(--hair); }
-.workspace-link.on { background: var(--accent-soft); border-color: #F94D4D54; color: var(--ink); box-shadow: inset 3px 0 var(--red); }
-.workspace-code { flex: 0 0 25px; font: 10px var(--mono); color: var(--faint); }
-.workspace-link.on .workspace-code { color: var(--accent-text); }
-.workspace-sidebar-foot { margin-top: auto; padding: 20px 10px 0; color: var(--faint); font-size: 11px; white-space: nowrap; }
-.workspace-sidebar-foot .sep { margin-inline: 6px; }
 /* Правка состава у администратора — второй строкой карточки: в карточку шириной
    280 px имя, выбор роли и кнопка в одну строку не помещаются. */
 .mag-mem:has(> .mag-mem-admin) { flex-wrap: wrap; }
 .mag-mem-admin { flex: 1 0 100%; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 .mag-mem-admin select { width: auto; min-height: 30px; padding-block: 4px; font-size: 12px; }
-.mag-topbar.workspace-topbar { position: fixed; top: 0; left: var(--workspace-width); right: 0; height: var(--workspace-header); min-height: var(--workspace-header); padding: 0 32px; z-index: 35; background: var(--paper); border-bottom: 1px solid var(--rule); gap: 20px; box-shadow: none; }
 /* Длинное название проекта — в одну строку с многоточием (полное — в title):
    иначе оно переносилось и ломало шапку. */
-.workspace-project { color: var(--ink); font-size: 13px; font-weight: 600; text-decoration: none; padding-right: 20px; border-right: 1px solid var(--rule); min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.workspace-breadcrumb { color: var(--dim); font-size: 12px; flex-shrink: 0; }
-.workspace-topbar .mag-me { flex-shrink: 0; }
-.workspace-topbar .mag-me { margin-left: auto; font-size: 12px; color: var(--ink); gap: 9px; }
-.workspace-main { min-width: 0; outline: none; }
-.workspace-skip { position: fixed; top: -100px; left: 240px; z-index: 250; background: var(--red); color: var(--on-acc); padding: 12px 18px; border-radius: 8px; }
-.workspace-skip:focus { top: 12px; }
-.workspace .mag-content { max-width: var(--workspace-max); width: 100%; margin: 0 auto; padding: 32px; }
 .mag-content-head { margin-bottom: 28px; gap: 18px; align-items: center; }
 .mag-content-head h1, .workspace-project-head h1 { font-size: 32px; line-height: 1.2; letter-spacing: -1px; font-weight: 650; margin: 0; }
 .workspace-eyebrow { display: block; color: var(--dim); font-size: 12px; margin-bottom: 10px; }
@@ -490,18 +467,11 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .g-field .hint, .g-insp-why { font-size: 12px; line-height: 1.6; color: var(--dim); }
 @media(min-width:1600px) {
   :root { --workspace-width: 232px; }
-  .workspace .mag-content { padding: 40px; }
 }
 @media(max-width:1250px) {
   :root { --workspace-width: 190px; }
-  .workspace .mag-content { padding: 25px; }
-  .workspace-brand { font-size: 15px; }
-  .workspace-link { font-size: 12px; gap: 6px; padding-inline: 8px; }
-  .workspace-code { flex-basis: 23px; }
   /* Узкая колонка меню: подпись переносится, а черта-разделитель повисала в
      конце строки — здесь разделители убираем, слова разделяет пробел. */
-  .workspace-sidebar-foot { white-space: normal; }
-  .workspace-sidebar-foot .sep { display: none; }
   .mag-projects { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .mag-pass-nums > div { padding: 18px; }
   .g-ged { grid-template-columns: 170px minmax(0,1fr) 250px; }
@@ -525,17 +495,8 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 @media(max-width:900px) {
   .workspace-overview { grid-template-columns: 1fr; }
   :root { --workspace-width: 0px; --workspace-header: 56px; }
-  .workspace { padding-top: 0; }
-  .workspace-sidebar { position: static; width: 100%; flex-direction: row; padding: 8px 14px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--rule); gap: 12px; }
-  .workspace-brand, .workspace-caption, .workspace-code, .workspace-sidebar-foot { display: none; }
-  .workspace-nav { flex-direction: row; flex-shrink: 0; margin: 0; gap: 4px; }
-  .workspace-link { white-space: nowrap; font-size: 12px; }
-  .mag-topbar.workspace-topbar { position: sticky; left: 0; padding: 0 20px; gap: 12px; }
-  .workspace-topbar .mag-me > span:last-child { display: none; }
   /* Раздел не сжимается вместе с длинным названием проекта (сжатие делится
      пропорционально ширине — раздел уходил в 8 px), а держит свой потолок. */
-  .workspace-breadcrumb { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; max-width: 45%; }
-  .workspace .mag-content { padding: 24px 20px; }
   .mag-pass-nums { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .mag-projects { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .g-ctx { position: static; flex-wrap: wrap; padding-inline: 20px; }

@@ -1,0 +1,158 @@
+/* Токены редизайна: единственное место, где живут цвета, шрифты, радиусы и тени.
+ * Hex вне этого файла — ошибка. Тема одна, тёмная (Radix Mauve + Red).
+ * Подключается после старых стилей: мост внизу переопределяет их переменные. */
+
+:root {
+  color-scheme: dark;
+
+  /* Поверхности */
+  --bg: #141415;
+  --sidebar: #1a191b;
+  --card: #1a191b;
+  --muted: #1a191b;
+  --hover: #2b292d;
+  --border: #3c393f;
+  --input: #49474e;
+  --stage: #0c0b0d;
+
+  /* Текст */
+  --fg: #eeeef0;
+  --muted-fg: #b5b2bc;
+  --faint: #7c7a85;
+
+  /* Акцент: красный — действие или брак, в графики не берётся */
+  --primary: #d4383d;
+  --primary-fg: #ffffff;
+  --ring: #ff9592;
+  --destructive: #ec5d5e;
+
+  /* Состояния кадра */
+  --st-new: #625f69;
+  --st-done: #46a758;
+  --st-empty: #0090ff;
+  --st-skip: #ffc53d;
+  --st-del: #f76b15;
+
+  /* Ряды графиков. Порядок не менять: подобран под протанопию (ΔE ≥ 9,4) */
+  --c1: #0090ff;
+  --c2: #29a383;
+  --c3: #ffc53d;
+  --c4: #b1a9ff;
+  --c5: #7ce2fe;
+
+  /* Подписи поверх кадра: тёмная плашка и светлый текст при любой картинке */
+  --on-frame: #f4f4f5;
+  --on-frame-bg: rgb(0 0 0 / .58);
+  --on-swatch: #111111;
+
+  --font: "Onest", ui-sans-serif, system-ui, "Segoe UI", Roboto, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, Consolas, "Liberation Mono", monospace;
+
+  --r-sm: 4px;
+  --r: 6px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-full: 999px;
+
+  --shadow-pop: 0 12px 40px rgb(0 0 0 / .35);
+  --shadow-float: 0 8px 30px rgb(0 0 0 / .35);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / .25);
+  --scrim: rgb(0 0 0 / .6);
+
+  --sidebar-w: 248px;
+  --topbar-h: 52px;
+}
+
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.45 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+button, input, select, textarea { font: inherit; }
+
+/* Полосы прокрутки: тонкие, цвета рамки поля */
+* { scrollbar-width: thin; scrollbar-color: var(--input) transparent; }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--input);
+  border-radius: var(--r-full);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* ======================= МОСТ К СТАРЫМ ЭКРАНАМ =======================
+ * Старые переменные выражены через новые. Удаляется вместе с последним
+ * непереписанным экраном. */
+:root {
+  --paper: var(--bg);
+  --sunk: var(--muted);
+  --rule: var(--input);
+  --hair: var(--border);
+  --ink: var(--fg);
+  --dim: var(--muted-fg);
+  --red: var(--primary);
+  --red-hi: var(--ring);
+  --red-in: color-mix(in srgb, var(--primary) 18%, var(--bg));
+  --done: var(--st-done);
+  --null: var(--st-empty);
+  --skip: var(--st-skip);
+  --del: var(--st-del);
+  --done-in: color-mix(in srgb, var(--st-done) 16%, var(--bg));
+  --skip-in: color-mix(in srgb, var(--st-skip) 16%, var(--bg));
+  --null-in: color-mix(in srgb, var(--st-empty) 16%, var(--bg));
+  --on-acc: var(--primary-fg);
+  --radius-s: var(--r);
+  --radius: var(--r-md);
+  --radius-l: var(--r-lg);
+  --surface-raised: var(--hover);
+  --control-edge: var(--faint);
+  --accent-text: var(--ring);
+  --accent-soft: color-mix(in srgb, var(--primary) 25%, transparent);
+  --danger: var(--destructive);
+  --workspace-max: none;
+}
+.mag {
+  --mag-red: var(--primary);
+  --mag-red-dark: var(--ring);
+  --mag-ink: var(--fg);
+  --mag-muted: var(--muted-fg);
+  --mag-line: var(--border);
+  --mag-edge: var(--input);
+  --mag-bg: var(--bg);
+  --mag-graphite: var(--sidebar);
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+}
+.mag-ed, .mag-viewer, .mag-cv, .mag-fs {
+  --ed-bg: var(--stage);
+  --ed-chrome: var(--sidebar);
+  --ed-panel: var(--sidebar);
+  --ed-edge: var(--border);
+  --ed-btn: var(--hover);
+  --ed-ink: var(--fg);
+  --ed-dim: var(--muted-fg);
+  --ed-faint: var(--faint);
+  --s-done: var(--st-done);
+  --s-skip: var(--st-skip);
+  --s-null: var(--st-empty);
+  --s-del: var(--st-del);
+  --paper: var(--bg);
+  --sunk: var(--muted);
+}

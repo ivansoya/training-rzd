@@ -1,125 +1,157 @@
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { Link, NavLink, matchPath, useLocation } from "react-router-dom";
+import { Link, matchPath, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthGate";
-import { initials } from "../auth/AccountPage";
-import Sep from "../Sep";
 import ErrorBoundary from "../ErrorBoundary";
 import { LiveProvider } from "../../live/LiveProvider";
+import { Avatar, Empty, Icon, LinkButton, MenuItem, Popover, RailsMark, cx } from "../../ui";
+import GpuMeter from "../shell/GpuMeter";
+import { PROJECT_GROUPS, hrefOf, sectionOf } from "../shell/nav";
+import type { NavItem } from "../shell/nav";
 
-/** The workspace shell never transforms its children: editors measure their
- * bitmap and annotation layers in viewport coordinates. */
+const LAST = "mag.lastProject";
+const readLast = () => { try { return localStorage.getItem(LAST); } catch { return null; } };
+const writeLast = (code: string) => { try { localStorage.setItem(LAST, code); } catch { /* приватное окно */ } };
+
+/** Каркас никогда не трансформирует детей: редакторы меряют слои в координатах окна. */
 export default function MagShell({ children }: { children: ReactNode }) {
   const { me, refresh } = useAuth();
-  const { pathname } = useLocation();
-  const graphEditor = Boolean(matchPath("/augment/:graphId", pathname));
-  const agentEditor = Boolean(matchPath("/agents/:graphId", pathname));
-  // Текущий проект — только тот, где мы участник, и без учёта регистра: сервер
-  // принимает код строчными. Раньше /projects/NOPE и /projects/%20 рисовали блок
-  // «Текущий проект» и сырой код в шапке, а код строчными — код вместо имени.
+  const { pathname, search } = useLocation();
+  const navigate = useNavigate();
+  // Текущий проект — только тот, где мы участник, без учёта регистра кода.
   const rawCode = matchPath("/projects/:code/*", pathname)?.params.code;
   const current = rawCode
     ? me.projects.find((p) => p.code === rawCode.trim().toUpperCase())
     : undefined;
   const code = current?.code;
-  // Не участник — «не найден», а не пустые разделы чужого проекта. Перед
-  // вердиктом один раз перечитываем себя: проект могли только что создать.
+  // Не участник — «не найден», но сначала один раз перечитываем себя: проект могли только что создать.
   const [checked, setChecked] = useState<string | null>(null);
   const missing = Boolean(rawCode) && !current;
   useEffect(() => {
     if (!missing || checked === rawCode) return;
     refresh().catch(() => undefined).finally(() => setChecked(rawCode ?? null));
   }, [missing, rawCode, checked, refresh]);
-  const projectPath = code ? "/projects/" + code : "";
-  const projectName = current?.name;
-  const lowerPath = pathname.toLowerCase();
-  const nav = ({ isActive }: { isActive: boolean }) =>
-    isActive ? "workspace-link on" : "workspace-link";
-  const projectLinks = [
-    ["", "Обзор", "ОБ"], ["/tasks", "Таски", "ТС"],
-    ["/datasets", "Датасеты", "ДТ"], ["/classes", "Классы", "КЛ"],
-    ["/tags", "Таги", "ТГ"],
-    ["/aug", "Аугментации проекта", "АУ"], ["/training", "Обучение", "МО"],
-    ["/members", "Участники", "УЧ"],
-  ];
-  const section = code
-    ? projectLinks.find(([suffix]) => suffix && lowerPath.startsWith((projectPath + suffix).toLowerCase()))?.[1]
-      ?? (pathname.includes("/trainsets/") ? "Обучающий набор" : pathname.endsWith("/import") ? "Импорт" : "Обзор проекта")
-    // Одно имя на меню, заголовок и вкладку браузера — как в меню слева.
-    : pathname.startsWith("/augment") ? "Мои графы"
-      : pathname.startsWith("/agents") ? "Мои агенты"
-      : pathname.startsWith("/hardware") ? "Оборудование"
-        : pathname.startsWith("/account") ? "Личный кабинет" : "Проекты";
 
-  useEffect(() => {
-    document.title = [projectName, section, "Магистраль"].filter(Boolean).join(" — ");
-  }, [projectName, section]);
+  // Вне проекта сайдбар держит последний открытый — из агента назад к таскам одним щелчком.
+  useEffect(() => { if (code) writeLast(code); }, [code]);
+  const last = me.projects.find((p) => p.code === readLast());
+  const project = current ?? last ?? (me.projects.length === 1 ? me.projects[0] : undefined);
 
-  // На узком экране меню — горизонтальная лента, и активный пункт уезжал за
-  // край. Двигаем только ленту: scrollIntoView прокрутил бы ещё и страницу.
-  const sidebar = useRef<HTMLElement>(null);
+  const section = sectionOf(pathname, search, code);
   useEffect(() => {
-    const bar = sidebar.current;
-    const on = bar?.querySelector<HTMLElement>(".workspace-link.on");
-    if (!bar || !on || bar.scrollWidth <= bar.clientWidth) return;
-    const b = bar.getBoundingClientRect();
-    const r = on.getBoundingClientRect();
-    if (r.left < b.left || r.right > b.right) bar.scrollLeft += r.left - b.left - (b.width - r.width) / 2;
-  }, [pathname, code]);
+    document.title = [current?.name, section.label, "Магистраль"].filter(Boolean).join(" — ");
+  }, [current?.name, section.label]);
+
+  const active = section.key === "graphs" && project ? "aug" : section.key;
+  const groups = project ? PROJECT_GROUPS : [{
+    title: "Подготовка",
+    items: [
+      { key: "graphs", label: "Мои графы", icon: "workflow", to: "/augment", abs: true },
+      { key: "agents", label: "Мои агенты", icon: "sparkle", to: "/agents", abs: true },
+    ] as NavItem[],
+  }];
+  const roleOf = current ?? project;
 
   const shell = (
-    <div className={`mag mag-page workspace${graphEditor || agentEditor ? " workspace-graph" : ""}`}>
-      <a className="workspace-skip" href="#workspace-content">К содержимому</a>
-      <aside ref={sidebar} className="workspace-sidebar" aria-label="Навигация рабочей среды">
-        <Link to="/" className="mag-mark mag-mark-link workspace-brand">
-          <i aria-hidden="true">М</i><span>Магистраль <small>ML</small></span>
-        </Link>
-        <nav className="workspace-nav" aria-label="Рабочая среда">
-          <span className="workspace-caption">Рабочая среда</span>
-          <NavLink to="/" end className={nav}><span className="workspace-code">ПР</span>Проекты</NavLink>
-        </nav>
-        {code && <nav className="workspace-nav" aria-label="Разделы проекта">
-          <span className="workspace-caption">Текущий проект</span>
-          {projectLinks.map(([suffix, label, short]) =>
-            <NavLink key={suffix} to={projectPath + suffix} end={!suffix}
-              className={suffix === "/training" && pathname.includes("/trainsets/") ? "workspace-link on" : nav}>
-              <span className="workspace-code" aria-hidden="true">{short}</span>{label}
-            </NavLink>)}
-        </nav>}
-        <nav className="workspace-nav" aria-label="Инструменты и профиль">
-          <span className="workspace-caption">Инструменты</span>
-          <NavLink to="/augment" className={nav}><span className="workspace-code">ГР</span>Мои графы</NavLink>
-          <NavLink to="/agents" className={nav}><span className="workspace-code">АГ</span>Мои агенты</NavLink>
-          {/* Всем, а не только обслуживанию: свою очередь к картам видит каждый,
-              и без пункта меню ожидание обучения было нечем объяснить. */}
-          <NavLink to="/hardware" className={nav}><span className="workspace-code">GPU</span>Оборудование</NavLink>
-          <NavLink to="/account" className={nav}><span className="workspace-code">ЛК</span>Кабинет</NavLink>
-        </nav>
-        <div className="workspace-sidebar-foot">Данные <Sep /> разметка <Sep /> обучение</div>
-      </aside>
-      <header className="mag-topbar workspace-topbar">
-        {graphEditor ? <Link to="/augment" className="workspace-project">← Мои графы</Link> : agentEditor ? <Link to="/agents" className="workspace-project">← Мои агенты</Link> : code ? <Link to={projectPath} className="workspace-project" title={projectName}>{projectName}</Link> : <span className="workspace-project">Рабочая среда</span>}
-        <span className="workspace-breadcrumb">{section}</span>
-        <Link to="/account" className="mag-me mag-me-link">
-          <span className="mag-ava">{initials(me.user.display_name)}</span>
-          <span>{me.user.display_name}</span>
-        </Link>
-      </header>
-      <main id="workspace-content" className="workspace-main" tabIndex={-1}>
-        <ErrorBoundary resetKey={pathname}>
-          {!missing ? children : checked === rawCode ? (
-            <div className="mag-content mag-empty">
-              <p>Проект не найден или у вас нет к нему доступа.</p>
-              <Link className="mag-link" to="/">К проектам</Link>
-            </div>
-          ) : (
-            <div className="mag-content mag-empty">Загружаем проект…</div>
+    <div className="mag shell">
+      <a className="shell-skip" href="#workspace-content">К содержимому</a>
+      <aside className="sb" aria-label="Навигация">
+        <Popover align="start" width={232} trigger={
+          <button type="button" className="sb-proj" aria-label="Сменить проект">
+            <span className="sb-logo"><RailsMark /></span>
+            <span className="sb-proj-t">
+              <b>{project?.name ?? "Магистраль ML"}</b>
+              <span>{project ? `${project.code} · ${project.role_label.toLowerCase()}` : "проект не выбран"}</span>
+            </span>
+            <Icon name="updown" size={14} />
+          </button>
+        }>
+          {(close) => (
+            <>
+              <div className="ui-pop-h">Проекты</div>
+              {me.projects.map((p) => (
+                <MenuItem key={p.code} selected={p.code === project?.code} hint={`${p.code} · ${p.role_label.toLowerCase()}`}
+                  onSelect={() => { close(); navigate(`/projects/${p.code}`); }}>
+                  {p.name}
+                </MenuItem>
+              ))}
+              {me.projects.length > 0 && <div className="ui-pop-sep" />}
+              <MenuItem icon="folder" onSelect={() => { close(); navigate("/"); }}>Все проекты</MenuItem>
+            </>
           )}
-        </ErrorBoundary>
-      </main>
+        </Popover>
+
+        <nav className="sb-nav" aria-label="Разделы">
+          <Link to="/" className={cx("nv", active === "projects" && "on")}
+            aria-current={active === "projects" ? "page" : undefined}>
+            <Icon name="folder" /><span>Все проекты</span>
+            {me.projects.length > 0 && <span className="ui-count">{me.projects.length}</span>}
+          </Link>
+          {groups.map((g) => (
+            <Fragment key={g.title}>
+              <div className="nv-g">{g.title}</div>
+              {g.items.map((it) => (
+                <Link key={it.key} to={hrefOf(it, project?.code ?? "")}
+                  className={cx("nv", active === it.key && "on")}
+                  aria-current={active === it.key ? "page" : undefined}>
+                  <Icon name={it.icon} /><span>{it.label}</span>
+                </Link>
+              ))}
+            </Fragment>
+          ))}
+        </nav>
+
+        <div className="sb-f">
+          <GpuMeter />
+          {/* Всем, а не только обслуживанию: свою очередь к картам видит каждый. */}
+          <Link to="/hardware" className={cx("nv", active === "hardware" && "on")}
+            aria-current={active === "hardware" ? "page" : undefined}>
+            <Icon name="cpu" /><span>Оборудование</span>
+          </Link>
+          <Link to="/account" className={cx("sb-me", active === "account" && "on")} title="Личный кабинет">
+            <Avatar name={me.user.display_name} size={28} />
+            <span className="sb-me-t">
+              <span>{me.user.display_name}</span>
+              <span>{roleOf ? roleOf.role_label.toLowerCase() : me.user.login}</span>
+            </span>
+          </Link>
+        </div>
+      </aside>
+
+      <div className="shell-main">
+        <header className="topbar">
+          <nav className="crumbs" aria-label="Путь">
+            {current ? (
+              <>
+                <Link to="/">Проекты</Link>
+                <Icon name="chevR" size={14} />
+                {section.key === "overview" && section.label === "Обзор"
+                  ? <b>{current.name}</b>
+                  : <><Link to={`/projects/${current.code}`}>{current.name}</Link>
+                    <Icon name="chevR" size={14} /><b>{section.label}</b></>}
+              </>
+            ) : matchPath("/augment/:id", pathname) ? (
+              <><Link to="/augment">Мои графы</Link><Icon name="chevR" size={14} /><b>Граф</b></>
+            ) : matchPath("/agents/:id", pathname) ? (
+              <><Link to="/agents">Мои агенты</Link><Icon name="chevR" size={14} /><b>Агент</b></>
+            ) : <b>{section.label}</b>}
+          </nav>
+        </header>
+        <main id="workspace-content" className="shell-content" tabIndex={-1}>
+          <ErrorBoundary resetKey={pathname}>
+            {!missing ? children : checked === rawCode ? (
+              <div className="page">
+                <Empty icon="folder" title="Проект не найден или у вас нет к нему доступа."
+                  action={<LinkButton to="/" icon="back">К проектам</LinkButton>} />
+              </div>
+            ) : (
+              <div className="page"><Empty compact title="Загружаем проект…" /></div>
+            )}
+          </ErrorBoundary>
+        </main>
+      </div>
     </div>
   );
-  // Живая связь — одна на вкладку и на весь проект, на любой его странице:
-  // таска, обучение и мастера лежат вне ProjectShell и раньше её не слышали.
+  // Живая связь — одна на вкладку и на весь проект, на любой его странице.
   return code ? <LiveProvider key={code} code={code}>{shell}</LiveProvider> : shell;
 }
