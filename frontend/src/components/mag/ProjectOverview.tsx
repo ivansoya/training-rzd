@@ -237,7 +237,7 @@ function ClassBalance({ rows, declared, code }: { rows: OverviewClass[]; declare
                   title={`train ${ru(r.train)} · val ${ru(r.val)}${r.other ? ` · без сплита ${ru(r.other)}` : ""}`}>
                   {r.train > 0 && <i style={{ flex: r.train, background: "var(--c1)" }} />}
                   {r.val > 0 && <i style={{ flex: r.val, background: "var(--c2)" }} />}
-                  {r.other > 0 && <i style={{ flex: r.other, background: "var(--faint)" }} />}
+                  {r.other > 0 && <i style={{ flex: r.other, background: "var(--destructive)" }} />}
                 </span>
                 <span className="bal-v ui-mono">{ru(r.total)}</span>
               </div>
@@ -247,7 +247,7 @@ function ClassBalance({ rows, declared, code }: { rows: OverviewClass[]; declare
             <Legend items={[
               { label: "train", color: "var(--c1)" },
               { label: "val", color: "var(--c2)" },
-              ...(anyOther ? [{ label: "без сплита — из тасок", color: "var(--faint)" }] : []),
+              ...(anyOther ? [{ label: "без сплита — из тасок", color: "var(--destructive)" }] : []),
             ]} />
             {unused > 0 && <span className="t-faint t-xs">ещё {count(unused, "класс", "класса", "классов")} без разметки</span>}
           </div>
