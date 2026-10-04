@@ -550,6 +550,9 @@
 .ag-exds label { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .ag-exds label .mono { margin-left: auto; color: var(--faint); font-size: 12px; }
 .ag-exds input { margin: 0; accent-color: var(--red); }
+/* Флажок, а не поле: общее .mag-field input растягивало его на всю ширину. */
+.ag-exds input[type="checkbox"] { width: auto; flex: none; padding: 0; }
+.ag-exds label > span:not(.mono) { min-width: 0; overflow-wrap: anywhere; }
 .ag-exnote { margin: 0; color: var(--dim); font-size: 13px; }
 .ag-exdlg .ag-foot { justify-content: flex-start; align-items: center; margin-top: 0; }
 @media (max-width: 560px) { .ag-three { grid-template-columns: 1fr; } }

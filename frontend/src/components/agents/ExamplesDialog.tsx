@@ -112,7 +112,7 @@ export function ExamplesDialog({
                     if (e.target.checked) next.delete(d.id); else next.add(d.id);
                     return next;
                   })} />
-                {d.name}
+                <span>{d.name}</span>
                 <span className="mono">{count(d.frames, "кадр", "кадра", "кадров")}</span>
               </label>
             ))}
