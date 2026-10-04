@@ -18,6 +18,7 @@ const ANNS = ["разметка", "разметки", "разметок"] as con
 const says = (n: number, forms: readonly [string, string, string], tail = "") =>
   plural(n, ...forms) + tail;
 import Banner from "../Banner";
+import { useAuth } from "../auth/AuthGate";
 
 // Colours offered to classes that arrive without one — the same list the
 // server falls back to, so a class looks the same before and after the write.
@@ -53,6 +54,8 @@ function splitLine(splits: Record<string, number>): string {
 
 export default function ImportWizard() {
   const { code } = useParams<{ code: string }>();
+  // В крошках — имя проекта, а не двадцатизначный код.
+  const projectName = useAuth().me.projects.find((p) => p.code === code)?.name ?? code;
   const navigate = useNavigate();
 
   const [state, setState] = useState<ImportState | null>(null);
@@ -237,7 +240,7 @@ export default function ImportWizard() {
   return (
     <div className="mag-content">
       <div className="mag-crumbs">
-        <Link to="/">Проекты</Link> / <Link to={`/projects/${code}`}>{code}</Link> /{" "}
+        <Link to="/">Проекты</Link> / <Link to={`/projects/${code}`}>{projectName}</Link> /{" "}
         <b>Импорт датасета</b>
       </div>
 
