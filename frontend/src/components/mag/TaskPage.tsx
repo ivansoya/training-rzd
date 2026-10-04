@@ -363,8 +363,12 @@ export default function TaskPage() {
     setUploadPct(0);
     setError(null);
     try {
-      await uploadTaskImages(taskId, files, setUploadPct, perFile);
+      const got = await uploadTaskImages(taskId, files, setUploadPct, perFile);
       await load();
+      // Пропущенное называем: молча принятые 6 из 8 читались как «всё дошло».
+      const skipped = `${count(got.skipped, "файл", "файла", "файлов")} — не изображения или не читаются`;
+      if (!got.added && got.skipped) setError(`Ни один файл не принят: ${skipped}.`);
+      else if (got.skipped) setNotice(`Принято ${got.added}, пропущено ${skipped}.`);
     } catch (e) {
       setError((e as Error).message);
     } finally {
