@@ -727,9 +727,11 @@ export default function TaskPage() {
                   onClick={() => fileRef.current?.click()}>
                   Загрузить изображения
                 </button>
+                {/* Режим ролика задаёт вкладка, и потом его не сменить — говорим это до загрузки. */}
                 <button className="mag-btn mag-btn-inline" type="button"
+                  title="Ролик нарежется на кадры этой вкладки. Режим потом не сменить: для покадровой разметки добавьте ролик во вкладке «Видео»"
                   onClick={() => cutRef.current?.click()}>
-                  Добавить видео
+                  Видео на нарезку
                 </button>
               </div>
             )}
@@ -772,8 +774,9 @@ export default function TaskPage() {
                     e.target.value = "";
                   }} />
                 <button className="mag-btn mag-btn-inline" type="button"
+                  title="Ролик размечают покадрово, треками. Режим потом не сменить: чтобы нарезать его на кадры, добавьте ролик во вкладке «Кадры»"
                   onClick={() => annotateRef.current?.click()}>
-                  Добавить видео
+                  Видео на разметку
                 </button>
               </div>
             )}
