@@ -84,6 +84,20 @@ button, input, select, textarea { font: inherit; }
 }
 ::-webkit-scrollbar-thumb:hover { background: var(--faint); background-clip: padding-box; }
 
+/* Курсор: текстовый — только там, где текст вводят. Над подписями, графикой
+ * и любыми органами управления — стрелка или «палец»; нулевая специфичность,
+ * поэтому свои курсоры холстов и редакторов не перебиваются. */
+body { cursor: default; }
+:where(button, a[href], summary, label, select, [role="button"], [role="option"], [role="switch"], [role="tab"],
+  [role="menuitem"], [role="checkbox"], input[type="range"], input[type="checkbox"], input[type="radio"],
+  input[type="color"], input[type="file"]) { cursor: pointer; }
+:where(input:not([type]), input[type="text"], input[type="search"], input[type="email"], input[type="password"],
+  input[type="number"], input[type="url"], input[type="tel"], textarea, [contenteditable="true"]) { cursor: text; }
+:where(button, [role="button"], [role="option"], [role="tab"], [role="switch"], label, summary, svg,
+  input[type="range"], .ui-stack, .ui-progress, .ui-legend, .ui-ring, .ui-pill, .ui-badge, .ui-seg, .ui-tabs,
+  .ui-chip, .ui-chiptg, .ui-kbd, .ui-dot, .ui-swatch, .ui-av) { -webkit-user-select: none; user-select: none; }
+:where(:disabled, [aria-disabled="true"]) { cursor: not-allowed; }
+
 :where(a, button, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;

@@ -334,13 +334,13 @@
 /* ---------- бейдж-сообщение ---------- */
 .ui-pill {
   --t: var(--st-empty);
-  display: inline-flex; align-items: center; gap: 6px; height: 24px; padding: 0 10px; border-radius: var(--r-full);
-  font-size: 12px; font-weight: 500; white-space: nowrap; max-width: 100%;
+  display: inline-flex; align-items: flex-start; gap: 6px; min-height: 24px; padding: 3px 10px; border-radius: 12px;
+  font-size: 12px; line-height: 1.4; font-weight: 500; max-width: 100%; text-align: left; overflow-wrap: anywhere;
   background: color-mix(in srgb, var(--t) 13%, transparent);
   border: 1px solid color-mix(in srgb, var(--t) 30%, transparent);
   color: color-mix(in srgb, var(--t) 70%, var(--fg));
 }
-.ui-pill .ui-ic { color: var(--t); }
+.ui-pill .ui-ic { color: var(--t); flex: none; margin-top: 2px; }
 .ui-pill.warn { --t: var(--st-skip); }
 .ui-pill.bad { --t: var(--destructive); }
 .ui-pill.ok { --t: var(--st-done); }

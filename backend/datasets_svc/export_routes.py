@@ -40,6 +40,8 @@ from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import select
 
 from common import config, jobs
+from common import prep_queue as queue
+from common import similarity
 from common import selection as sel_lib
 from common.auth import current_user
 from common.db import SessionLocal
@@ -60,14 +62,38 @@ PACK_BATCH = 25
 # --------------------------------------------------------------------------- #
 # План выгрузки
 # --------------------------------------------------------------------------- #
+# Как выгрузка делит заново — те же способы, что у мастера набора. «keep» —
+# уважать проставленные половины; «resplit» — старое имя «с учётом классов».
+EXPORT_SPLITS = ("keep", "random", "balanced", "smart")
+
+
 def _selection(data):
     """Выбор из окна выгрузки. Умолчание — «уважать проставленные половины»:
     так эта ручка вела себя с самого начала, и менять её молча нельзя."""
     raw = dict(data or {})
-    raw["split_mode"] = (
-        "resplit" if raw.get("split_mode") == "resplit" else "keep"
-    )
+    mode = raw.get("split_mode")
+    raw["split_mode"] = "balanced" if mode == "resplit" else mode if mode in EXPORT_SPLITS else "keep"
     return sel_lib.parse(raw)
+
+
+def _embeddings(db, project, picked, sel):
+    """Для умного деления: признаки кадров и группы похожих — как в мастере набора.
+    Признаков нет — групп нет, и деление скажет, что поделило с учётом классов."""
+    ids = [i.id for i in picked.images]
+    missing = similarity.missing_for(db, ids)
+    failed = queue.last_error(db, queue.KIND_EMBED, project.id)
+    state = {
+        "ready": len(ids) - len(missing),
+        "total": len(ids),
+        "missing": len(missing),
+        "job": queue.progress_of(db, queue.KIND_EMBED, project.id),
+        "failure": {
+            "error": failed.error,
+            "at": failed.finished_at.isoformat() if failed.finished_at else None,
+        } if failed is not None and missing else None,
+    }
+    clusters = similarity.clusters_for(db, ids, sel.get("seed", 0)) if not missing else None
+    return state, clusters
 
 
 def _plan(db, project, sel):
@@ -78,7 +104,10 @@ def _plan(db, project, sel):
     архива: имена файлов внутри сплитов и таблица по классам.
     """
     picked = sel_lib.gather(db, project, sel)
-    split_of, ratio, warnings = sel_lib.assign(picked, sel)
+    embeddings, cluster_of = (
+        _embeddings(db, project, picked, sel) if sel["split_mode"] == "smart" else (None, None)
+    )
+    split_of, ratio, warnings = sel_lib.assign(picked, sel, cluster_of=cluster_of)
     want = picked.ann_type
 
     items, taken = [], defaultdict(set)
@@ -169,6 +198,8 @@ def _plan(db, project, sel):
         "background_parts": picked.background_parts,
         "splits": {s: counts[s] for s in sel_lib.FIXED_SPLITS if counts[s]},
         "val_ratio": round(ratio, 4),
+        "split_mode": sel["split_mode"],
+        "embeddings": embeddings,
         "warnings": warnings,
     }
 

@@ -76,3 +76,5 @@
   .exp-cls { grid-template-columns: 16px minmax(0, 1fr) 76px; }
   .exp-tv { display: none; }
 }
+.exp-embed { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.exp-field .ui-seg button { white-space: nowrap; padding: 0 8px; }

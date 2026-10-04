@@ -10,12 +10,15 @@ import {
 } from "../../auth/api";
 import type {
   ExportOptions,
+  ExportSplit,
   ExportPreview,
   ExportResult,
   LabelClass,
   ProjectDetail,
 } from "../../auth/api";
 import { listTags } from "../../api/tags";
+import { startEmbed } from "../../api/trainsets";
+import type { SetSpec } from "../../api/trainsets";
 import type { Tag } from "../../api/tags";
 import {
   AnchorButton, Button, Check, ChipToggle, Dialog, Legend, Notice, Pill, Range, Ring, Seg, StackBar,
@@ -44,7 +47,11 @@ export default function ExportModal({ detail, onClose }: Props) {
   // Таги СУЖАЮТ отбор и работают «любым из»: ничего не отмечено — берём всё.
   const [tags, setTags] = useState<Tag[]>([]);
   const [pickedTags, setPickedTags] = useState<string[]>([]);
-  const [resplit, setResplit] = useState(false);
+  // «keep» — как в проекте; иначе один из способов мастера набора
+  const [split, setSplit] = useState<ExportSplit>("keep");
+  const [divideBy, setDivideBy] = useState<Exclude<ExportSplit, "keep">>("balanced");
+  const [embedBusy, setEmbedBusy] = useState(false);
+  const [tick, setTick] = useState(0);
   const [annType, setAnnType] = useState<"bbox" | "polygon">("bbox");
   const [valRatio, setValRatio] = useState(0.2);
   const [preview, setPreview] = useState<ExportPreview | null>(null);
@@ -74,10 +81,10 @@ export default function ExportModal({ detail, onClose }: Props) {
     datasets: [...pickedDs],
     classes: [...pickedCls],
     tags: pickedTags,
-    split_mode: resplit ? "resplit" : "keep",
+    split_mode: split,
     val_ratio: valRatio,
     ann_type: annType,
-  }), [pickedDs, pickedCls, pickedTags, resplit, valRatio, annType]);
+  }), [pickedDs, pickedCls, pickedTags, split, valRatio, annType]);
 
   useEffect(() => {
     if (phase !== "setup") return;
@@ -100,7 +107,27 @@ export default function ExportModal({ detail, onClose }: Props) {
         .finally(() => { if (seq.current === mine) setPending(false); });
     }, 250);
     return () => window.clearTimeout(h);
-  }, [code, options, phase]);
+  }, [code, options, phase, tick]);
+
+  // Пока считаются признаки для умного деления — пересчитывать предпросмотр
+  const embedJob = preview?.embeddings?.job ?? null;
+  useEffect(() => {
+    if (!embedJob || phase !== "setup") return;
+    const h = window.setTimeout(() => setTick((n) => n + 1), 2000);
+    return () => window.clearTimeout(h);
+  }, [embedJob, preview, phase]);
+
+  async function embed() {
+    setEmbedBusy(true);
+    try {
+      await startEmbed(code, { ...options, force: true } as unknown as Partial<SetSpec> & { force?: boolean });
+      setTick((n) => n + 1);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setEmbedBusy(false);
+    }
+  }
 
   const toggle = (set: Set<string>, id: string) => {
     const next = new Set(set);
@@ -217,17 +244,24 @@ export default function ExportModal({ detail, onClose }: Props) {
       </div>
       <div className="exp-field">
         <span>Обучение и проверка</span>
-        <Seg label="Обучение и проверка" value={resplit ? "1" : "0"} onChange={(v) => setResplit(v === "1")} options={[
-          { value: "0", label: "Как в проекте" },
-          { value: "1", label: "Поделить заново" },
-        ]} />
-        {resplit ? (
+        <Seg label="Обучение и проверка" value={split === "keep" ? "0" : "1"}
+          onChange={(v) => setSplit(v === "1" ? divideBy : "keep")} options={[
+            { value: "0", label: "Как в проекте" },
+            { value: "1", label: "Поделить заново" },
+          ]} />
+        {split === "keep" ? <p className="ui-hint">Сплит кадра берётся из проекта; кадры без сплита делятся в той же пропорции.</p> : (
           <>
+            <Seg label="Способ деления" value={split} onChange={(v) => { setSplit(v); setDivideBy(v as Exclude<ExportSplit, "keep">); }} options={[
+              { value: "random", label: "Случайно", title: "Кадры раскладываются случайно — без оглядки на классы" },
+              { value: "balanced", label: "С учётом классов", title: "Случайно, но редкие классы попадают и в проверку" },
+              { value: "smart", label: "Умное", title: "Похожие кадры едут в одну сторону целиком — проверка не меряет запоминание" },
+            ]} />
             <div className="row between t-sm"><span className="t-muted">На проверку</span><span className="ui-mono">{Math.round(valRatio * 100)} %</span></div>
             <Range min={5} max={50} step={1} value={Math.round(valRatio * 100)} aria-label="Доля на проверку"
               onChange={(e) => setValRatio(Number(e.target.value) / 100)} />
+            {split === "smart" && preview?.embeddings && <Embeddings state={preview.embeddings} busy={embedBusy} onStart={embed} />}
           </>
-        ) : <p className="ui-hint">Сплит кадра берётся из проекта; кадры без сплита делятся в той же пропорции.</p>}
+        )}
       </div>
       <hr className="ov-sep" />
       {summary}
@@ -337,5 +371,34 @@ export default function ExportModal({ detail, onClose }: Props) {
       </div>
       <div className="exp-r">{right}</div>
     </Dialog>
+  );
+}
+
+/** Признаки кадров для умного деления: сколько посчитано, идёт ли счёт, что делать. */
+function Embeddings({ state, busy, onStart }: {
+  state: NonNullable<ExportPreview["embeddings"]>;
+  busy: boolean;
+  onStart: () => void;
+}) {
+  if (!state.missing) return <div className="ui-pills"><Pill tone="ok">Признаки есть у всех кадров</Pill></div>;
+  return (
+    <div className="exp-embed">
+      <div className="ui-pills">
+        {state.job ? (
+          <Pill icon="refresh">{state.job.stage === "embed"
+            ? `Считаю признаки: ${ru(state.job.processed)} из ${ru(state.job.total)}`
+            : state.job.stage_text || "Признаки в очереди"}</Pill>
+        ) : state.failure ? (
+          <Pill tone="bad">Признаки не посчитались: {state.failure.error}</Pill>
+        ) : (
+          <Pill tone="warn">Признаки есть у {ru(state.ready)} из {ru(state.total)} кадров — без них деление идёт с учётом классов</Pill>
+        )}
+      </div>
+      {!state.job && (
+        <Button size="sm" icon="sparkle" disabled={busy} onClick={onStart}>
+          {state.failure ? "Повторить счёт признаков" : "Посчитать признаки"} ({ru(state.missing)})
+        </Button>
+      )}
+    </div>
   );
 }

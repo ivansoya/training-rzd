@@ -1654,13 +1654,16 @@ export function imageFileUrl(id: string): string {
 // Номера классов в выгрузке свои (0..N-1): номера проекта разрежены, а YOLO
 // требует сплошной ряд. Соответствие лежит в classes.json внутри архива.
 
+/** Как делить: как в проекте, случайно, случайно с учётом классов, по группам похожих кадров. */
+export type ExportSplit = "keep" | "random" | "balanced" | "smart";
+
 export interface ExportOptions {
   datasets: string[];
   classes: string[];
   /** Сужение по тагам, «любой из». Пусто — берём всё. */
   tags?: string[];
-  /** keep — брать images.split, resplit — поделить всё заново. */
-  split_mode: "keep" | "resplit";
+  /** keep — брать images.split; остальные — поделить заново тем же способом, что мастер набора. */
+  split_mode: ExportSplit;
   val_ratio: number;
   format?: string;
   ann_type?: string;
@@ -1708,6 +1711,15 @@ export interface ExportPreview {
    *  этого числа читается как поломка, а не как отбор. */
   no_tag: number;
   ann_type: "bbox" | "polygon";
+  split_mode?: ExportSplit;
+  /** Только у умного деления: сколько кадров с признаками и идёт ли счёт. */
+  embeddings?: {
+    ready: number;
+    total: number;
+    missing: number;
+    job: { id: string; stage: string | null; stage_text: string | null; processed: number; total: number } | null;
+    failure: { error: string | null; at: string | null } | null;
+  } | null;
   /** Кадры без разметки: идут в выгрузку фоном, с пустым файлом. */
   background: number;
   background_parts: BackgroundParts;
