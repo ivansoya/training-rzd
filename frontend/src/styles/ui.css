@@ -215,11 +215,11 @@
   transition: background .12s, border-color .12s;
 }
 .ui-check:hover:not(:disabled) { border-color: var(--faint); }
-/* Отмеченный — тон акцента и контурный tick того же семейства, что иконки, а не сплошная красная плашка */
-.ui-check:checked, .ui-check:indeterminate { background: color-mix(in srgb, var(--primary) 18%, transparent); border-color: var(--primary); }
-.ui-check:checked:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 26%, transparent); }
-.ui-check:checked::after { content: ""; width: 12px; height: 12px; background: var(--fg); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat; }
-.ui-check:indeterminate::after { content: ""; width: 8px; height: 2px; border-radius: 1px; background: var(--fg); }
+/* Отмеченный — красная рамка и светлый квадрат внутри: без галочки и не путается с образцом цвета класса */
+.ui-check:checked, .ui-check:indeterminate { background: color-mix(in srgb, var(--primary) 12%, transparent); border-color: var(--primary); }
+.ui-check:checked:hover:not(:disabled) { background: color-mix(in srgb, var(--primary) 20%, transparent); }
+.ui-check:checked::after { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--fg); }
+.ui-check:indeterminate::after { content: ""; width: 8px; height: 2px; border-radius: 1px; background: var(--primary); }
 .ui-check:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 
 .ui-tri { width: 16px; height: 16px; border-radius: var(--r-sm); border: 1px solid var(--input); display: grid; place-items: center; flex: none; }

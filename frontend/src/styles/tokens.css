@@ -158,13 +158,12 @@ button, input, select, textarea { font: inherit; }
   --sunk: var(--muted);
 }
 
-/* Старые флажки — тем же видом, что ui-check: тон акцента и контурный tick */
+/* Старые флажки — тем же видом, что ui-check: красная рамка и светлый квадрат внутри */
 input[type="checkbox"]:where(:not(.ui-ctl)) { border: 1px solid var(--input); border-radius: var(--r-sm); background: transparent; width: 16px; height: 16px; }
 input[type="checkbox"]:where(:not(.ui-ctl)):hover { border-color: var(--faint); box-shadow: none; }
-input[type="checkbox"]:where(:not(.ui-ctl)):checked { background: color-mix(in srgb, var(--primary) 18%, transparent); border-color: var(--primary); }
-input[type="checkbox"]:where(:not(.ui-ctl)):checked:hover { background: color-mix(in srgb, var(--primary) 26%, transparent); box-shadow: none; }
+input[type="checkbox"]:where(:not(.ui-ctl)):checked { background: color-mix(in srgb, var(--primary) 12%, transparent); border-color: var(--primary); }
+input[type="checkbox"]:where(:not(.ui-ctl)):checked:hover { background: color-mix(in srgb, var(--primary) 20%, transparent); box-shadow: none; }
 input[type="checkbox"]:where(:not(.ui-ctl)):checked::after {
-  left: 1px; top: 1px; width: 12px; height: 12px; border: 0; transform: none; background: var(--fg);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M20 6 9 17l-5-5'/%3E%3C/svg%3E") center / contain no-repeat;
+  left: 3px; top: 3px; width: 8px; height: 8px; border: 0; border-radius: 2px; transform: none; background: var(--fg);
 }
 
