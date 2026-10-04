@@ -263,6 +263,9 @@ class Image(Base, AuditMixin):
         sa.Index("ix_images_project", "project_id"),
         # Поиск «есть ли уже изображение для этого кадра» при повторной сдаче.
         sa.Index("ix_images_video_frame", "source_video_id", "source_frame_no"),
+        # Есть в базе с ранних миграций; без объявления autogenerate их удалил бы.
+        sa.Index("ix_images_split", "project_id", "split"),
+        sa.Index("ix_images_task", "task_id", "task_status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
@@ -454,6 +457,7 @@ class Task(Base, AuditMixin):
     """
 
     __tablename__ = "tasks"
+    __table_args__ = (sa.Index("ix_tasks_project", "project_id"),)
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
     project_id: Mapped[uuid.UUID] = mapped_column(

@@ -14,10 +14,21 @@ from common.db import Base, DATABASE_URL  # noqa: E402
 target_metadata = Base.metadata
 
 
+# Таблицы старой ветки обучения: в моделях их нет, данные в них живы, а
+# autogenerate предлагал бы их удалить при каждой новой миграции.
+LEGACY_TABLES = {"training_epochs", "training_runs", "augmentation_sets", "train_builds"}
+
+
+def include_object(obj, name, type_, reflected, compare_to):
+    table = name if type_ == "table" else getattr(getattr(obj, "table", None), "name", None)
+    return not (reflected and compare_to is None and table in LEGACY_TABLES)
+
+
 def run_migrations_offline() -> None:
     context.configure(
         url=DATABASE_URL,
         target_metadata=target_metadata,
+        include_object=include_object,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
     )
@@ -28,7 +39,8 @@ def run_migrations_offline() -> None:
 def run_migrations_online() -> None:
     engine = create_engine(DATABASE_URL)
     with engine.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(connection=connection, target_metadata=target_metadata,
+                          include_object=include_object)
         with context.begin_transaction():
             context.run_migrations()
 
