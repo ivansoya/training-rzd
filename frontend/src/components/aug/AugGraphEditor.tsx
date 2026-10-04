@@ -6,6 +6,7 @@
 // смотрятся из списка, настоящая стоит в нём отдельно.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import NotFound, { isMissing } from "../NotFound";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   Background,
@@ -145,6 +146,7 @@ function Editor() {
   const [search, setSearch] = useSearchParams();
   const wanted = search.get("version") ?? undefined;
 
+  const [missing, setMissing] = useState(false);
   const [graph, setGraph] = useState<api.GraphDetail | null>(null);
   // Имя графа правится прямо в шапке. Держим его отдельным состоянием, чтобы
   // буквы появлялись сразу, а на сервер уходило одно сохранение по уходу
@@ -230,7 +232,10 @@ function Editor() {
         setSaveState("saved");
         setVersions((await api.listVersions(graphId)).versions);
       } catch (e) {
-        if (alive) setProblem((e as Error).message);
+        if (!alive) return;
+        // Мусорный id — «не найден», а не пустой холст с активной кнопкой сохранения.
+        if (isMissing(e)) setMissing(true);
+        else setProblem((e as Error).message);
       }
     })();
     return () => {
@@ -678,6 +683,7 @@ function Editor() {
   }, [graphId, graph, title]);
 
   const current = nodes.find((n) => n.id === selected) ?? null;
+  if (missing) return <NotFound message="Граф не найден: его удалили или ссылка неверна." back="/augment" backLabel="К моим графам" />;
   // Сохранять мешает только поломка самого графа; отказ сервера — разовое событие.
   const trouble = plan.flaw;
 

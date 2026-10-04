@@ -12,6 +12,7 @@
 // даёт за них выйти, иначе ошибка всплывала только на «Сохранить версию».
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import NotFound, { isMissing } from "../NotFound";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import {
   Background,
@@ -105,6 +106,7 @@ function Editor() {
   const { graphId } = useParams<{ graphId: string }>();
   const [search, setSearch] = useSearchParams();
   const wanted = search.get("version") ?? undefined;
+  const [missing, setMissing] = useState(false);
   const [graph, setGraph] = useState<aug.GraphDetail | null>(null);
   const [title, setTitle] = useState("");
   const [versions, setVersions] = useState<aug.VersionRow[]>([]);
@@ -161,7 +163,10 @@ function Editor() {
         setSaveState("saved");
         setVersions((await aug.listVersions(graphId)).versions);
       } catch (e) {
-        if (alive) setProblem((e as Error).message);
+        if (!alive) return;
+        // Мусорный id — «не найден», а не пустой холст с активной кнопкой сохранения.
+        if (isMissing(e)) setMissing(true);
+        else setProblem((e as Error).message);
       }
     })();
     return () => {
@@ -414,6 +419,7 @@ function Editor() {
   }, [graphId, graph, title]);
 
   const current = nodes.find((n) => n.id === selected) ?? null;
+  if (missing) return <NotFound message="Агент не найден: его удалили или ссылка неверна." back="/agents" backLabel="К моим агентам" />;
   const pickedFor = picking ? nodes.find((n) => n.id === picking) : null;
 
   return (
