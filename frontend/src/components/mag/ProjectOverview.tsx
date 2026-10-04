@@ -47,7 +47,7 @@ export default function ProjectOverview() {
   const { detail } = useProject();
   const [search] = useSearchParams();
   const navigate = useNavigate();
-  const { project, datasets, classes, my_role } = detail;
+  const { project, datasets, my_role } = detail;
   const code = project.code;
   const isAdmin = my_role === "admin";
   const canEdit = my_role === "admin" || my_role === "editor";
@@ -87,19 +87,13 @@ export default function ProjectOverview() {
     );
   }
 
-  // Второй архив сервер отклонит, пока в проекте есть классы: кнопка говорит это сразу.
-  const importBlocked = classes.length > 0;
   const actions = (
     <>
       <Button icon="download" disabled={importing} onClick={() => setExporting(true)}
         title={importing ? "Дождитесь окончания импорта" : "Собрать архив с изображениями и разметкой"}>
         Экспорт
       </Button>
-      {isAdmin && (importBlocked
-        ? <Button icon="upload" disabled title="В проекте уже есть классы — импорт второго архива пока не поддержан">
-            Импорт архива
-          </Button>
-        : <LinkButton icon="upload" to={`/projects/${code}/import`}>Импорт архива</LinkButton>)}
+      {isAdmin && <LinkButton icon="upload" to={`/projects/${code}/import`}>Импорт архива</LinkButton>}
       {canEdit && <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>Новая таска</Button>}
     </>
   );
@@ -141,13 +135,11 @@ export default function ProjectOverview() {
         <Empty icon="database" title="В проекте пока нет данных"
           action={
             <div className="row">
-              {isAdmin && !importBlocked && <LinkButton variant="primary" icon="upload" to={`/projects/${code}/import`}>Импортировать архив</LinkButton>}
+              {isAdmin && <LinkButton variant="primary" icon="upload" to={`/projects/${code}/import`}>Импортировать архив</LinkButton>}
               {taskCount > 0 && <LinkButton to={`/projects/${code}/tasks`}>К таскам</LinkButton>}
             </div>
           }>
-          {importBlocked
-            ? "Сдайте кадры таски — импорт архива в проект с классами пока не поддержан."
-            : taskCount ? "Импортируйте YOLO-архив или сдайте кадры таски." : "Импортируйте YOLO-архив."}
+          {taskCount ? "Импортируйте YOLO-архив или сдайте кадры таски." : "Импортируйте YOLO-архив."}
         </Empty>
         {modals}
       </div>

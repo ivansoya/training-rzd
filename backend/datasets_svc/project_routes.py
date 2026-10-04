@@ -274,40 +274,11 @@ def start_import(code):
         db.close()
 
 
-def _classes_block(db, project):
-    """Второй архив в проект пока не поддержан: его class_index столкнётся с
-    уже заведёнными классами. Отказываем явно, а не падаем на записи."""
-    total = db.execute(
-        select(func.count()).select_from(LabelClass)
-        .where(LabelClass.project_id == project.id)
-    ).scalar_one()
-    if not total:
-        return None
-    used = db.execute(
-        select(func.count(func.distinct(LabelClass.id)))
-        .where(LabelClass.project_id == project.id)
-        .where(or_(
-            select(Annotation.id).where(Annotation.class_id == LabelClass.id).exists(),
-            select(VideoTrack.id).where(VideoTrack.class_id == LabelClass.id).exists(),
-            select(VideoAnnotation.id).where(VideoAnnotation.class_id == LabelClass.id).exists(),
-        ))
-    ).scalar_one()
-    # Выход из тупика (например, после удаления последнего датасета) — назвать.
-    if used:
-        return (f"В проекте уже есть классы ({total}, с разметкой — {used}). Второй архив "
-                "в проект с классами пока не импортируется: сверки классов ещё нет.")
-    return (f"В проекте остались классы без разметки ({total}). Удалите их во вкладке "
-            "«Классы» — после этого архив можно будет загрузить.")
-
-
 def _import_blocked(db, project):
     """Почему в проект нельзя грузить архив, или ``None``."""
     existing = _state(project.id)
     if existing and existing.get("status") in ("scanning", "writing"):
         return jsonify({"error": "Импорт уже идёт."}), 409
-    reason = _classes_block(db, project)
-    if reason:
-        return jsonify({"error": reason}), 409
     return None
 
 
@@ -442,12 +413,6 @@ def get_import(code):
         state = _state(project.id) or {"status": "none"}
         # zip_path is a server detail; the wizard never needs it.
         out = {k: v for k, v in state.items() if k not in ("zip_path", "started")}
-        # Отказ, который ждёт архив, — заранее: мастер говорил его только
-        # после выбора и загрузки файла, то есть после минут ожидания.
-        if out.get("status") not in ("scanning", "classes", "writing"):
-            reason = _classes_block(db, project)
-            if reason:
-                out["blocked"] = reason
         return jsonify(out)
     finally:
         db.close()
@@ -508,7 +473,11 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
         db.flush()
         made["dataset"] = dataset.id
 
-        superclass_ids = {}
+        superclass_ids = {
+            sc.name: sc.id for sc in db.execute(
+                select(Superclass).where(Superclass.project_id == project_id)
+            ).scalars()
+        }
         for sc in plan["superclasses"]:
             row = Superclass(
                 project_id=project_id, name=sc["name"], color=sc["color"],
@@ -519,12 +488,25 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
             superclass_ids[sc["name"]] = row.id
             made["superclasses"].append(row.id)
 
+        project = db.get(Project, project_id)
+        had_classes = db.execute(
+            select(func.count()).select_from(LabelClass).where(LabelClass.project_id == project_id)
+        ).scalar_one() > 0
+        next_index = project.next_class_index or 0
         class_ids = {}
         for cls in plan["classes"]:
+            if cls.get("target"):
+                class_ids[cls["class_index"]] = uuid.UUID(cls["target"])
+                continue
+            # В проекте с классами номер из архива столкнулся бы с занятым
+            if had_classes:
+                index, next_index = next_index, next_index + 1
+            else:
+                index = cls["class_index"]
             row = LabelClass(
                 project_id=project_id,
                 superclass_id=superclass_ids.get(cls.get("superclass")),
-                class_index=cls["class_index"],
+                class_index=index,
                 name=cls["name"],
                 color=cls["color"],
                 created_by=user_id,
@@ -533,15 +515,12 @@ def _run_write_job(job_id, project_id, plan, zip_path, manifest, user_id):
             db.flush()
             class_ids[cls["class_index"]] = row.id
             made["classes"].append(row.id)
-        # Номера пришли из архива, а не от счётчика проекта: двигаем отметку
-        # за ними, иначе следующий класс, созданный руками, налетит на занятый.
-        # Только вверх: опустить отметку значило бы раздать номера удалённых классов.
-        if plan["classes"]:
-            project = db.get(Project, project_id)
-            project.next_class_index = max(
-                project.next_class_index or 0,
-                max(cls["class_index"] for cls in plan["classes"]) + 1,
-            )
+        # Номера пришли из архива или от счётчика: двигаем отметку за ними, иначе
+        # следующий класс, созданный руками, налетит на занятый. Только вверх.
+        new = [c for c in plan["classes"] if not c.get("target")]
+        if new:
+            top = next_index if had_classes else max(c["class_index"] for c in new) + 1
+            project.next_class_index = max(project.next_class_index or 0, top)
         db.commit()
 
         unreadable = orphan_boxes = 0
@@ -688,7 +667,7 @@ def commit_import(code):
             manifest = load_json(_manifest_file(project.id), None)
             if manifest is None:
                 return jsonify({"error": "Список файлов потерян, начните импорт заново."}), 409
-            plan, error = _build_plan(data, state)
+            plan, error = _build_plan(db, project, data, state)
             if error:
                 return jsonify({"error": error}), 400
 
@@ -709,9 +688,21 @@ def commit_import(code):
         db.close()
 
 
-def _build_plan(data, state):
-    """Validate what the class step sent back. Names are required, superclasses
-    are not: a class without one simply drops out of superclass export."""
+def _build_plan(db, project, data, state):
+    """Проверить, что вернул шаг классов. Класс архива либо сопоставлен с
+    классом проекта (``target``), либо заводится новым — тогда нужно имя, и
+    оно не должно совпасть с уже существующим (имена уникальны без регистра)."""
+    existing = {
+        str(c.id): c for c in db.execute(
+            select(LabelClass).where(LabelClass.project_id == project.id)
+        ).scalars()
+    }
+    taken_names = {c.name.casefold() for c in existing.values()}
+    existing_sc = {
+        sc.name.casefold(): sc.name for sc in db.execute(
+            select(Superclass).where(Superclass.project_id == project.id)
+        ).scalars()
+    }
     dataset_name = str_field(data, "dataset_name", max_len=DATASET_NAME_MAX,
                              label="Название датасета")
     if not dataset_name:
@@ -726,7 +717,7 @@ def _build_plan(data, state):
     seen_sc = set()
     for i, sc in enumerate(data.get("superclasses") or []):
         name = str_field(sc, "name", max_len=4096, label="Суперкласс")
-        if not name or name in seen_sc:
+        if not name or name in seen_sc or name.casefold() in existing_sc:
             continue
         if len(name) > NAME_MAX:
             return None, f"Название суперкласса длиннее {NAME_MAX} символов."
@@ -751,14 +742,26 @@ def _build_plan(data, state):
         if class_index in seen_idx:
             return None, f"Класс {class_index} указан дважды."
         seen_idx.add(class_index)
+        target = cls.get("target")
+        if target:
+            if str(target) not in existing:
+                return None, f"Класс {class_index} сопоставлен с классом, которого нет в проекте."
+            classes.append({"class_index": class_index, "target": str(target)})
+            continue
         name = str_field(cls, "name", max_len=4096, label=f"Класс {class_index}")
         if not name:
             return None, f"Класс {class_index} без названия."
         if len(name) > NAME_MAX:
             return None, f"Название класса {class_index} длиннее {NAME_MAX} символов."
+        if name.casefold() in taken_names:
+            return None, (f"Класс «{name}» уже есть в проекте — выберите его в сопоставлении "
+                          "или назовите новый иначе.")
+        taken_names.add(name.casefold())
         superclass = str_field(cls, "superclass", max_len=4096,
                                label=f"Суперкласс класса {class_index}") or None
-        if superclass and superclass not in seen_sc:
+        if superclass and superclass.casefold() in existing_sc:
+            superclass = existing_sc[superclass.casefold()]
+        elif superclass and superclass not in seen_sc:
             return None, f"Суперкласс «{superclass}» не объявлен."
         classes.append({
             "class_index": class_index,

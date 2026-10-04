@@ -170,10 +170,15 @@
 .imp-sw { width: 28px; height: 28px; border-radius: var(--r); border: 1px solid var(--border); background: var(--card); display: grid; place-items: center; cursor: pointer; padding: 0; }
 .imp-sw:hover { border-color: color-mix(in srgb, var(--ring) 55%, var(--input)); }
 .imp-sw i { width: 14px; height: 14px; border-radius: 3px; background: var(--cc); }
-.imp-cnt { width: 170px; }
+.imp-cnt { width: 104px; }
 .imp-cnt { white-space: nowrap; }
 .imp-cnt > * { vertical-align: middle; }
-.imp-bar { display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; margin-right: 8px; }
+.imp-bar { display: inline-block; width: 48px; height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; margin-right: 8px; }
 .imp-bar i { display: block; height: 100%; background: var(--c1); }
 
 .imp-confirm { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Класс архива, сопоставленный с классом проекта: имя, цвет и группа берутся из проекта */
+.imp-mapped td { background: color-mix(in srgb, var(--hover) 30%, transparent); }
+.imp-arch { font-size: 13px; color: var(--muted-fg); }
+.imp-sw.static { cursor: default; }

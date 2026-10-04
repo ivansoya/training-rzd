@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { pollJob } from "../../api/jobs";
-import { cancelImport, commitImport, getImport } from "../../auth/api";
-import type { ImportState, ScannedClass } from "../../auth/api";
+import { cancelImport, commitImport, getClasses, getImport } from "../../auth/api";
+import type { ImportState, LabelClass, ScannedClass } from "../../auth/api";
 import { Button, Dialog, Field, Icon, Input, LinkButton, Pill, Popover, Ring, Select } from "../../ui";
 import { count, plural, ru } from "../ru";
 import ColorPicker from "./ColorPicker";
@@ -20,7 +20,15 @@ const PALETTE = [
 ];
 const STEPS = ["Загрузка", "Разбор", "Классы", "Запись"];
 
-interface ClassDraft { name: string; color: string; superclass: string | null }
+interface ClassDraft {
+  name: string;
+  color: string;
+  superclass: string | null;
+  /** Класс проекта, в который ляжет разметка; null — завести новый. */
+  target: string | null;
+}
+
+const norm = (s: string) => s.trim().toLocaleLowerCase("ru-RU").replace(/ё/g, "е");
 
 /** Мастер импорта YOLO-архива в окне одного размера на всех шагах.
  *  Состояние живёт на сервере: закрытое окно и перезагрузка не теряют начатое. */
@@ -42,8 +50,14 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
   const [drafts, setDrafts] = useState<Record<number, ClassDraft>>({});
   const [superclasses, setSuperclasses] = useState<{ name: string; color: string }[]>([]);
   const [newSuperclass, setNewSuperclass] = useState("");
+  // Классы проекта: архив сверяется с ними, их номера не меняются
+  const [projectClasses, setProjectClasses] = useState<LabelClass[] | null>(null);
+  const [projectSupers, setProjectSupers] = useState<string[]>([]);
   const fileInput = useRef<HTMLInputElement>(null);
   const following = useRef<string | null>(null);
+  // «Готово» показываем, только если запись кончилась при открытом окне; старый
+  // итог не мешает начать следующий импорт — он остаётся бейджем у выбора архива
+  const [liveDone, setLiveDone] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!code) return null;
@@ -63,7 +77,8 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
     } finally {
       following.current = null;
       setJobPct(null);
-      await refresh().catch(() => null);
+      const next = await refresh().catch(() => null);
+      if (next?.status === "done") setLiveDone(true);
     }
   }, [refresh]);
 
@@ -97,19 +112,35 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
     if (state?.status === "done") void refreshProject();
   }, [state?.status, refreshProject]);
 
-  // Шаг классов начинается с того, что сказал архив; человек правит
   useEffect(() => {
-    if (state?.status !== "classes" || !state.report) return;
+    if (!code || state?.status !== "classes" || projectClasses) return;
+    getClasses(code)
+      .then((info) => {
+        setProjectClasses(info.classes);
+        setProjectSupers(info.superclasses.map((sc) => sc.name));
+      })
+      .catch((e) => setError((e as Error).message));
+  }, [code, state?.status, projectClasses]);
+
+  // Шаг классов начинается с того, что сказал архив; одноимённый класс проекта сопоставлен сразу
+  useEffect(() => {
+    if (state?.status !== "classes" || !state.report || !projectClasses) return;
     setDatasetName((prev) => prev || state.archive?.name.replace(/\.zip$/i, "") || "");
     setDrafts((prev) => {
       if (Object.keys(prev).length) return prev;
       const next: Record<number, ClassDraft> = {};
+      const byName = new Map(projectClasses.map((pc) => [norm(pc.name), pc.id]));
       state.report!.classes.forEach((c, i) => {
-        next[c.class_index] = { name: c.yaml_name || "", color: PALETTE[i % PALETTE.length], superclass: null };
+        next[c.class_index] = {
+          name: c.yaml_name || "",
+          color: PALETTE[i % PALETTE.length],
+          superclass: null,
+          target: c.yaml_name ? byName.get(norm(c.yaml_name)) ?? null : null,
+        };
       });
       return next;
     });
-  }, [state]);
+  }, [state, projectClasses]);
 
   function handleFile(file: File) {
     if (!code) return;
@@ -126,12 +157,17 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
       const { job_id } = await commitImport(code, {
         dataset_name: datasetName.trim(),
         superclasses,
-        classes: state.report.classes.map((c) => ({
-          class_index: c.class_index,
-          name: (drafts[c.class_index]?.name || "").trim(),
-          color: drafts[c.class_index]?.color || PALETTE[0],
-          superclass: drafts[c.class_index]?.superclass || null,
-        })),
+        classes: state.report.classes.map((c) => {
+          const d = drafts[c.class_index];
+          return d?.target
+            ? { class_index: c.class_index, target: d.target }
+            : {
+                class_index: c.class_index,
+                name: (d?.name || "").trim(),
+                color: d?.color || PALETTE[0],
+                superclass: d?.superclass || null,
+              };
+        }) as never,
       });
       await refresh();
       void follow(job_id);
@@ -169,7 +205,7 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
 
   function addSuperclass() {
     const name = newSuperclass.trim();
-    if (!name || superclasses.some((s) => s.name === name)) return;
+    if (!name || superclasses.some((s) => norm(s.name) === norm(name)) || projectSupers.some((s) => norm(s) === norm(name))) return;
     setSuperclasses((prev) => [...prev, { name, color: PALETTE[(prev.length + 3) % PALETTE.length] }]);
     setNewSuperclass("");
   }
@@ -220,18 +256,14 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
   }
 
   // --- 1. Выбор архива ---
-  if (state.status === "none" || state.status === "uploading") {
-    // Причину отказа сервер говорит заранее — до выбора файла, а не после минут загрузки
-    const blocked = (state as ImportState & { blocked?: string }).blocked;
+  const stale = state.status === "done" && !liveDone;
+  if (state.status === "none" || state.status === "uploading" || stale) {
     const broken = state.status === "uploading" && state.upload?.name;
     return dialog({
       step: 0,
       body: (
         <div className="imp-stage">
-          {blocked ? (
-            <Stage ring={<Ring tone="bad" label="Импорт закрыт" />} title="Этот архив сейчас не импортировать"
-              pills={<><Pill tone="bad">{blocked}</Pill><Link className="imp-link" to={`/projects/${code}/classes`}>Открыть классы</Link></>} />
-          ) : (
+          {(
             <>
               <label className="imp-drop" onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) handleFile(f); }}>
@@ -249,6 +281,9 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
                   </Pill>
                 ) : (
                   <>
+                    {stale && state.result && (
+                      <Pill tone="ok">Прошлый импорт: «{state.dataset_name}», {count(state.result.images, "изображение", "изображения", "изображений")}</Pill>
+                    )}
                     <Pill>Размер не ограничен</Pill>
                     <Pill icon="refresh">Докачается при обрыве</Pill>
                   </>
@@ -311,8 +346,15 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
 
   // --- 3. Классы ---
   if (state.status === "classes" && report) {
-    const unnamed = report.classes.filter((c) => !(drafts[c.class_index]?.name || "").trim()).length;
+    const fresh = report.classes.filter((c) => !drafts[c.class_index]?.target);
+    const unnamed = fresh.filter((c) => !(drafts[c.class_index]?.name || "").trim()).length;
+    const taken = new Set((projectClasses ?? []).map((pc) => norm(pc.name)));
+    const clash = fresh.map((c) => (drafts[c.class_index]?.name || "").trim())
+      .filter((n) => n && taken.has(norm(n)));
+    const mapped = report.classes.length - fresh.length;
     const maxCount = Math.max(1, ...report.classes.map((c) => c.annotations));
+    const merge = (projectClasses?.length ?? 0) > 0;
+    const supers = [...projectSupers, ...superclasses.map((sc) => sc.name)];
     return dialog({
       step: 2,
       body: (
@@ -321,19 +363,25 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
             {(id) => <Input id={id} value={datasetName} placeholder="Как называть эту партию изображений"
               onChange={(e) => setDatasetName(e.target.value)} />}
           </Field>
-          <div className="row between">
+          <div className="stack-v">
             <span className="imp-l">Классы и суперклассы</span>
-            {unnamed
-              ? <Pill tone="warn">{count(unnamed, "класс", "класса", "классов")} без названия</Pill>
-              : <Pill tone="ok">Все классы названы</Pill>}
+            <div className="ui-pills">
+              {merge && <Pill>{mapped
+                ? `${count(mapped, "класс сопоставлен", "класса сопоставлено", "классов сопоставлено")} с проектом`
+                : "Ни один класс не сопоставлен с проектом"}</Pill>}
+              {clash.length > 0 && <Pill tone="bad">Имя «{clash[0]}» уже есть в проекте — сопоставьте с ним</Pill>}
+              {unnamed
+                ? <Pill tone="warn">{count(unnamed, "класс", "класса", "классов")} без названия</Pill>
+                : !clash.length && <Pill tone="ok">Все классы названы</Pill>}
+            </div>
           </div>
           <div className="imp-tbl">
             <table className="ui-table">
-              <thead><tr><th>id</th><th>Название класса</th><th>Цвет</th><th>Суперкласс</th><th>Разметок</th></tr></thead>
+              <thead><tr><th>id</th><th>Название класса</th>{merge && <th>В проекте</th>}<th>Цвет</th><th>Суперкласс</th><th>Разметок</th></tr></thead>
               <tbody>
                 {report.classes.map((c) => (
-                  <ClassRow key={c.class_index} cls={c} draft={drafts[c.class_index]} superclasses={superclasses}
-                    maxCount={maxCount}
+                  <ClassRow key={c.class_index} cls={c} draft={drafts[c.class_index]} superclasses={supers}
+                    maxCount={maxCount} projectClasses={merge ? projectClasses ?? [] : null}
                     onChange={(patch) => setDrafts((prev) => ({ ...prev, [c.class_index]: { ...prev[c.class_index], ...patch } }))} />
                 ))}
               </tbody>
@@ -348,7 +396,7 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
         </>
       ),
       footer: <>{cancelBtn}<span className="grow" />{!confirmCancel && (
-        <Button variant="primary" disabled={busy || unnamed > 0 || !datasetName.trim()} onClick={handleCommit}>Записать в проект</Button>
+        <Button variant="primary" disabled={busy || unnamed > 0 || clash.length > 0 || !datasetName.trim()} onClick={handleCommit}>Записать в проект</Button>
       )}</>,
     });
   }
@@ -422,37 +470,60 @@ function Stat({ value, label }: { value: string; label: string }) {
   return <div className="imp-stat"><b>{value}</b><span>{label}</span></div>;
 }
 
-function ClassRow({ cls, draft, superclasses, maxCount, onChange }: {
+function ClassRow({ cls, draft, superclasses, maxCount, projectClasses, onChange }: {
   cls: ScannedClass;
   draft?: ClassDraft;
-  superclasses: { name: string; color: string }[];
+  superclasses: string[];
   maxCount: number;
+  /** null — проект пуст, сверять не с чем. */
+  projectClasses: LabelClass[] | null;
   onChange: (patch: Partial<ClassDraft>) => void;
 }) {
   const name = draft?.name ?? "";
   const color = draft?.color ?? PALETTE[0];
+  const target = draft?.target ? projectClasses?.find((pc) => pc.id === draft.target) : undefined;
   return (
-    <tr>
+    <tr className={target ? "imp-mapped" : undefined}>
       <td className="imp-id">{cls.class_index}</td>
       <td>
-        <Input value={name} invalid={!name.trim()} aria-label={`Название класса ${cls.class_index}`}
-          className={name.trim() ? undefined : "imp-blank"}
-          placeholder={cls.yaml_name === null ? "Нет в data.yaml — найден в разметке" : "Имя не указано в data.yaml"}
-          onChange={(e) => onChange({ name: e.target.value })} />
+        {target ? (
+          <span className="imp-arch" title="Имя в архиве">{cls.yaml_name ?? "без имени в data.yaml"}</span>
+        ) : (
+          <Input value={name} invalid={!name.trim()} aria-label={`Название класса ${cls.class_index}`}
+            className={name.trim() ? undefined : "imp-blank"}
+            placeholder={cls.yaml_name === null ? "Нет в data.yaml — найден в разметке" : "Имя не указано в data.yaml"}
+            onChange={(e) => onChange({ name: e.target.value })} />
+        )}
       </td>
+      {projectClasses && (
+        <td style={{ width: 168 }}>
+          <Select full size="sm" value={draft?.target ?? "new"} label={`Класс проекта для класса ${cls.class_index}`}
+            onChange={(v) => onChange({ target: v === "new" ? null : v })}
+            options={[{ value: "new", label: "Новый класс" },
+              ...projectClasses.map((pc) => ({ value: pc.id, label: pc.name, hint: `№ ${pc.class_index}${pc.superclass_name ? ` · ${pc.superclass_name}` : ""}` }))]} />
+        </td>
+      )}
       <td style={{ width: 52 }}>
-        <Popover width={260} trigger={
-          <button type="button" className="imp-sw" aria-label={`Цвет класса ${cls.class_index}`}>
-            <i style={{ "--cc": color } as CSSProperties} />
-          </button>
-        }>
-          <ColorPicker value={color} onChange={(c) => onChange({ color: c })} />
-        </Popover>
+        {target ? (
+          <span className="imp-sw static" title="Цвет класса проекта"><i style={{ "--cc": target.color } as CSSProperties} /></span>
+        ) : (
+          <Popover width={260} trigger={
+            <button type="button" className="imp-sw" aria-label={`Цвет класса ${cls.class_index}`}>
+              <i style={{ "--cc": color } as CSSProperties} />
+            </button>
+          }>
+            <ColorPicker value={color} onChange={(c) => onChange({ color: c })} />
+          </Popover>
+        )}
       </td>
-      <td style={{ width: 200 }}>
-        <Select full size="sm" value={draft?.superclass ?? "none"} label={`Суперкласс класса ${cls.class_index}`}
-          onChange={(v) => onChange({ superclass: v === "none" ? null : v })}
-          options={[{ value: "none", label: "Без группы" }, ...superclasses.map((s) => ({ value: s.name, label: s.name }))]} />
+      <td style={{ width: 150 }}>
+        {target ? (
+          <span className="t-muted t-sm">{target.superclass_name ?? "без группы"}</span>
+        ) : (
+          <Select full size="sm" value={draft?.superclass ?? "none"} label={`Суперкласс класса ${cls.class_index}`}
+            onChange={(v) => onChange({ superclass: v === "none" ? null : v })}
+            options={[{ value: "none", label: "Без группы" }, ...superclasses.map((sc) => ({ value: sc, label: sc }))]} />
+        )}
       </td>
       <td className="imp-cnt">
         <span className="imp-bar"><i style={{ width: `${(cls.annotations / maxCount) * 100}%` }} /></span>

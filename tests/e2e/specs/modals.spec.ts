@@ -76,4 +76,23 @@ test("импорт архива окном, экспорт и новая тас�
   await expect(task.getByRole("button", { name: "Создать и загрузить кадры" })).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(task).toHaveCount(0);
+
+  // --- повторный импорт: архив сверяется с классами проекта ---
+  await page.getByRole("link", { name: "Импорт архива" }).click();
+  const again = page.getByRole("dialog", { name: "Импорт архива" });
+  await again.locator("input[type=file]").setInputFiles(archive());
+  await again.getByRole("button", { name: "К классам" }).click({ timeout: 60_000 });
+  await expect(again.getByText("2 класса сопоставлено с проектом")).toBeVisible();
+  // Новый класс с занятым именем — нельзя: надо сопоставить
+  await again.getByLabel("Название класса 2").fill("Путевая машина");
+  await expect(again.getByText("уже есть в проекте")).toBeVisible();
+  await expect(again.getByRole("button", { name: "Записать в проект" })).toBeDisabled();
+  await page.screenshot({ path: "test-results/redesign/app-import-merge.png" }).catch(() => undefined);
+  await again.getByRole("combobox", { name: "Класс проекта для класса 2" }).click();
+  await page.getByRole("option", { name: /путевая машина/ }).click();
+  await expect(again.getByText("3 класса сопоставлено с проектом")).toBeVisible();
+  await again.getByRole("button", { name: "Записать в проект" }).click();
+  await expect(again.getByRole("link", { name: "Открыть датасет" })).toBeVisible({ timeout: 60_000 });
+  const classes = await (await page.request.get(`/api/projects/${project.code}/classes`)).json();
+  expect(classes.classes.map((c: { name: string }) => c.name).sort()).toEqual(["вагон", "опора", "путевая машина"]);
 });
