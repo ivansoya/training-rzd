@@ -18,7 +18,7 @@
 }
 body, .mag { font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, Arial, sans-serif; font-size: 14px; line-height: 1.5; }
 .mag { --mag-line: var(--rule); --mag-edge: var(--rule); }
-.mag-ed, .mag-viewer, .mag-cv, .mag-fs {
+.mag-ed, .mag-cv, .mag-fs {
   --ed-bg: #0F0F15; --ed-chrome: #1F1E29; --ed-panel: #1F1E29;
   --ed-edge: #56556C; --ed-btn: #302F40; --ed-ink: #F7F7F8;
   --ed-dim: #C6C5CE; --ed-faint: #A9A8B8;
@@ -69,7 +69,7 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag-error, .mag-ok, .mag-warn, .g-warn, .t-warn { border-radius: 8px; padding: 14px 16px; box-shadow: none; line-height: 1.6; }
 .mag-error { color: var(--danger); border: 1px solid #A36973; background: #38272E; }
 .mag-ok { color: #A5DFBF; border: 1px solid #527A64; background: #20352C; }
-.mag-empty, .g-empty, .mag-empty-big, .mag-proj-desc, .mag-sub { color: var(--dim); }
+.mag-empty, .g-empty, .mag-empty-big, .mag-sub { color: var(--dim); }
 .mag-empty-big, .g-empty { padding: 38px 28px; border-radius: 12px; }
 .mag-empty-big h3, .g-empty b { font-size: 20px; color: var(--ink); font-weight: 600; }
 .mag-empty-big p { font-size: 14px; line-height: 1.7; }
@@ -90,9 +90,9 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag-exp-done { background: #24352C; border-color: #4B705A; color: #B1EBC7; }
 .mag-exp-done span { color: #B1EBC7; }
 .mag-exp-progress i { background: var(--accent-soft); }
-.mag-exp-seg button.on, .mag-chips button.on { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 0 0 1px #F94D4D78; }
+.mag-exp-seg button.on { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 0 0 1px #F94D4D78; }
 .mag-tile-split, .mag-tile-n, .mag-tile-note, .mag-tile-mark, .mag-poster-play, .mag-poster-dur, .mag-from, .mag-one .mag-icon-btn { color: var(--ink); }
-.mag-role, .mag-code-badge, .t-pill { border-radius: 5px; letter-spacing: 0; text-transform: none; font-size: 12px; box-shadow: none; }
+.mag-role, .t-pill { border-radius: 5px; letter-spacing: 0; text-transform: none; font-size: 12px; box-shadow: none; }
 .mag-role { background: var(--hair); color: var(--dim); border: 1px solid var(--rule); }
 .mag-role.admin { background: var(--accent-soft); color: var(--accent-text); }
 /* Два класса, как в auth.css: иначе светлые плашки ролей перебивали тёмную тему. */
@@ -126,17 +126,7 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag-pass-nums > div:first-child b { color: var(--red); }
 .mag-pass-nums span { font-size: 12px; margin-top: 10px; color: var(--dim); }
 .mag-pass-export { grid-column: 2; grid-row: 1; }
-.mag-projects { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 20px; }
-.mag-proj-card { padding: 25px; background: var(--card); border: 1px solid var(--rule); border-radius: 12px; min-width: 0; box-shadow: none; }
-.mag-proj-card:hover { background: #262533; border-color: var(--control-edge); box-shadow: none; transform: none; }
-.mag-proj-top { gap: 12px; flex-wrap: wrap; }
-.mag-proj-top h3 { font-size: 23px; font-weight: 600; letter-spacing: -.5px; overflow-wrap: anywhere; }
-.mag-proj-desc { line-height: 1.7; margin-block: 15px 25px; overflow-wrap: anywhere; }
-.mag-proj-nums { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 18px; }
-.mag-proj-nums b { font-size: 22px; color: var(--ink); font-weight: 600; }
-.mag-proj-nums span { font-size: 12px; color: var(--dim); }
-.mag-proj-foot { margin-top: 25px; padding-top: 18px; border-color: var(--rule); gap: 10px; flex-wrap: wrap; }
-.mag-proj-meta { font-size: 11px; color: var(--faint); }
+
 .workspace-project-search { display: flex; align-items: center; gap: 15px; margin-bottom: 22px; }
 .workspace-project-search input { width: min(380px,100%); padding: 10px 13px; border: 1px solid var(--control-edge); background: var(--sunk); color: var(--ink); border-radius: 8px; font-size: 14px; }
 .workspace-project-search span { color: var(--dim); font-size: 12px; }
@@ -366,17 +356,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-ved-quality-menu { background: var(--card); border-color: var(--rule); }
 .mag-menu { background: var(--card); color: var(--ink); border-color: var(--rule); box-shadow: 0 12px 35px #0008; }
 .mag-menu button:hover { background: var(--hair); }
-.mag-viewer { background: var(--ed-bg); color: var(--ed-ink); }
-.mag-v-head, .mag-v-side { background: var(--ed-panel); border-color: var(--ed-edge); }
-.mag-v-side { width: 280px; padding: 18px; }
-.mag-v-side h5 { color: var(--ink); font: 600 14px/1.4 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; }
-.mag-v-stage { background: var(--ed-bg); }
-.mag-v-kv { border-color: var(--ed-edge); padding-block: 10px; font-size: 13px; }
-.mag-v-kv span, .mag-v-cnt, .mag-v-hint, .mag-v-empty { color: var(--ed-dim); }
-.mag-v-obj { border-color: var(--ed-edge); padding-block: 12px; color: var(--ed-ink); }
-.mag-v-obj-id, .mag-v-obj-n { color: var(--ed-dim); }
-.mag-v-btn { background: var(--ed-btn); color: var(--ed-ink); border-color: var(--ed-edge); }
-.mag-v-btn.on { background: var(--accent-soft); border-color: var(--red); color: var(--ink); }
+
 .mag-ghost-inline.on, .mag-switch button.on { background: var(--accent-soft); border-color: #F94D4D78; color: var(--ink); }
 .mag-step { padding: 22px; border-radius: 12px; gap: 18px; }
 .mag-step.now { box-shadow: none; border-color: #F94D4D78; }
@@ -386,8 +366,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-auto-ok { background: var(--red); color: var(--on-acc); border-color: var(--red); }
 .mag-auto-no { background: var(--card); color: var(--ink); border-color: var(--rule); }
 
-.mag-code-badge { color: var(--dim); font-size: 10px; font-weight: 500; }
-.mag-pass-nums span, .mag-proj-nums span { font: 12px/1.5 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; }
+.mag-pass-nums span { font: 12px/1.5 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; }
 .mag-h1 { font-size: 30px; line-height: 1.25; letter-spacing: -.7px; font-weight: 650; margin: 0 0 8px; }
 .g-label { font: 600 12px/1.4 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; color: var(--dim); }
 .t-chip { padding: 7px 10px; font-size: 12px; border-radius: 6px; border-color: var(--rule); }
@@ -458,9 +437,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 }
 @media(max-width:1250px) {
   :root { --workspace-width: 190px; }
-  /* Узкая колонка меню: подпись переносится, а черта-разделитель повисала в
-     конце строки — здесь разделители убираем, слова разделяет пробел. */
-  .mag-projects { grid-template-columns: repeat(2,minmax(0,1fr)); }
+
   .mag-pass-nums > div { padding: 18px; }
   .g-ged { grid-template-columns: 170px minmax(0,1fr) 250px; }
   .g-canvas-top .sp { flex-wrap: wrap; gap: 8px; }
@@ -485,7 +462,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   /* Раздел не сжимается вместе с длинным названием проекта (сжатие делится
      пропорционально ширине — раздел уходил в 8 px), а держит свой потолок. */
   .mag-pass-nums { grid-template-columns: repeat(2,minmax(0,1fr)); }
-  .mag-projects { grid-template-columns: repeat(2,minmax(0,1fr)); }
+
   .g-ctx { position: static; flex-wrap: wrap; padding-inline: 20px; }
   .g-ged { position: relative; inset: auto; height: calc(100dvh - 130px); min-height: 600px; grid-template-columns: 145px minmax(280px,1fr) 220px; overflow: auto; }
   .mag-auth { grid-template-columns: 1fr 1fr; }
@@ -499,8 +476,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   .mag-content-head h1, .workspace-project-head h1 { font-size: 28px; }
   .mag-pass-strip { grid-template-columns: 1fr; }
   .mag-pass-export { grid-column: 1; grid-row: 3; justify-self: start; }
-  .mag-projects { grid-template-columns: 1fr; }
-  .mag-proj-card { padding: 22px; }
+
   .mag-card, .t-side, .t-card { padding: 18px; }
   .mag-card-h { flex-wrap: wrap; }
   .mag-modal { padding: 22px; max-width: calc(100vw - 24px); }

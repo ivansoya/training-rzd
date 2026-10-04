@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { getOverview } from "../../api/overview";
 import type { Overview, OverviewClass } from "../../api/overview";
 import { listTasks } from "../../auth/api";
@@ -9,21 +9,13 @@ import {
   Avatar, Badge, Button, Card, Empty, Icon, Legend, LineChart, LinkButton, Notice, PageHeader,
   Spark, StackBar,
 } from "../../ui";
-import { ago, count, ru } from "../ru";
+import { ago, count, pct, ru } from "../ru";
 import { deviceParts, gb, useGpuState } from "../shell/useGpuState";
 import ExportModal from "./ExportModal";
-import ProjectGallery from "./ProjectGallery";
 import { useProject } from "./ProjectShell";
 import { CreateTaskModal } from "./ProjectTasks";
 import { describeTaskEvent } from "./taskEvents";
 
-// Доля, которую округление довело бы до 100 %, показывается с десятыми: один неразмеченный кадр не прячется.
-const pct = (x: number) => {
-  const p = x * 100;
-  return Math.round(p) === 100 && x < 1
-    ? `${(Math.floor(p * 10) / 10).toLocaleString("ru-RU", { minimumFractionDigits: 1 })} %`
-    : `${Math.round(p)} %`;
-};
 const map = (x: number) => x.toLocaleString("ru-RU", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 
 const STATE_PARTS = [
@@ -77,15 +69,8 @@ export default function ProjectOverview() {
   useLive("run", () => void load());
   useLive("classes", () => void load());
 
-  if (search.get("view") === "frames") {
-    return (
-      <div className="page">
-        <PageHeader title="Все кадры" desc={`${project.name} · ${count(detail.stats.images, "кадр", "кадра", "кадров")}`}
-          actions={<LinkButton to={`/projects/${code}`} icon="back">К обзору</LinkButton>} />
-        <ProjectGallery datasets={datasets.map((d) => ({ id: d.id, name: d.name }))} role={my_role} />
-      </div>
-    );
-  }
+  // «Все кадры» переехали в галерею датасетов; старая ссылка ведёт туда
+  if (search.get("view") === "frames") return <Navigate replace to={`/projects/${code}/datasets`} />;
 
   const actions = (
     <>
@@ -188,7 +173,7 @@ function Kpis({ data, code }: { data: Overview; code: string }) {
   return (
     <div className="kpis">
       <Kpi label="Кадров в проекте" value={ru(frames.total)}
-        aside={<Link className="kpi-link" to={`/projects/${code}?view=frames`}>Все кадры</Link>}
+        aside={<Link className="kpi-link" to={`/projects/${code}/datasets`}>Все кадры</Link>}
         desc={frames.week ? <><span className="up">+{ru(frames.week)}</span> за неделю</> : "за неделю новых нет"}
         spark={<Spark data={frames.series} color="var(--c1)" label="Кадры за неделю" />} />
       <Kpi label="Размечено" value={pct(share)}

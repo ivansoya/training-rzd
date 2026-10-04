@@ -855,7 +855,8 @@ def _split_arg():
     return split
 
 
-def _image_query(db, project, *, dataset_ids, split, class_ids, only_empty):
+def _image_query(db, project, *, dataset_ids, split, class_ids, only_empty,
+                 name_like=None, tags_in=(), tags_ex=(), image_id=None):
     """Запрос кадров проекта под общий набор фильтров.
 
     Только кадры датасетов — данные проекта. Кадр таски без `dataset_id` —
@@ -884,7 +885,34 @@ def _image_query(db, project, *, dataset_ids, split, class_ids, only_empty):
                 .where(Annotation.class_id.in_(class_ids))
             )
         )
+    if name_like:
+        q = q.where(Image.file_name.ilike(f"%{_like_escape(name_like)}%", escape="\\"))
+    # «Нужен» — каждый из тагов, «исключить» — ни одного
+    for tag_id in tags_in:
+        q = q.where(Image.id.in_(select(ImageTag.image_id).where(ImageTag.tag_id == tag_id)))
+    if tags_ex:
+        q = q.where(~Image.id.in_(select(ImageTag.image_id).where(ImageTag.tag_id.in_(tags_ex))))
+    if image_id is not None:
+        q = q.where(Image.id == image_id)
     return q
+
+
+def _like_escape(s):
+    return s.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+def _wanted_tags(project_id, db, raw, field):
+    """id тагов из запроса; чужой или неизвестный — ошибка, а не молча снятый фильтр."""
+    ids = []
+    for piece in (raw or "").split(","):
+        piece = piece.strip()
+        if not piece:
+            continue
+        tag = _get_by_uuid(db, Tag, piece)
+        if tag is None or tag.project_id != project_id:
+            raise InputError(f"{field}: тага «{piece}» в проекте нет.", field)
+        ids.append(tag.id)
+    return ids
 
 
 def _ordered(q, order):
@@ -924,11 +952,25 @@ def _shapes_by_image(db, ids):
     return by_image
 
 
-def _image_row(img, boxes, dataset=None):
+def _tags_by_image(db, ids):
+    """Имена тагов пачкой — для подписи кадра в просмотре."""
+    by_image = {i: [] for i in ids}
+    if not ids:
+        return by_image
+    for image_id, name in db.execute(
+        select(ImageTag.image_id, Tag.name).join(Tag, Tag.id == ImageTag.tag_id)
+        .where(ImageTag.image_id.in_(ids)).order_by(Tag.name)
+    ).all():
+        by_image[image_id].append(name)
+    return by_image
+
+
+def _image_row(img, boxes, dataset=None, tags=None):
     row = {
         "id": str(img.id),
         "file_name": img.file_name,
         "split": img.split,
+        "task_status": img.task_status,
         "width": img.width,
         "height": img.height,
         "size_bytes": img.size_bytes,
@@ -939,6 +981,8 @@ def _image_row(img, boxes, dataset=None):
     if dataset is not None:
         row["dataset_id"] = str(dataset.id)
         row["dataset_name"] = dataset.name
+    if tags is not None:
+        row["tags"] = tags
     return row
 
 
@@ -973,8 +1017,18 @@ def project_images(code):
         only_empty = request.args.get("empty") == "1"
         order = request.args.get("sort", "name")
         class_ids = _wanted_classes(project.id, db, request.args.get("classes"))
+        tags_in = _wanted_tags(project.id, db, request.args.get("tags"), "tags")
+        tags_ex = _wanted_tags(project.id, db, request.args.get("notags"), "notags")
+        name_like = (request.args.get("q") or "").strip()[:255] or None
+        # Один кадр по адресу: ссылка на кадр открывает его просмотр
+        image_id = None
+        if request.args.get("image"):
+            one = _get_by_uuid(db, Image, request.args["image"])
+            if one is None or one.project_id != project.id:
+                return jsonify({"error": "Кадр не найден."}), 404
+            image_id = one.id
         try:
-            limit = min(max(int(request.args.get("limit", 60)), 1), 200)
+            limit = min(max(int(request.args.get("limit", 60)), 0), 200)
             offset = max(int(request.args.get("offset", 0)), 0)
         except ValueError:
             limit, offset = 60, 0
@@ -982,12 +1036,38 @@ def project_images(code):
         q = _image_query(
             db, project, dataset_ids=chosen, split=split,
             class_ids=class_ids, only_empty=only_empty,
+            name_like=name_like, tags_in=tags_in, tags_ex=tags_ex, image_id=image_id,
         )
         matched = db.execute(
             select(func.count()).select_from(q.subquery())
         ).scalar_one()
-        images = db.execute(_ordered(q, order).limit(limit).offset(offset)).scalars().all()
+        images = db.execute(_ordered(q, order).limit(limit).offset(offset)).scalars().all() if limit else []
         by_image = _shapes_by_image(db, [i.id for i in images])
+        tags_of = _tags_by_image(db, [i.id for i in images])
+
+        # Сводка отбора для галереи: сколько кадров в каждой группе и чем они размечены
+        summary = None
+        if request.args.get("summary") == "1":
+            sub = q.subquery()
+            summary = {
+                "by_dataset": {
+                    str(k): n for k, n in db.execute(
+                        select(sub.c.dataset_id, func.count()).group_by(sub.c.dataset_id)
+                    ).all()
+                },
+                "by_split": dict(db.execute(
+                    select(sub.c.split, func.count()).group_by(sub.c.split)
+                ).all()),
+                "boxes_by_class": {
+                    str(idx): n for idx, n in db.execute(
+                        select(LabelClass.class_index, func.count())
+                        .select_from(Annotation)
+                        .join(LabelClass, LabelClass.id == Annotation.class_id)
+                        .where(Annotation.image_id.in_(select(sub.c.id)))
+                        .group_by(LabelClass.class_index)
+                    ).all()
+                },
+            }
 
         # Итоги — по тому же множеству, что и сетка (см. `_image_query`).
         splits = dict(db.execute(
@@ -1009,9 +1089,10 @@ def project_images(code):
             "splits": splits,
             "total": sum(splits.values()),
             "matched": matched,
+            "summary": summary,
             "my_role": _role(db, project),
             "images": [
-                _image_row(img, by_image[img.id], by_id.get(img.dataset_id))
+                _image_row(img, by_image[img.id], by_id.get(img.dataset_id), tags_of[img.id])
                 for img in images
             ],
         })

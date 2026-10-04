@@ -4,6 +4,7 @@ import { getProject, listTasks } from "../../auth/api";
 import type { ProjectMembership } from "../../auth/api";
 import { listRuns } from "../../api/runs";
 import { listSets } from "../../api/trainsets";
+import { projectImages } from "../../api/gallery";
 import { Icon, Input, cx, useEscape } from "../../ui";
 import { PROJECT_GROUPS, hrefOf } from "./nav";
 import { searchItems } from "./search";
@@ -54,7 +55,7 @@ export default function SearchBox({ projects, project }: {
         items.push({ group: "Классы", label: c.name, hint: c.superclass ?? undefined, to: `${base}/classes`, icon: "tag" });
       }
       for (const d of detail.value.datasets) {
-        items.push({ group: "Датасеты", label: d.name, to: `${base}/datasets/${d.id}`, icon: "images" });
+        items.push({ group: "Датасеты", label: d.name, to: `${base}/datasets?ds=${d.id}`, icon: "images" });
       }
     }
     if (sets.status === "fulfilled") {
@@ -70,6 +71,28 @@ export default function SearchBox({ projects, project }: {
     loading.current = null;
     setContent({ code, items });
   }
+
+  // Кадры ищутся на сервере по имени файла — их слишком много, чтобы держать списком
+  const [frames, setFrames] = useState<{ key: string; items: SearchItem[] } | null>(null);
+  useEffect(() => {
+    const code = project?.code;
+    const term = q.trim();
+    if (!code || term.length < 2) return;
+    let alive = true;
+    const h = window.setTimeout(() => {
+      projectImages(code, { q: term, limit: 5 }).then((r) => {
+        if (!alive) return;
+        setFrames({
+          key: `${code}|${term}`,
+          items: r.images.map((im) => ({
+            group: "Кадры", label: im.file_name, hint: im.dataset_name,
+            to: `/projects/${code}/datasets?frame=${im.id}`, icon: "image" as const,
+          })),
+        });
+      }).catch(() => {});
+    }, 250);
+    return () => { alive = false; window.clearTimeout(h); };
+  }, [q, project?.code]);
 
   const all = useMemo(() => {
     const items: SearchItem[] = [];
@@ -90,8 +113,9 @@ export default function SearchBox({ projects, project }: {
       items.push({ group: "Проекты", label: p.name, hint: p.code, to: `/projects/${p.code}`, icon: "folder" });
     }
     if (content && content.code === project?.code) items.push(...content.items);
+    if (frames && frames.key === `${project?.code}|${q.trim()}`) items.push(...frames.items);
     return items;
-  }, [projects, project, content]);
+  }, [projects, project, content, frames, q]);
 
   const found = useMemo(() => searchItems(q, all), [q, all]);
   const shown = open && q.trim().length > 0;
@@ -109,7 +133,7 @@ export default function SearchBox({ projects, project }: {
     <div className="search" onBlur={(e) => {
       if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOpen(false);
     }}>
-      <Input ref={input} icon="search" kbd="Ctrl K" placeholder="Таска, класс, датасет" value={q}
+      <Input ref={input} icon="search" kbd="Ctrl K" placeholder="Таска, класс, кадр" value={q}
         aria-label="Поиск" role="combobox" aria-expanded={shown}
         aria-controls="search-results" aria-autocomplete="list"
         onFocus={() => { setOpen(true); void loadProject(); }}

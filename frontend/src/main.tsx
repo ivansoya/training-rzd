@@ -13,13 +13,13 @@ import TrainRunPage from "./components/training/TrainRunPage";
 import TrainSetWizard from "./components/training/TrainSetWizard";
 import AuthGate from "./components/auth/AuthGate";
 import ConfirmPage from "./components/auth/ConfirmPage";
-import DatasetPage from "./components/mag/DatasetPage";
+import { DatasetRedirect } from "./components/mag/frames/redirect";
 import { ImportRoute } from "./components/mag/ImportDialog";
 import RoleGate from "./components/mag/RoleGate";
 import MagShell from "./components/mag/MagShell";
 import ProjectClasses from "./components/mag/ProjectClasses";
 import ProjectTags from "./components/mag/ProjectTags";
-import ProjectDatasets from "./components/mag/ProjectDatasets";
+import ProjectFrames from "./components/mag/frames/ProjectFrames";
 import ProjectMembers from "./components/mag/ProjectMembers";
 import ProjectOverview from "./components/mag/ProjectOverview";
 import ProjectShell from "./components/mag/ProjectShell";
@@ -88,7 +88,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   }
                 >
                   <Route index element={<ProjectOverview />} />
-                  <Route path="datasets" element={<ProjectDatasets />} />
+                  <Route path="datasets" element={<ProjectFrames />} />
                   <Route path="classes" element={<ProjectClasses />} />
                   <Route path="tags" element={<ProjectTags />} />
                   <Route path="members" element={<ProjectMembers />} />
@@ -97,10 +97,8 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="tasks" element={<ProjectTasks />} />
                   <Route path="aug" element={<ProjectAug />} />
                   <Route path="training" element={<TrainingHome />} />
-                  {/* Датасет и собранный набор — тоже разделы проекта: без
-                      этого на них пропадали и строка разделов, и паспорт
-                      проекта, и уйти отсюда было некуда. */}
-                  <Route path="datasets/:datasetId" element={<DatasetPage />} />
+                  {/* Старый адрес датасета ведёт в общую галерею на его группу */}
+                  <Route path="datasets/:datasetId" element={<DatasetRedirect />} />
                   <Route path="trainsets/:setId" element={<TrainSetView />} />
                 </Route>
                 <Route

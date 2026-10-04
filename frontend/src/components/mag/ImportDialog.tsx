@@ -424,7 +424,7 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
           {r.orphan_boxes > 0 && <Pill tone="warn">{count(r.orphan_boxes, "разметка без класса", "разметки без класса", "разметок без класса")}</Pill>}
         </>} />,
       footer: <><span className="grow" /><Button variant="ghost" onClick={onClose}>Закрыть</Button>
-        <LinkButton variant="primary" to={`/projects/${code}/datasets/${r.dataset_id}`}>Открыть датасет</LinkButton></>,
+        <LinkButton variant="primary" to={`/projects/${code}/datasets?ds=${r.dataset_id}`}>Открыть датасет</LinkButton></>,
     });
   }
 

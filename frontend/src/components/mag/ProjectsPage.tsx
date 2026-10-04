@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   acceptInvitation,
@@ -7,12 +7,22 @@ import {
   listProjects,
 } from "../../auth/api";
 import type { InvitationItem, ProjectSummary } from "../../auth/api";
-import CreateProjectModal from "./CreateProjectModal";
-import { initials } from "../auth/AccountPage";
-import Banner from "../Banner";
-import { plural, ru } from "../ru";
+import { Avatars, Badge, Button, Dot, Empty, Input, Notice, PageHeader, Progress, Seg } from "../../ui";
 import { useAuth } from "../auth/AuthGate";
+import { pct, ru } from "../ru";
+import CreateProjectModal from "./CreateProjectModal";
+import { doneShare, projectsLine, runLine } from "./projects";
+import type { RunTone } from "./projects";
 
+type RoleFilter = "all" | "admin" | "member";
+
+const TONE: Record<RunTone, string | undefined> = {
+  live: "var(--c1)", done: "var(--st-done)", warn: "var(--st-skip)", bad: "var(--destructive)", idle: undefined,
+};
+
+const norm = (s: string) => s.toLocaleLowerCase("ru").replace(/ё/g, "е").trim();
+
+/** Все проекты карточками: состояние разметки, обучение и участники видны сразу. */
 export default function ProjectsPage() {
   const navigate = useNavigate();
   const { refresh: refreshMe } = useAuth();
@@ -25,9 +35,7 @@ export default function ProjectsPage() {
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [query, setQuery] = useState("");
-  const filtered = projects.filter((p) =>
-    [p.name, p.code, p.description].join(" ").toLocaleLowerCase("ru").includes(query.trim().toLocaleLowerCase("ru"))
-  );
+  const [role, setRole] = useState<RoleFilter>("all");
 
   const refresh = useCallback(async () => {
     try {
@@ -42,10 +50,18 @@ export default function ProjectsPage() {
   }, []);
 
   useEffect(() => {
-    refresh();
+    void refresh();
   }, [refresh]);
 
-  async function handleInvitation(inv: InvitationItem, accept: boolean) {
+  const admins = projects.filter((p) => p.role === "admin").length;
+  const shown = useMemo(() => {
+    const q = norm(query);
+    return projects.filter((p) =>
+      (role === "all" || (role === "admin") === (p.role === "admin")) &&
+      (!q || norm([p.name, p.code, p.description ?? ""].join(" ")).includes(q)));
+  }, [projects, query, role]);
+
+  async function answer(inv: InvitationItem, accept: boolean) {
     if (answering) return;
     setAnswering(inv.id);
     setError(null);
@@ -67,120 +83,59 @@ export default function ProjectsPage() {
     }
   }
 
+  const filtering = query.trim() !== "" || role !== "all";
+
   return (
-    <div className="mag-content">
-      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
+    <div className="page">
+      <PageHeader title="Проекты"
+        desc={loaded ? projectsLine(projects, invitations.length) : "Загружаем проекты…"}
+        actions={<Button variant="primary" icon="plus" onClick={() => setShowCreate(true)}>Новый проект</Button>} />
 
-      {invitations.map((inv) => (
-        <div key={inv.id} className="mag-invite-banner">
-          <div>
-            <b>{inv.invited_by || "Администратор"}</b> приглашает вас в проект{" "}
-            <b>{inv.project.name}</b>{" "}
-            <span className="mag-code">{inv.project.code}</span> — роль «
-            {inv.role_label}»
-          </div>
-          <div className="mag-invite-actions">
-            <button
-              className="mag-btn mag-btn-inline"
-              type="button"
-              disabled={answering !== null}
-              onClick={() => handleInvitation(inv, true)}
-            >
-              Принять
-            </button>
-            <button
-              className="mag-ghost mag-ghost-inline"
-              type="button"
-              disabled={answering !== null}
-              onClick={() => handleInvitation(inv, false)}
-            >
-              Отклонить
-            </button>
-          </div>
+      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+
+      {loaded && projects.length > 0 && (
+        <div className="row between wrap">
+          <Seg label="Мои роли" value={role} onChange={setRole} options={[
+            { value: "all", label: <>Все <span className="ui-count">{projects.length}</span></> },
+            { value: "admin", label: <>Я админ <span className="ui-count">{admins}</span></> },
+            { value: "member", label: <>Я участник <span className="ui-count">{projects.length - admins}</span></> },
+          ]} />
+          <Input icon="search" className="proj-search" placeholder="Найти проект" aria-label="Найти проект"
+            type="search" value={query} onChange={(e) => setQuery(e.target.value)} />
         </div>
-      ))}
+      )}
 
-      <div className="mag-content-head">
-        <h1>Проекты</h1>
-        <button
-          className="mag-btn mag-btn-inline"
-          type="button"
-          onClick={() => setShowCreate(true)}
-        >
-          Создать проект
-        </button>
-      </div>
-
-      {loaded && projects.length > 0 && <div className="workspace-project-search">
-        <input type="search" aria-label="Найти проект" placeholder="Название, код или описание…" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <span role="status">{filtered.length} из {projects.length}</span>
-      </div>}
-      {!loaded && <div className="mag-card mag-empty" role="status">Загружаем проекты…</div>}
-      {loaded && projects.length > 0 && filtered.length === 0 && <div className="mag-card mag-empty-big">
-        <h3>Проекты не найдены</h3><p>Попробуйте другое название или код проекта.</p>
-        <button type="button" className="mag-ghost mag-ghost-inline" onClick={() => setQuery("")}>Сбросить поиск</button>
-      </div>}
-      {loaded && projects.length === 0 ? (
-        <div className="mag-card mag-empty-big">
-          <h3>Проектов пока нет</h3>
-          <p>
-            Создайте первый проект — или дождитесь приглашения: оно появится на
-            этой странице.
-          </p>
-        </div>
+      {loaded && projects.length === 0 && invitations.length === 0 ? (
+        <Empty icon="folder" title="Проектов пока нет"
+          action={<Button variant="primary" icon="plus" onClick={() => setShowCreate(true)}>Новый проект</Button>}>
+          Создайте первый проект или дождитесь приглашения — оно появится на этой странице.
+        </Empty>
+      ) : loaded && shown.length === 0 && filtering ? (
+        <Empty icon="search" title="Под условия не подошёл ни один проект"
+          action={<Button size="sm" onClick={() => { setQuery(""); setRole("all"); }}>Сбросить</Button>}>
+          Поиск идёт по названию, коду и описанию.
+        </Empty>
       ) : (
-        <div className="mag-projects">
-          {filtered.map((p) => (
-            <Link key={p.id} to={`/projects/${p.code}`} className="mag-proj-card">
-              <div className="mag-proj-top">
-                <h3>{p.name}</h3>
-                {p.status === "importing" ? (
-                  <span className="mag-importing"><i />импорт</span>
-                ) : (
-                  <span className="mag-code-badge">{p.code}</span>
-                )}
+        <div className="grid-cards">
+          {shown.map((p) => <ProjectCard key={p.id} p={p} />)}
+          {!filtering && invitations.map((inv) => (
+            <article key={inv.id} className="ui-card pcard pcard-invite">
+              <div className="stack-v">
+                <span><Badge variant="secondary" icon="users">Приглашение</Badge></span>
+                <h3>{inv.project.name}</h3>
+                <p className="t-sm t-muted">
+                  {inv.invited_by || "Администратор"} зовёт вас в проект с ролью «{inv.role_label}».
+                </p>
               </div>
-              {p.description && <p className="mag-proj-desc">{p.description}</p>}
-
-              <div className="mag-proj-nums">
-                {(
-                  [
-                    [p.images_count, "изображение", "изображения", "изображений"],
-                    [p.annotations_count, "разметка", "разметки", "разметок"],
-                    [p.classes_count, "класс", "класса", "классов"],
-                    [p.datasets_count, "датасет", "датасета", "датасетов"],
-                  ] as const
-                ).map(([n, one, few, many]) => (
-                  <div key={many}>
-                    <b>{ru(n)}</b>
-                    <span>{plural(n, one, few, many)}</span>
-                  </div>
-                ))}
+              <div className="row">
+                <Button variant="primary" size="sm" disabled={answering !== null} onClick={() => answer(inv, true)}>
+                  Принять
+                </Button>
+                <Button variant="ghost" size="sm" disabled={answering !== null} onClick={() => answer(inv, false)}>
+                  Отклонить
+                </Button>
               </div>
-
-              <div className="mag-proj-foot">
-                <span className="mag-faces">
-                  {p.members.map((m, i) => (
-                    <span
-                      key={i}
-                      className={m.online ? "mag-ava on" : "mag-ava"}
-                      title={m.display_name}
-                    >
-                      {initials(m.display_name)}
-                    </span>
-                  ))}
-                  {p.members_count > p.members.length && (
-                    <span className="mag-ava more">
-                      +{p.members_count - p.members.length}
-                    </span>
-                  )}
-                </span>
-                <span className={`mag-role ${p.role}`}>{p.role_label}</span>
-                <span className="mag-proj-meta">
-                  создан {new Date(p.created_at).toLocaleDateString("ru-RU")}
-                </span>
-              </div>
-            </Link>
+            </article>
           ))}
         </div>
       )}
@@ -199,3 +154,42 @@ export default function ProjectsPage() {
   );
 }
 
+function ProjectCard({ p }: { p: ProjectSummary }) {
+  const run = runLine(p.last_run);
+  const share = doneShare(p);
+  const names = p.members.map((m) => m.display_name);
+  // Аватаров приходит пять, остальные участники — только числом
+  const all = [...names, ...Array<string>(Math.max(0, p.members_count - names.length)).fill("?")];
+  return (
+    <Link to={`/projects/${p.code}`} className="ui-card pcard">
+      <div className="pcard-h">
+        <div className="pcard-t">
+          <h3>{p.name}</h3>
+          <span className="ui-mono t-xs t-faint">{p.code}</span>
+        </div>
+        {p.status === "importing"
+          ? <Badge tone="var(--c1)" live>Импорт</Badge>
+          : <Badge variant={p.role === "admin" ? "secondary" : undefined}>{p.role_label}</Badge>}
+      </div>
+      <dl className="pstats">
+        <div><dt>Кадров</dt><dd>{ru(p.images_count)}</dd></div>
+        <div><dt>Классов</dt><dd>{ru(p.classes_count)}</dd></div>
+        <div title="Не закрытые таски"><dt>Тасок</dt><dd>{ru(p.tasks_open)}</dd></div>
+      </dl>
+      <div className="stack-v pcard-done">
+        <div className="row between t-sm">
+          <span className="t-muted">Размечено</span>
+          <span className="ui-mono">{p.images_count ? pct(share) : "—"}</span>
+        </div>
+        <Progress value={share} label="Размечено" />
+      </div>
+      <footer className="pcard-f">
+        <span className="row">
+          <Dot color={TONE[run.tone]} live={run.tone === "live"} />
+          <span className="t-ell">{run.text}</span>
+        </span>
+        <Avatars names={all} max={3} />
+      </footer>
+    </Link>
+  );
+}

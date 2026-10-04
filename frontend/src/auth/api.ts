@@ -60,6 +60,11 @@ export interface ProjectSummary {
   images_count: number;
   annotations_count: number;
   classes_count: number;
+  /** Не закрытые таски. */
+  tasks_open: number;
+  /** Кадров с рамкой или осознанным фоном — доля «размечено» на плитке. */
+  done_count: number;
+  last_run: { name: string; status: string; epoch: number; epochs: number; at: string } | null;
   created_at: string;
 }
 
@@ -567,6 +572,11 @@ export interface DatasetImage {
   boxes: (Box & { id?: string })[];
   /** Версия разметки: запись с устаревшей получает 409 «stale». */
   rev?: number;
+  /** Решение разметчика по кадру; у кадров архива — «new». */
+  task_status?: string;
+  /** Есть у кадров из общей выдачи проекта. */
+  dataset_name?: string;
+  tags?: string[];
 }
 
 export interface DatasetStats {

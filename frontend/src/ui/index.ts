@@ -6,7 +6,7 @@ export { AnchorButton, Button, Kbd, LinkButton, buttonClass } from "./Button";
 export type { ButtonProps, ButtonVariant } from "./Button";
 export { Avatar, Avatars, Badge, Chip, ChipToggle, Dot, Legend, Pill, Progress, Ring, StackBar, Swatch } from "./Marks";
 export type { StackPart } from "./Marks";
-export { Seg, Tabs } from "./Nav";
+export { Seg, Tabs, ToggleGroup } from "./Nav";
 export type { SegOption, TabItem } from "./Nav";
 export { Card, Empty, Meta, Notice, PageHeader, Table } from "./Layout";
 export { Check, Field, Input, Range, Switch, Textarea, TriCheck, nextTri } from "./Form";

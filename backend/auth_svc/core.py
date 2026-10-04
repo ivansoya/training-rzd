@@ -234,6 +234,22 @@ def list_projects():
                 select(func.count()).select_from(LabelClass)
                 .where(LabelClass.project_id == p.id)
             ).scalar_one()
+            # Размечено — как на обзоре: кадр с рамкой или осознанный фон
+            in_data = (Image.project_id == p.id) & Image.dataset_id.isnot(None)
+            boxed = select(Annotation.image_id).join(Image, Image.id == Annotation.image_id).where(in_data)
+            done_count = db.execute(
+                select(func.count()).select_from(Image).where(
+                    in_data, or_(Image.id.in_(boxed), Image.task_status == "empty"),
+                )
+            ).scalar_one()
+            open_tasks = db.execute(
+                select(func.count()).select_from(Task)
+                .where(Task.project_id == p.id, Task.status != "closed")
+            ).scalar_one()
+            run = db.execute(
+                select(TrainRun).where(TrainRun.project_id == p.id)
+                .order_by(TrainRun.created_at.desc()).limit(1)
+            ).scalar_one_or_none()
             result.append(
                 {
                     "id": str(p.id),
@@ -252,6 +268,15 @@ def list_projects():
                     "images_count": images_count,
                     "annotations_count": annotations_count,
                     "classes_count": classes_count,
+                    "tasks_open": open_tasks,
+                    "done_count": done_count,
+                    "last_run": run and {
+                        "name": run.name,
+                        "status": run.status,
+                        "epoch": run.current_epoch,
+                        "epochs": run.epochs,
+                        "at": (run.finished_at or run.started_at or run.created_at).isoformat(),
+                    },
                     "created_at": p.created_at.isoformat(),
                 }
             )

@@ -115,10 +115,12 @@ export function nextTri(v: Tri): Tri {
   return v === null ? "in" : v === "in" ? "ex" : null;
 }
 
-export function TriCheck({ value, onChange, children }: {
+export function TriCheck({ value, onChange, children, showState }: {
   value: Tri;
   onChange: (v: Tri) => void;
   children: ReactNode;
+  /** Подпись состояния справа в строке. */
+  showState?: boolean;
 }) {
   const state = value === "in" ? "нужен" : value === "ex" ? "исключить" : "неважно";
   return (
@@ -129,6 +131,7 @@ export function TriCheck({ value, onChange, children }: {
         {value === "ex" && <Icon name="minus" size={12} />}
       </span>
       <span className="ui-opt-t">{children}</span>
+      {showState && <span className={cx("ui-tri-s", value)} aria-hidden="true">{state}</span>}
     </button>
   );
 }

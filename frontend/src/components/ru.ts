@@ -34,3 +34,11 @@ export function ago(iso: string, now = Date.now()): string {
   return at.toLocaleDateString("ru-RU", { day: "numeric", month: "short", ...(sameYear ? {} : { year: "numeric" }) })
     .replace(".", "");
 }
+
+/** Доля в процентах. Та, что округлилась бы до 100 %, — с десятыми: один неразмеченный кадр не прячется. */
+export function pct(x: number): string {
+  const p = x * 100;
+  return Math.round(p) === 100 && x < 1
+    ? `${(Math.floor(p * 10) / 10).toLocaleString("ru-RU", { minimumFractionDigits: 1 })} %`
+    : `${Math.round(p)} %`;
+}

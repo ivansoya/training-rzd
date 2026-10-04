@@ -33,6 +33,26 @@ export function Seg<T extends string>({ value, onChange, options, label, size }:
   );
 }
 
+/** Вид сегмента, но каждая кнопка включается сама по себе: что показывать поверх кадров. */
+export function ToggleGroup<T extends string>({ value, onToggle, options, label }: {
+  value: Record<T, boolean>;
+  onToggle: (key: T) => void;
+  options: { value: T; label: ReactNode; title?: string }[];
+  label: string;
+}) {
+  return (
+    <div className="ui-seg" role="group" aria-label={label}>
+      {options.map((o) => (
+        <button key={o.value} type="button" aria-pressed={value[o.value]} title={o.title}
+          onClick={() => onToggle(o.value)}>
+          <Icon name={value[o.value] ? "eye" : "eyeoff"} size={14} />
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export interface TabItem {
   /** Переход по адресу — вкладка становится ссылкой. */
   to?: string;

@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { imageFileUrl, imagePreviewUrl, saveAnnotations } from "../../auth/api";
 import type { DatasetImage, LabelClass } from "../../auth/api";
 import BoxCanvas from "./BoxCanvas";
 import type { CanvasHandle, CanvasShape } from "./BoxCanvas";
 import ClassMenu from "./ClassMenu";
 import FilmStrip from "./FilmStrip";
-import Sep from "../Sep";
+import { AnchorButton, Badge, Button, Chip, Dot, Icon, Kbd, Meta, Pill, Select, Swatch, cx } from "../../ui";
 import { count, ru } from "../ru";
+import { FRAME_STATE, frameState } from "./frames/layout";
 import { useAutosave } from "./useAutosave";
 import { withSavedIds } from "./savedIds";
 
@@ -260,95 +262,79 @@ export default function ImageViewer({
 
   const w = image.width || 1;
   const h = image.height || 1;
+  const st = FRAME_STATE[frameState(image.task_status, boxes.length)];
+  const close = () => { void flush().then((ok) => ok && onClose()); };
 
   return (
-    <div className="mag-viewer" role="dialog" aria-modal="true" aria-label={image.file_name}>
-      <div className="mag-v-head">
-        <b>{image.file_name}</b>
-        <span className="mag-v-cnt">
-          {ru(base + index + 1)} из {ru(total)}
-        </span>
-        <span className="mag-v-sp" />
+    <div className="lbx" role="dialog" aria-modal="true" aria-label={image.file_name}>
+      <div className="lbx-h">
+        <b className="ui-mono t-ell lbx-name" title={image.file_name}>{image.file_name}</b>
+        <Badge>{image.split === "other" ? "без сплита" : image.split}</Badge>
+        <span className="row t-xs t-muted"><Dot color={st.color} />{st.label}</span>
+        <span className="grow" />
+
         {editing && (saveState === "stale" || saveState === "refused" ? (
-          <span className="mag-ed-unsaved">
-            {saveState === "stale" ? "кадр изменил другой человек" : `не сохранено: ${saveErr}`}
-            <button type="button" className="mag-ed-discard" onClick={discard}>
+          <Pill tone="bad">
+            {saveState === "stale" ? "Кадр изменил другой человек" : `Не сохранено: ${saveErr}`}
+            <button type="button" className="lbx-pill-a" onClick={discard}>
               {saveState === "stale" ? "Показать его версию" : "Отбросить правку"}
             </button>
-          </span>
+          </Pill>
         ) : saveState === "failed" ? (
-          <span className="mag-ed-unsaved" title={saveErr || undefined}>не сохранено — повторяю</span>
+          <Pill tone="warn" title={saveErr || undefined}>Не сохранено — повторяю</Pill>
         ) : (
-          <span className={saveState === "saved" ? "mag-ed-saved" : "mag-ed-saving"}>
-            {saveState === "saved" ? "сохранено" : "сохраняю…"}
-          </span>
+          <span className="t-xs t-faint">{saveState === "saved" ? "Сохранено" : "Сохраняю…"}</span>
         ))}
 
-        {editing ? (
-          <span className="mag-v-tools">
-            <button className={tool === "select" ? "mag-tool on" : "mag-tool"}
-              type="button" title="Выбор и правка — V" onClick={() => setTool("select")}>
-              ↖
-            </button>
-            <button className={tool === "box" ? "mag-tool on" : "mag-tool"}
-              type="button" title="Новая рамка — B" onClick={() => setTool("box")}>
-              ▢
-            </button>
-            <select
-              className="mag-v-cls"
-              value={active ?? ""}
-              aria-label="Класс"
-              onChange={(e) => pickClass(Number(e.target.value))}
-            >
-              {classes.map((c) => (
-                <option key={c.id} value={c.class_index}>
-                  {`${c.class_index} — ${c.name}`}
-                </option>
-              ))}
-            </select>
-          </span>
-        ) : (
-          <button className="mag-v-btn" type="button" onClick={() => setShowBoxes((v) => !v)}>
-            Разметка: {showBoxes ? "вкл" : "выкл"}
-          </button>
+        {editing && (
+          <>
+            <Button variant="ghost" size="sm" icon="pointer" aria-label="Выбор и правка — V"
+              aria-pressed={tool === "select"} onClick={() => setTool("select")} />
+            <Button variant="ghost" size="sm" icon="bbox" aria-label="Новая рамка — B"
+              aria-pressed={tool === "box"} onClick={() => setTool("box")} />
+            <Select size="sm" label="Класс" value={active === null ? undefined : String(active)}
+              onChange={(v) => pickClass(Number(v))} placeholder="Класс"
+              options={classes.map((c) => ({
+                value: String(c.class_index),
+                label: <span className="row"><Swatch color={c.color} />{c.name}</span>,
+              }))} />
+          </>
         )}
 
-        <button className="mag-tool wide" type="button" title="Вписать в окно — 0"
-          onClick={() => canvas.current?.fit()}>
-          {Math.round(scale * 100)}%
-        </button>
-
+        <span className="ui-mono t-xs t-muted">{ru(base + index + 1)} из {ru(total)}</span>
+        <Button variant="ghost" size="sm" title="Вписать в окно — 0" onClick={() => canvas.current?.fit()}>
+          <span className="ui-mono">{Math.round(scale * 100)} %</span>
+        </Button>
+        {!editing && (
+          <Button size="sm" icon={showBoxes ? "eye" : "eyeoff"} aria-pressed={showBoxes}
+            onClick={() => setShowBoxes((v) => !v)}>
+            Рамки
+          </Button>
+        )}
         {canEdit && (
-          <button
-            className={editing ? "mag-v-btn on" : "mag-v-btn"}
-            type="button"
+          <Button size="sm" variant={editing ? "primary" : "outline"} icon={editing ? "tick" : "bbox"}
+            title="Правка разметки прямо здесь"
             onClick={() => {
-              if (editing) flush();
+              if (editing) void flush();
               setEditing((v) => !v);
               setTool("select");
               setShowBoxes(true);
-            }}
-            title="Правка разметки прямо здесь"
-          >
+            }}>
             {editing ? "Готово" : "Разметить"}
-          </button>
+          </Button>
         )}
-        <a className="mag-v-btn" href={imageFileUrl(image.id)} download={image.file_name}>
-          Скачать
-        </a>
-        <button className="mag-v-btn" type="button"
-          onClick={() => flush().then((ok) => ok && onClose())} aria-label="Закрыть">
-          ✕
-        </button>
+        <AnchorButton variant="ghost" size="sm" icon="download" href={imageFileUrl(image.id)}
+          download={image.file_name} title="Скачать оригинал" aria-label="Скачать оригинал" />
+        <Button variant="ghost" size="sm" icon="x" aria-label="Закрыть (Esc)" onClick={close} />
       </div>
 
-      <div className="mag-v-body">
-        <div className="mag-v-stage">
-          <button className="mag-v-arrow l" type="button" onClick={() => go(-1)}
-            disabled={!canPrev} aria-label="Предыдущий кадр">
-            ‹
-          </button>
+      <div className="lbx-b">
+        <button className="lbx-nav" type="button" onClick={() => go(-1)} disabled={!canPrev}
+          aria-label="Предыдущий кадр">
+          <Icon name="chevL" />
+        </button>
 
+        <div className="lbx-stage">
           <BoxCanvas
             ref={canvas}
             imageId={image.id}
@@ -363,70 +349,55 @@ export default function ImageViewer({
             activeClass={active}
             selected={selected}
             grid={false}
-            reserve={filmH + 92}
+            reserve={filmH + 100}
             onSelect={setSelected}
             onBoxes={edit}
             onDrawn={() => setTool("select")}
             onScale={setScale}
             onContext={(i, x, y) => setMenu({ i, x, y })}
           />
-
-          <button className="mag-v-arrow r" type="button" onClick={() => go(1)}
-            disabled={!canNext} aria-label="Следующий кадр">
-            ›
-          </button>
         </div>
 
-        <aside className="mag-v-side">
-          <h5>Кадр</h5>
-          <div className="mag-v-kv"><span>Сплит</span><b>{image.split}</b></div>
-          <div className="mag-v-kv"><span>Разрешение</span><b>{w}×{h}</b></div>
-          <div className="mag-v-kv"><span>Вес</span><b>{fmtBytes(image.size_bytes)}</b></div>
-          <div className="mag-v-kv"><span>Объектов</span><b>{boxes.length}</b></div>
+        <button className="lbx-nav" type="button" onClick={() => go(1)} disabled={!canNext}
+          aria-label="Следующий кадр">
+          <Icon name="chevR" />
+        </button>
 
-          <h5>Объекты</h5>
+        <aside className="lbx-s">
+          <div className="lbx-st">Объекты <span className="ui-mono">{boxes.length}</span></div>
           {onFrame.length === 0 ? (
-            <p className="mag-v-empty">
-              {editing
-                ? "Выберите класс, нажмите B и протяните рамку."
-                : "Разметки нет."}
+            <p className="t-sm t-muted">
+              {editing ? "Выберите класс, нажмите B и протяните рамку." : "Разметки нет."}
             </p>
-          ) : (
-            <>
-              {onFrame.map(([idx, c]) => (
-                <button
-                  key={idx}
-                  type="button"
-                  className={hidden.has(idx) ? "mag-v-obj off" : "mag-v-obj"}
-                  title={hidden.has(idx) ? "Показать класс" : "Скрыть класс"}
-                  onClick={() =>
-                    setHidden((prev) => {
-                      const next = new Set(prev);
-                      next.has(idx) ? next.delete(idx) : next.add(idx);
-                      return next;
-                    })
-                  }
-                >
-                  <i style={{ background: c.color }} />
-                  <span className="mag-v-obj-name">{c.name}</span>
-                  <span className="mag-v-obj-id">id {idx}</span>
-                  <span className="mag-v-obj-n">{c.count}</span>
-                </button>
-              ))}
-              {/* Щелчок по классу гасит его рамки — подсказку об этом держит
-                  title кнопки, отдельный абзац не нужен. */}
-            </>
-          )}
-
-          <p className="mag-ed-keys">
-            {editing ? (
-              <>
-                <kbd>V</kbd> выбор <kbd>B</kbd> рамка <kbd>1–9</kbd> класс{" "}
-                <kbd>Del</kbd> удалить<br />
-              </>
-            ) : null}
-            <kbd>←</kbd> <kbd>→</kbd> кадры <Sep /> протяжка — полотно <Sep /> колесо — зум <Sep />{" "}
-            <kbd>0</kbd> вписать
+          ) : onFrame.map(([idx, c]) => (
+            // Щелчок по классу гасит его рамки — подсказка в title
+            <button key={idx} type="button" className={cx("lbx-obj", hidden.has(idx) && "off")}
+              title={hidden.has(idx) ? "Показать класс" : "Скрыть класс"}
+              onClick={() => setHidden((prev) => {
+                const next = new Set(prev);
+                if (next.has(idx)) next.delete(idx);
+                else next.add(idx);
+                return next;
+              })}>
+              <Swatch color={c.color} />
+              <span className="t-ell grow">{c.name}</span>
+              <span className="ui-mono t-xs t-faint">{c.count}</span>
+              <Icon name={hidden.has(idx) ? "eyeoff" : "eye"} size={14} />
+            </button>
+          ))}
+          <hr className="ov-sep" />
+          <Meta items={[
+            ["Размер", <span className="ui-mono">{w} × {h}</span>],
+            ["Вес", fmtBytes(image.size_bytes)],
+            ...(image.dataset_name ? [["Датасет", image.dataset_name] as [ReactNode, ReactNode]] : []),
+            ...(image.tags?.length
+              ? [["Таги", <span className="row wrap">{image.tags.map((t) => <Chip key={t}>{t}</Chip>)}</span>] as [ReactNode, ReactNode]]
+              : []),
+          ]} />
+          <hr className="ov-sep" />
+          <p className="lbx-keys">
+            {editing && <><Kbd>V</Kbd> выбор <Kbd>B</Kbd> рамка <Kbd>1–9</Kbd> класс <Kbd>Del</Kbd> удалить<br /></>}
+            <Kbd>←</Kbd> <Kbd>→</Kbd> кадры · колесо — зум · <Kbd>0</Kbd> вписать
           </p>
         </aside>
       </div>

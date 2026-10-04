@@ -40,7 +40,8 @@ export default function ProjectShell() {
   // Переписанные экраны рисуют свою шапку и поля сами; старым — прежняя обёртка.
   const atOverview = Boolean(useMatch("/projects/:code"));
   const atImport = Boolean(useMatch("/projects/:code/import"));
-  const redesigned = atOverview || atImport;
+  const atDatasets = Boolean(useMatch("/projects/:code/datasets"));
+  const redesigned = atOverview || atImport || atDatasets;
 
   const refresh = useCallback(async () => {
     if (!code) return;

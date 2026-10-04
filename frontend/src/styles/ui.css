@@ -355,3 +355,6 @@
 .ui-chiptg:hover:not(:disabled) { color: var(--fg); border-color: color-mix(in srgb, var(--ring) 55%, var(--input)); }
 .ui-chiptg[aria-pressed="true"] { border-color: var(--ring); color: var(--fg); background: color-mix(in srgb, var(--hover) 60%, var(--card)); }
 .ui-chiptg:disabled { opacity: .55; cursor: not-allowed; }
+.ui-tri-s { margin-left: auto; font-size: 11.5px; color: var(--faint); }
+.ui-tri-s.in { color: var(--fg); }
+.ui-tri-s.ex { color: var(--st-del); }

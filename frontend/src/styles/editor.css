@@ -12,7 +12,6 @@
    файле не должно появиться ни одного деления на --z. */
 
 .mag-ed,
-.mag-viewer,
 .mag-cv,
 .mag-fs {
   --ed-bg: #0e1114;
@@ -440,7 +439,6 @@
   z-index: 43;
   pointer-events: none;
 }
-
 
 .mag-ed-help {
   position: absolute;
@@ -1136,8 +1134,7 @@
 .mag-ed-cls-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mag-ed-cls.on { background: var(--ed-btn); border-color: #3d4854; }
 
-.mag-ed-cls kbd,
-.mag-ed-keys kbd {
+.mag-ed-cls kbd {
   font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
   background: var(--ed-btn);
   border: 1px solid #333c46;
@@ -1206,9 +1203,7 @@
 .mag-ed-obj:hover .mag-ed-obj-x { opacity: 1; }
 .mag-ed-obj-x:hover { color: #ff8a80; }
 
-.mag-ed-hint,
-.mag-ed-keys { font-size: 11px; color: var(--ed-faint); margin: 0; }
-.mag-ed-keys { margin-top: auto; padding-top: 10px; line-height: 2.1; }
+.mag-ed-hint { font-size: 11px; color: var(--ed-faint); margin: 0; }
 
 /* ===== Меню смены класса (правая кнопка на боксе) ===== */
 .mag-cmenu {
@@ -1252,23 +1247,6 @@
 .mag-cmenu-del:hover {
   background: rgba(226, 26, 26, 0.12);
 }
-
-/* ===== Просмотр: холст встаёт между стрелками ===== */
-.mag-v-stage { padding: 0; }
-.mag-v-tools { display: flex; align-items: center; gap: 6px; }
-
-.mag-v-cls {
-  background: var(--ed-btn);
-  border: 1px solid #333c46;
-  color: var(--ed-ink);
-  border-radius: 6px;
-  padding: 5px 8px;
-  font-size: 12px;
-  font-family: inherit;
-  max-width: 190px;
-}
-
-.mag-v-btn.on { background: var(--mag-red); border-color: var(--mag-red); color: #fff; }
 
 @media (max-width: 1100px) {
   .mag-ed-side { width: 200px; }
