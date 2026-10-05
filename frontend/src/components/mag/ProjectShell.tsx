@@ -38,14 +38,21 @@ export default function ProjectShell() {
   const { me, refresh: refreshMe } = useAuth();
   const shown = useRef(false);
   // Переписанные экраны рисуют свою шапку и поля сами; старым — прежняя обёртка.
-  const atOverview = Boolean(useMatch("/projects/:code"));
-  const atImport = Boolean(useMatch("/projects/:code/import"));
-  const atDatasets = Boolean(useMatch("/projects/:code/datasets"));
-  const atClasses = Boolean(useMatch("/projects/:code/classes")) || Boolean(useMatch("/projects/:code/tags"));
-  const atMembers = Boolean(useMatch("/projects/:code/members"));
-  const atTasks = Boolean(useMatch("/projects/:code/tasks"));
-  const atRuns = Boolean(useMatch("/projects/:code/runs")) || Boolean(useMatch("/projects/:code/runs/:runId"));
-  const redesigned = atOverview || atImport || atDatasets || atClasses || atMembers || atTasks || atRuns;
+  // Каждый useMatch вызывается всегда: «a || useMatch(b)» менял число хуков при переходе список → страница
+  const hits = [
+    useMatch("/projects/:code"),
+    useMatch("/projects/:code/import"),
+    useMatch("/projects/:code/datasets"),
+    useMatch("/projects/:code/classes"),
+    useMatch("/projects/:code/tags"),
+    useMatch("/projects/:code/members"),
+    useMatch("/projects/:code/tasks"),
+    useMatch("/projects/:code/runs"),
+    useMatch("/projects/:code/runs/:runId"),
+    useMatch("/projects/:code/training"),
+    useMatch("/projects/:code/trainsets/:setId"),
+  ];
+  const redesigned = hits.some(Boolean);
 
   const refresh = useCallback(async () => {
     if (!code) return;
