@@ -47,6 +47,7 @@ export default function ProjectShell() {
     useMatch("/projects/:code/tags"),
     useMatch("/projects/:code/members"),
     useMatch("/projects/:code/tasks"),
+    useMatch("/projects/:code/aug"),
     useMatch("/projects/:code/runs"),
     useMatch("/projects/:code/runs/:runId"),
     useMatch("/projects/:code/training"),

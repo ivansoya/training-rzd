@@ -4,21 +4,28 @@
 // Куда уходит основная масса, видно раньше, чем прочитаны цифры; а это
 // единственное, что в графе надо видеть боковым зрением.
 
-import { useRef, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useRef, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import {
   EdgeLabelRenderer,
   Handle,
   Position,
+  getBezierPath,
+  type ConnectionLineComponentProps,
   type EdgeProps,
   type NodeProps,
 } from "@xyflow/react";
-import { getBezierPath } from "@xyflow/react";
 import type { CatalogueNode, NodeKind } from "../../api/aug";
+import { Icon, cx } from "../../ui";
 import { branches, grid, inputsCount, times, weights, type Fit } from "./counts";
+import { kindOf, paramSummary, toneOf } from "./look";
 
-/** Что редактор кладёт в провод: число на нём и способ его убрать. */
+/** Что редактор кладёт в провод: число на нём, подсветка и способ его убрать. */
 export interface WireData extends Record<string, unknown> {
   amount?: number;
+  /** Провод выбранного узла — светится. */
+  hot?: boolean;
+  /** Над проводом держат узел: отпустят — встанет в разрыв. */
+  aim?: boolean;
   kill?: (id: string) => void;
 }
 
@@ -27,21 +34,18 @@ export interface NodeData extends Record<string, unknown> {
   params: Record<string, unknown>;
   catalogue?: CatalogueNode;
   group?: { in: string[]; out: string[]; name?: string; version?: number };
+  /** Узел закреплён в превью глазом. */
   eye?: boolean;
-  total?: number;          // сколько выходит из этого узла
+  /** Сколько образцов выходит из узла (у «Выхода» — сколько приходит). */
+  amount?: number;
+  /** Ни одного провода — висит сам по себе. */
+  loose?: boolean;
   problem?: string | null;
   onEye?: (id: string) => void;
   /** Правка параметров прямо с карточки (редактор сетки). Нет её — граф
    *  открыт только для чтения. */
   onParams?: (id: string, next: Record<string, unknown>) => void;
 }
-
-const GROUP_CLASS: Record<string, string> = {
-  light: "k-light",
-  noise: "k-noise",
-  weather: "k-weather",
-  geometry: "k-geometry",
-};
 
 /** Имя узла, как на карточке. Его же пишет превью — в списке узлов и в пути
  *  образца, — и разойтись с карточкой оно не должно. */
@@ -77,268 +81,129 @@ export function titleOf(d: NodeData): string {
 }
 
 export const ru = (n: number) =>
-  Math.round(n).toLocaleString("ru-RU").replace(/ /g, " ");
+  Math.round(n).toLocaleString("ru-RU").replace(/ /g, " ");
 
-function Ports({
-  ins,
-  outs,
-}: {
-  ins: string[];
-  outs: string[];
-}) {
+function Ports({ ins, outs }: { ins: string[]; outs: string[] }) {
   const at = (i: number, n: number) => `${((i + 1) / (n + 1)) * 100}%`;
   return (
     <>
       {ins.map((name, i) => (
-        <Handle
-          key={`in-${name}`}
-          id={name}
-          type="target"
-          position={Position.Left}
-          style={{ top: at(i, ins.length) }}
-        />
+        <Handle key={`in-${name}`} id={name} type="target" position={Position.Left} style={{ top: at(i, ins.length) }} />
       ))}
       {outs.map((name, i) => (
-        <Handle
-          key={`out-${name}`}
-          id={name}
-          type="source"
-          position={Position.Right}
-          style={{ top: at(i, outs.length) }}
-        />
+        <Handle key={`out-${name}`} id={name} type="source" position={Position.Right} style={{ top: at(i, outs.length) }} />
       ))}
     </>
   );
 }
 
-function Card({
-  id,
-  data,
-  klass,
-  title,
-  why,
-  badge,
-  total,
-  ins,
-  outs,
-  children,
-}: {
+function Card({ id, data, selected, sub, ins, outs, wide, children }: {
   id: string;
   data: NodeData;
-  klass: string;
-  title: string;
-  why?: string;
-  badge?: string;
-  total?: string;
+  selected?: boolean;
+  sub?: string;
   ins: string[];
   outs: string[];
+  wide?: boolean;
   children?: ReactNode;
 }) {
+  const { icon, label } = kindOf(data.kind, data.catalogue);
   return (
-    <div className={`g-node ${klass}${data.problem ? " bad" : ""}`}>
+    <div className={cx("ge-node", wide && "wide", selected && "sel", data.loose && "loose", data.problem && "bad")}
+      style={{ "--gc": toneOf(data.kind, data.catalogue?.group) } as CSSProperties}>
       <Ports ins={ins} outs={outs} />
-      <div className="g-node-title">{title}</div>
-      {why && <div className="g-node-why">{why}</div>}
-      {badge && <div className="g-node-mult">{badge}</div>}
+      <span className="ge-node-k">
+        <Icon name={icon} size={13} />
+        <span>{label}</span>
+        {/* Глаз закрепляет узел в превью; без него превью идёт за выделением. Второе нажатие — открепить. */}
+        <button type="button" className={cx("ge-eye nodrag", data.eye && "on")} title={data.eye ? "Открепить превью" : "Закрепить в превью"}
+          aria-label={data.eye ? "Открепить превью" : "Закрепить в превью"} aria-pressed={Boolean(data.eye)}
+          onClick={(e) => { e.stopPropagation(); data.onEye?.(id); }}>
+          <Icon name="eye" size={13} />
+        </button>
+      </span>
+      <b className="ge-node-t">{titleOf(data)}</b>
+      {sub && <small className="ge-node-p">{sub}</small>}
       {children}
-      {total && <div className="g-node-total">{total}</div>}
-      {/* Глаз есть у каждого узла: превью показывает, что выходит из
-          любого, — даже «Слияние» отвечает на вопрос «что тут вперемешку». */}
-      <button
-        type="button"
-        className={`g-eye${data.eye ? " on" : ""}`}
-        title="Показать в превью"
-        aria-pressed={Boolean(data.eye)}
-        onClick={(e) => {
-          e.stopPropagation();
-          data.onEye?.(id);
-        }}
-      >
-        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-          <path
-            d="M1 7s2.2-4 6-4 6 4 6 4-2.2 4-6 4-6-4-6-4z"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.2"
-          />
-          <circle cx="7" cy="7" r="1.6" fill="currentColor" />
-        </svg>
-      </button>
     </div>
   );
 }
 
-export function SourceNode({ id, data }: NodeProps) {
+const flowText = (d: NodeData) => (d.amount !== undefined ? ru(d.amount) : undefined);
+
+export function SourceNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
-  return (
-    <Card
-      id={id}
-      data={d}
-      klass="k-source"
-      title={titleOf(d)}
-      why="обучающая часть набора"
-      total={d.total !== undefined ? ru(d.total) : undefined}
-      ins={[]}
-      outs={["out"]}
-    />
-  );
+  const n = flowText(d);
+  return <Card id={id} data={d} selected={selected} sub={n ? `${n} кадров · условно` : "обучающая часть набора"} ins={[]} outs={["out"]} />;
 }
 
-export function InputNode({ id, data }: NodeProps) {
+export function InputNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
-  return (
-    <Card
-      id={id}
-      data={d}
-      klass="k-source"
-      title={titleOf(d)}
-      why="гнездо блока"
-      ins={[]}
-      outs={["out"]}
-    />
-  );
+  return <Card id={id} data={d} selected={selected} sub="гнездо блока" ins={[]} outs={["out"]} />;
 }
 
-export function OutputNode({ id, data }: NodeProps) {
+export function OutputNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
-  return (
-    <Card
-      id={id}
-      data={d}
-      klass="k-output"
-      title={titleOf(d)}
-      why="в обучающий набор"
-      total={d.total !== undefined ? ru(d.total) : undefined}
-      ins={["in"]}
-      outs={[]}
-    />
-  );
+  const n = flowText(d);
+  return <Card id={id} data={d} selected={selected} sub={n ? `в набор ${n}` : "в обучающий набор"} ins={["in"]} outs={[]} />;
 }
 
-export function AugNode({ id, data }: NodeProps) {
+export function AugNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
-  const cat = d.catalogue;
-  const chance = Number(d.params.chance ?? 1);
-  return (
-    <Card
-      id={id}
-      data={d}
-      klass={GROUP_CLASS[cat?.group ?? ""] ?? "k-flow"}
-      title={titleOf(d)}
-      why={cat?.why?.split(".")[0] ?? undefined}
-      badge={chance < 1 ? `p ${chance.toFixed(2).replace(".", ",")}` : undefined}
-      ins={["in"]}
-      outs={["out"]}
-    />
-  );
+  return <Card id={id} data={d} selected={selected} sub={paramSummary(d.catalogue, d.params) || undefined} ins={["in"]} outs={["out"]} />;
 }
 
-export function FlowNode({ id, data }: NodeProps) {
+export function FlowNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
   const ops = (d.params.ops as { op: string }[] | undefined) ?? [];
   return (
-    <Card
-      id={id}
-      data={d}
-      klass="k-flow"
-      title={titleOf(d)}
-      why={
-        ops.length
-          ? `${ops.length} ${ops.length === 1 ? "трансформ" : "трансформа"} подряд`
-          : "пусто — кадры пройдут насквозь"
-      }
-      ins={["in"]}
-      outs={["out"]}
-    />
+    <Card id={id} data={d} selected={selected} ins={["in"]} outs={["out"]}
+      sub={ops.length ? `${ops.length} ${ops.length === 1 ? "трансформ" : "трансформа"} подряд` : "пусто — кадры пройдут насквозь"} />
   );
 }
 
-export function MultiplyNode({ id, data }: NodeProps) {
+export function MultiplyNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
   const n = times({ id, type: "multiply", params: d.params });
-  return (
-    <Card
-      id={id}
-      data={d}
-      klass="k-flow"
-      title={titleOf(d)}
-      why="каждый кадр столько раз, своё зерно у копии"
-      badge={`×${n}`}
-      ins={["in"]}
-      outs={["out"]}
-    />
-  );
+  return <Card id={id} data={d} selected={selected} sub={`×${n} · своё зерно у копии`} ins={["in"]} outs={["out"]} />;
 }
 
-function SplitNode(kind: "split_share" | "split_prob", why: string) {
-  return function Split({ id, data }: NodeProps) {
+function SplitNode(kind: "split_share" | "split_prob", how: string) {
+  return function Split({ id, data, selected }: NodeProps) {
     const d = data as NodeData;
     const node = { id, type: kind, params: d.params } as const;
     const w = weights(node);
-    const total = w.reduce((a, b) => a + b, 0);
-    const shares = w
-      .map((v) => `${Math.round((v / total) * 100)}`)
-      .join(" — ");
+    const total = w.reduce((a, b) => a + b, 0) || 1;
+    const shares = w.map((v) => `${Math.round((v / total) * 100)}`).join(" — ");
     return (
-      <Card
-        id={id}
-        data={d}
-        klass="k-flow"
-        title={titleOf(d)}
-        why={`${why} — ${shares}`}
-        ins={["in"]}
-        outs={Array.from({ length: branches(node) }, (_, i) => `o${i}`)}
-      />
+      <Card id={id} data={d} selected={selected} sub={`${shares} · ${how}`} ins={["in"]}
+        outs={Array.from({ length: branches(node) }, (_, i) => `o${i}`)} />
     );
   };
 }
 
-export const SplitShareNode = SplitNode(
-  "split_share",
-  "каждый кадр в одну ветку, по долям"
-);
-export const SplitProbNode = SplitNode(
-  "split_prob",
-  "каждый кадр в одну ветку, жребием"
-);
+export const SplitShareNode = SplitNode("split_share", "по долям");
+export const SplitProbNode = SplitNode("split_prob", "жребием");
 
-function JoinNode(kind: "merge" | "order", why: string) {
-  return function Join({ id, data }: NodeProps) {
+function JoinNode(kind: "merge" | "order", how: string) {
+  return function Join({ id, data, selected }: NodeProps) {
     const d = data as NodeData;
-    const node = { id, type: kind, params: d.params } as const;
+    const n = inputsCount({ id, type: kind, params: d.params });
     return (
-      <Card
-        id={id}
-        data={d}
-        klass="k-flow"
-        title={titleOf(d)}
-        why={why}
-        ins={Array.from({ length: inputsCount(node) }, (_, i) => `i${i}`)}
-        outs={["out"]}
-      />
+      <Card id={id} data={d} selected={selected} sub={`${n} входа · ${how}`}
+        ins={Array.from({ length: n }, (_, i) => `i${i}`)} outs={["out"]} />
     );
   };
 }
 
-export const MergeNode = JoinNode("merge", "потоки вперемешку");
-export const OrderNode = JoinNode("order", "сперва вся первая ветка, потом вторая");
+export const MergeNode = JoinNode("merge", "вперемешку");
+export const OrderNode = JoinNode("order", "ветка за веткой");
 
-export function GroupNode({ id, data }: NodeProps) {
+export function GroupNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
   return (
-    <Card
-      id={id}
-      data={d}
-      klass="k-block"
-      title={titleOf(d)}
-      why={
-        d.group?.version
-          ? `мой граф — версия ${d.group.version}`
-          : "вложенный граф"
-      }
-      ins={d.group?.in ?? ["in"]}
-      outs={d.group?.out ?? ["out"]}
-    />
+    <Card id={id} data={d} selected={selected} sub={d.group?.version ? `мой граф · версия ${d.group.version}` : "вложенный граф"}
+      ins={d.group?.in ?? ["in"]} outs={d.group?.out ?? ["out"]} />
   );
 }
 
@@ -369,9 +234,7 @@ function GridEditor({ id, data }: { id: string; data: NodeData }) {
     const move = (ev: PointerEvent) => {
       const r = box.current!.getBoundingClientRect();
       const f = axis === "x" ? (ev.clientX - r.left) / r.width : (ev.clientY - r.top) / r.height;
-      const lo = edges[at] + 0.05;
-      const hi = edges[at + 2] - 0.05;
-      const cut = Math.min(hi, Math.max(lo, f));
+      const cut = Math.min(edges[at + 2] - 0.05, Math.max(edges[at] + 0.05, f));
       const next = list.slice();
       next[at] = cut - edges[at];
       next[at + 1] = edges[at + 2] - cut;
@@ -394,70 +257,36 @@ function GridEditor({ id, data }: { id: string; data: NodeData }) {
   };
 
   return (
-    <div
-      ref={box}
-      className={`g-grid nodrag${edit ? "" : " locked"}`}
-      style={{ width: g.width * k, height: g.height * k }}
-    >
+    <div ref={box} className={cx("ge-grid nodrag", !edit && "locked")} style={{ width: g.width * k, height: g.height * k }}>
       {g.fit.map((fit, i) => {
         const r = Math.floor(i / g.cols);
         const c = i % g.cols;
         return (
-          <button
-            key={i}
-            type="button"
-            className={`g-grid-cell ${fit}`}
-            style={{
-              left: `${xs[c] * 100}%`,
-              top: `${ys[r] * 100}%`,
-              width: `${g.colW[c] * 100}%`,
-              height: `${g.rowH[r] * 100}%`,
-            }}
-            disabled={!edit}
+          <button key={i} type="button" className={cx("ge-grid-cell", fit)} disabled={!edit}
+            style={{ left: `${xs[c] * 100}%`, top: `${ys[r] * 100}%`, width: `${g.colW[c] * 100}%`, height: `${g.rowH[r] * 100}%` }}
             title={`Вход ${i + 1}: ${fit === "letterbox" ? "с полями" : "растянуть"}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              toggle(i);
-            }}
-          >
+            onClick={(e) => { e.stopPropagation(); toggle(i); }}>
             <b>{i + 1}</b>
             <span>{fit === "letterbox" ? "поля" : "тянуть"}</span>
           </button>
         );
       })}
       {xs.slice(1, -1).map((x, i) => (
-        <div
-          key={`x${i}`}
-          className="g-grid-bar v"
-          style={{ left: `${x * 100}%` }}
-          onPointerDown={drag("x", i)}
-        />
+        <div key={`x${i}`} className="ge-grid-bar v" style={{ left: `${x * 100}%` }} onPointerDown={drag("x", i)} />
       ))}
       {ys.slice(1, -1).map((y, i) => (
-        <div
-          key={`y${i}`}
-          className="g-grid-bar h"
-          style={{ top: `${y * 100}%` }}
-          onPointerDown={drag("y", i)}
-        />
+        <div key={`y${i}`} className="ge-grid-bar h" style={{ top: `${y * 100}%` }} onPointerDown={drag("y", i)} />
       ))}
     </div>
   );
 }
 
-export function MosaicNode({ id, data }: NodeProps) {
+export function MosaicNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
   const g = grid({ id, type: "mosaic", params: d.params });
   return (
-    <Card
-      id={id}
-      data={d}
-      klass="k-geometry g-node-wide"
-      title={titleOf(d)}
-      why={`${g.rows} × ${g.cols}, кадр ${g.width} × ${g.height}`}
-      ins={Array.from({ length: g.rows * g.cols }, (_, i) => `i${i}`)}
-      outs={["out"]}
-    >
+    <Card id={id} data={d} selected={selected} wide sub={`${g.rows} × ${g.cols}, кадр ${g.width} × ${g.height}`}
+      ins={Array.from({ length: g.rows * g.cols }, (_, i) => `i${i}`)} outs={["out"]}>
       <GridEditor id={id} data={d} />
     </Card>
   );
@@ -478,6 +307,24 @@ export const nodeTypes = {
   mosaic: MosaicNode,
 };
 
+// Гнездо ловит мышь кругом 22 px, а видна точка 10 px: провод начинается у точки, а не у края круга.
+const PIN_INSET = 6;
+const DOT_R = 5;
+const inset = (x: number, pos: Position) => (pos === Position.Right ? x - PIN_INSET : pos === Position.Left ? x + PIN_INSET : x);
+
+// Пока провод тянут, библиотека отдаёт центры гнёзд — сдвигаем к краю точки.
+const dot = (x: number, pos: Position) => (pos === Position.Right ? x + DOT_R : pos === Position.Left ? x - DOT_R : x);
+
+/** Провод, который тянут к гнезду, — от края точки, как и готовые провода. */
+export function WireDraft({ fromX, fromY, toX, toY, fromPosition, toPosition, toHandle, connectionStatus }: ConnectionLineComponentProps) {
+  const snapped = Boolean(toHandle) && connectionStatus === "valid";
+  const [path] = getBezierPath({
+    sourceX: dot(fromX, fromPosition), sourceY: fromY, sourcePosition: fromPosition,
+    targetX: snapped ? dot(toX, toPosition) : toX, targetY: toY, targetPosition: toPosition,
+  });
+  return <path className="react-flow__connection-path" d={path} fill="none" />;
+}
+
 /**
  * Провод с числом на нём.
  *
@@ -485,90 +332,35 @@ export const nodeTypes = {
  * из ста тысяч линию во весь экран, а разница между тысячей и тремя тысячами
  * пропала бы вовсе.
  */
-export function VolumeEdge({
-  id,
-  sourceX,
-  sourceY,
-  targetX,
-  targetY,
-  sourcePosition,
-  targetPosition,
-  data,
-  selected,
-}: EdgeProps) {
+export function VolumeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, selected }: EdgeProps) {
   const [path, labelX, labelY] = getBezierPath({
-    sourceX,
-    sourceY,
-    sourcePosition,
-    targetX,
-    targetY,
-    targetPosition,
+    sourceX: inset(sourceX, sourcePosition), sourceY, sourcePosition, targetX: inset(targetX, targetPosition), targetY, targetPosition,
   });
   const wire = data as WireData | undefined;
   const amount = Number(wire?.amount ?? 0);
   const kill = wire?.kill;
   const width = amount > 0 ? Math.min(6, 1.2 + Math.log10(amount + 1) * 0.85) : 1.4;
-  const text = amount > 0 ? ru(amount) : "—";
-  const half = Math.max(20, text.length * 6 + 12);
 
   return (
     <>
-      {/* Невидимая жила поверх пути. В провод толщиной в полтора пикселя
-          курсором не попасть, а рисовать провода толще — врать о потоке:
-          толщина здесь значит объём. Поэтому область попадания шире вида. */}
-      <path
-        className="react-flow__edge-interaction"
-        d={path}
-        fill="none"
-        stroke="transparent"
-        strokeWidth={22}
-      />
-      <path
-        id={id}
-        className="g-wire"
-        d={path}
-        fill="none"
-        stroke={selected ? "var(--red)" : "#4a5157"}
-        strokeWidth={width}
-        strokeLinecap="round"
-      />
-      <rect
-        className="g-wire-plate"
-        x={labelX - half / 2}
-        y={labelY - 9}
-        width={half}
-        height={18}
-        rx={3}
-      />
-      <text className="g-wire-text" x={labelX} y={labelY + 1}>
-        {text}
-      </text>
-      {/* Крестик — обычной кнопкой в слое подписей, а не фигурой внутри
-          провода: поверх провода библиотека кладёт свои круглые ручки
-          перецепки, и нарисованный в SVG крестик оказывался под ними —
-          щелчок доставался ручке. */}
-      {selected && kill && (
-        <EdgeLabelRenderer>
-          <button
-            type="button"
-            className="g-wire-kill nodrag nopan"
-            style={{
-              // Над табличкой с числом, а не сбоку от неё: сбоку крестик
-              // упирался в гнездо соседнего узла, когда провод короткий.
-              transform: `translate(-50%, -50%) translate(${labelX}px, ${
-                labelY - 20
-              }px)`,
-            }}
-            title="Убрать провод"
-            onClick={(e) => {
-              e.stopPropagation();
-              kill(id);
-            }}
-          >
-            ×
+      {/* Невидимая жила поверх пути: в провод толщиной в полтора пикселя курсором не попасть. */}
+      <path className="react-flow__edge-interaction" d={path} fill="none" stroke="transparent" strokeWidth={22} />
+      <path id={id} className={cx("ge-wire", (selected || wire?.hot) && "hot", wire?.aim && "aim")} d={path}
+        fill="none" strokeWidth={wire?.aim ? Math.max(width, 3) : width} strokeLinecap="round" />
+      <EdgeLabelRenderer>
+        <span className={cx("ge-wl", (selected || wire?.hot) && "hot")}
+          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
+          {amount > 0 ? ru(amount) : "—"}
+        </span>
+        {/* Крестик — кнопкой в слое подписей: в SVG он оказывался под ручками перецепки. */}
+        {selected && kill && (
+          <button type="button" className="ge-wire-kill nodrag nopan" title="Убрать провод" aria-label="Убрать провод"
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY - 22}px)` }}
+            onClick={(e) => { e.stopPropagation(); kill(id); }}>
+            <Icon name="x" size={12} />
           </button>
-        </EdgeLabelRenderer>
-      )}
+        )}
+      </EdgeLabelRenderer>
     </>
   );
 }

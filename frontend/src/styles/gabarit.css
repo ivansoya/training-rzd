@@ -137,15 +137,6 @@
   }
 }
 
-/* Всё, что число, набирается цифрами одинаковой ширины — иначе столбцы
- * «прыгают», и сравнить два значения глазом нельзя. */
-.g-num,
-.g-stat b,
-.g-legend em,
-.g-rail b {
-  font-variant-numeric: tabular-nums;
-}
-
 /* Крупное число с подписью под ним. Подпись именно снизу: пара «сколько
  * чего» так читается одним движением глаз, а не двумя. */
 
@@ -167,22 +158,6 @@
 
 /* ===================== ВТОРОЙ УРОВЕНЬ НАВИГАЦИИ ===================== */
 
-/* Контекст: где мы сейчас и что у него внутри. Приклеен к верхней строке —
- * на длинных списках кадров «где я» не должно уезжать вверх вместе с ними. */
-.g-ctx {
-  position: sticky;
-  top: 0;
-  z-index: 30;
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 0 22px;
-  min-height: 46px;
-  background: var(--sunk);
-  border-bottom: 1px solid var(--rule);
-  flex-wrap: wrap;
-}
-
 .g-ctx-back {
   color: var(--dim);
   text-decoration: none;
@@ -195,59 +170,6 @@
 .g-ctx-back:hover {
   color: var(--ink);
   background: var(--hair);
-}
-
-.g-ctx-name {
-  font-weight: 680;
-  font-size: 14.5px;
-  letter-spacing: -0.012em;
-}
-
-.g-ctx-code {
-  font: 500 11px/1 var(--mono);
-  letter-spacing: 0.05em;
-  color: var(--faint);
-}
-
-.g-ctx-nav {
-  display: flex;
-  gap: 2px;
-  margin-left: auto;
-  overflow-x: auto;
-}
-
-.g-ctx-link {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  white-space: nowrap;
-  padding: 13px 11px;
-  font-size: 13.5px;
-  color: var(--dim);
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-}
-
-.g-ctx-link:hover { color: var(--ink); }
-
-.g-ctx-link.on {
-  color: var(--red);
-  font-weight: 600;
-  border-bottom-color: var(--red);
-}
-
-.g-ctx-link span {
-  font: 600 10.5px/1 var(--mono);
-  font-variant-numeric: tabular-nums;
-  background: var(--hair);
-  color: var(--faint);
-  padding: 3px 6px;
-  border-radius: 999px;
-}
-
-.g-ctx-link.on span {
-  background: var(--red-in);
-  color: var(--red);
 }
 
 /* Переключатель темы в верхней строке: три состояния, а не два — «как в
@@ -270,12 +192,10 @@
 /* Предупреждение о незакрытых роликах: их работы ещё нет в кадрах, и без
    этой строки прогресс врал бы. */
 
-
 /* ==================== ПРАВКИ ЧИТАЕМОСТИ И РИТМА ==================== */
 
 /* Пустые разделы. Раньше текст, подпись и кнопка стояли вплотную: заголовок
    лип к объяснению, объяснение к кнопке, и всё читалось одним комком. */
-.g-empty,
 .mag-empty {
   display: flex;
   flex-direction: column;
@@ -287,13 +207,11 @@
 /* Объяснение под заголовком — обычно голый текстовый узел, а не элемент.
    Междуэлементный зазор такой не всегда цепляет, поэтому отступ задаём полем
    у заголовка, а не только `gap`. */
-.g-empty b,
+
 .mag-empty b {
   margin-bottom: 4px;
 }
 
-.g-empty button,
-.g-empty .mag-btn,
 .mag-empty button,
 .mag-empty .mag-btn {
   margin-top: 4px;
@@ -349,8 +267,7 @@ select {
    их не умело — отсюда белая рамка и серый фон у подразделов таски.
    Шрифт кнопке тоже не наследуется, его приходится задавать. */
 
-.mag-tab span,
-.g-ctx-nav a span {
+.mag-tab span{
   display: inline-block;
   margin-left: 6px;
   padding: 0 6px;
@@ -362,8 +279,7 @@ select {
   font: 600 10.5px var(--mono);
 }
 
-.mag-tab.on span,
-.g-ctx-nav a.on span {
+.mag-tab.on span{
   background: var(--red-in);
   color: var(--red);
 }
@@ -371,7 +287,6 @@ select {
 /* Предупреждения и сообщения. Приглушённые цвета на почти чёрном тонули —
    теперь они светятся, и полоса слева говорит о характере раньше текста. */
 .mag-ok-banner,
-.g-warn,
 .mag-error,
 .mag-hint {
   border-radius: var(--radius-l);
@@ -475,12 +390,11 @@ select {
 /* Строка «что делают с роликом». Точка, название работы и доля были выровнены
    по середине коробок, а не по строке: у мелкого моноширинного процента своя
    высота, и текст рядом с ним казался съехавшим вниз. */
-.g-prep,
+
 .mag-ved-prepare {
   align-items: baseline;
 }
 
-.g-prep i,
 .mag-ved-prepare-dot {
   align-self: center;
   flex-shrink: 0;

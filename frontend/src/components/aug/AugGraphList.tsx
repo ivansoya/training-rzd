@@ -1,23 +1,24 @@
-// Личная библиотека графов. Живёт вне проектов: удачный граф переносят из
+// «Мои графы»: личная библиотека. Живёт вне проектов: удачный граф переносят из
 // проекта в проект, и копия разошлась бы с оригиналом на первой же правке.
 
-import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import * as api from "../../api/aug";
-import { mult } from "./counts";
+import { Button, Card, Empty, Input, MenuItem, Notice, PageHeader, Seg } from "../../ui";
 import { count } from "../ru";
-import Banner from "../Banner";
+import { useConfirm } from "../mag/tasks/Confirm";
+import GraphTable from "./GraphTable";
+import { freeName } from "./look";
 
 export default function AugGraphList() {
-  // null — список ещё не пришёл. Пустой массив до ответа показывал «Графов
-  // пока нет» на полсекунды даже тому, у кого их десяток.
+  // null — список ещё не пришёл: «Графов пока нет» не мигает тому, у кого их десяток.
   const [graphs, setGraphs] = useState<api.GraphSummary[] | null>(null);
-  // Архив — отдельный список: граф, по которому собран набор, удалить
-  // нельзя (паспорт набора ссылается на его версии), но убрать с глаз можно.
+  // Архив — отдельный список: граф с наборами удалить нельзя, но убрать с глаз можно.
   const [archived, setArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
-  const [working, setWorking] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [confirm, confirmNode] = useConfirm();
   const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
@@ -31,26 +32,18 @@ export default function AugGraphList() {
 
   useEffect(() => {
     setGraphs(null);
-    refresh();
+    void refresh();
   }, [refresh]);
 
-  /** Завести граф и сразу открыть его.
-   *
-   *  Имя здесь не спрашиваем. Раньше кнопка разворачивала полосу с полем и
-   *  двумя кнопками во всю ширину страницы — ради одного слова, которое всё
-   *  равно придумывают уже на холсте, глядя на собранное. Имя правится в
-   *  шапке редактора, а свободный номер не даёт двум черновикам столкнуться.
-   */
+  /** Завести граф и сразу открыть: имя придумывают уже на холсте, глядя на собранное. */
   const create = async () => {
     if (making) return;
     setMaking(true);
     setError(null);
     try {
       // Имя держат только живые графы — и из архива смотрим на них же.
-      const taken = new Set((await api.listGraphs("aug")).graphs.map((g) => g.name));
-      let name = "Новый граф";
-      for (let n = 2; taken.has(name); n++) name = `Новый граф ${n}`;
-      const got = await api.createGraph(name);
+      const taken = (await api.listGraphs("aug")).graphs.map((g) => g.name);
+      const got = await api.createGraph(freeName(taken));
       navigate(`/augment/${got.id}`);
     } catch (e) {
       setError((e as Error).message);
@@ -58,117 +51,80 @@ export default function AugGraphList() {
     }
   };
 
-  /** Удалить граф. Граф, по которому собран набор, сервер не отдаст (409) —
-   *  паспорт набора ссылается на его версии; причину он пишет сам. */
+  /** Граф, по которому собран набор, сервер не удалит (409) — причину он пишет сам. */
   const remove = async (g: api.GraphSummary) => {
-    if (!window.confirm(`Удалить граф «${g.name}» со всеми версиями?`)) return;
-    setWorking(g.id);
-    setError(null);
+    const ok = await confirm({
+      title: `Удалить граф «${g.name}»?`, danger: true, icon: "trash", ok: "Удалить",
+      desc: g.used_by_sets ? "По нему собраны наборы — сервер не даст удалить. Уберите его в архив." : "Со всеми версиями. Вернуть не получится.",
+    });
+    if (!ok) return;
     try {
       await api.deleteGraph(g.id);
       setGraphs((old) => (old ?? []).filter((x) => x.id !== g.id));
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setWorking(null);
     }
   };
 
-  /** В архив и обратно. Архивный граф не предлагается ни в проекте, ни в
-   *  мастере набора; наборы, собранные по нему, остаются как были. */
+  /** Архивный граф не предлагается ни в проекте, ни в мастере набора; наборы по нему остаются. */
   const shelve = async (g: api.GraphSummary, away: boolean) => {
-    if (away && !window.confirm(`Убрать граф «${g.name}» в архив?`)) return;
-    setWorking(g.id);
-    setError(null);
+    if (away) {
+      const ok = await confirm({
+        title: `Убрать граф «${g.name}» в архив?`, icon: "archive", ok: "В архив",
+        desc: "Его перестанут предлагать в проектах и мастере набора. Собранные наборы останутся как были.",
+      });
+      if (!ok) return;
+    }
     try {
       await api.patchGraph(g.id, { archived: away });
       setGraphs((old) => (old ?? []).filter((x) => x.id !== g.id));
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setWorking(null);
     }
   };
 
+  const all = graphs ?? [];
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return needle ? all.filter((g) => g.name.toLowerCase().includes(needle)) : all;
+  }, [all, q]);
+  const inSets = all.filter((g) => g.used_by_sets > 0).length;
+  const desc = graphs === null ? "Загружаю…"
+    : [count(all.length, "граф", "графа", "графов"), inSets ? `${inSets} в наборах` : ""].filter(Boolean).join(" · ");
+
   return (
-    <div className="mag-content">
-      <div className="mag-pass-strip">
-        <div className="mag-pass-id">
-          <h1 className="mag-h1">{archived ? "Мои графы — архив" : "Мои графы"}</h1>
+    <div className="page">
+      <PageHeader title="Мои графы" desc={desc} actions={<>
+        <Seg<"live" | "arch"> label="Какие графы" value={archived ? "arch" : "live"} onChange={(v) => setArchived(v === "arch")}
+          options={[{ value: "live", label: "Действующие" }, { value: "arch", label: "Архив", icon: "archive" }]} />
+        {all.length > 0 && <Input icon="search" className="gl-q" placeholder="Найти граф" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Найти граф" />}
+        {!archived && <Button variant="primary" icon="plus" disabled={making} onClick={create}>Новый граф</Button>}
+      </>} />
+      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+
+      {graphs !== null && all.length === 0 && (archived ? <Empty icon="archive" title="В архиве пусто" /> : (
+        <div className="gl-empty">
+          <b>Графов пока нет</b>
+          <p>Граф аугментаций — схема, по которой кадры набора размножаются копиями: источник, пара преобразований и выход.
+            Он живёт в вашей библиотеке, подключается к проектам ссылкой и выбирается в мастере набора.</p>
+          <Button variant="primary" icon="plus" disabled={making} onClick={create}>Собрать первый граф</Button>
         </div>
-        <div className="mag-pass-export g-lib-acts">
-          <button
-            className="mag-ghost"
-            type="button"
-            aria-pressed={archived}
-            onClick={() => setArchived((v) => !v)}
-          >
-            {archived ? "← Мои графы" : "Архив"}
-          </button>
-          {!archived && (
-            <button className="mag-btn" type="button" disabled={making} onClick={create}>
-              Новый граф
-            </button>
+      ))}
+
+      {all.length > 0 && (
+        <Card flush className="gl-card">
+          {shown.length === 0 ? <Empty compact icon="search" title="Под поиск ничего не подошло" /> : (
+            <GraphTable graphs={shown} onOpen={(g) => navigate(`/augment/${g.id}`)} menu={(g, close) => (<>
+              <MenuItem icon="workflow" onSelect={() => { close(); navigate(`/augment/${g.id}`); }}>Открыть</MenuItem>
+              <MenuItem icon="archive" onSelect={() => { close(); void shelve(g, !archived); }}
+                hint={archived ? "Снова предлагать в проектах" : "Наборы по нему останутся"}>{archived ? "Вернуть из архива" : "В архив…"}</MenuItem>
+              <MenuItem icon="trash" danger onSelect={() => { close(); void remove(g); }}
+                hint={g.used_by_sets ? "По нему собраны наборы" : "Со всеми версиями"}>Удалить…</MenuItem>
+            </>)} />
           )}
-        </div>
-      </div>
-
-      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
-
-      {graphs === null ? null : graphs.length === 0 ? (
-        archived ? (
-          <div className="mag-empty-big">
-            <b>В архиве пусто.</b>
-          </div>
-        ) : (
-          <div className="mag-empty-big">
-            <b>Графов пока нет.</b>
-            <p>Источник, пара аугментаций и выход. Готовый граф подключают к набору
-              во вкладке проекта «Обучение».</p>
-            <button className="mag-btn" type="button" disabled={making}
-              onClick={create}>
-              Собрать первый граф
-            </button>
-          </div>
-        )
-      ) : (
-        <div className="g-graphs">
-          {graphs.map((g) => (
-            // Карточка — не ссылка целиком: кнопку внутри ссылки класть
-            // нельзя. Ссылка растянута на всю карточку, кнопка лежит поверх.
-            <div key={g.id} className="g-graph-card">
-              <Link to={`/augment/${g.id}`} className="name">{g.name}</Link>
-              {g.description && <span className="desc">{g.description}</span>}
-              <span className="foot">
-                <span>версия {g.version}</span>
-                {g.stats && <b>{mult(g.stats.multiplier)}</b>}
-                <span>{count(g.stats?.nodes ?? 0, "узел", "узла", "узлов")}</span>
-                {g.used_by_sets > 0 && (
-                  <span>в наборах: {g.used_by_sets}</span>
-                )}
-              </span>
-              <span className="g-graph-acts">
-                <button
-                  type="button"
-                  className="g-graph-del g-graph-shelf"
-                  disabled={working === g.id}
-                  onClick={() => shelve(g, !archived)}
-                >
-                  {archived ? "Вернуть" : "В архив"}
-                </button>
-                <button
-                  type="button"
-                  className="g-graph-del"
-                  disabled={working === g.id}
-                  onClick={() => remove(g)}
-                >
-                  Удалить
-                </button>
-              </span>
-            </div>
-          ))}
-        </div>
+        </Card>
       )}
+      {confirmNode}
     </div>
   );
 }

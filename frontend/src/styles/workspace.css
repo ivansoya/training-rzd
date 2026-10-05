@@ -66,12 +66,12 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag select option, .mag select optgroup { background: var(--card); color: var(--ink); }
 .mag-field label { font-size: 13px; font-weight: 550; margin-bottom: 8px; }
 .mag-field :is(input,textarea):focus, .mag select:focus { box-shadow: 0 0 0 3px var(--accent-soft); border-color: var(--red); }
-.mag-error, .mag-ok, .mag-warn, .g-warn, .t-warn { border-radius: 8px; padding: 14px 16px; box-shadow: none; line-height: 1.6; }
+.mag-error, .mag-ok, .mag-warn, .t-warn { border-radius: 8px; padding: 14px 16px; box-shadow: none; line-height: 1.6; }
 .mag-error { color: var(--danger); border: 1px solid #A36973; background: #38272E; }
 .mag-ok { color: #A5DFBF; border: 1px solid #527A64; background: #20352C; }
-.mag-empty, .g-empty, .mag-empty-big, .mag-sub { color: var(--dim); }
-.mag-empty-big, .g-empty { padding: 38px 28px; border-radius: 12px; }
-.mag-empty-big h3, .g-empty b { font-size: 20px; color: var(--ink); font-weight: 600; }
+.mag-empty, .mag-empty-big, .mag-sub { color: var(--dim); }
+.mag-empty-big { padding: 38px 28px; border-radius: 12px; }
+.mag-empty-big h3 { font-size: 20px; color: var(--ink); font-weight: 600; }
 .mag-empty-big p { font-size: 14px; line-height: 1.7; }
 .mag-card, .t-side { border: 1px solid transparent; border-radius: 12px; background: var(--card); padding: 22px; box-shadow: none; }
 .mag-card-h { margin-bottom: 20px; gap: 15px; align-items: center; }
@@ -133,9 +133,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-tab, .mag-tabs .mag-tab, .mag-vtabs button { min-height: 38px; padding: 9px 14px; border: 1px solid transparent; border-radius: 7px; font: 550 13px/1.4 "Segoe UI",sans-serif; color: var(--dim); background: transparent; box-shadow: none; text-transform: none; letter-spacing: 0; }
 .mag-tab.on, .mag-tabs .mag-tab.on, .mag-vtabs button.on { background: var(--accent-soft); color: var(--ink); border: 1px solid #F94D4D54; box-shadow: none; }
 .mag-tab:hover, .mag-vtabs button:hover { background: var(--hair); color: var(--ink); }
-.g-ctx { top: var(--workspace-header); padding: 15px 32px; background: var(--paper); min-height: 60px; gap: 14px; border-color: var(--rule); }
-.g-ctx-name { font-size: 18px; font-weight: 600; }
-.g-ctx-code { color: var(--dim); }
 
 /* План ролика: по строке на объект или на участок нарезки. Карточка широкая и
    до этого пустовала, а «3 объекта» одним числом не говорят ни где они, ни
@@ -153,8 +150,8 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 
 /* Список прокручивается сам: на ролике с полусотней объектов карточка иначе
    растягивает вкладку тасок в полотно, по которому надо листать страницу. */
-.g-when, .g-vcard-note, .mag-src-mode { color: var(--dim); }
-.g-meter { border-radius: 5px; background: var(--hair); }
+.mag-src-mode { color: var(--dim); }
+
 .mag-vmode-pick { padding: 18px; background: var(--sunk); border-color: var(--rule); }
 .mag-vmode-pick.on { background: var(--accent-soft); border-color: var(--red); }
 .mag-vmode-body span, .mag-vmode-warn { color: var(--dim); }
@@ -172,9 +169,8 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .t-run-head h2 { font-size: 24px; font-weight: 600; letter-spacing: -.5px; }
 .t-run { gap: 24px; }
 .g-ged { position: fixed; top: var(--workspace-header); left: var(--workspace-width); right: 0; bottom: 0; grid-template-columns: 210px minmax(0,1fr) 290px; }
-.g-pal, .g-insp { background: var(--card); border-color: var(--rule); }
-.g-pal-search { padding: 16px; background: var(--card); border-color: var(--rule); }
-.g-pal-search input { min-height: 38px; font-size: 13px; border-color: var(--control-edge); border-radius: 8px; }
+.g-pal { background: var(--card); border-color: var(--rule); }
+
 .g-pal h4 { font: 600 12px/1.4 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; padding: 4px; color: var(--dim); }
 .g-pal-item { font-size: 13px; padding: 10px 16px; }
 .g-canvas-top { min-height: 64px; padding: 12px 18px; gap: 12px; flex-wrap: wrap; border-color: var(--rule); }
@@ -275,11 +271,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-ved-transport { flex-wrap: wrap; padding: 10px 15px; gap: 8px; }
 .mag-ved-time { font-size: 12px; }
 .mag-ved-ruler { margin: 0 14px; }
-.g-lanes { padding: 6px 14px 12px; max-height: 152px; }
-.g-lane { padding: 5px; }
-.g-lane-name { font-size: 12px; width: 132px; }
-.g-lane-name em { color: var(--dim); }
-.g-lane-track { border-color: var(--ed-edge); background: var(--sunk); }
+
 .mag-ved .mag-auto-bar { left: calc(50% - 120px); bottom: 275px; }
 .mag-ed.help .mag-ved-side { z-index: 41; }
 .mag-cv-frame { box-shadow: none; }
@@ -328,80 +320,77 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   100% { transform: translateX(0); }
 }
 
-.g-insp { padding: 20px; }
 .g-insp-name { font-size: 18px; font-weight: 600; }
-.g-field .k { font-size: 13px; color: var(--ink); }
-.g-field .hint, .g-insp-why { font-size: 12px; line-height: 1.6; color: var(--dim); }
+
 @media(min-width:1600px) {
   :root { --workspace-width: 232px; }
 }
 @media(max-width:1250px) {
   :root { --workspace-width: 190px; }
 
-  .mag-pass-nums > div { padding: 18px; }
-  .g-ged { grid-template-columns: 170px minmax(0,1fr) 250px; }
-  .g-canvas-top .sp { flex-wrap: wrap; gap: 8px; }
-  .mag-ved { grid-template-columns: 60px minmax(0,1fr) 280px; }
-  .mag-ed-rail { width: 60px; }
-  .mag-ed-side { width: 280px; }
-  .mag-ved-side { width: auto; padding: 15px 12px; }
-  .mag-ed-head { gap: 8px; padding: 9px 12px; }
-  .mag-ved-plan { max-width: 150px; white-space: normal; }
+.mag-pass-nums > div { padding: 18px; }
+.g-ged { grid-template-columns: 170px minmax(0,1fr) 250px; }
+.g-canvas-top .sp { flex-wrap: wrap; gap: 8px; }
+.mag-ved { grid-template-columns: 60px minmax(0,1fr) 280px; }
+.mag-ed-rail { width: 60px; }
+.mag-ed-side { width: 280px; }
+.mag-ved-side { width: auto; padding: 15px 12px; }
+.mag-ed-head { gap: 8px; padding: 9px 12px; }
+.mag-ved-plan { max-width: 150px; white-space: normal; }
 }
 @media(max-height:800px) and (min-width:801px) {
-  .mag-ed-head { min-height: 52px; }
-  .mag-ved-classes { max-height: 17vh; }
-  .mag-ved-side { gap: 8px; padding-block: 12px; }
-  .mag-ved-props { gap: 8px; padding-top: 12px; }
-  .mag-ved-props .mag-ved-note { font-size: 11px; }
-  .g-lanes { max-height: 125px; }
-  .mag-ved .mag-tool { min-height: 43px; }
+.mag-ed-head { min-height: 52px; }
+.mag-ved-classes { max-height: 17vh; }
+.mag-ved-side { gap: 8px; padding-block: 12px; }
+.mag-ved-props { gap: 8px; padding-top: 12px; }
+.mag-ved-props .mag-ved-note { font-size: 11px; }
+  
+.mag-ved .mag-tool { min-height: 43px; }
 }
 @media(max-width:900px) {
   :root { --workspace-width: 0px; --workspace-header: 56px; }
   /* Раздел не сжимается вместе с длинным названием проекта (сжатие делится
      пропорционально ширине — раздел уходил в 8 px), а держит свой потолок. */
-  .mag-pass-nums { grid-template-columns: repeat(2,minmax(0,1fr)); }
+.mag-pass-nums { grid-template-columns: repeat(2,minmax(0,1fr)); }
 
-  .g-ctx { position: static; flex-wrap: wrap; padding-inline: 20px; }
-  .g-ged { position: relative; inset: auto; height: calc(100dvh - 130px); min-height: 600px; grid-template-columns: 145px minmax(280px,1fr) 220px; overflow: auto; }
-  .mag-auth { grid-template-columns: 1fr 1fr; }
-  .mag-brand, .mag-panel { padding: 36px; }
-  .mag-brand h2 { font-size: 32px; }
-  .mag-ed-head { flex-wrap: wrap; }
-  .mag-ed-side { display: flex; width: 240px; }
+.g-ged { position: relative; inset: auto; height: calc(100dvh - 130px); min-height: 600px; grid-template-columns: 145px minmax(280px,1fr) 220px; overflow: auto; }
+.mag-auth { grid-template-columns: 1fr 1fr; }
+.mag-brand, .mag-panel { padding: 36px; }
+.mag-brand h2 { font-size: 32px; }
+.mag-ed-head { flex-wrap: wrap; }
+.mag-ed-side { display: flex; width: 240px; }
 }
 @media(max-width:600px) {
-  .mag-content-head, .workspace-project-head { flex-wrap: wrap; gap: 16px; }
-  .mag-content-head h1, .workspace-project-head h1 { font-size: 28px; }
-  .mag-pass-strip { grid-template-columns: 1fr; }
-  .mag-pass-export { grid-column: 1; grid-row: 3; justify-self: start; }
+.mag-content-head, .workspace-project-head { flex-wrap: wrap; gap: 16px; }
+.mag-content-head h1, .workspace-project-head h1 { font-size: 28px; }
+.mag-pass-strip { grid-template-columns: 1fr; }
+.mag-pass-export { grid-column: 1; grid-row: 3; justify-self: start; }
 
-  .mag-card, .t-side { padding: 18px; }
-  .mag-card-h { flex-wrap: wrap; }
-  .mag-modal { padding: 22px; max-width: calc(100vw - 24px); }
-  .mag-auth { grid-template-columns: 1fr; }
-  .mag-brand { padding: 28px; min-height: 240px; }
-  .mag-brand h2 { margin-top: 35px; max-width: 22ch; }
-  .mag-brand .mag-route { display: none; }
-  .mag-panel { padding: 32px 28px; }
-  .mag-table { min-width: 570px; }
-  .mag-card:has(> .mag-table) { overflow-x: auto; }
-  .mag-tabs, .mag-vtabs { overflow-x: auto; flex-wrap: nowrap; }
-  .mag-tabs > *, .mag-vtabs > * { flex-shrink: 0; white-space: nowrap; }
-  .t-row { flex-wrap: wrap; padding: 17px; }
+.mag-card, .t-side { padding: 18px; }
+.mag-card-h { flex-wrap: wrap; }
+.mag-modal { padding: 22px; max-width: calc(100vw - 24px); }
+.mag-auth { grid-template-columns: 1fr; }
+.mag-brand { padding: 28px; min-height: 240px; }
+.mag-brand h2 { margin-top: 35px; max-width: 22ch; }
+.mag-brand .mag-route { display: none; }
+.mag-panel { padding: 32px 28px; }
+.mag-table { min-width: 570px; }
+.mag-card:has(> .mag-table) { overflow-x: auto; }
+.mag-tabs, .mag-vtabs { overflow-x: auto; flex-wrap: nowrap; }
+.mag-tabs > *, .mag-vtabs > * { flex-shrink: 0; white-space: nowrap; }
+.t-row { flex-wrap: wrap; padding: 17px; }
 
-  .t-run { grid-template-columns: 1fr; }
-  .mag-ved { grid-template-columns: 52px minmax(0,1fr); grid-template-rows: auto minmax(240px,1fr) auto auto; overflow-y: auto; }
-  .mag-ved .mag-ed-rail { grid-row: 2/4; }
-  .mag-ved-stage { min-height: 240px; }
-  .mag-ved-side { grid-column: 1/-1; grid-row: 4; border-left: 0; border-top: 1px solid var(--rule); max-height: 500px; }
-  .mag-ved-bottom { max-height: none; }
-  .mag-ved .mag-tool { width: 39px; }
-  .mag-ed-side { width: 185px; padding: 12px; }
-  .mag-ed-head .mag-ed-plan { white-space: normal; }
-  .g-lane-name { width: 90px; font-size: 11px; }
-  .mag-ved .mag-auto-bar { left: 60px; bottom: 16px; }
+.t-run { grid-template-columns: 1fr; }
+.mag-ved { grid-template-columns: 52px minmax(0,1fr); grid-template-rows: auto minmax(240px,1fr) auto auto; overflow-y: auto; }
+.mag-ved .mag-ed-rail { grid-row: 2/4; }
+.mag-ved-stage { min-height: 240px; }
+.mag-ved-side { grid-column: 1/-1; grid-row: 4; border-left: 0; border-top: 1px solid var(--rule); max-height: 500px; }
+.mag-ved-bottom { max-height: none; }
+.mag-ved .mag-tool { width: 39px; }
+.mag-ed-side { width: 185px; padding: 12px; }
+.mag-ed-head .mag-ed-plan { white-space: normal; }
+  
+.mag-ved .mag-auto-bar { left: 60px; bottom: 16px; }
 }
 @media(prefers-reduced-motion:reduce) {
   *, *::before, *::after { animation-duration: .01ms!important; transition-duration: .01ms!important; scroll-behavior: auto!important; }
@@ -496,8 +485,8 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 
 @media (max-width: 560px) {
   /* На телефоне номера важнее подписей: стрелка говорит то же самое. */
-  .mag-pager-step { padding: 7px 10px; font-size: 0; gap: 0; }
-  .mag-pager-step > span { font-size: 14px; }
+.mag-pager-step { padding: 7px 10px; font-size: 0; gap: 0; }
+.mag-pager-step > span { font-size: 14px; }
 }
 
 /* Плашка полуавтомата над холстом: ожидание, ответ модели, отказ и повтор. */

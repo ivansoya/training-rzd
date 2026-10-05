@@ -1,30 +1,31 @@
-// Графы, подключённые к проекту.
+// «Аугментации» проекта: графы, подключённые ссылкой, — их предлагает мастер набора.
 //
 // Ссылкой, а не копией: удачный граф переносят из проекта в проект, и копия
-// разошлась бы с оригиналом на первой же правке. Править его можно только у
-// себя в библиотеке — здесь он читается.
+// разошлась бы с оригиналом на первой же правке. Правит граф только владелец.
 
-import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams } from "react-router-dom";
 import * as api from "../../api/aug";
-import { mult } from "./counts";
+import { useAuth } from "../auth/AuthGate";
+import { Button, Card, Empty, Input, LinkButton, MenuItem, Notice, PageHeader, Popover } from "../../ui";
 import { count } from "../ru";
-import Sep from "../Sep";
-import Banner from "../Banner";
+import { mult } from "./counts";
+import GraphTable from "./GraphTable";
+import { freeName } from "./look";
 
 export default function ProjectAug() {
-  const { code } = useParams<{ code: string }>();
+  const { code = "" } = useParams<{ code: string }>();
+  const navigate = useNavigate();
+  const { me } = useAuth();
   const [linked, setLinked] = useState<api.GraphSummary[] | null>(null);
   const [mine, setMine] = useState<api.GraphSummary[]>([]);
   const [role, setRole] = useState("viewer");
   const [error, setError] = useState<string | null>(null);
-  // Граф, над которым идёт запрос. Двойной щелчок по «Подключить» слал два
-  // запроса подряд; кнопка гаснет до ответа, сервер к тому же отвечает на
-  // повтор тем же подключением.
-  const [working, setWorking] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  // Идёт запрос: двойной щелчок по «Подключить» слал два подряд.
+  const [working, setWorking] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!code) return;
     try {
       const got = await api.projectGraphs(code);
       setLinked(got.graphs);
@@ -35,99 +36,99 @@ export default function ProjectAug() {
       setError((e as Error).message);
     }
   }, [code]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
-  useEffect(() => {
-    refresh();
-  }, [refresh]);
-
-  const act = async (id: string, call: () => Promise<unknown>) => {
+  const act = async (call: () => Promise<unknown>) => {
     if (working) return;
-    setWorking(id);
+    setWorking(true);
     try {
       await call();
     } catch (e) {
       setError((e as Error).message);
     }
     await refresh();
-    setWorking(null);
+    setWorking(false);
+  };
+
+  const back = `/projects/${code}/aug`;
+  const open = (id: string) => navigate(`/augment/${id}`, { state: { back } });
+
+  /** Новый граф — в библиотеку, сразу в проект и на холст. */
+  const create = async () => {
+    if (working) return;
+    setWorking(true);
+    try {
+      const taken = (await api.listGraphs("aug")).graphs.map((g) => g.name);
+      const got = await api.createGraph(freeName(taken));
+      await api.linkGraph(code, got.id);
+      open(got.id);
+    } catch (e) {
+      setError((e as Error).message);
+      setWorking(false);
+    }
   };
 
   const canEdit = role === "admin" || role === "editor";
+  const all = linked ?? [];
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    return needle ? all.filter((g) => g.name.toLowerCase().includes(needle)) : all;
+  }, [all, q]);
+  const desc = linked === null ? "Загружаю…" : all.length === 0 ? "Графы, по которым мастер набора размножает кадры"
+    : `${count(all.length, "граф подключён", "графа подключено", "графов подключено")} · их предлагает мастер набора`;
 
-  return (
-    <>
-      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
-
-      {linked === null ? null : linked.length === 0 ? (
-        <div className="mag-empty-big">
-          <b>К проекту не подключён ни один граф.</b>
-          <p>Граф живёт в вашей библиотеке и подключается сюда ссылкой.</p>
-          <Link to="/augment" className="mag-btn">
-            Открыть библиотеку
-          </Link>
-        </div>
-      ) : (
-        <div className="g-graphs">
-          {linked.map((g) => (
-            <div key={g.id} className="g-graph-card">
-              <span className="name">{g.name}</span>
-              {g.description && <span className="desc">{g.description}</span>}
-              <span className="foot">
-                <span>версия {g.version}</span>
-                {g.stats && <b>{mult(g.stats.multiplier)}</b>}
-                <span>{g.owner ?? "без владельца"}</span>
-              </span>
-              <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-                <Link to={`/augment/${g.id}`} className="mag-ghost">
-                  Открыть
-                </Link>
-                {canEdit && (
-                  <button
-                    type="button"
-                    className="mag-ghost"
-                    disabled={working !== null}
-                    onClick={() => code && act(g.id, () => api.unlinkGraph(code, g.id))}
-                  >
-                    Отключить
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {canEdit && mine.length > 0 && (
-        <>
-          <div className="g-label" style={{ margin: "24px 0 10px" }}>
-            Мои графы, не подключённые к проекту
-          </div>
-          <div className="t-rows">
+  const attach = canEdit && (
+    <Popover align="end" width={320} trigger={<Button icon="plus" disabled={working}>Подключить граф</Button>}>
+      {(close) => (<>
+        <div className="ui-pop-h">Мои графы</div>
+        {mine.length === 0 ? <p className="t-xs t-faint" style={{ padding: "4px 10px 8px" }}>Все ваши графы уже здесь</p> : (
+          <div className="gl-pick">
             {mine.map((g) => (
-              <div className="t-row" key={g.id}>
-                <div>
-                  <div className="name">{g.name}</div>
-                  <div className="meta">
-                    версия {g.version}
-                    {g.stats ? ` — ${mult(g.stats.multiplier)}` : ""} <Sep />{" "}
-                    {count(g.stats?.nodes ?? 0, "узел", "узла", "узлов")}
-                  </div>
-                </div>
-                <div className="right">
-                  <button
-                    type="button"
-                    className="mag-btn"
-                    disabled={working !== null}
-                    onClick={() => code && act(g.id, () => api.linkGraph(code, g.id))}
-                  >
-                    Подключить
-                  </button>
-                </div>
-              </div>
+              <MenuItem key={g.id} icon="workflow" disabled={working}
+                hint={[g.version ? `v${g.version}` : "только черновик", g.stats ? mult(g.stats.multiplier) : ""].filter(Boolean).join(" · ")}
+                onSelect={() => { close(); void act(() => api.linkGraph(code, g.id)); }}>{g.name}</MenuItem>
             ))}
           </div>
-        </>
+        )}
+        <div className="ui-pop-sep" />
+        <MenuItem icon="plus" onSelect={() => { close(); void create(); }} hint="В вашу библиотеку и сразу сюда">Новый граф</MenuItem>
+      </>)}
+    </Popover>
+  );
+
+  return (
+    <div className="page">
+      <PageHeader title="Аугментации" desc={desc} actions={<>
+        {all.length > 0 && <Input icon="search" className="gl-q" placeholder="Найти граф" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Найти граф" />}
+        <LinkButton variant="ghost" icon="workflow" to="/augment">Мои графы</LinkButton>
+        {attach}
+      </>} />
+      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+
+      {linked !== null && all.length === 0 && (
+        <div className="gl-empty">
+          <b>К проекту не подключён ни один граф</b>
+          <p>Граф живёт в библиотеке своего автора и подключается сюда ссылкой. Подключённые графы мастер набора
+            предлагает для train и val; обучение на наборе с графом идёт без встроенных аугментаций ultralytics.</p>
+          {canEdit && <div className="row">
+            <Button variant="primary" icon="plus" disabled={working} onClick={create}>Новый граф</Button>
+            {mine.length > 0 && attach}
+          </div>}
+        </div>
       )}
-    </>
+
+      {all.length > 0 && (
+        <Card flush className="gl-card">
+          {shown.length === 0 ? <Empty compact icon="search" title="Под поиск ничего не подошло" /> : (
+            <GraphTable graphs={shown} owner onOpen={(g) => open(g.id)} menu={(g, close) => (<>
+              <MenuItem icon="workflow" onSelect={() => { close(); open(g.id); }}
+                hint={g.owner_id !== me.user.id ? "Только смотреть: править может владелец" : undefined}>Открыть</MenuItem>
+              {canEdit && <MenuItem icon="x" danger disabled={working} onSelect={() => { close(); void act(() => api.unlinkGraph(code, g.id)); }}
+                hint="Граф останется в библиотеке, собранные наборы — как были">Отключить от проекта</MenuItem>}
+            </>)} />
+          )}
+        </Card>
+      )}
+    </div>
   );
 }
