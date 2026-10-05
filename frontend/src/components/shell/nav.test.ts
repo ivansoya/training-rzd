@@ -16,12 +16,13 @@ describe("sectionOf", () => {
     expect(at("/projects/VKZ/tags")).toEqual({ key: "classes", label: "Таги" });
   });
 
-  it("наборы и прогоны делят одну страницу по ?tab", () => {
+  it("наборы на /training, прогоны на /runs; старые адреса прогонов узнаются", () => {
     expect(at("/projects/VKZ/training").key).toBe("sets");
-    expect(at("/projects/VKZ/training", "?tab=sets").key).toBe("sets");
-    expect(at("/projects/VKZ/training", "?tab=runs").key).toBe("runs");
     expect(at("/projects/VKZ/training/new").key).toBe("sets");
     expect(at("/projects/VKZ/trainsets/s1").key).toBe("sets");
+    expect(at("/projects/VKZ/runs")).toEqual({ key: "runs", label: "Обучения" });
+    expect(at("/projects/VKZ/runs/14").key).toBe("runs");
+    expect(at("/projects/VKZ/training", "?tab=runs").key).toBe("runs");
     expect(at("/projects/VKZ/training/runs/r1").key).toBe("runs");
   });
 

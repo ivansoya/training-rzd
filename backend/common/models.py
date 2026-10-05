@@ -1381,14 +1381,21 @@ class TrainRun(Base, AuditMixin):
         sa.Index("ix_train_runs_project", "project_id", "created_at"),
         sa.Index("ix_train_runs_set", "set_id"),
         sa.Index(
-            "ix_train_runs_pick", "status", "created_at",
+            "ix_train_runs_pick", "status", "queued_at",
             postgresql_where=sa.text("status IN ('queued', 'waiting_gpu')"),
         ),
+        sa.UniqueConstraint("project_id", "number", name="uq_train_run_number"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
     project_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    # Номер в проекте: выдаётся при запуске, после удаления соседей не меняется
+    number: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    # Очередь идёт по нему: продолженный прогон встаёт в конец, а не по дате создания
+    queued_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
     )
     # Набор можно удалить, обучение при этом остаётся: веса и метрики уже
     # посчитаны. Пока ключ был RESTRICT, удаление падало после того, как

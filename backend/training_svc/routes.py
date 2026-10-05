@@ -8,13 +8,14 @@ import os
 import uuid
 
 from flask import Blueprint, Response, jsonify, request, send_file
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from common import config, gpu, live
 from common.auth import current_user, has_role, may_manage, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
-    GpuDevice, TrainEpoch, TrainRun, TrainSet, TrainSetFeed, User, utcnow,
+    AugGraph, AugGraphVersion, GpuDevice, Project, TrainEpoch, TrainRun, TrainSet,
+    TrainSetFeed, User, utcnow,
 )
 from common.web import InputError, int_field, json_body
 from common.storage import load_json
@@ -165,32 +166,99 @@ def kill_lease(lease_id):
 # --------------------------------------------------------------------------- #
 # Обучения
 # --------------------------------------------------------------------------- #
-def _best_epochs(db, runs):
-    """Лучшая эпоха для ранов, у которых она не записана.
+# Метрики карточек: по ним же разница с прошлым прогоном
+KPI = ("metrics/mAP50(B)", "metrics/mAP50-95(B)",
+       "metrics/precision(B)", "metrics/recall(B)")
+SPARK = 40
 
-    Бегун до 01.10.2026 искал в метриках эпохи ключ ``fitness``, а
-    ultralytics его оттуда выкидывает, — лучшая эпоха не записалась ни у
-    одного рана. Досчитываем при чтении по строкам эпох, данные не трогаем.
-    Одним запросом на весь список, а не по запросу на ран.
+
+def _num(v):
+    return isinstance(v, (int, float)) and v == v
+
+
+def _digest(db, runs):
+    """Лучшая эпоха, её метрики и ряд mAP50 — одним запросом на весь список.
+
+    Лучшую эпоху бегун до 01.10.2026 не записывал (искал ключ ``fitness``,
+    которого у ultralytics в метриках нет) — досчитываем по строкам эпох.
     """
-    need = [r for r in runs if r.best_epoch is None]
-    if not need:
+    if not runs:
         return {}
-    rows = {}
+    rows, secs = {}, {}
     for row in db.execute(
-        select(TrainEpoch.run_id, TrainEpoch.epoch, TrainEpoch.metrics)
-        .where(TrainEpoch.run_id.in_([r.id for r in need]))
+        select(TrainEpoch.run_id, TrainEpoch.epoch, TrainEpoch.metrics, TrainEpoch.seconds)
+        .where(TrainEpoch.run_id.in_([r.id for r in runs]))
     ):
-        rows.setdefault(row.run_id, []).append((row.epoch, row.metrics))
+        rows.setdefault(row.run_id, []).append((row.epoch, row.metrics or {}))
+        secs[row.run_id] = secs.get(row.run_id, 0.0) + (row.seconds or 0.0)
     out = {}
-    for run in need:
+    for run in runs:
         done = (run.summary or {}).get("epochs_done")
         last = min(int(done), run.epochs) if done else run.epochs
-        out[run.id] = metrics_lib.best_of(rows.get(run.id, []), run.task, last)
+        got = sorted((r for r in rows.get(run.id, []) if r[0] <= last), key=lambda r: r[0])
+        best = (run.best_epoch, run.best_fitness)
+        if best[0] is None:
+            best = metrics_lib.best_of(got, run.task, last)
+        at = dict(got).get(best[0], {}) if best[0] else {}
+        series = [round(float(m[KPI[0]]), 4) for _, m in got if _num(m.get(KPI[0]))]
+        if len(series) > SPARK:
+            step = len(series) / SPARK
+            series = [series[int(i * step)] for i in range(SPARK - 1)] + [series[-1]]
+        out[run.id] = {
+            "done": max((e for e, _ in got), default=0),
+            # Чистое время эпох: у продолженного «конец − начало» включало бы паузу
+            "seconds": round(secs.get(run.id, 0.0)),
+            "best": best,
+            "metrics": {k: float(at[k]) for k in KPI if _num(at.get(k))},
+            "spark": series,
+        }
+    return out
+
+
+def _graphs(db, set_ids):
+    """Графы обучающей половины каждого набора: имя и версия, без повторов."""
+    out = {}
+    ids = [i for i in set_ids if i]
+    if not ids:
+        return out
+    for row in db.execute(
+        select(TrainSetFeed.set_id, AugGraph.id, AugGraph.name, AugGraphVersion.version)
+        .join(AugGraphVersion, AugGraphVersion.id == TrainSetFeed.graph_version_id)
+        .join(AugGraph, AugGraph.id == AugGraphVersion.graph_id)
+        .where(TrainSetFeed.set_id.in_(ids), TrainSetFeed.part == "train")
+        .order_by(TrainSetFeed.position)
+    ):
+        have = out.setdefault(row.set_id, [])
+        item = {"id": str(row.id), "name": row.name, "version": row.version}
+        if item not in have:
+            have.append(item)
     return out
 
 
 WAITING = ("queued", "waiting_gpu", "preparing")
+
+
+def _find(db, project, run_id):
+    """Прогон по номеру в проекте или по uuid."""
+    if str(run_id).isdigit():
+        return db.execute(select(TrainRun).where(
+            TrainRun.project_id == project.id, TrainRun.number == int(run_id)
+        )).scalar_one_or_none()
+    run = db.get(TrainRun, _uuid(run_id))
+    return run if run is not None and run.project_id == project.id else None
+
+
+def _resumable(run, done):
+    """Почему нельзя продолжить, или None — можно. done — законченных эпох."""
+    if run.status not in ("stopped", "error"):
+        return "Продолжить можно только остановленное или упавшее обучение."
+    if run.set_id is None:
+        return "Набор удалён — учиться не на чем."
+    if done >= run.epochs:
+        return "Все эпохи уже пройдены."
+    if not os.path.isfile(trainer.last_checkpoint(run)):
+        return "Ни одна эпоха не закончилась — продолжать не с чего."
+    return None
 
 
 def _queue_reason(db, run):
@@ -200,8 +268,8 @@ def _queue_reason(db, run):
     ahead = db.execute(
         select(TrainRun).where(
             TrainRun.status.in_(("queued", "waiting_gpu", "preparing", "running", "stopping")),
-            TrainRun.created_at < run.created_at,
-        ).order_by(TrainRun.created_at)
+            TrainRun.queued_at < run.queued_at,
+        ).order_by(TrainRun.queued_at)
     ).scalars().all()
     if not ahead:
         return "Ждёт свободного исполнителя — начнётся через несколько секунд."
@@ -209,21 +277,23 @@ def _queue_reason(db, run):
     return f"В очереди {len(ahead) + 1}-м: впереди обучение «{busy.name}»."
 
 
-def _run_view(db, run, *, full=False, best=None):
+def _run_view(db, run, *, full=False, digest=None, graphs=None):
     # Набор могли удалить: обучение живёт дальше, с весами и метриками.
     tset = db.get(TrainSet, run.set_id) if run.set_id else None
-    best_epoch, best_fitness = (run.best_epoch, run.best_fitness)
-    if best_epoch is None:
-        best_epoch, best_fitness = (best or _best_epochs(db, [run])).get(
-            run.id, (None, None))
+    dig = (digest if digest is not None else _digest(db, [run])).get(run.id) or {}
+    best_epoch, best_fitness = dig.get("best") or (None, None)
+    if graphs is None:
+        graphs = _graphs(db, [run.set_id])
     author = db.get(User, run.created_by) if run.created_by else None
     got = {
         "id": str(run.id),
+        "number": run.number,
         "name": run.name,
         "status": run.status,
         "queue_reason": run.queue_reason or _queue_reason(db, run),
         "task": run.task,
         "base_model": run.base_model,
+        "imgsz": (run.params or {}).get("imgsz"),
         # До старта устройство не выбрано: «cpu» в колонке — заглушка, а не решение.
         "device": None if run.status in WAITING else run.device,
         "epochs": run.epochs,
@@ -236,17 +306,23 @@ def _run_view(db, run, *, full=False, best=None):
         "batch_metrics": run.batch_metrics,
         "best_epoch": best_epoch,
         "best_fitness": best_fitness,
+        "best_metrics": dig.get("metrics") or {},
+        "spark": dig.get("spark") or [],
+        "train_seconds": dig.get("seconds") or 0,
         "peak_vram_mb": run.peak_vram_mb,
         "has_weights": bool(run.weights_path),
         "weights_bytes": run.weights_bytes,
         "error": run.error,
         "author": author.display_name if author else None,
         "created_at": run.created_at.isoformat(),
+        "queued_at": run.queued_at.isoformat() if run.queued_at else None,
         "started_at": run.started_at.isoformat() if run.started_at else None,
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
+        "resumable": _resumable(run, dig.get("done", 0)) is None,
         "set": {
             "id": str(tset.id), "name": tset.name, "kind": tset.kind,
             "counts": tset.counts,
+            "graphs": graphs.get(tset.id, []),
         } if tset else None,
     }
     if full:
@@ -255,7 +331,33 @@ def _run_view(db, run, *, full=False, best=None):
         got["confusion"] = run.confusion
         got["curves"] = run.curves
         got["per_class"] = run.per_class
+        got["previous"] = _previous(db, run)
     return got
+
+
+def _next_number(db, project):
+    """Следующий номер прогона; строка проекта под замком — два запуска разом не возьмут один."""
+    db.execute(select(Project.id).where(Project.id == project.id).with_for_update())
+    top = db.execute(select(func.max(TrainRun.number)).where(
+        TrainRun.project_id == project.id)).scalar()
+    return (top or 0) + 1
+
+
+def _previous(db, run):
+    """Прошлый законченный прогон на том же наборе — для разницы метрик."""
+    if run.set_id is None:
+        return None
+    prev = db.execute(
+        select(TrainRun).where(
+            TrainRun.set_id == run.set_id, TrainRun.status == "done",
+            TrainRun.created_at < run.created_at,
+        ).order_by(TrainRun.created_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    if prev is None:
+        return None
+    dig = _digest(db, [prev]).get(prev.id) or {}
+    return {"id": str(prev.id), "number": prev.number, "name": prev.name,
+            "best_metrics": dig.get("metrics") or {}}
 
 
 @bp.get("/api/projects/<code>/runs")
@@ -268,9 +370,10 @@ def list_runs(code):
             select(TrainRun).where(TrainRun.project_id == project.id)
             .order_by(TrainRun.created_at.desc())
         ).scalars().all()
-        best = _best_epochs(db, rows)
+        digest = _digest(db, rows)
+        graphs = _graphs(db, {r.set_id for r in rows})
         return jsonify({
-            "runs": [_run_view(db, r, best=best) for r in rows],
+            "runs": [_run_view(db, r, digest=digest, graphs=graphs) for r in rows],
             "role": role_in(db, user, project),
         })
     finally:
@@ -339,7 +442,9 @@ def start_run(code):
 
         name = (data.get("name") or f"{tset.name} · {model_id}").strip()
         run = TrainRun(
-            project_id=project.id, set_id=tset.id, name=name[:255],
+            project_id=project.id, number=_next_number(db, project),
+            set_id=tset.id, name=name[:255],
+            queued_at=utcnow(),
             base_model=model_id, task=task,
             base_weights_path=spec,
             params=params, device="cpu", status="queued",
@@ -359,8 +464,8 @@ def get_run(code, run_id):
     if err:
         return err
     try:
-        run = db.get(TrainRun, _uuid(run_id))
-        if run is None or run.project_id != project.id:
+        run = _find(db, project, run_id)
+        if run is None:
             return jsonify({"error": "Обучение не найдено."}), 404
         # Кнопки «Остановить» и «Удалить» — только тому, кому сервер их позволит.
         return jsonify({**_run_view(db, run, full=True),
@@ -375,8 +480,8 @@ def run_epochs(code, run_id):
     if err:
         return err
     try:
-        run = db.get(TrainRun, _uuid(run_id))
-        if run is None or run.project_id != project.id:
+        run = _find(db, project, run_id)
+        if run is None:
             return jsonify({"error": "Обучение не найдено."}), 404
         since = request.args.get("since", type=int) or 0
         rows = db.execute(
@@ -398,8 +503,8 @@ def stop_run(code, run_id):
     if err:
         return err
     try:
-        run = db.get(TrainRun, _uuid(run_id))
-        if run is None or run.project_id != project.id:
+        run = _find(db, project, run_id)
+        if run is None:
             return jsonify({"error": "Обучение не найдено."}), 404
         if not may_manage(db, user, project, run):
             return jsonify({"error": NOT_YOURS}), 403
@@ -431,14 +536,52 @@ def stop_run(code, run_id):
         db.close()
 
 
+@bp.post("/api/projects/<code>/runs/<run_id>/resume")
+def resume_run(code, run_id):
+    """Продолжить остановленное или упавшее обучение с last.pt — в конец очереди."""
+    db, project, user, err = _resolve(code, "editor")
+    if err:
+        return err
+    try:
+        run = _find(db, project, run_id)
+        if run is None:
+            return jsonify({"error": "Обучение не найдено."}), 404
+        if not may_manage(db, user, project, run):
+            return jsonify({"error": NOT_YOURS}), 403
+        dig = _digest(db, [run]).get(run.id) or {}
+        why = _resumable(run, dig.get("done", 0))
+        if why:
+            return jsonify({"error": why}), 409
+        run.status = "queued"
+        run.queued_at = utcnow()
+        run.cancel_requested = False
+        run.error = None
+        run.queue_reason = None
+        run.finished_at = None
+        run.phase = None
+        run.pid = None
+        run.worker_id = None
+        run.gpu_lease_id = None
+        run.current_batch = 0
+        run.total_batches = None
+        run.val_batch = 0
+        run.val_total = None
+        run.batch_metrics = None
+        db.commit()
+        live.notify(db, "run", run.id, project.id, s="queued")
+        return jsonify(_run_view(db, run)), 202
+    finally:
+        db.close()
+
+
 @bp.delete("/api/projects/<code>/runs/<run_id>")
 def delete_run(code, run_id):
     db, project, user, err = _resolve(code, "editor")
     if err:
         return err
     try:
-        run = db.get(TrainRun, _uuid(run_id))
-        if run is None or run.project_id != project.id:
+        run = _find(db, project, run_id)
+        if run is None:
             return jsonify({"error": "Обучение не найдено."}), 404
         if not may_manage(db, user, project, run):
             return jsonify({"error": NOT_YOURS}), 403
@@ -465,8 +608,8 @@ def run_weights(code, run_id):
     if err:
         return err
     try:
-        run = db.get(TrainRun, _uuid(run_id))
-        if run is None or run.project_id != project.id or not run.weights_path:
+        run = _find(db, project, run_id)
+        if run is None or not run.weights_path:
             return jsonify({"error": "Весов нет."}), 404
         path = os.path.join(config.DATA_DIR, run.weights_path)
         if not os.path.isfile(path):

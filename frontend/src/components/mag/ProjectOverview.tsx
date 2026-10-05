@@ -294,7 +294,7 @@ function RunCard({ run, code }: { run: Overview["latest_run"]; code: string }) {
       desc={<>{run.model}{run.imgsz ? ` · ${run.imgsz} px` : ""} · эпоха {run.epoch} из {run.epochs}</>}
       actions={<>
         <Badge tone={tone || undefined} live={run.status === "running"}>{label}</Badge>
-        <LinkButton variant="ghost" size="sm" to={`/projects/${code}/training/runs/${run.id}`}>Открыть</LinkButton>
+        <LinkButton variant="ghost" size="sm" to={`/projects/${code}/runs/${run.id}`}>Открыть</LinkButton>
       </>}>
       <div className="stack-v">
         {run.map50.some((v) => v != null) ? (
@@ -326,7 +326,7 @@ function ActivityCard({ data, code }: { data: Overview; code: string }) {
               <span>
                 {describeTaskEvent(a.kind, a.payload)}
                 {a.task && <> · <Link to={`/projects/${code}/tasks/${a.task.id}`}>{a.task.name}</Link></>}
-                {a.run && <> · <Link to={`/projects/${code}/training/runs/${a.run.id}`}>к прогону</Link></>}
+                {a.run && <> · <Link to={`/projects/${code}/runs/${a.run.id}`}>к обучению</Link></>}
               </span>
               <span className="feed-t" title={new Date(a.at).toLocaleString("ru-RU")}>{ago(a.at)}</span>
             </li>

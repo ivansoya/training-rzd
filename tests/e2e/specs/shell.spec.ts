@@ -19,8 +19,8 @@ test("каркас: сайдбар, крошки, переключатель и 
   await expect(page).toHaveTitle(new RegExp(`^${name} — Классы`));
 
   // Наборы и прогоны — одна страница, раздел по ?tab
-  await nav.getByRole("link", { name: "Прогоны" }).click();
-  await expect(nav.getByRole("link", { name: "Прогоны" })).toHaveAttribute("aria-current", "page");
+  await nav.getByRole("link", { name: "Обучения" }).click();
+  await expect(nav.getByRole("link", { name: "Обучения" })).toHaveAttribute("aria-current", "page");
 
   await page.getByRole("button", { name: "Сменить проект" }).click();
   await expect(page.getByRole("button", { name: /Все проекты/ })).toBeVisible();

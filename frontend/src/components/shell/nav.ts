@@ -32,10 +32,10 @@ export const PROJECT_GROUPS: { title: string; items: NavItem[] }[] = [
   {
     title: "Обучение",
     items: [
-      { key: "sets", label: "Наборы", icon: "layers", to: "/training?tab=sets",
+      { key: "sets", label: "Наборы", icon: "layers", to: "/training",
         match: /^\/(training\/?$|training\/new|trainsets\/)/ },
-      { key: "runs", label: "Прогоны", icon: "activity", to: "/training?tab=runs",
-        match: /^\/training\/runs\// },
+      { key: "runs", label: "Обучения", icon: "activity", to: "/runs",
+        match: /^\/(runs|training\/runs)(\/|$)/ },
     ],
   },
 ];
@@ -57,9 +57,9 @@ export function sectionOf(pathname: string, search: string, code: string | undef
     if (pathname.toLowerCase().startsWith(base.toLowerCase())) {
       if (/^\/import\/?$/.test(rest)) return { key: "overview", label: "Импорт" };
       if (/^\/tags(\/|$)/.test(rest)) return { key: "classes", label: "Таги" };
-      // Наборы и прогоны — одна страница, раздел выбирает ?tab
+      // Старый адрес прогонов: /training?tab=runs перенаправляется на /runs
       if (/^\/training\/?$/.test(rest) && new URLSearchParams(search).get("tab") === "runs") {
-        return { key: "runs", label: "Прогоны" };
+        return { key: "runs", label: "Обучения" };
       }
       for (const g of PROJECT_GROUPS) {
         for (const it of g.items) {

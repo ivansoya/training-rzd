@@ -111,7 +111,7 @@ def main():
         return
 
     run.status = "running"
-    run.started_at = utcnow()
+    run.started_at = run.started_at or utcnow()
     run.pid = os.getpid()
     db.commit()
     live.notify(db, "run", run.id, run.project_id, s="running")
@@ -147,10 +147,17 @@ def main():
             run.lease_until = utcnow()
             db.commit()
 
-        spec = trainer.resolve_weights(
-            run.base_weights_path or run.base_model, on_progress=fetching
-        )
-        model = YOLO(spec)
+        # Продолжение: last.pt уже есть — ultralytics берёт из него эпоху, оптимизатор и данные
+        last_pt = trainer.last_checkpoint(run)
+        resume = os.path.isfile(last_pt)
+        if resume:
+            spec = run.base_weights_path or run.base_model
+            model = YOLO(last_pt)
+        else:
+            spec = trainer.resolve_weights(
+                run.base_weights_path or run.base_model, on_progress=fetching
+            )
+            model = YOLO(spec)
 
         hot = {"last": 0.0, "epoch_started": time.time()}
         # Эпохи кончились — дальше идёт итоговая проверка ultralytics. Она
@@ -296,6 +303,8 @@ def main():
             device=device, plots=False, verbose=False, augment=False,
             amp=not is_cpu, cache=False,
         )
+        if resume:
+            overrides["resume"] = True
         results = model.train(**overrides)
 
         best = os.path.join(out_dir, "train", "weights", "best.pt")

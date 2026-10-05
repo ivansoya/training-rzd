@@ -119,7 +119,7 @@ def claim_run(db):
     run = db.execute(
         select(TrainRun)
         .where(TrainRun.status.in_(("queued", "waiting_gpu")))
-        .order_by(TrainRun.created_at)
+        .order_by(TrainRun.queued_at)
         .limit(1)
         .with_for_update(skip_locked=True)
     ).scalar_one_or_none()

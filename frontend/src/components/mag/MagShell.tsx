@@ -17,6 +17,9 @@ const readLast = () => { try { return localStorage.getItem(LAST); } catch { retu
 const writeLast = (code: string) => { try { localStorage.setItem(LAST, code); } catch { /* приватное окно */ } };
 
 /** Каркас никогда не трансформирует детей: редакторы меряют слои в координатах окна. */
+/** «№14» по адресу прогона; uuid старой ссылки — просто «Прогон», пока страница не подменит адрес. */
+const runCrumb = (id: string | undefined) => (id && /^\d+$/.test(id) ? `№${id}` : "Обучение");
+
 export default function MagShell({ children }: { children: ReactNode }) {
   const { me, refresh } = useAuth();
   const { pathname, search } = useLocation();
@@ -130,6 +133,10 @@ export default function MagShell({ children }: { children: ReactNode }) {
                 <Icon name="chevR" size={14} />
                 {section.key === "overview" && section.label === "Обзор"
                   ? <b>{current.name}</b>
+                  : matchPath("/projects/:code/runs/:runId", pathname)
+                    ? <><Link to={`/projects/${current.code}`}>{current.name}</Link>
+                      <Icon name="chevR" size={14} /><Link to={`/projects/${current.code}/runs`}>{section.label}</Link>
+                      <Icon name="chevR" size={14} /><b>{runCrumb(matchPath("/projects/:code/runs/:runId", pathname)?.params.runId)}</b></>
                   : matchPath("/projects/:code/tasks/:taskId", pathname)
                     ? <><Link to={`/projects/${current.code}`}>{current.name}</Link>
                       <Icon name="chevR" size={14} /><Link to={`/projects/${current.code}/tasks`}>{section.label}</Link>

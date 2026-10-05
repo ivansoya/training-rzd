@@ -9,7 +9,6 @@ import AugGraphList from "./components/aug/AugGraphList";
 import HardwarePage from "./components/hardware/HardwarePage";
 import ProjectAug from "./components/aug/ProjectAug";
 import TrainingHome from "./components/training/TrainingHome";
-import TrainRunPage from "./components/training/TrainRunPage";
 import TrainSetWizard from "./components/training/TrainSetWizard";
 import AuthGate from "./components/auth/AuthGate";
 import ConfirmPage from "./components/auth/ConfirmPage";
@@ -26,6 +25,9 @@ import ProjectShell from "./components/mag/ProjectShell";
 import TaskBoard from "./components/mag/tasks/TaskBoard";
 import ProjectsPage from "./components/mag/ProjectsPage";
 import TaskPage from "./components/mag/tasks/TaskPage";
+import RunHistory from "./components/mag/runs/RunHistory";
+import RunPage from "./components/mag/runs/RunPage";
+import { RunRedirect } from "./components/mag/runs/redirect";
 import TrainSetView from "./components/training/TrainSetView";
 import "./styles/common.css";
 import "./styles/auth.css";
@@ -97,6 +99,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="tasks" element={<TaskBoard />} />
                   <Route path="aug" element={<ProjectAug />} />
                   <Route path="training" element={<TrainingHome />} />
+                  <Route path="runs" element={<RunHistory />} />
+                  <Route path="runs/:runId" element={<RunPage />} />
+                  <Route path="training/runs/:runId" element={<RunRedirect />} />
                   {/* Старый адрес датасета ведёт в общую галерею на его группу */}
                   <Route path="datasets/:datasetId" element={<DatasetRedirect />} />
                   <Route path="trainsets/:setId" element={<TrainSetView />} />
@@ -108,16 +113,6 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                       <RoleGate need="editor" what="Собирать обучающие наборы">
                         <TrainSetWizard />
                       </RoleGate>
-                    </MagShell>
-                  }
-                />
-                <Route
-                  path="/projects/:code/training/runs/:runId"
-                  element={
-                    <MagShell>
-                      <div className="mag-content">
-                        <TrainRunPage />
-                      </div>
                     </MagShell>
                   }
                 />

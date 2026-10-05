@@ -204,9 +204,9 @@ def test_редактор_не_удаляет_чужое_обучение(api, d
     with db.cursor() as cur:
         cur.execute(
             "INSERT INTO train_runs (id, project_id, name, base_model, task, params, device,"
-            " status, epochs, created_at, created_by)"
+            " status, epochs, created_at, queued_at, number, created_by)"
             " SELECT gen_random_uuid(), p.id, 'чужое', 'yolo11n.pt', 'detect', '{}', 'cuda:0',"
-            " 'done', 1, now(), m.user_id FROM projects p JOIN project_members m"
+            " 'done', 1, now(), now(), 1, m.user_id FROM projects p JOIN project_members m"
             " ON m.project_id = p.id AND m.role = 'admin' WHERE p.code = %s RETURNING id",
             (project["code"],),
         )

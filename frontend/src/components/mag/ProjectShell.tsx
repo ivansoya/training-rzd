@@ -44,7 +44,8 @@ export default function ProjectShell() {
   const atClasses = Boolean(useMatch("/projects/:code/classes")) || Boolean(useMatch("/projects/:code/tags"));
   const atMembers = Boolean(useMatch("/projects/:code/members"));
   const atTasks = Boolean(useMatch("/projects/:code/tasks"));
-  const redesigned = atOverview || atImport || atDatasets || atClasses || atMembers || atTasks;
+  const atRuns = Boolean(useMatch("/projects/:code/runs")) || Boolean(useMatch("/projects/:code/runs/:runId"));
+  const redesigned = atOverview || atImport || atDatasets || atClasses || atMembers || atTasks || atRuns;
 
   const refresh = useCallback(async () => {
     if (!code) return;

@@ -1,18 +1,11 @@
-// Раздел обучения проекта: наборы и обучения на них.
-//
-// Живая связь одна на вкладку: она приносит «изменился такой-то ран», а строку
-// страница дочитывает сама. Соединение на каждое обучение занимало бы поток
-// сервера на всё время прогона, причём девять из десяти — впустую.
+// Обучающие наборы проекта. Прогоны живут отдельно — /runs; «Учить» открывает окно запуска.
 
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
-import * as runsApi from "../../api/runs";
+import { Link, Navigate, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import * as setsApi from "../../api/trainsets";
-import type { Run } from "../../api/runs";
 import type { TrainSet } from "../../api/trainsets";
 import { useLive } from "../../live/LiveProvider";
-import StartRunModal from "./StartRunModal";
-import { progress, stageText } from "./runMath";
+import RunDialog from "../mag/runs/RunDialog";
 import Sep from "../Sep";
 import Banner from "../Banner";
 
@@ -39,41 +32,25 @@ const SET_LOOK: Record<string, [string, string]> = {
   deleting: ["wait", "удаляется"],
 };
 
-const RUN_LOOK: Record<string, [string, string]> = {
-  queued: ["wait", "в очереди"],
-  waiting_gpu: ["wait", "ждёт видеокарту"],
-  preparing: ["run", "готовится"],
-  running: ["run", "идёт"],
-  stopping: ["wait", "останавливается"],
-  done: ["ok", "готово"],
-  stopped: ["idle", "остановлено"],
-  error: ["bad", "ошибка"],
-};
-
 export default function TrainingHome() {
   const { code } = useParams<{ code: string }>();
-  const [search, setSearch] = useSearchParams();
-  const tab = search.get("tab") === "runs" ? "runs" : "sets";
+  const [search] = useSearchParams();
+  const navigate = useNavigate();
 
   // null — ответа ещё нет. С пустым массивом до ответа на полсекунды
   // мелькало «Обучающих наборов пока нет» у проекта с десятком наборов.
   const [sets, setSets] = useState<TrainSet[] | null>(null);
-  const [runs, setRuns] = useState<Run[] | null>(null);
   // Набор, который сейчас удаляется по щелчку: двойной щелчок слал два DELETE.
   const [removing, setRemoving] = useState<string | null>(null);
   const [role, setRole] = useState("viewer");
   const [error, setError] = useState<string | null>(null);
-  const [starting, setStarting] = useState<TrainSet | null>(null);
+  const [starting, setStarting] = useState<{ setId: string } | null>(null);
 
   const refresh = useCallback(async () => {
     if (!code) return;
     try {
-      const [s, r] = await Promise.all([
-        setsApi.listSets(code),
-        runsApi.listRuns(code),
-      ]);
+      const s = await setsApi.listSets(code);
       setSets(s.sets);
-      setRuns(r.runs);
       setRole(s.role);
       setError(null);
     } catch (e) {
@@ -85,42 +62,29 @@ export default function TrainingHome() {
     refresh();
   }, [refresh]);
 
-  // Одна подписка на всё: «пересчитай всё» раньше будило и её, и подписки
-  // на обучения и сборки — четыре одинаковых запроса на одно событие.
   useLive("*", (event) => {
-    if (["run", "prep", "*"].includes(event.k)) refresh();
+    if (["prep", "*"].includes(event.k)) refresh();
   });
 
-  // Пока что-то собирается или учится, страница обновляется сама даже без
-  // живой связи: сборка не шлёт события так часто, как обучение.
+  // Пока что-то собирается, страница обновляется сама и без живой связи
   useEffect(() => {
-    const busy =
-      (sets ?? []).some((s) => ["building", "queued", "deleting"].includes(s.status)) ||
-      (runs ?? []).some((r) => !["done", "error", "stopped"].includes(r.status));
+    const busy = (sets ?? []).some((s) => ["building", "queued", "deleting"].includes(s.status));
     if (!busy) return;
     const timer = window.setInterval(refresh, 2500);
     return () => window.clearInterval(timer);
-  }, [sets, runs, refresh]);
+  }, [sets, refresh]);
 
   const canEdit = role === "admin" || role === "editor";
+
+  if (search.get("tab") === "runs") return <Navigate replace to={`/projects/${code}/runs`} />;
 
   return (
     <>
       <div className="t-tabs">
-        <button
-          type="button"
-          className={`t-tab${tab === "sets" ? " on" : ""}`}
-          onClick={() => setSearch({})}
-        >
+        <span className="t-tab on">
           Наборы <b>{sets?.length ?? "—"}</b>
-        </button>
-        <button
-          type="button"
-          className={`t-tab${tab === "runs" ? " on" : ""}`}
-          onClick={() => setSearch({ tab: "runs" })}
-        >
-          Обучения <b>{runs?.length ?? "—"}</b>
-        </button>
+        </span>
+        <Link className="t-tab" to={`/projects/${code}/runs`}>Обучения</Link>
         {canEdit && (
           <Link
             to={`/projects/${code}/training/new`}
@@ -134,7 +98,7 @@ export default function TrainingHome() {
 
       {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
 
-      {tab === "sets" && sets &&
+      {sets &&
         (sets.length === 0 ? (
           <div className="mag-empty-big">
             <b>Обучающих наборов пока нет.</b>
@@ -223,7 +187,7 @@ export default function TrainingHome() {
                       <button
                         type="button"
                         className="mag-btn"
-                        onClick={() => setStarting(s)}
+                        onClick={() => setStarting({ setId: s.id })}
                       >
                         Учить
                       </button>
@@ -262,78 +226,12 @@ export default function TrainingHome() {
           </div>
         ))}
 
-      {tab === "runs" && runs &&
-        (runs.length === 0 ? (
-          <div className="mag-empty-big">
-            <b>Обучений пока не было.</b>
-            <p>Соберите набор и запустите на нём обучение.</p>
-          </div>
-        ) : (
-          <div className="t-rows">
-            {runs.map((r) => {
-              const [look, label] = RUN_LOOK[r.status] ?? ["idle", r.status];
-              const busy = ["running", "preparing", "stopping"].includes(r.status);
-              return (
-                <Link
-                  className="t-row"
-                  key={r.id}
-                  to={`/projects/${code}/training/runs/${r.id}`}
-                >
-                  <div>
-                    <div className="name">
-                      {r.name}
-                      <span className={`t-pill ${look}`}>
-                        <i />
-                        {label}
-                        {busy && ` — ${stageText(r)}`}
-                      </span>
-                    </div>
-                    <div className="meta">
-                      {r.base_model} <Sep /> {r.device ?? "ещё не стартовал"} <Sep />{" "}
-                      {r.set ? `набор «${r.set.name}»` : "набор удалён"}
-                      {r.author ? ` — ${r.author}` : ""}
-                      {r.best_epoch !== null && (
-                        <>
-                          {" "}
-                          <Sep /> лучшая эпоха <b>{r.best_epoch}</b>
-                        </>
-                      )}
-                    </div>
-                    {r.status === "waiting_gpu" && r.queue_reason && (
-                      <div className="meta" style={{ color: "var(--skip)" }}>
-                        {r.queue_reason}
-                      </div>
-                    )}
-                    {busy && (
-                      <div className="t-bar">
-                        <i
-                          className="done"
-                          style={{
-                            width: `${progress(r) * 100}%`,
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <div className="right">
-                    {r.has_weights && <span className="t-pill ok">веса</span>}
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        ))}
-
       {starting && code && (
-        <StartRunModal
+        <RunDialog
           code={code}
-          set={starting}
+          seed={starting}
           onClose={() => setStarting(null)}
-          onStarted={() => {
-            setStarting(null);
-            setSearch({ tab: "runs" });
-            refresh();
-          }}
+          onStarted={(r) => navigate(`/projects/${code}/runs/${r.number}`)}
         />
       )}
     </>

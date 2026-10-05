@@ -65,7 +65,7 @@ export default function SearchBox({ projects, project }: {
     }
     if (runs.status === "fulfilled") {
       for (const r of runs.value.runs) {
-        items.push({ group: "Прогоны", label: r.name, hint: r.base_model, to: `${base}/training/runs/${r.id}`, icon: "activity" });
+        items.push({ group: "Обучения", label: r.number ? `№${r.number} · ${r.name}` : r.name, hint: r.base_model, to: `${base}/runs/${r.number ?? r.id}`, icon: "activity" });
       }
     }
     loading.current = null;

@@ -454,6 +454,13 @@ def beat_of(run):
     return run.lease_until or run.started_at or run.created_at
 
 
+def last_checkpoint(run) -> str:
+    """last.pt прогона: с него продолжают остановленное обучение."""
+    from common import config
+
+    return os.path.join(config.run_dir(run.project_id, run.id), "train", "weights", "last.pt")
+
+
 def adopt_weights(run) -> bool:
     """Веса прерванного обучения — в строку рана, иначе их не скачать.
 

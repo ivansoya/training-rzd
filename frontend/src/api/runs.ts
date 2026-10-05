@@ -42,13 +42,22 @@ export interface ParamSpec {
 
 export type ParamValue = number | string | boolean;
 
+/** Лучшая эпоха: mAP50, mAP50-95, точность, полнота — ключами ultralytics. */
+export type KpiMetrics = Partial<Record<
+  "metrics/mAP50(B)" | "metrics/mAP50-95(B)" | "metrics/precision(B)" | "metrics/recall(B)", number>>;
+
+export interface GraphRef { id: string; name: string; version: number }
+
 export interface Run {
   id: string;
+  /** Номер в проекте, не меняется после удаления соседей. */
+  number: number;
   name: string;
   status: RunStatus;
   queue_reason: string | null;
   task: "detect" | "segment";
   base_model: string;
+  imgsz: number | null;
   /** null — ещё не стартовал, устройство не выбрано. */
   device: string | null;
   epochs: number;
@@ -63,12 +72,20 @@ export interface Run {
   batch_metrics: Record<string, number> | null;
   best_epoch: number | null;
   best_fitness: number | null;
+  best_metrics: KpiMetrics;
+  /** mAP50 по эпохам, прорежено до 40 точек — для спарклайна. */
+  spark: number[];
+  /** Сумма времени эпох, секунды: у продолженного без паузы между попытками. */
+  train_seconds: number;
+  /** Можно продолжить с last.pt. */
+  resumable: boolean;
   peak_vram_mb: number | null;
   has_weights: boolean;
   weights_bytes: number | null;
   error: string | null;
   author: string | null;
   created_at: string;
+  queued_at: string | null;
   started_at: string | null;
   finished_at: string | null;
   set: {
@@ -76,12 +93,16 @@ export interface Run {
     name: string;
     kind: string;
     counts: Record<string, number> | null;
+    /** Графы обучающей половины; пусто — набор без графа. */
+    graphs: GraphRef[];
   } | null;
   params?: Record<string, unknown>;
   summary?: Record<string, number> | null;
   confusion?: { matrix: number[][]; names: string[] } | null;
   curves?: CurveSeries[] | null;
   per_class?: PerClass | null;
+  /** Прошлый законченный прогон на том же наборе — для разницы метрик. */
+  previous?: { id: string; number: number; name: string; best_metrics: KpiMetrics } | null;
   /** Можно ли остановить и удалить: автор или админ проекта. */
   can_manage?: boolean;
 }
@@ -165,6 +186,9 @@ export const runEpochs = (code: string, id: string, since = 0) =>
 
 export const stopRun = (code: string, id: string) =>
   post<{ ok: true; status: RunStatus }>(`projects/${code}/runs/${id}/stop`);
+
+export const resumeRun = (code: string, id: string) =>
+  post<Run>(`projects/${code}/runs/${id}/resume`);
 
 export const deleteRun = (code: string, id: string) =>
   del<{ ok: true }>(`projects/${code}/runs/${id}`);

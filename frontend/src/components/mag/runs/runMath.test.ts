@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { EpochRow } from "../../api/runs";
+import type { EpochRow } from "../../../api/runs";
 import { epochX, isFinalCheck, left, progress, stageText, trainedEpochs } from "./runMath";
 
 const rows = (n: number, seconds = 60): EpochRow[] =>

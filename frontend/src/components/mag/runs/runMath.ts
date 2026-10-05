@@ -1,7 +1,7 @@
 // Расчёты экрана обучения: сколько осталось, где на графике эпоха, что писать
 // в полосе. Отдельно от разметки, чтобы закрыть их числами.
 
-import type { EpochRow, Run } from "../../api/runs";
+import type { EpochRow, Run } from "../../../api/runs";
 
 const FINISHED = ["done", "error", "stopped"];
 
