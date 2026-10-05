@@ -71,6 +71,10 @@ export interface ProjectSummary {
 export interface ProjectMemberInfo extends Person {
   role: string;
   role_label: string;
+  joined_at: string;
+  /** Боксов человека во всех кадрах проекта, включая таски. */
+  boxes: number;
+  last_box_at: string | null;
 }
 
 export type ProjectStatus = "importing" | "ready";
@@ -109,7 +113,7 @@ export interface ProjectDetail {
     superclass: string | null;
     annotations: number;
   }[];
-  pending_invitations?: { id: string; user: Person; role_label: string }[];
+  pending_invitations?: { id: string; user: Person; role: string; role_label: string; sent_at: string }[];
 }
 
 export interface InvitationItem {

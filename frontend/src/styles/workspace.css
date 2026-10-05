@@ -103,11 +103,6 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag-ava.on::after { box-shadow: none; }
 
 /* Stable left navigation and a single context header. */
-/* Правка состава у администратора — второй строкой карточки: в карточку шириной
-   280 px имя, выбор роли и кнопка в одну строку не помещаются. */
-.mag-mem:has(> .mag-mem-admin) { flex-wrap: wrap; }
-.mag-mem-admin { flex: 1 0 100%; display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
-.mag-mem-admin select { width: auto; min-height: 30px; padding-block: 4px; font-size: 12px; }
 /* Длинное название проекта — в одну строку с многоточием (полное — в title):
    иначе оно переносилось и ломало шапку. */
 .mag-content-head { margin-bottom: 28px; gap: 18px; align-items: center; }
@@ -595,40 +590,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 }
 
 
-/* ===== Кто сейчас в сети ===== */
-/* Отдельный предмет рядом с заголовком, а не приписка внутри него: состав
-   проекта и присутствие — разные сведения, и стоя вплотную «12» и «3 в сети»
-   читались одним числом. */
-.mag-presence {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 12px 5px 10px;
-  border: 1px solid var(--rule);
-  border-radius: 999px;
-  background: var(--sunk);
-  font-size: 12px;
-  color: var(--dim);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-/* Единственное в шапке, что меняется само, пока на него смотрят, — поэтому
-   ореол дышит. Медленно и без смены цвета: это фоновый признак жизни, а не
-   призыв что-то сделать. */
-/* В шапке карточки последний элемент прижимается вправо — это для кнопки.
-   Без админских прав кнопки нет, и последним оказывается чип: он уезжал бы к
-   правому краю, оторвавшись от числа, рядом с которым и должен стоять. */
-.mag-card-h > .mag-presence:last-child { margin-left: 0; }
-.mag-presence .mag-dot.on { animation: presence-pulse 2.8s ease-in-out infinite; }
-
-@keyframes presence-pulse {
-  0%, 100% { box-shadow: 0 0 0 3px rgba(34, 160, 76, .15); }
-  50% { box-shadow: 0 0 0 5px rgba(34, 160, 76, .05); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .mag-presence .mag-dot.on { animation: none; }
-}
 
 /* Плашка полуавтомата над холстом: ожидание, ответ модели, отказ и повтор. */
 .mag-auto-plate { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 7px 12px; border: 1px solid var(--ed-edge); border-radius: 9px; background: rgba(31, 30, 41, .92); color: var(--ed-ink); font-size: 12.5px; box-shadow: 0 8px 22px rgba(0, 0, 0, .35); pointer-events: auto; }

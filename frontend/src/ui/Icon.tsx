@@ -6,7 +6,7 @@ import {
   Lock, LogOut, Maximize2, Merge, Minus, MousePointer2, Pause, Pencil, Pentagon, Play, Plus,
   Redo2, RefreshCw, RotateCw, Route, Save, Scan, Search, Send, Server, Settings, Shuffle,
   SkipBack, SkipForward, SlidersHorizontal, Snowflake, Sparkles, Split, Square, SquareCheckBig,
-  SquareDashed, Sun, Tag, Tags, Target, Trash2, TriangleAlert, Undo2, Upload, User, UserPlus,
+  SquareDashed, Sun, Tag, Tags, Target, Trash2, TriangleAlert, Undo2, Upload, User, UserMinus, UserPlus,
   Users, Video, Wind, Workflow, X, ZoomIn, ZoomOut,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -28,7 +28,7 @@ const ICONS = {
   skipb: SkipBack, skipf: SkipForward, sliders: SlidersHorizontal, snow: Snowflake,
   sparkle: Sparkles, split: Split, stop: Square, check: SquareCheckBig, bbox: SquareDashed,
   sun: Sun, tag: Tag, tags: Tags, target: Target, trash: Trash2, alert: TriangleAlert,
-  undo: Undo2, upload: Upload, user: User, invite: UserPlus, users: Users, video: Video,
+  undo: Undo2, upload: Upload, user: User, kick: UserMinus, invite: UserPlus, users: Users, video: Video,
   wind: Wind, workflow: Workflow, x: X, zin: ZoomIn, zout: ZoomOut,
 } satisfies Record<string, LucideIcon>;
 

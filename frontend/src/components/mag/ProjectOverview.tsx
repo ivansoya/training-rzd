@@ -12,6 +12,7 @@ import {
 import { ago, count, pct, ru } from "../ru";
 import { deviceParts, gb, useGpuState } from "../shell/useGpuState";
 import ExportModal from "./ExportModal";
+import { ProjectMenu } from "./ProjectMenu";
 import { useProject } from "./ProjectShell";
 import { CreateTaskModal } from "./ProjectTasks";
 import { describeTaskEvent } from "./taskEvents";
@@ -36,7 +37,7 @@ const RUN_BADGE: Record<string, [string, string]> = {
 
 /** Обзор: сводка проекта — данные, разметка, таски, обучение и что происходит. */
 export default function ProjectOverview() {
-  const { detail } = useProject();
+  const { detail, refresh } = useProject();
   const [search] = useSearchParams();
   const navigate = useNavigate();
   const { project, datasets, my_role } = detail;
@@ -80,6 +81,7 @@ export default function ProjectOverview() {
       </Button>
       {isAdmin && <LinkButton icon="upload" to={`/projects/${code}/import`}>Импорт архива</LinkButton>}
       {canEdit && <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>Новая таска</Button>}
+      <ProjectMenu detail={detail} refresh={refresh} />
     </>
   );
 

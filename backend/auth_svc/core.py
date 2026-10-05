@@ -362,14 +362,27 @@ def project_detail(code):
             .where(ProjectMember.project_id == project.id)
             .order_by(ProjectMember.created_at)
         ).scalars().all()
-        members_json = [
-            {
+        # Вклад — боксы человека во всех кадрах проекта, и в тасках тоже: это тоже работа
+        work = {
+            uid: (n, last)
+            for uid, n, last in db.execute(
+                select(Annotation.created_by, func.count(), func.max(Annotation.created_at))
+                .join(Image, Annotation.image_id == Image.id)
+                .where(Image.project_id == project.id, Annotation.created_by.isnot(None))
+                .group_by(Annotation.created_by)
+            ).all()
+        }
+        members_json = []
+        for m in members:
+            boxes, last = work.get(m.user_id, (0, None))
+            members_json.append({
                 **_person(m.user, is_online(m.user)),
                 "role": m.role,
                 "role_label": ROLE_LABELS.get(m.role, m.role),
-            }
-            for m in members
-        ]
+                "joined_at": m.created_at.isoformat(),
+                "boxes": boxes,
+                "last_box_at": last.isoformat() if last else None,
+            })
 
         images_count = db.execute(
             select(func.count()).select_from(Image)
@@ -475,7 +488,9 @@ def project_detail(code):
                 {
                     "id": str(i.id),
                     "user": _person(i.user, show_login=False),
+                    "role": i.role,
                     "role_label": ROLE_LABELS.get(i.role, i.role),
+                    "sent_at": i.created_at.isoformat(),
                 }
                 for i in pending
             ]

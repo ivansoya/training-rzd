@@ -20,7 +20,7 @@ import MagShell from "./components/mag/MagShell";
 import ProjectClasses from "./components/mag/classes/ProjectClasses";
 import ProjectTags from "./components/mag/classes/ProjectTags";
 import ProjectFrames from "./components/mag/frames/ProjectFrames";
-import ProjectMembers from "./components/mag/ProjectMembers";
+import ProjectMembers from "./components/mag/members/ProjectMembers";
 import ProjectOverview from "./components/mag/ProjectOverview";
 import ProjectShell from "./components/mag/ProjectShell";
 import ProjectTasks from "./components/mag/ProjectTasks";

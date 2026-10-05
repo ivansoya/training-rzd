@@ -306,6 +306,27 @@ a.pcard:hover { border-color: var(--input); }
 .cls-gname { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .cls-gname .ui-count { margin-left: auto; }
 
+/* ---------- участники ---------- */
+.mem-card > .ui-card-b { padding: 0; }
+.mem-tbl td { height: 56px; }
+.mem-tbl th:nth-child(2), .mem-tbl td:nth-child(2) { width: 170px; }
+.mem-tbl td:nth-child(2) .ui-select { width: 150px; }
+.mem-who-c { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.mem-av { position: relative; display: inline-flex; flex: none; }
+.mem-av .ui-dot { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; box-shadow: 0 0 0 2px var(--card); }
+.mem-name { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+.mem-name b { font-size: 13px; font-weight: 500; max-width: 36ch; }
+.mem-name span { font-size: 12px; color: var(--muted-fg); }
+.mem-name .ui-mono { font-size: 11.5px; color: var(--faint); }
+.mem-act { width: 1%; white-space: nowrap; text-align: right; }
+.mem-sub td { height: 34px; font-size: 12px; font-weight: 500; color: var(--muted-fg); background: var(--bg); }
+.ui-table tbody tr.mem-sub:hover td { background: var(--bg); }
+.mem-inv .ui-av { background: transparent; border: 1px dashed var(--input); color: var(--muted-fg); }
+.mem-who { display: flex; gap: 8px; }
+.mem-who .ui-input { flex: 1; min-width: 0; }
+.mem-who .ui-select { width: 160px; flex: none; }
+.mem-fail { margin: 4px 0 0; padding-left: 18px; }
+
 .tag-tbl .tag-n { font-weight: 500; }
 .tag-tbl .tag-in { width: 260px; }
 .tag-tbl .tag-acts { width: 1%; white-space: nowrap; }
