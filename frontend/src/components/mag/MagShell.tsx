@@ -130,8 +130,12 @@ export default function MagShell({ children }: { children: ReactNode }) {
                 <Icon name="chevR" size={14} />
                 {section.key === "overview" && section.label === "Обзор"
                   ? <b>{current.name}</b>
-                  : <><Link to={`/projects/${current.code}`}>{current.name}</Link>
-                    <Icon name="chevR" size={14} /><b>{section.label}</b></>}
+                  : matchPath("/projects/:code/tasks/:taskId", pathname)
+                    ? <><Link to={`/projects/${current.code}`}>{current.name}</Link>
+                      <Icon name="chevR" size={14} /><Link to={`/projects/${current.code}/tasks`}>{section.label}</Link>
+                      <Icon name="chevR" size={14} /><b>Таска</b></>
+                    : <><Link to={`/projects/${current.code}`}>{current.name}</Link>
+                      <Icon name="chevR" size={14} /><b>{section.label}</b></>}
               </>
             ) : matchPath("/augment/:id", pathname) ? (
               <><Link to="/augment">Мои графы</Link><Icon name="chevR" size={14} /><b>Граф</b></>

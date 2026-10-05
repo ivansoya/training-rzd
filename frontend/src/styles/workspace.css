@@ -132,11 +132,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-table th { color: var(--dim); font-size: 12px; font-weight: 550; text-transform: none; letter-spacing: 0; padding: 13px 16px; background: var(--sunk); border-color: var(--rule); }
 .mag-table td { padding: 15px 16px; border-color: var(--rule); vertical-align: middle; }
 .mag-table tbody tr:hover { background: #ffffff04; }
-.mag-cls { padding-block: 13px; border-color: var(--rule); }
-.mag-cls-name b { font-weight: 550; font-size: 13px; }
-.mag-cls-name > span { color: var(--dim); }
-.mag-cls-bar { background: var(--hair); }
-.mag-cls-n { color: var(--ink); font-variant-numeric: tabular-nums; font-size: 13px; }
 
 .mag-ds-head { gap: 13px; flex-wrap: wrap; margin-bottom: 20px; }
 .mag-ds-head h1, .mag-ds-head h2 { letter-spacing: -.5px; }
@@ -147,10 +142,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .g-ctx { top: var(--workspace-header); padding: 15px 32px; background: var(--paper); min-height: 60px; gap: 14px; border-color: var(--rule); }
 .g-ctx-name { font-size: 18px; font-weight: 600; }
 .g-ctx-code { color: var(--dim); }
-.g-block { border-radius: 12px; background: var(--card); border-color: var(--rule); overflow: visible; }
-.g-block-h { padding: 16px 20px; background: transparent; gap: 13px; }
-.g-block-b { padding: 20px; }
-.g-vcard { grid-template-columns: 170px minmax(0,1fr); gap: 24px; }
 
 /* План ролика: по строке на объект или на участок нарезки. Карточка широкая и
    до этого пустовала, а «3 объекта» одним числом не говорят ни где они, ни
@@ -160,50 +151,15 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 /* Высота на три ролика с запасом: на 360px в жёлоб влезала полторы строки, и
    список читался как обрезок — не видно было даже, сколько там всего. */
 /* Составной селектор: `.g-plan-box` ниже по файлу иначе сжимал список до 216px. */
-.g-plan-box.g-reels { max-height: 720px; padding-right: 2px; }
 /* Общая строка тагов стоит НАД списком и вне жёлоба: она про весь блок, а
    уехав вместе с роликами при прокрутке, читалась бы как таг первого. */
-.g-reels-all { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; padding: 8px 14px; border: 1px dashed var(--rule); border-radius: 10px; }
-.g-reels-all > span { font-size: 11px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; white-space: nowrap; }
 /* Каждый ролик — отдельный предмет со своей рамкой: строки без границ на
    широкой карточке сливаются с пустым местом вокруг. */
-.g-reel { display: grid; grid-template-columns: 72px minmax(140px,1fr) auto auto auto auto; align-items: center; gap: 8px 16px; padding: 12px 14px; margin-bottom: 10px; border: 1px solid var(--rule); border-radius: 10px; background: var(--sunk); }
-.g-reel:last-child { margin-bottom: 0; }
-.g-reel:hover { border-color: var(--control-edge); }
-.g-reel-poster { width: 72px; height: 34px; object-fit: cover; border-radius: var(--radius-s); flex-shrink: 0; }
-.g-reel-name { min-width: 0; }
-.g-reel-name b { display: block; font-size: 13px; font-weight: 550; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.g-reel-name > span { display: block; margin-top: 3px; font-size: 11px; color: var(--faint); }
 /* Дорожка ролика: закрашено то, что взято в нарезку. */
-.g-reel-rail { position: relative; display: block; height: 4px; margin-top: 8px; border-radius: 2px; background: var(--hair); overflow: hidden; }
-.g-reel-rail u { position: absolute; top: 0; bottom: 0; background: var(--red); border-radius: 2px; }
-.g-reel-nums { text-align: right; }
-.g-reel-nums b { display: block; font-size: 17px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; line-height: 1.2; }
-.g-reel-nums span { display: block; margin-top: 2px; font-size: 11px; color: var(--dim); white-space: nowrap; }
-.g-reel-segs { display: inline-flex; align-items: center; gap: 7px; padding: 7px 11px; border: 1px solid var(--rule); border-radius: 7px; background: transparent; color: var(--dim); font: inherit; font-size: 12px; white-space: nowrap; cursor: pointer; }
-.g-reel-segs:hover { border-color: var(--control-edge); color: var(--ink); background: var(--hair); }
-.g-reel-segs[aria-expanded=true] { border-color: #F94D4D78; background: var(--accent-soft); color: var(--ink); }
-.g-reel-segs i { font-style: normal; font-size: 10px; color: var(--faint); }
-.g-reel-segs.none { border-style: dashed; color: var(--faint); cursor: default; }
-.g-reel-plan { grid-column: 1 / -1; margin-top: 6px; }
-.g-reel-plan th { background: var(--sunk); }
 
 /* Список прокручивается сам: на ролике с полусотней объектов карточка иначе
    растягивает вкладку тасок в полотно, по которому надо листать страницу. */
-.g-plan-box { margin-top: 14px; max-height: 216px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
-.g-plan { width: 100%; border-collapse: collapse; font-size: 12px; }
-.g-plan th { position: sticky; top: 0; z-index: 1; text-align: left; padding: 7px 12px 7px 0; font-weight: 550; color: var(--faint); white-space: nowrap; background: var(--card); box-shadow: inset 0 -1px var(--rule); }
-.g-plan tbody tr:first-child td { border-top: 0; }
-.g-plan td { padding: 8px 12px 8px 0; border-top: 1px solid var(--hair); color: var(--dim); vertical-align: middle; }
-.g-plan td:first-child { color: var(--ink); }
-.g-plan td:last-child, .g-plan th:last-child { text-align: right; padding-right: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
-.g-plan td i { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 8px; vertical-align: -1px; }
-.g-plan tr.bad td { color: var(--danger); }
-.g-plan tr.bad td em { font-style: normal; border-bottom: 1px dotted currentColor; cursor: help; }
-.g-vcard-fail { margin: 14px 0 0; padding: 11px 14px; border: 1px solid #A36973; border-radius: 8px; background: #38272E; color: var(--danger); font-size: 13px; line-height: 1.6; }
-.g-vcard-fail b { color: var(--ink); }
 .g-when, .g-vcard-note, .mag-src-mode { color: var(--dim); }
-.g-stat b { font-size: 28px; font-weight: 600; }
 .g-meter, .t-bar { border-radius: 5px; background: var(--hair); }
 .mag-vmode-pick { padding: 18px; background: var(--sunk); border-color: var(--rule); }
 .mag-vmode-pick.on { background: var(--accent-soft); border-color: var(--red); }
@@ -364,43 +320,17 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
    Шкала здесь — прибор для сравнения, и общая для всех строк нулевая отметка
    с общей полной длиной — единственное, на чём это сравнение держится.
    Колонка под число фиксированная по той же причине: «195» шире «0». */
-.mag-cls {
-  display: grid;
-  grid-template-columns: 26px 1.75rem minmax(0, 15rem) minmax(96px, 1fr) 3.25rem;
-  align-items: center;
-  gap: 14px;
-}
 /* Только внутри строки: те же имена носят ячейки таблиц в мастере импорта и
    в списке классов, и там ширина колонки № и шкалы своя. */
-.mag-cls > .mag-cls-id { width: auto; text-align: right; }
-.mag-cls > .mag-cls-bar { min-width: 0; }
-.mag-cls > .mag-cls-n { margin-left: 0; justify-self: end; }
 
 /* Имя обрезается многоточием, а по наведению на строку едет бегущей строкой.
    Ширину рамки даёт контейнерная единица: `100cqw` — это ширина самого <b>,
    `100%` — ширина текста внутри. Их разность отрицательна ровно тогда, когда
    текст не влез, а `min(0px, …)` оставляет короткие имена стоять на месте —
    иначе ездило бы и то, что и так видно целиком. */
-.mag-cls-name b {
-  display: block;
-  container-type: inline-size;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 /* Блочным пролёт становится только на наведении — ради transform бегущей
    строки. Стоял он таким всегда, и многоточие у <b> не появлялось вовсе:
    text-overflow режет строчный текст, а не inline-block целиком. */
-.mag-cls:hover .mag-cls-name b { text-overflow: clip; }
-.mag-cls:hover .mag-cls-name b > span {
-  display: inline-block;
-  animation: cls-marquee 7s ease-in-out infinite;
-}
-.mag-cls-name > span {
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
 
 /* Две остановки: в начале, чтобы прочитать первые слова, и в конце — хвост.
    Без них строка уезжает раньше, чем глаз успевает зацепиться. */
@@ -410,10 +340,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   100% { transform: translateX(0); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mag-cls:hover .mag-cls-name b > span { animation: none; display: inline; }
-  .mag-cls:hover .mag-cls-name b { text-overflow: ellipsis; }
-}
 .g-insp { padding: 20px; }
 .g-insp-name { font-size: 18px; font-weight: 600; }
 .g-field .k { font-size: 13px; color: var(--ink); }
@@ -479,8 +405,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   .t-rail { overflow-x: auto; }
   .t-rail > div { min-width: 125px; }
   .t-run { grid-template-columns: 1fr; }
-  .g-vcard { grid-template-columns: 1fr; }
-  .g-vcard-nums { flex-direction: row; flex-wrap: wrap; gap: 22px; }
   .mag-ved { grid-template-columns: 52px minmax(0,1fr); grid-template-rows: auto minmax(240px,1fr) auto auto; overflow-y: auto; }
   .mag-ved .mag-ed-rail { grid-row: 2/4; }
   .mag-ved-stage { min-height: 240px; }
@@ -588,8 +512,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   .mag-pager-step { padding: 7px 10px; font-size: 0; gap: 0; }
   .mag-pager-step > span { font-size: 14px; }
 }
-
-
 
 /* Плашка полуавтомата над холстом: ожидание, ответ модели, отказ и повтор. */
 .mag-auto-plate { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: 10px; max-width: calc(100% - 32px); padding: 7px 12px; border: 1px solid var(--ed-edge); border-radius: 9px; background: rgba(31, 30, 41, .92); color: var(--ed-ink); font-size: 12.5px; box-shadow: 0 8px 22px rgba(0, 0, 0, .35); pointer-events: auto; }

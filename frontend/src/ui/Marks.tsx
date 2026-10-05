@@ -114,17 +114,24 @@ export function Legend({ items }: { items: { label: ReactNode; color: string; ki
 }
 
 /** Кольцо загрузки: прогресс 0–1, «готово» или «ошибка». */
-export function Ring({ value = 0, tone, label, size = 140 }: {
+export function Ring({ value = 0, tone, label, size = 140, color, draw, children }: {
   value?: number;
   tone?: "done" | "bad";
   label: string;
   size?: number;
+  /** Цвет дуги — токен; по умолчанию акцент. */
+  color?: string;
+  /** Прорисовать дугу при появлении. */
+  draw?: boolean;
+  /** Своё содержимое в центре вместо процента. */
+  children?: ReactNode;
 }) {
   const R = 54;
   const C = 2 * Math.PI * R;
   const pct = Math.round(Math.min(1, Math.max(0, value)) * 100);
+  const style: Vars = { width: size, height: size, "--rs": size / 140, ...(color ? { "--ring-c": color } : {}) };
   return (
-    <div className={cx("ui-ring", tone)} style={{ width: size, height: size }}
+    <div className={cx("ui-ring", tone, draw && "draw")} style={style}
       role={tone ? "img" : "progressbar"} aria-label={label}
       aria-valuemin={tone ? undefined : 0} aria-valuemax={tone ? undefined : 100}
       aria-valuenow={tone ? undefined : pct}>
@@ -134,9 +141,9 @@ export function Ring({ value = 0, tone, label, size = 140 }: {
           style={tone ? undefined : { strokeDasharray: C, strokeDashoffset: C * (1 - pct / 100) }} />
       </svg>
       <div className="ui-ring-c">
-        {tone === "done" ? <Icon name="tick" size={40} />
+        {children ?? (tone === "done" ? <Icon name="tick" size={40} />
           : tone === "bad" ? <Icon name="x" size={40} />
-            : <b>{pct}<small> %</small></b>}
+            : <b>{pct}<small> %</small></b>)}
       </div>
     </div>
   );

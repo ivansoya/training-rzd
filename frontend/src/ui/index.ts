@@ -17,3 +17,4 @@ export type { SelectOption } from "./Overlay";
 export { LineChart, Spark, linePath } from "./Charts";
 export type { LineSeries } from "./Charts";
 export { hasLayer, useEscape } from "./useEscape";
+export { useTween } from "./useTween";

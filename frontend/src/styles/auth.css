@@ -693,19 +693,6 @@
 }
 
 /* --- страница проекта (П2: паспорт слева) --- */
-.mag-crumbs {
-  font-size: 12.5px;
-  color: var(--mag-muted);
-  margin-bottom: 14px;
-}
-
-.mag-crumbs a {
-  color: var(--mag-muted);
-}
-
-.mag-crumbs b {
-  color: var(--mag-ink);
-}
 
 .mag-pp {
   display: grid;
@@ -821,33 +808,6 @@
   font-size: 12px;
   font-weight: 500;
   color: var(--mag-muted);
-}
-
-.mag-cls {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 7px 0;
-  font-size: 13px;
-  border-bottom: 1px solid var(--mag-line);
-}
-
-.mag-cls:last-child {
-  border-bottom: none;
-}
-
-.mag-cls i {
-  width: 11px;
-  height: 11px;
-  border-radius: 3px;
-  flex-shrink: 0;
-}
-
-.mag-cls-n {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
-  color: var(--mag-muted);
-  font-size: 12.5px;
 }
 
 /* --- кабинет: правая колонка и друзья --- */

@@ -14,7 +14,7 @@ import { deviceParts, gb, useGpuState } from "../shell/useGpuState";
 import ExportModal from "./ExportModal";
 import { ProjectMenu } from "./ProjectMenu";
 import { useProject } from "./ProjectShell";
-import { CreateTaskModal } from "./ProjectTasks";
+import { CreateTaskModal } from "./tasks/CreateTaskModal";
 import { describeTaskEvent } from "./taskEvents";
 
 const map = (x: number) => x.toLocaleString("ru-RU", { minimumFractionDigits: 3, maximumFractionDigits: 3 });

@@ -1,89 +1,15 @@
 /* «Магистраль» — страница таски: шапка, вкладка источников, модалка нарезки. */
 
 /* ===== Шапка: прогресс и сдача видны на любой вкладке ===== */
-.mag-task-strip {
-  display: grid;
-  grid-template-columns: 1fr auto auto;
-  gap: 14px 24px;
-  align-items: center;
-  background: var(--card);
-  border: 1px solid var(--mag-edge);
-  box-shadow: 0 1px 2px rgba(29, 35, 41, 0.05);
-  border-radius: 10px;
-  padding: 16px 20px;
-  margin-bottom: 14px;
-}
 
 /* Ход агента — своим рядом: в колонке он сжимал название таски в три строки. */
-.mag-task-strip > .ag-progress {
-  grid-column: 1 / -1;
-}
-
-.mag-task-id p {
-  margin: 3px 0 0;
-  font-size: 12.5px;
-  color: var(--mag-muted);
-}
-
-.mag-task-assignee {
-  font: inherit;
-  padding: 1px 6px;
-  border: 1px solid var(--rule);
-  border-radius: 6px;
-  max-width: 280px;
-}
-
-.mag-task-nums {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-
-.mag-task-nums b {
-  display: block;
-  font-size: 17px;
-  font-weight: 750;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
-}
-
-.mag-task-nums span {
-  font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--mag-muted);
-}
 
 /* Имя таски длинное — переносится, а не выталкивает шапку за край. */
-.mag-task-id { min-width: 0; }
-.mag-task-id .mag-pass-title { flex-wrap: wrap; }
-.mag-task-id h1 { overflow-wrap: anywhere; }
 
 /* Сдача — необратимое действие, поэтому отделена чертой, а не стоит в ряду.
    Кнопок бывает до пяти («Статистика разведки», «Агент», переходы,
    «Закрыть») — на узком экране они переносятся, а не уезжают за край. */
-.mag-task-submit {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding-left: 20px;
-  border-left: 1px solid var(--mag-line);
-}
 
-.mag-task-bar {
-  grid-column: 1 / -1;
-}
-
-@media (max-width: 900px) {
-  .mag-task-strip {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .mag-task-submit {
-    padding-left: 0;
-    border-left: 0;
-  }
-}
 
 /* ===== Вкладка источников ===== */
 .mag-src-files {
@@ -248,9 +174,6 @@
 }
 
 /* ===== Метка источника на кадре ===== */
-.mag-tile-wrap {
-  position: relative;
-}
 
 .mag-from {
   position: absolute;
@@ -1189,7 +1112,6 @@
   line-height: 1;
 }
 
-
 /* Крутилка вместо доли. Доля с сервера прыгает рывками по участкам: на шаге
    в две секунды она стоит, потом скачет на треть — такой прибор врёт больше,
    чем молчит. Крутилка честно говорит одно: работа идёт. */
@@ -1242,9 +1164,3 @@
 /* Вкладки таски на узком экране переносятся: в прокрутке «История» пряталась
    за краем, и о ней было не узнать. Общее правило workspace.css прокручивает
    вкладки всех страниц — здесь их всего четыре, и перенос честнее. */
-@media (max-width: 600px) {
-  .mag-tabs.mag-task-tabs {
-    flex-wrap: wrap;
-    overflow-x: visible;
-  }
-}

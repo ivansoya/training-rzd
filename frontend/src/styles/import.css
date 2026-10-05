@@ -1,11 +1,6 @@
 /* «Магистраль» — импорт архива в проект и просмотр датасета.
    Продолжение mag-темы из auth.css: те же переменные, свои компоненты. */
 
-.mag-head-actions {
-  display: flex;
-  gap: 10px;
-}
-
 /* Пометка «идёт импорт» — в списке проектов и в шапке проекта */
 .mag-importing {
   display: inline-flex;
@@ -30,30 +25,8 @@
 }
 
 /* --- прогресс --- */
-.mag-progress {
-  margin-top: 11px;
-  max-width: 460px;
-}
-
-.mag-progress-track {
-  height: 6px;
-  border-radius: 4px;
-  background: var(--hair);
-  overflow: hidden;
-}
-
-.mag-progress-track i {
-  display: block;
-  height: 100%;
-  background: var(--mag-red);
-  transition: width 0.2s ease;
-}
 
 /* Неопределённое состояние: байты ещё идут, долю посчитать нечем */
-.mag-progress-track i.indeterminate {
-  width: 40%;
-  animation: mag-slide 1.1s ease-in-out infinite;
-}
 
 @keyframes mag-slide {
   0% {
@@ -64,49 +37,6 @@
   }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .mag-progress-track i.indeterminate {
-    animation: none;
-    width: 100%;
-    opacity: 0.5;
-  }
-}
-
-.mag-progress-lbl {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-  color: var(--mag-muted);
-  margin-top: 6px;
-  font-variant-numeric: tabular-nums;
-}
-
-.mag-cls-id {
-  width: 46px;
-  font: 700 12px ui-monospace, Menlo, Consolas, monospace;
-  color: var(--mag-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-.mag-cls-bar {
-  flex: 1;
-  min-width: 54px;
-  height: 5px;
-  border-radius: 3px;
-  background: var(--hair);
-  overflow: hidden;
-}
-
-.mag-cls-bar i {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--mag-red);
-}
-
-.mag-cls-bar i.zero {
-  background: #c9d0d7;
-}
 
 /* Изображение без разметки — негативный пример, а не потеря */
 .mag-pager {
@@ -119,7 +49,6 @@
   color: var(--mag-muted);
   font-variant-numeric: tabular-nums;
 }
-
 
 /* ---------- Окно импорта: один размер на всех шагах ---------- */
 .imp .ui-dialog-b { padding-top: 16px; }

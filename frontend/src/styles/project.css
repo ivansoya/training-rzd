@@ -20,19 +20,6 @@
   min-width: 0;
 }
 
-.mag-pass-title {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.mag-pass-title h1 {
-  margin: 0;
-  font-size: 20px;
-  font-weight: 760;
-  letter-spacing: -0.015em;
-}
-
 .mag-pass-id p {
   margin: 3px 0 0;
   font-size: 12.5px;
@@ -61,45 +48,6 @@
   color: var(--mag-muted);
 }
 
-.mag-tabs {
-  display: flex;
-  gap: 2px;
-  border-bottom: 1px solid var(--mag-edge);
-  margin-bottom: 16px;
-  overflow-x: auto;
-}
-
-.mag-tab {
-  padding: 9px 15px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--mag-muted);
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-  margin-bottom: -1px;
-  white-space: nowrap;
-}
-
-.mag-tab:hover {
-  color: var(--mag-ink);
-}
-
-.mag-tab.on {
-  color: var(--mag-ink);
-  border-bottom-color: var(--mag-red);
-}
-
-.mag-tab span {
-  color: var(--faint);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-.mag-tab:focus-visible {
-  outline: 2px solid var(--mag-red);
-  outline-offset: -2px;
-}
-
 /* ===== Общее для карточек разделов ===== */
 .mag-card-h {
   display: flex;
@@ -126,13 +74,6 @@
   text-decoration: none;
   display: inline-flex;
   align-items: center;
-}
-
-.mag-hint {
-  font-size: 12px;
-  color: var(--mag-muted);
-  margin: -4px 0 16px;
-  max-width: 76ch;
 }
 
 /* ===== Таблица разделов проекта =====
@@ -208,32 +149,13 @@
 }
 
 /* ===== Обзор: разметки по классам ===== */
-.mag-cls {
-  gap: 12px;
-  padding: 9px 0;
-  border-bottom-color: var(--mag-line);
-}
 
 /* Ширину имени задаёт сетка строки (`minmax(0, 15rem)` в workspace.css).
    Свои 140 px здесь её перебивали: на 430 px колонка — 94 px, и имя наезжало
    на полосу. Нулевой минимум оставляет длинному имени многоточие. */
-.mag-cls-name {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-}
-
-.mag-cls-name b {
-  font-size: 13px;
-  font-weight: 650;
-}
 
 /* Прямой потомок: внутри <b> теперь живёт свой пролёт с именем, и правило
    для строки группы не должно его перекрашивать. */
-.mag-cls-name > span {
-  font-size: 11px;
-  color: var(--mag-muted);
-}
 
 .mag-cls-rest {
   font-size: 12px;
@@ -251,12 +173,6 @@
 
 .mag-dot.on {
   background: var(--done);
-}
-
-.mag-online-n {
-  font-weight: 500;
-  color: var(--mag-muted);
-  font-size: 12.5px;
 }
 
 /* ===== Модалки разделов ===== */
@@ -283,10 +199,6 @@
  * остаться справа, где его и ищут. */
 .mag-modal-foot .mag-btn.mag-danger {
   margin-right: 0;
-}
-
-.mag-hint.mag-warn {
-  color: var(--red);
 }
 
 .mag-field input:disabled {
@@ -442,11 +354,3 @@
 
 /* Крошечная полоса прокрутки под вкладками мозолит глаза; сама прокрутка
    нужна только на узком экране и работает жестом. */
-.mag-tabs {
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-
-.mag-tabs::-webkit-scrollbar {
-  display: none;
-}

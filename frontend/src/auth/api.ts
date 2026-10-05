@@ -834,7 +834,21 @@ export interface TaskSummary {
   assignee: { id: string; display_name: string } | null;
   target_dataset: { id: string | null; name: string } | null;
   created_at: string;
+  created_by: string | null;
+  /** С какого момента таска в нынешнем состоянии. */
+  status_at: string;
   counts: TaskCounts;
+}
+
+/** Карточка доски: что ещё нужно, кроме счётчиков. */
+export interface TaskBoardItem extends TaskSummary {
+  sources: { files: number; cut: number; uncut: number; annotate: number };
+  /** Кадров незакрытых роликов: в таске их ещё нет. */
+  pending_frames: number;
+  last_box_at: string | null;
+  last_at: string;
+  /** Можно менять состояние: админ или исполнитель-редактор. */
+  can_work: boolean;
 }
 
 // План нарезки ролика, а не история: кадры таски приводятся к нему.
@@ -1009,7 +1023,7 @@ export interface Segment {
 
 export async function listTasks(
   code: string
-): Promise<{ tasks: TaskSummary[]; can_create: boolean; is_admin: boolean }> {
+): Promise<{ tasks: TaskBoardItem[]; can_create: boolean; is_admin: boolean }> {
   return asJson(await fetch(`/api/projects/${encodeURIComponent(code)}/tasks`));
 }
 

@@ -189,8 +189,56 @@ def _counts(db, task_id):
     }
 
 
+# События, которыми таска переходит из состояния в состояние
+STATUS_EVENTS = ("status", "accepted", "done", "closed")
+
+
+def _status_at(db, task):
+    at = db.execute(
+        select(func.max(TaskEvent.created_at)).where(
+            TaskEvent.task_id == task.id, TaskEvent.kind.in_(STATUS_EVENTS))
+    ).scalar_one()
+    return (at or task.created_at).isoformat()
+
+
+def _board_extra(db, task):
+    """Сводка для карточки доски: откуда кадры, что ждёт закрытия ролика, когда трогали."""
+    videos = db.execute(
+        select(TaskVideo.mode, TaskVideo.segments, TaskVideo.annotation_closed_at)
+        .where(TaskVideo.task_id == task.id)
+    ).all()
+    files = db.execute(
+        select(func.count(Image.id)).where(
+            Image.task_id == task.id, Image.source_video_id.is_(None),
+            Image.task_status != "deleted")
+    ).scalar_one()
+    pending = 0
+    if any(m == "annotate" and closed is None for m, _, closed in videos):
+        pending = sum(p.get("frames", 0) for p in materialize.pending_summary(db, task))
+    last_box = db.execute(
+        select(func.max(Annotation.created_at)).join(Image, Image.id == Annotation.image_id)
+        .where(Image.task_id == task.id)
+    ).scalar_one()
+    last_event = db.execute(
+        select(func.max(TaskEvent.created_at)).where(TaskEvent.task_id == task.id)
+    ).scalar_one()
+    last = max([d for d in (last_box, last_event, task.created_at) if d is not None])
+    return {
+        "sources": {
+            "files": files,
+            "cut": sum(1 for m, _, _ in videos if m == "cut"),
+            "uncut": sum(1 for m, segs, _ in videos if m == "cut" and not segs),
+            "annotate": sum(1 for m, _, _ in videos if m == "annotate"),
+        },
+        "pending_frames": pending,
+        "last_box_at": last_box.isoformat() if last_box else None,
+        "last_at": last.isoformat(),
+    }
+
+
 def _task_json(db, task, with_counts=True):
     assignee = db.get(User, task.assignee_id) if task.assignee_id else None
+    author = db.get(User, task.created_by) if task.created_by else None
     dataset = db.get(Dataset, task.target_dataset_id) if task.target_dataset_id else None
     data = {
         "id": str(task.id),
@@ -207,6 +255,8 @@ def _task_json(db, task, with_counts=True):
                   if task.target_dataset_name else None)
         ),
         "created_at": task.created_at.isoformat(),
+        "created_by": author.display_name if author else None,
+        "status_at": _status_at(db, task),
     }
     if with_counts:
         data["counts"] = _counts(db, task.id)
@@ -226,8 +276,11 @@ def list_tasks(code):
             select(Task).where(Task.project_id == project.id)
             .order_by(Task.created_at.desc())
         ).scalars().all()
+        role = role_in(db, user, project)
         return jsonify({
-            "tasks": [_task_json(db, t) for t in tasks],
+            # can_work — можно ли тащить карточку по доске (те же права, что у кнопок таски)
+            "tasks": [{**_task_json(db, t), **_board_extra(db, t), "can_work": _may_work(t, user, role)}
+                      for t in tasks],
             "can_create": has_role(role_in(db, user, project), "editor"),
             "is_admin": role_in(db, user, project) == "admin",
         })

@@ -7,7 +7,7 @@ export function ClassesHead({ code, desc, actions }: { code: string; desc?: Reac
   return (
     <>
       <PageHeader title="Классы" desc={desc} actions={actions} />
-      <Tabs label="Разделы" items={[
+      <Tabs label="Классы и таги" items={[
         { to: `${base}/classes`, label: "Классы", end: true },
         { to: `${base}/tags`, label: "Таги", end: true },
       ]} />

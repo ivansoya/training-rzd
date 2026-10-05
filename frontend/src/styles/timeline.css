@@ -50,7 +50,6 @@
 .mag-ved-transport .mag-ed-btn.nul.on { background: var(--accent-soft); border-color: var(--red); color: var(--ink); }
 /* Пометка стоит, но не действует: кнопка не утверждает, что кадр фоновый. */
 .mag-ved-transport .mag-ed-btn.nul.on.idle { background: transparent; border-style: dashed; color: var(--faint); }
-.mag-task-pending b { color: var(--skip); }
 .vt-name { position: absolute; right: calc(100% + 12px); top: 0; width: 84px; height: 100%; padding: 0; border: 0; background: transparent; color: var(--dim); display: flex; align-items: center; gap: 6px; font: 12px/1.4 "Segoe UI",sans-serif; text-align: left; }
 .vt-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .vt-name i { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }

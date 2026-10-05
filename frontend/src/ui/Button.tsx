@@ -6,7 +6,7 @@ import { cx } from "./cx";
 import { Icon } from "./Icon";
 import type { IconName } from "./Icon";
 
-export type ButtonVariant = "primary" | "outline" | "ghost" | "danger";
+export type ButtonVariant = "primary" | "agent" | "outline" | "ghost" | "danger";
 
 interface Look {
   variant?: ButtonVariant;

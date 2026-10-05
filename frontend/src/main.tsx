@@ -23,9 +23,9 @@ import ProjectFrames from "./components/mag/frames/ProjectFrames";
 import ProjectMembers from "./components/mag/members/ProjectMembers";
 import ProjectOverview from "./components/mag/ProjectOverview";
 import ProjectShell from "./components/mag/ProjectShell";
-import ProjectTasks from "./components/mag/ProjectTasks";
+import TaskBoard from "./components/mag/tasks/TaskBoard";
 import ProjectsPage from "./components/mag/ProjectsPage";
-import TaskPage from "./components/mag/TaskPage";
+import TaskPage from "./components/mag/tasks/TaskPage";
 import TrainSetView from "./components/training/TrainSetView";
 import "./styles/common.css";
 import "./styles/auth.css";
@@ -94,7 +94,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="members" element={<ProjectMembers />} />
                   {/* Импорт — окно поверх обзора; адрес держит его открытым после перезагрузки */}
                   <Route path="import" element={<ImportRoute />} />
-                  <Route path="tasks" element={<ProjectTasks />} />
+                  <Route path="tasks" element={<TaskBoard />} />
                   <Route path="aug" element={<ProjectAug />} />
                   <Route path="training" element={<TrainingHome />} />
                   {/* Старый адрес датасета ведёт в общую галерею на его группу */}

@@ -293,8 +293,6 @@
 .ag-scout-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 4px 11px; border: 1px solid #8b73ff66; border-radius: 7px; background: #1d1733; color: #b9a4ff; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .ag-scout-btn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #8b73ff; }
 .ag-scout-btn:hover { border-color: #8b73ff; background: #2a2150; color: #d9ceff; }
-.g-block-h .ag-scout-btn, .ag-scout-btn.ag-scout-btn-head { margin-top: 0; }
-.ag-scout-btn.ag-scout-btn-head { padding: 7px 14px; font-size: 13px; }
 .vt-scout .vt-name { cursor: default; font-style: italic; }
 .vt-scout .vt-life { cursor: pointer; opacity: 0.55; }
 

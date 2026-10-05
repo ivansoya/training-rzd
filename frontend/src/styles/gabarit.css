@@ -148,24 +148,6 @@
 
 /* Крупное число с подписью под ним. Подпись именно снизу: пара «сколько
  * чего» так читается одним движением глаз, а не двумя. */
-.g-stat b {
-  display: block;
-  font-size: 27px;
-  font-weight: 700;
-  line-height: 1;
-  letter-spacing: -0.025em;
-}
-
-.g-stat span {
-  display: block;
-  margin-top: 5px;
-  font-size: 12.5px;
-  color: var(--dim);
-}
-
-.g-stat.s b {
-  font-size: 19px;
-}
 
 /* Служебная метка: моноширинная, вразрядку, капсом. */
 .g-label {
@@ -176,117 +158,12 @@
 }
 
 /* Метка состояния. */
-.g-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  font: 600 10.5px/1 var(--mono);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 5px 9px;
-  border-radius: var(--radius-s);
-  border: 1px solid var(--rule);
-  color: var(--dim);
-  background: none;
-}
-
-.g-chip.mark { border-color: var(--red); color: var(--red); }
-.g-chip.done { border-color: var(--done); color: var(--done); }
-.g-chip.skip { border-color: var(--skip); color: var(--skip); }
-.g-chip.null { border-color: var(--null); color: var(--null); }
 
 /* Составная полоса состояния: доли читаются раньше, чем цифры. */
-.g-meter {
-  display: flex;
-  height: 9px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: var(--hair);
-}
-
-.g-meter i { display: block; }
-.g-meter .m-done { background: var(--done); }
-.g-meter .m-null { background: var(--null); }
-.g-meter .m-skip { background: var(--skip); }
-
-.g-legend {
-  display: flex;
-  gap: 18px;
-  flex-wrap: wrap;
-  margin-top: 10px;
-}
-
-.g-legend div {
-  display: flex;
-  align-items: baseline;
-  gap: 7px;
-  font-size: 12.5px;
-  color: var(--dim);
-}
-
-.g-legend em {
-  font-style: normal;
-  font-weight: 700;
-  font-size: 14.5px;
-  color: var(--ink);
-}
-
-.g-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
-  display: inline-block;
-}
 
 /* Путевая шкала — сквозной приём системы: появляется везде, где что-то
  * меряется вдоль оси. Отметки как на километровом столбе, закрашенное —
  * то, что уже сделано. */
-.g-rail {
-  position: relative;
-  height: 26px;
-}
-
-.g-rail-line {
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 8px;
-  height: 2px;
-  background: var(--rule);
-}
-
-.g-rail i {
-  position: absolute;
-  top: 4px;
-  width: 1px;
-  height: 10px;
-  background: var(--faint);
-}
-
-.g-rail i.major {
-  top: 1px;
-  height: 16px;
-  background: var(--dim);
-}
-
-.g-rail u {
-  position: absolute;
-  top: 5px;
-  height: 8px;
-  border-radius: 2px;
-  background: var(--red);
-  opacity: 0.85;
-  text-decoration: none;
-}
-
-.g-rail b {
-  position: absolute;
-  top: 18px;
-  transform: translateX(-50%);
-  font: 500 9.5px/1 var(--mono);
-  color: var(--faint);
-}
 
 /* ===================== ВТОРОЙ УРОВЕНЬ НАВИГАЦИИ ===================== */
 
@@ -376,138 +253,23 @@
 /* Переключатель темы в верхней строке: три состояния, а не два — «как в
  * системе» тоже осознанный выбор, и он должен быть виден. */
 /* Пустой экран — приглашение действовать, а не сообщение о пустоте. */
-.g-empty {
-  text-align: center;
-  padding: 34px 20px;
-  color: var(--dim);
-  border: 1px dashed var(--rule);
-  border-radius: var(--radius-l);
-  background: var(--sunk);
-}
-
-.g-empty b {
-  display: block;
-  color: var(--ink);
-  font-size: 15.5px;
-  margin-bottom: 5px;
-}
 
 /* ===================== БЛОКИ ИСТОЧНИКОВ И РОЛИКОВ ===================== */
-
-.g-blocks { display: flex; flex-direction: column; gap: 12px; }
-
-.g-block {
-  border: 1px solid var(--rule);
-  border-radius: var(--radius-l);
-  overflow: hidden;
-  background: var(--card);
-}
-
-.g-block-h {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  flex-wrap: wrap;
-  padding: 11px 14px;
-  background: var(--sunk);
-  border-bottom: 1px solid var(--rule);
-}
-
-.g-block-h h4 { margin: 0; font-size: 15px; font-weight: 650; }
-
-.g-block-poster {
-  width: 64px;
-  height: 30px;
-  object-fit: cover;
-  border-radius: var(--radius-s);
-  flex-shrink: 0;
-}
-
-.g-when {
-  font: 500 11.5px/1 var(--mono);
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.g-sp { flex: 1; }
-
-.g-block-b { padding: 14px; }
 
 /* У блока ролика две части: сам ролик с дорожкой участков и разбивка его
    кадров по состояниям. Волосяная линия между ними нужна затем, чтобы это
    читалось как «источник и что из него вышло», а не как одна длинная строка
    цифр. */
-.g-block-b + .g-block-b { border-top: 1px solid var(--hair); }
 
 /* Корзина. Действие редкое и необратимое, поэтому оно не спорит за внимание с
    «Нарезать» и «Размечать»: приглушённый значок, который краснеет под курсором. */
-.g-trash {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  flex-shrink: 0;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--muted, #7a848d);
-  cursor: pointer;
-  transition: color 0.12s linear, border-color 0.12s linear, background 0.12s linear;
-}
-
-.g-trash:hover {
-  color: var(--mag-red, #e21a1a);
-  border-color: var(--rule, #e2e6e9);
-  background: var(--sunk, rgba(127, 127, 127, 0.08));
-}
-
-.g-trash:focus-visible {
-  outline: 2px solid var(--mag-red, #e21a1a);
-  outline-offset: 1px;
-}
 
 /* Карточка ролика: числа слева, время справа. Компоновка К4 — у разметки
    видео есть место во времени, и терять его в списке цифр жалко. */
-.g-vcard { display: grid; grid-template-columns: 190px 1fr; gap: 20px; }
-
-.g-vcard-nums { display: flex; flex-direction: column; gap: 14px; }
-
-.g-vcard-body { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
-
-.g-strip {
-  width: 100%;
-  height: 54px;
-  object-fit: cover;
-  border-radius: var(--radius);
-  background: var(--hair);
-}
-
-.g-vcard-facts { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 6px; }
-
-.g-vcard-note {
-  margin: 4px 0 0;
-  font-size: 12.5px;
-  color: var(--dim);
-  line-height: 1.45;
-}
 
 /* Предупреждение о незакрытых роликах: их работы ещё нет в кадрах, и без
    этой строки прогресс врал бы. */
-.g-warn {
-  border-left: 3px solid var(--skip);
-  font-size: 13.5px;
-  color: var(--dim);
-}
 
-.g-warn b { color: var(--ink); }
-
-@media (max-width: 780px) {
-  .g-vcard { grid-template-columns: 1fr; }
-  .g-vcard-nums { flex-direction: row; gap: 26px; flex-wrap: wrap; }
-}
 
 /* ==================== ПРАВКИ ЧИТАЕМОСТИ И РИТМА ==================== */
 
@@ -578,63 +340,14 @@ select {
 
 /* Состояние таски. Цвета были заданы светлыми числами и на тёмном
    превращались в белые пятна без всякого смысла. */
-.mag-tstate {
-  background: var(--sunk);
-  border-color: var(--rule);
-  color: var(--dim);
-}
-
-.mag-tstate i { background: var(--faint); }
-
-.mag-tstate.queued { background: var(--sunk); color: var(--dim); border-color: var(--rule); }
-.mag-tstate.queued i { background: var(--faint); }
-
-.mag-tstate.work { background: var(--red-in); color: var(--red); border-color: rgba(255, 77, 77, 0.45); }
-.mag-tstate.work i { background: var(--red); box-shadow: 0 0 8px rgba(255, 77, 77, 0.7); }
-
-.mag-tstate.done { background: var(--done-in); color: var(--done); border-color: rgba(46, 224, 122, 0.42); }
-.mag-tstate.done i { background: var(--done); box-shadow: 0 0 8px rgba(46, 224, 122, 0.7); }
-
-.mag-tstate.upd { background: var(--skip-in); color: var(--skip); border-color: rgba(255, 176, 46, 0.42); }
-.mag-tstate.upd i { background: var(--skip); box-shadow: 0 0 8px rgba(255, 176, 46, 0.7); }
-
-.mag-tstate.closed { background: var(--sunk); color: var(--faint); border-color: var(--hair); }
-.mag-tstate.closed i { background: var(--faint); }
 
 /* Подразделы таски. Полоска снизу у выбранного — единственное, что отличало
    его от остальных, и на тёмном она пропадала. */
-.mag-tabs {
-  border-bottom-color: var(--rule);
-  gap: 4px;
-}
 
 /* Вкладки бывают и ссылками, и кнопками. У кнопки своя родная обводка и
    серая заливка от браузера, а прежнее правило писалось под ссылки и гасить
    их не умело — отсюда белая рамка и серый фон у подразделов таски.
    Шрифт кнопке тоже не наследуется, его приходится задавать. */
-.mag-tab {
-  appearance: none;
-  background: none;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.2;
-  color: var(--dim);
-  border-radius: var(--radius) var(--radius) 0 0;
-}
-
-.mag-tab:hover {
-  color: var(--ink);
-  background: var(--sunk);
-}
-
-.mag-tab.on {
-  color: var(--ink);
-  background: var(--card);
-  border-bottom-color: var(--red);
-}
 
 .mag-tab span,
 .g-ctx-nav a span {
@@ -672,16 +385,6 @@ select {
   color: var(--done);
   box-shadow: var(--glow-done);
 }
-
-.g-warn {
-  background: var(--skip-in);
-  border: 1px solid rgba(255, 176, 46, 0.42);
-  border-left: 3px solid var(--skip);
-  color: var(--skip);
-  box-shadow: var(--glow-skip);
-}
-
-.g-warn b { color: var(--ink); }
 
 .mag-error {
   background: var(--red-in);
@@ -730,30 +433,6 @@ select {
 /* Что делают с роликом прямо сейчас. Строка живёт в шапке блока рядом с
    меткой: подготовка идёт на сервере, и без неё свежий ролик выглядит просто
    сломанным — открывается и ничего не показывает. */
-.g-prep {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-  color: var(--skip);
-  white-space: nowrap;
-}
-
-.g-prep i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--skip);
-  box-shadow: 0 0 8px rgba(255, 176, 46, 0.8);
-  animation: g-prep-pulse 1s ease-in-out infinite;
-}
-
-.g-prep b {
-  font: 600 11px var(--mono);
-  color: var(--ink);
-}
-
-.g-prep.bad { color: var(--red); }
 
 @keyframes g-prep-pulse {
   0%, 100% { opacity: 0.3; }
@@ -792,14 +471,6 @@ select {
 
 /* Карточка загрузки. Полоса шла на 460 px и обрывалась посреди карточки, а
    снизу к ней вплотную прилипало следующее — вкладка со списком. */
-.mag-card > .mag-progress {
-  max-width: none;
-  width: 100%;
-}
-
-.mag-upload-card {
-  margin-bottom: 14px;
-}
 
 /* Строка «что делают с роликом». Точка, название работы и доля были выровнены
    по середине коробок, а не по строке: у мелкого моноширинного процента своя
