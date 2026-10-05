@@ -1060,10 +1060,11 @@ def preview_set(code):
         # Класс без проверочных кадров — предупреждение, не вмешательство:
         # умное деление держит группу целиком, и это его смысл.
         warnings.extend(sel_lib.coverage_warnings(
-            (c.name, per_class.get(i, {}).get("train", 0),
-             per_class.get(i, {}).get("val", 0))
-            for i, c in enumerate(picked.classes)
-        ), mode=sel["split_mode"])
+            [(c.name, per_class.get(i, {}).get("train", 0),
+              per_class.get(i, {}).get("val", 0))
+             for i, c in enumerate(picked.classes)],
+            mode=sel["split_mode"],
+        ))
 
         # Строки сборки: сколько кадров возьмёт каждая и во сколько образцов
         # превратит. Без этих чисел кнопка «Собрать» обещает вслепую — а

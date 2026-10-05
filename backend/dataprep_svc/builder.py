@@ -395,9 +395,10 @@ def build(db, job, *, on_beat=None):
         warnings.append("Обучающая часть пуста.")
     # Класс без проверочных кадров — только словами, деление не трогаем.
     warnings.extend(sel_lib.coverage_warnings(
-        (name, per_class[i]["train"], per_class[i]["val"])
-        for i, name in enumerate(names)
-    ), mode=sel["split_mode"])
+        [(name, per_class[i]["train"], per_class[i]["val"])
+         for i, name in enumerate(names)],
+        mode=sel["split_mode"],
+    ))
 
     report = {
         "warnings": warnings,
