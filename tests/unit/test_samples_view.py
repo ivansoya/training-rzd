@@ -6,7 +6,7 @@
 """
 import pytest
 
-from dataprep_svc.samples import boxes_of, classes_in, inside, pick
+from dataprep_svc.samples import boxes_of, classes_in, inside, pick, tally
 
 
 def rows():
@@ -51,6 +51,28 @@ def test_кадры_без_разметки_отбираются_отдельн�
     total, page = pick(rows(), without=True, limit=10)
     assert total == 1
     assert names(page) == ["c.jpg"]
+
+
+def with_ops():
+    out = rows()
+    out[0]["ops"] = ["Rotate", "RandomFog"]
+    out[1]["ops"] = []
+    return out
+
+
+def test_оригиналы_это_образцы_без_трансформов():
+    total, page = pick(with_ops(), kind="orig", limit=10)
+    assert total == 4
+    assert "a.jpg" not in names(page)
+
+
+def test_копии_это_образцы_с_трансформами():
+    total, page = pick(with_ops(), kind="copy", split="train", limit=10)
+    assert (total, names(page)) == (1, ["a.jpg"])
+
+
+def test_сводка_по_половинам_и_копиям():
+    assert tally(with_ops()) == {"train": 3, "val": 2, "orig": 4, "copy": 1, "empty": 1}
 
 
 def test_счётчик_считает_отобранное_а_не_страницу():

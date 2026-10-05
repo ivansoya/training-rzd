@@ -933,8 +933,9 @@ def _graph_label(db, version_id):
     }
 
 
-def _set_view(db, tset):
+def _set_view(db, tset, user=None, project=None):
     rows = feeds.load(db, tset.id)
+    author = db.get(User, tset.created_by) if tset.created_by else None
     labels = {v: _graph_label(db, v) for v in feeds.versions_of(rows)}
     # «graph» — первый граф обучающей половины. Остался ради списка наборов:
     # там одна строка на набор, и назвать в ней все графы всё равно негде.
@@ -967,6 +968,10 @@ def _set_view(db, tset):
         "created_at": tset.created_at.isoformat(),
         "error": tset.error,
         "job": job,
+        "author": author.display_name if author else None,
+        # Спек мастера целиком — из него «Собрать похожий» заполняет мастер
+        "spec": tset.spec or {},
+        "can_manage": bool(user and project and may_manage(db, user, project, tset)),
     }
 
 
@@ -981,7 +986,7 @@ def list_sets(code):
             .order_by(TrainSet.created_at.desc())
         ).scalars().all()
         return jsonify({
-            "sets": [_set_view(db, s) for s in rows],
+            "sets": [_set_view(db, s, user, project) for s in rows],
             "role": role_in(db, user, project),
         })
     finally:
@@ -1229,7 +1234,7 @@ def create_set(code):
             tset.error = "Сборка недавно не удалась. Повторим позже."
             db.commit()
             return jsonify({"error": tset.error}), 409
-        return jsonify(_set_view(db, tset)), 202
+        return jsonify(_set_view(db, tset, user, project)), 202
     finally:
         db.close()
 
@@ -1243,9 +1248,22 @@ def get_set(code, set_id):
         tset = db.get(TrainSet, _uuid(set_id))
         if tset is None or tset.project_id != project.id:
             return jsonify({"error": "Набор не найден."}), 404
-        return jsonify(_set_view(db, tset))
+        return jsonify({**_set_view(db, tset, user, project), "built": _built(tset)})
     finally:
         db.close()
+
+
+def _built(tset):
+    """Что сборка насчитала по строкам и половинам. У наборов до 06.10.2026 пусто."""
+    try:
+        with open(config.trainset_report(tset.project_id, tset.id),
+                  "r", encoding="utf-8") as fh:
+            report = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if "feeds" not in report:
+        return None
+    return {"split": report.get("split"), "feeds": report.get("feeds") or []}
 
 
 def _palette(db, project, tset):
@@ -1319,6 +1337,9 @@ def set_samples(code, set_id):
                 except ValueError:
                     continue
         without = request.args.get("empty") == "1"
+        kind = request.args.get("kind") or None
+        if kind not in (None, "orig", "copy"):
+            kind = None
         try:
             limit = min(max(int(request.args.get("limit", 60)), 1), 200)
             offset = max(int(request.args.get("offset", 0)), 0)
@@ -1327,10 +1348,15 @@ def set_samples(code, set_id):
 
         root, rows = samples_lib.index(tset.project_id, tset.id)
         matched, page = samples_lib.pick(
-            rows, split=split, classes=wanted, without=without,
+            rows, split=split, classes=wanted, without=without, kind=kind,
             offset=offset, limit=limit,
         )
 
+        # Имя исходного кадра: по нему человек узнаёт кадр, uuid в имени файла ему ничего не говорит
+        ids = [u for u in (_uuid(r.get("image_id")) for r in page) if u]
+        source_names = dict(db.execute(
+            select(Image.id, Image.file_name).where(Image.id.in_(ids))
+        ).all()) if ids else {}
         out = []
         for row in page:
             # Размер образца читаем заголовком файла: слою разметки нужно
@@ -1344,6 +1370,7 @@ def set_samples(code, set_id):
                 "split": row.get("split"),
                 "objects": int(row.get("objects") or 0),
                 "image_id": row.get("image_id"),
+                "source_name": source_names.get(_uuid(row.get("image_id"))),
                 "width": width,
                 "height": height,
                 "hardlink": bool(row.get("hardlink")),
@@ -1357,10 +1384,12 @@ def set_samples(code, set_id):
                 ),
             })
         return jsonify({
-            "set": _set_view(db, tset),
+            "set": _set_view(db, tset, user, project),
             "classes": classes,
             "warnings": warnings,
             "total": len(rows),
+            "tally": samples_lib.tally(rows),
+            "built": _built(tset),
             "matched": matched,
             "samples": out,
             "role": role_in(db, user, project),
@@ -1429,7 +1458,7 @@ def delete_set(code, set_id):
         )
         live.notify(db, "prep", job.id if job else tset.id, project.id,
                     s="deleting")
-        return jsonify(_set_view(db, tset)), 202
+        return jsonify(_set_view(db, tset, user, project)), 202
     finally:
         db.close()
 

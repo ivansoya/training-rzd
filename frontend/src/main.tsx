@@ -8,8 +8,8 @@ import AugGraphEditor from "./components/aug/AugGraphEditor";
 import AugGraphList from "./components/aug/AugGraphList";
 import HardwarePage from "./components/hardware/HardwarePage";
 import ProjectAug from "./components/aug/ProjectAug";
-import TrainingHome from "./components/training/TrainingHome";
-import TrainSetWizard from "./components/training/TrainSetWizard";
+import SetList from "./components/mag/sets/SetList";
+import SetWizard from "./components/mag/sets/SetWizard";
 import AuthGate from "./components/auth/AuthGate";
 import ConfirmPage from "./components/auth/ConfirmPage";
 import { DatasetRedirect } from "./components/mag/frames/redirect";
@@ -28,7 +28,7 @@ import TaskPage from "./components/mag/tasks/TaskPage";
 import RunHistory from "./components/mag/runs/RunHistory";
 import RunPage from "./components/mag/runs/RunPage";
 import { RunRedirect } from "./components/mag/runs/redirect";
-import TrainSetView from "./components/training/TrainSetView";
+import SetPage from "./components/mag/sets/SetPage";
 import "./styles/common.css";
 import "./styles/auth.css";
 import "./styles/import.css";
@@ -98,20 +98,20 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="import" element={<ImportRoute />} />
                   <Route path="tasks" element={<TaskBoard />} />
                   <Route path="aug" element={<ProjectAug />} />
-                  <Route path="training" element={<TrainingHome />} />
+                  <Route path="training" element={<SetList />} />
                   <Route path="runs" element={<RunHistory />} />
                   <Route path="runs/:runId" element={<RunPage />} />
                   <Route path="training/runs/:runId" element={<RunRedirect />} />
                   {/* Старый адрес датасета ведёт в общую галерею на его группу */}
                   <Route path="datasets/:datasetId" element={<DatasetRedirect />} />
-                  <Route path="trainsets/:setId" element={<TrainSetView />} />
+                  <Route path="trainsets/:setId" element={<SetPage />} />
                 </Route>
                 <Route
                   path="/projects/:code/training/new"
                   element={
                     <MagShell>
                       <RoleGate need="editor" what="Собирать обучающие наборы">
-                        <TrainSetWizard />
+                        <SetWizard />
                       </RoleGate>
                     </MagShell>
                   }

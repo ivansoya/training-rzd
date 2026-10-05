@@ -207,9 +207,9 @@
 
 .ui-range { -webkit-appearance: none; appearance: none; height: 18px; width: 100%; background: transparent; cursor: pointer; margin: 0; --p: 50%; }
 .ui-range:focus { outline: none; }
-.ui-range::-webkit-slider-runnable-track { height: 4px; border-radius: var(--r-full); background: linear-gradient(var(--primary), var(--primary)) 0 0 / var(--p) 100% no-repeat, var(--muted); }
+.ui-range::-webkit-slider-runnable-track { height: 4px; border-radius: var(--r-full); background: linear-gradient(var(--primary), var(--primary)) 0 0 / var(--p) 100% no-repeat, var(--hover); }
 .ui-range::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; margin-top: -6px; border-radius: 50%; background: var(--bg); border: 2px solid var(--primary); box-shadow: var(--shadow-sm); transition: box-shadow .12s; }
-.ui-range::-moz-range-track { height: 4px; border-radius: var(--r-full); background: var(--muted); }
+.ui-range::-moz-range-track { height: 4px; border-radius: var(--r-full); background: var(--hover); }
 .ui-range::-moz-range-progress { height: 4px; border-radius: var(--r-full); background: var(--primary); }
 .ui-range::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--bg); border: 2px solid var(--primary); }
 .ui-range:hover::-webkit-slider-thumb { box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 18%, transparent); }

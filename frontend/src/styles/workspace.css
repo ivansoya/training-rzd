@@ -129,10 +129,10 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 
 .mag-ds-head { gap: 13px; flex-wrap: wrap; margin-bottom: 20px; }
 .mag-ds-head h1, .mag-ds-head h2 { letter-spacing: -.5px; }
-.mag-tabs, .mag-vtabs, .t-tabs { border-bottom: 1px solid var(--rule); background: transparent; gap: 8px; margin-bottom: 24px; padding: 0 0 10px; }
-.mag-tab, .mag-tabs .mag-tab, .mag-vtabs button, .t-tab { min-height: 38px; padding: 9px 14px; border: 1px solid transparent; border-radius: 7px; font: 550 13px/1.4 "Segoe UI",sans-serif; color: var(--dim); background: transparent; box-shadow: none; text-transform: none; letter-spacing: 0; }
-.mag-tab.on, .mag-tabs .mag-tab.on, .mag-vtabs button.on, .t-tab.on { background: var(--accent-soft); color: var(--ink); border: 1px solid #F94D4D54; box-shadow: none; }
-.mag-tab:hover, .mag-vtabs button:hover, .t-tab:hover { background: var(--hair); color: var(--ink); }
+.mag-tabs, .mag-vtabs { border-bottom: 1px solid var(--rule); background: transparent; gap: 8px; margin-bottom: 24px; padding: 0 0 10px; }
+.mag-tab, .mag-tabs .mag-tab, .mag-vtabs button { min-height: 38px; padding: 9px 14px; border: 1px solid transparent; border-radius: 7px; font: 550 13px/1.4 "Segoe UI",sans-serif; color: var(--dim); background: transparent; box-shadow: none; text-transform: none; letter-spacing: 0; }
+.mag-tab.on, .mag-tabs .mag-tab.on, .mag-vtabs button.on { background: var(--accent-soft); color: var(--ink); border: 1px solid #F94D4D54; box-shadow: none; }
+.mag-tab:hover, .mag-vtabs button:hover { background: var(--hair); color: var(--ink); }
 .g-ctx { top: var(--workspace-header); padding: 15px 32px; background: var(--paper); min-height: 60px; gap: 14px; border-color: var(--rule); }
 .g-ctx-name { font-size: 18px; font-weight: 600; }
 .g-ctx-code { color: var(--dim); }
@@ -154,7 +154,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 /* Список прокручивается сам: на ролике с полусотней объектов карточка иначе
    растягивает вкладку тасок в полотно, по которому надо листать страницу. */
 .g-when, .g-vcard-note, .mag-src-mode { color: var(--dim); }
-.g-meter, .t-bar { border-radius: 5px; background: var(--hair); }
+.g-meter { border-radius: 5px; background: var(--hair); }
 .mag-vmode-pick { padding: 18px; background: var(--sunk); border-color: var(--rule); }
 .mag-vmode-pick.on { background: var(--accent-soft); border-color: var(--red); }
 .mag-vmode-body span, .mag-vmode-warn { color: var(--dim); }
@@ -165,15 +165,10 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .t-row { padding: 20px 22px; border: 1px solid var(--rule); border-radius: 10px; background: var(--card); gap: 18px; }
 .t-row .name { font-size: 16px; font-weight: 600; }
 .t-row .meta { font-size: 12px; color: var(--dim); }
-.t-rail { gap: 8px; background: transparent; border: 0; margin-bottom: 26px; }
-.t-rail div { padding: 15px; border: 1px solid var(--rule); border-radius: 8px; background: var(--card); font-size: 13px; }
-.t-rail .now { background: var(--accent-soft); border-color: var(--red); }
-.t-rail div b { font-size: 12px; }
-.t-choice { border-radius: 9px; background: var(--card); border-color: var(--rule); padding: 16px; }
-.t-choice .t { font-size: 14px; font-weight: 600; }
+
 .t-side h3 { font-size: 15px; font-weight: 600; }
-.t-kv { padding-block: 10px; font-size: 13px; border-color: var(--rule); }
-.t-kv span, .t-legend { color: var(--dim); }
+
+.t-legend { color: var(--dim); }
 .t-run-head h2 { font-size: 24px; font-weight: 600; letter-spacing: -.5px; }
 .t-run { gap: 24px; }
 .g-ged { position: fixed; top: var(--workspace-header); left: var(--workspace-width); right: 0; bottom: 0; grid-template-columns: 210px minmax(0,1fr) 290px; }
@@ -305,8 +300,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-pass-nums span { font: 12px/1.5 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; }
 .mag-h1 { font-size: 30px; line-height: 1.25; letter-spacing: -.7px; font-weight: 650; margin: 0 0 8px; }
 .g-label { font: 600 12px/1.4 "Segoe UI",sans-serif; text-transform: none; letter-spacing: 0; color: var(--dim); }
-.t-chip { padding: 7px 10px; font-size: 12px; border-radius: 6px; border-color: var(--rule); }
-.t-chip.on { background: var(--accent-soft); border-color: #F94D4D54; color: var(--ink); }
+
 /* ===== Строка класса со шкалой: обзор проекта и прогресс разметки =====
    Сетка, а не flex. Пока шкала была `flex: 1`, её длина зависела от длины
    имени слева и ширины числа справа: у «Человека» с 87 разметками шкала
@@ -393,11 +387,10 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   .mag-panel { padding: 32px 28px; }
   .mag-table { min-width: 570px; }
   .mag-card:has(> .mag-table) { overflow-x: auto; }
-  .mag-tabs, .mag-vtabs, .t-tabs { overflow-x: auto; flex-wrap: nowrap; }
-  .mag-tabs > *, .mag-vtabs > *, .t-tabs > * { flex-shrink: 0; white-space: nowrap; }
+  .mag-tabs, .mag-vtabs { overflow-x: auto; flex-wrap: nowrap; }
+  .mag-tabs > *, .mag-vtabs > * { flex-shrink: 0; white-space: nowrap; }
   .t-row { flex-wrap: wrap; padding: 17px; }
-  .t-rail { overflow-x: auto; }
-  .t-rail > div { min-width: 125px; }
+
   .t-run { grid-template-columns: 1fr; }
   .mag-ved { grid-template-columns: 52px minmax(0,1fr); grid-template-rows: auto minmax(240px,1fr) auto auto; overflow-y: auto; }
   .mag-ved .mag-ed-rail { grid-row: 2/4; }

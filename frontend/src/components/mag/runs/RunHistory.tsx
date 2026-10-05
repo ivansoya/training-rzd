@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SyntheticEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import * as runsApi from "../../../api/runs";
 import type { Run } from "../../../api/runs";
 import { useLive } from "../../../live/LiveProvider";
@@ -26,7 +26,9 @@ export default function RunHistory() {
   const [role, setRole] = useState("viewer");
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<RunFilter>("all");
-  const [set, setSet] = useState("all");
+  // «Все обучения набора» из паспорта набора приходят с ?set=<id>
+  const [search] = useSearchParams();
+  const [set, setSet] = useState(() => search.get("set") ?? "all");
   const [model, setModel] = useState("all");
   const [shown, setShown] = useState(PAGE);
   const [seed, setSeed] = useState<RunSeed | null>(null);

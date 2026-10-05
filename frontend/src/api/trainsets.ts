@@ -152,6 +152,31 @@ export interface TrainSet {
   created_at: string;
   error: string | null;
   job: JobRow | null;
+  /** Кто собрал. */
+  author: string | null;
+  /** Настройки мастера, с которыми собран набор: «Собрать похожий». */
+  spec: Partial<SetSpec>;
+  /** Может ли этот участник удалить набор: автор или админ. */
+  can_manage: boolean;
+  /** Что насчитала сборка — только в ответе одного набора. У старых наборов null. */
+  built?: Built | null;
+}
+
+/** Числа сборки по одной строке и одному источнику. */
+export interface BuiltFeed {
+  part: "train" | "val";
+  position: number;
+  source_node: string | null;
+  source_name: string | null;
+  feed: FeedKind;
+  images: number;
+  samples: number;
+}
+
+export interface Built {
+  /** Сколько кадров проекта легло в каждую половину. */
+  split: { train: number; val: number } | null;
+  feeds: BuiltFeed[];
 }
 
 export const preview = (code: string, spec: Partial<SetSpec>) =>
@@ -206,6 +231,8 @@ export interface Sample {
   split: string;
   objects: number;
   image_id: string;
+  /** Имя исходного кадра в проекте. null — кадр из проекта удалён. */
+  source_name?: string | null;
   /** Размер образца в пикселях. `null` — файл не прочитался. */
   width: number | null;
   height: number | null;
@@ -216,11 +243,22 @@ export interface Sample {
   boxes: import("../auth/api").Box[];
 }
 
+/** Сколько образцов по половинам и сколько оригиналов и копий графа. */
+export interface SamplesTally {
+  train: number;
+  val: number;
+  orig: number;
+  copy: number;
+  empty: number;
+}
+
 export interface SamplesPage {
   set: TrainSet;
   classes: SetClass[];
   warnings: string[];
   total: number;
+  tally?: SamplesTally;
+  built?: Built | null;
   matched: number;
   samples: Sample[];
   role: string;
@@ -230,6 +268,8 @@ export interface SamplesQuery {
   split?: string;
   classes?: number[];
   empty?: boolean;
+  /** Только образцы как есть или только копии, прошедшие через граф. */
+  kind?: "orig" | "copy";
   limit?: number;
   offset?: number;
 }
@@ -239,6 +279,7 @@ export const samples = (code: string, setId: string, q: SamplesQuery = {}) => {
   if (q.split) p.set("split", q.split);
   if (q.classes?.length) p.set("classes", q.classes.join(","));
   if (q.empty) p.set("empty", "1");
+  if (q.kind) p.set("kind", q.kind);
   if (q.limit) p.set("limit", String(q.limit));
   if (q.offset) p.set("offset", String(q.offset));
   const suffix = p.toString();

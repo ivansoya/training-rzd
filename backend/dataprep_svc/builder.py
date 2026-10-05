@@ -230,6 +230,8 @@ def build(db, job, *, on_beat=None):
     many_rows = Counter(row["part"] for row in rows)
 
     counts = Counter()
+    # Образцы по строкам сборки: паспорт рисует «половина → граф → сколько вышло»
+    per_unit = Counter()
     per_class = defaultdict(Counter)
     dropped_at = Counter()
     size_bytes = 0
@@ -293,6 +295,7 @@ def build(db, job, *, on_beat=None):
         counts["written"] += 1
         _write_label(root, split, name, lines)
         _note(manifest, image, split, name, lines, False, item.sid, item.ops)
+        per_unit[_unit_key(unit)] += 1
         counts["samples"] += 1
         counts[split] += 1
         counts["annotations"] += len(lines)
@@ -362,6 +365,7 @@ def build(db, job, *, on_beat=None):
                     counts["written"] += 0 if linked else 1
                     _write_label(root, split, name, lines)
                     _note(manifest, image, split, name, lines, linked, "", ())
+                    per_unit[_unit_key(unit)] += 1
                     counts["samples"] += 1
                     counts[split] += 1
                     counts["annotations"] += len(lines)
@@ -400,8 +404,19 @@ def build(db, job, *, on_beat=None):
         mode=sel["split_mode"],
     ))
 
+    halves = Counter(split_of.get(img.id, "train") for img in picked.images)
     report = {
         "warnings": warnings,
+        "split": {"train": halves["train"], "val": halves["val"]},
+        "feeds": [
+            {
+                "part": u["part"], "position": u["position"],
+                "source_node": u["source_node"] or None,
+                "source_name": u["source_name"], "feed": u["feed"],
+                "images": len(u["images"]), "samples": per_unit[_unit_key(u)],
+            }
+            for u in units
+        ],
         "dropped": dict(dropped_at),
         "val_ratio": round(ratio, 4),
         "classes": [
@@ -437,6 +452,10 @@ def build(db, job, *, on_beat=None):
     }
     db.commit()
     return tset
+
+
+def _unit_key(unit):
+    return (unit["part"], unit["position"], unit["source_node"] or "")
 
 
 def _write_label(root, split, name, lines):

@@ -31,7 +31,24 @@ INDEX_NAME = "samples-index.jsonl"
 # --------------------------------------------------------------------------- #
 # Чистая часть
 # --------------------------------------------------------------------------- #
-def pick(rows, *, split=None, classes=None, without=False, offset=0, limit=60):
+def is_copy(row):
+    """Образец, к которому граф что-то применил. Пустой путь — кадр как есть."""
+    return bool(row.get("ops"))
+
+
+def tally(rows):
+    """Сколько образцов по половинам и сколько из них оригиналов и копий."""
+    out = {"train": 0, "val": 0, "orig": 0, "copy": 0, "empty": 0}
+    for row in rows:
+        if row.get("split") in ("train", "val"):
+            out[row["split"]] += 1
+        out["copy" if is_copy(row) else "orig"] += 1
+        if not row.get("objects"):
+            out["empty"] += 1
+    return out
+
+
+def pick(rows, *, split=None, classes=None, without=False, kind=None, offset=0, limit=60):
     """Отобранные строки и сколько их всего. Возвращает (всего, срез).
 
     ``classes`` — набор номеров класса в наборе (тех, что стоят в разметке).
@@ -47,6 +64,8 @@ def pick(rows, *, split=None, classes=None, without=False, offset=0, limit=60):
         if split and row.get("split") != split:
             continue
         if without and row.get("objects"):
+            continue
+        if kind and (kind == "copy") != is_copy(row):
             continue
         if want and not (want & set(row.get("classes") or ())):
             continue
