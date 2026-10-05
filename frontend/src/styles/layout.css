@@ -927,3 +927,13 @@ a.pcard:hover { border-color: var(--input); }
 .tw-nums dd { margin: 0; text-align: right; font: 500 13px var(--mono); }
 .tw-warns { align-items: flex-start; }
 .tw-why { font-size: 12px; color: var(--faint); text-align: right; }
+/* Заголовок группы образцов — строка карточки: фон карточки в покое, подсветка всей строкой, как у строк таблиц */
+.ts-gal .fr-gh {
+  margin: 0 -8px; padding: 6px 8px; border-bottom: 0; border-radius: var(--r-md);
+  background: var(--card); backdrop-filter: none; transition: background .15s;
+}
+.ts-gal .fr-gh:hover { background: color-mix(in srgb, var(--hover) 45%, var(--card)); }
+.ts-gal .fr-gt { flex: 1; margin: 0; padding: 4px 0; }
+.ts-gal .fr-gt:hover { background: none; }
+.ts-gal .fr-gh:hover .fr-chev { color: var(--fg); }
+.ts-gal .fr-gh > .t-xs { padding-right: 4px; }

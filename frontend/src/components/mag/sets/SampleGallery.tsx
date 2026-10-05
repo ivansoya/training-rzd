@@ -133,7 +133,6 @@ function SampleGroup({ part, code, setId, look, names, onMatched }: {
           <b>{part}</b>
           <span className="ui-mono t-xs t-muted">{g.matched === null ? "…" : count(total, "образец", "образца", "образцов")}</span>
         </button>
-        <span className="grow" />
         {g.loading && <span className="t-xs t-faint">загружаю…</span>}
         {!g.loading && copies > 0 && look.kind === "all" && <span className="t-xs t-faint">среди показанных копий графа — {ru(copies)}</span>}
       </header>
