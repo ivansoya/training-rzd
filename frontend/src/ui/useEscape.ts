@@ -28,6 +28,11 @@ export function hasLayer(): boolean {
   return layers.length > 0;
 }
 
+/** Сколько слоёв открыто: окно, само ставшее слоем, сверяет свои горячие клавиши с этой глубиной. */
+export function layerDepth(): number {
+  return layers.length;
+}
+
 export function useEscape(onClose: () => void, active = true) {
   const ref = useRef(onClose);
   ref.current = onClose;

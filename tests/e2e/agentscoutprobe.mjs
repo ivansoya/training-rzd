@@ -88,7 +88,7 @@ if (cutScouted) {
   await page.waitForSelector(".ag-band-bar", { timeout: 30000 });
   await page.waitForTimeout(800);
   const band = await page.locator(".ag-band-bar").boundingBox();
-  const track = await page.locator(".mag-cut-track").boundingBox();
+  const track = await page.locator(".vc-track").boundingBox();
   console.log("нарезка: полоса под лентой — зазор", Math.round(band.y - (track.y + track.height)), "px, края",
     Math.round(band.x - track.x), "/", Math.round((band.x + band.width) - (track.x + track.width)),
     "| высота", Math.round(band.height), "| чипов", await page.locator(".ag-band-chip").count());
@@ -96,14 +96,14 @@ if (cutScouted) {
   await page.waitForTimeout(400);
   console.log("  карточка над полосой:", await page.locator(".ag-peek").count());
   await page.screenshot({ path: `${OUT}/scout-cut-band.png` });
-  const before = await page.locator(".mag-cut-seg").count();
+  const before = await page.locator(".vc-seg").count();
   const lanesBefore = await page.locator(".ag-band-bar rect").count();
   await page.locator(".ag-band-chip").first().click();
   console.log("  погашен первый класс: отрезков", lanesBefore, "→", await page.locator(".ag-band-bar rect").count());
   await page.locator(".ag-band-chip").first().click();
   await page.getByRole("button", { name: "Участки в план" }).click();
-  console.log("  участков в плане:", before, "→", await page.locator(".mag-cut-seg").count());
-  await page.locator(".mag-cut-btn[aria-label='Закрыть']").click();
+  console.log("  участков в плане:", before, "→", await page.locator(".vc-seg").count());
+  await page.getByRole("dialog").getByRole("button", { name: "Закрыть" }).first().click();
 } else {
   console.log("нарезаемый ролик не разведан — полосу нарезки не проверяю");
 }

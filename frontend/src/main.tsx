@@ -59,6 +59,7 @@ import "./styles/tokens.css";
 import "./styles/ui.css";
 import "./styles/layout.css";
 import "./styles/graphed.css";
+import "./styles/cut.css";
 
 // Один сайт. Старое приложение на /tools удалено вместе со своими файловыми
 // датасетами: всё, что оно умело, живёт теперь внутри проектов.

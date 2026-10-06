@@ -1,0 +1,149 @@
+/* Окно нарезки ролика: плеер, кинолента с участками и разведкой | план и итог. */
+
+/* От угла, а не translate по центру: сдвиг делает окно опорой для fixed — подсказка кадра и меню шага сползали бы. */
+.ui-dialog.vc { left: 16px; top: 24px; translate: none; }
+.vc-body { position: relative; flex: 1; min-height: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
+.vc-keys { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- слева: плеер и лента ---------- */
+.vc-left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); background: var(--bg); }
+.vc-left.full { background: var(--stage); }
+.vc-stage { position: relative; flex: 1; min-height: 160px; display: grid; place-items: center; background: var(--stage); overflow: hidden; }
+.vc-stage > video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; display: block; cursor: pointer; }
+.vc-unplayable {
+  position: absolute; inset: auto 16px 16px; padding: 10px 14px; border-radius: var(--r-md); font-size: 13px;
+  background: var(--on-frame-bg); color: var(--on-frame);
+}
+/* Скрытый плеер для подсказок: display:none не даёт рисовать в canvas. */
+.vc-hidden { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+
+.vc-player { display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-top: 1px solid var(--border); background: var(--sidebar); flex-wrap: wrap; }
+.vc-time-now { font-size: 12.5px; padding: 0 8px; }
+.vc-time-now i { font-style: normal; color: var(--faint); }
+.vc-sep { width: 1px; height: 20px; background: var(--border); margin: 0 6px; }
+.vc-player .ui-seg { margin-right: 4px; }
+
+.vc-track {
+  position: relative; height: 84px; flex: none; overflow: hidden; touch-action: none; user-select: none;
+  border-top: 1px solid var(--border); background: var(--stage);
+}
+.vc-track.cut { cursor: crosshair; }
+.vc-track.hand { cursor: grab; }
+.vc-track.panning { cursor: grabbing; }
+.vc-strip { width: 100%; height: 100%; object-fit: cover; display: block; opacity: .55; pointer-events: none; }
+
+/* Участок: середина мышь не ловит — по ней перематывают и рисуют; ухватить можно за края и метку. */
+.vc-seg {
+  position: absolute; top: 0; bottom: 16px; display: flex; justify-content: center; align-items: flex-start; pointer-events: none;
+  border: 1px solid var(--sc); border-radius: var(--r-sm); background: color-mix(in srgb, var(--sc) 14%, transparent);
+  transition: box-shadow .16s, background-color .16s;
+}
+.vc-seg.on { border-width: 2px; background: color-mix(in srgb, var(--sc) 22%, transparent); box-shadow: 0 0 0 1px var(--on-frame), 0 0 14px color-mix(in srgb, var(--sc) 45%, transparent); }
+.vc-seg b {
+  font: 600 10px var(--mono); color: var(--bg); background: var(--sc); padding: 2px 7px; border-radius: 0 0 var(--r-sm) var(--r-sm);
+  white-space: nowrap; pointer-events: auto; cursor: grab;
+}
+.vc-seg b:hover { filter: brightness(1.15); }
+.vc-seg .h { position: absolute; top: 0; bottom: 0; width: 9px; background: var(--sc); opacity: .9; pointer-events: auto; cursor: ew-resize; transition: width .14s; }
+.vc-seg.on .h { width: 11px; opacity: 1; }
+.vc-seg .h.l { left: -4px; border-radius: var(--r-sm) 0 0 var(--r-sm); }
+.vc-seg .h.r { right: -4px; border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+
+/* Участок, который тянут прямо сейчас. */
+.vc-ghost {
+  position: absolute; top: 0; bottom: 16px; display: flex; justify-content: center; align-items: flex-start; pointer-events: none;
+  border: 1px dashed var(--fg); border-radius: var(--r-sm); background: color-mix(in srgb, var(--fg) 12%, transparent);
+}
+.vc-ghost b { font: 600 10px var(--mono); color: var(--bg); background: var(--fg); padding: 2px 7px; border-radius: 0 0 var(--r-sm) var(--r-sm); }
+
+/* Одиночный кадр — ромбик поверх ленты, чтобы не путался с участками. */
+.vc-one {
+  position: absolute; top: 40%; z-index: 2; width: 11px; height: 11px; margin: -5px 0 0 -5px; rotate: 45deg; cursor: pointer;
+  background: var(--fg); border: 1px solid var(--stage);
+}
+
+/* Засечки кадров нарезки: ножка — кадр уже нарезан, без неё — появится; «gone» — исчезнет. */
+.vc-marks { position: absolute; left: 0; right: 0; bottom: 0; height: 16px; background: var(--sidebar); }
+.vc-marks i { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.vc-marks i b { width: 3px; height: 9px; border-radius: 2px; opacity: .8; transition: height .15s var(--ease), width .15s, opacity .15s; }
+.vc-marks i:hover b { width: 5px; height: 15px; opacity: 1; }
+.vc-marks i.has::after { content: ""; position: absolute; bottom: 0; width: 3px; height: 3px; border-radius: 1px; background: var(--muted-fg); }
+.vc-marks i.gone b { height: 11px; background: var(--faint); box-shadow: inset 0 0 0 1px var(--destructive); }
+.vc-marks i.gone:hover b { background: var(--destructive); box-shadow: none; }
+.vc-marks .band { width: auto; margin: 0; top: auto; bottom: 3px; height: 9px; opacity: .7; cursor: default; }
+
+.vc-head { position: absolute; top: 0; bottom: 12px; width: 2px; margin-left: -1px; background: var(--on-frame); box-shadow: var(--shadow-sm); pointer-events: none; }
+
+/* fixed, а не absolute: лента режет по overflow, и карточка обрезалась бы. */
+.vc-peek {
+  position: fixed; z-index: 90; translate: -50% 0; pointer-events: none; display: flex; flex-direction: column; overflow: hidden;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--r-md); box-shadow: var(--shadow-pop);
+}
+.vc-peek img, .vc-peek-wait { display: block; width: 168px; height: 96px; object-fit: cover; background: var(--stage); }
+.vc-peek b { padding: 3px 0; text-align: center; font: 600 10.5px var(--mono); }
+
+.vc-ticks { display: flex; justify-content: space-between; padding: 5px 10px; font: 500 10.5px var(--mono); color: var(--faint); background: var(--sidebar); border-top: 1px solid var(--border); }
+
+/* ---------- справа: план ---------- */
+.vc-side {
+  display: flex; flex-direction: column; gap: 4px; min-height: 0; overflow: auto; padding: 4px 0; background: var(--sidebar);
+  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--input) transparent;
+}
+.vc-side > .ui-notice { margin: 8px 14px 0; }
+.vc-side > section { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.vc-side > section:last-child { border-bottom: 0; }
+.vc-side h5 { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 12px; font-weight: 500; color: var(--faint); }
+.vc-side h5 .ui-mono { color: var(--muted-fg); }
+
+.vc-card {
+  display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--card); cursor: pointer; transition: border-color .12s, background .12s;
+}
+.vc-card:hover { border-color: var(--input); }
+.vc-card.on { border-color: color-mix(in srgb, var(--sc) 70%, var(--border)); box-shadow: inset 3px 0 0 var(--sc); }
+.vc-card-r { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.vc-card-r > .ui-ic { color: var(--faint); flex: none; }
+.vc-card-r.sub { padding-left: 16px; }
+.vc-card-r.sub > b { font-size: 13px; font-weight: 500; }
+.vc-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--sc); flex: none; }
+.vc-time.ui-input { width: 82px; height: 28px; padding: 0 8px; font-size: 12.5px; }
+.vc-step.ui-input { width: 64px; height: 26px; padding: 0 8px; font-size: 12.5px; }
+
+.vc-ones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+.vc-one-t {
+  position: relative; display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden;
+  background: var(--card); cursor: pointer;
+}
+.vc-one-t:hover { border-color: var(--input); }
+.vc-one-t img, .vc-noimg { display: grid; place-items: center; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: var(--stage); font-size: 11px; color: var(--faint); }
+.vc-one-t > .ui-mono { padding: 2px 6px; font-size: 10.5px; color: var(--muted-fg); }
+.vc-one-t .rm {
+  position: absolute; top: 3px; right: 3px; display: none; place-items: center; width: 18px; height: 18px; padding: 0; border: 0;
+  border-radius: 50%; background: var(--on-frame-bg); color: var(--on-frame); cursor: pointer;
+}
+.vc-one-t:hover .rm { display: grid; }
+
+.vc-sum .ui-meta { gap: 6px 16px; }
+.vc-diff { display: inline-flex; flex-wrap: wrap; gap: 4px 10px; }
+.vc-diff b { font: 500 12.5px var(--mono); }
+.vc-diff .add { color: var(--st-done); }
+.vc-diff .rm, .vc-bad { color: var(--destructive); }
+
+/* ---------- заслонка нарезки и меню шага ---------- */
+.vc-veil { position: absolute; inset: 0; z-index: 10; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); backdrop-filter: blur(2px); }
+.vc-work {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 36px; text-align: center;
+  border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--card); box-shadow: var(--shadow-pop);
+}
+.vc-work > b { font-size: 16px; font-weight: 600; }
+.vc-work-f { display: flex; gap: 8px; margin-top: 8px; }
+.vc-spin { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--border); border-top-color: var(--fg); animation: vc-spin .9s linear infinite; }
+@keyframes vc-spin { to { rotate: 360deg; } }
+.vc-ok { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: color-mix(in srgb, var(--st-done) 20%, transparent); color: var(--st-done); }
+
+.vc-menu-veil { position: fixed; inset: 0; z-index: 95; }
+.vc-menu { position: fixed; z-index: 96; width: 200px; display: flex; flex-direction: column; }
+.vc-menu-h { padding: 6px 10px 4px; font-size: 11.5px; color: var(--faint); }
+.vc-menu-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
+.vc-menu-row .ui-input { width: 72px; height: 28px; }
+.vc .ui-dialog-bare { border-top: 1px solid var(--border); }

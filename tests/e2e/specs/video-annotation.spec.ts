@@ -269,8 +269,33 @@ test("нарезаемое видео живёт в «Роликах на нар
   const block = source(page, "Ролики на нарезку");
   await expect(block.getByText("не нарезан", { exact: true })).toBeVisible();
   await block.getByRole("button", { name: "Нарезать", exact: true }).click();
-  await expect(page.locator(".mag-cut")).toBeVisible();
+  const cut = page.getByRole("dialog", { name: "sample.mp4" });
+  await expect(cut).toBeVisible();
   await expect(page.getByRole("dialog", { name: "Разметка видео" })).toHaveCount(0);
+
+  // Протяжка по ленте ножницами — новый участок, «Применить» обещает кадры
+  await expect(cut.getByRole("button", { name: /Ножницы/ })).toHaveAttribute("aria-pressed", "true");
+  const track = cut.locator(".vc-track");
+  const box = (await track.boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.1, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.move(box.x + box.width * 0.9, box.y + box.height / 2, { steps: 8 });
+  await page.mouse.up();
+  await expect(cut.locator(".vc-seg")).toHaveCount(1);
+  await expect(cut.locator(".vc-card")).toHaveCount(1);
+  const apply = cut.getByRole("button", { name: /^Применить \+\d+/ });
+  await expect(apply).toBeEnabled();
+
+  // Щелчок без протяжки участка не рисует
+  await page.mouse.click(box.x + box.width * 0.95, box.y + box.height / 2);
+  await expect(cut.locator(".vc-seg")).toHaveCount(1);
+
+  await apply.click();
+  await expect(cut.getByText("Нарезано")).toBeVisible({ timeout: 60_000 });
+  await cut.getByRole("button", { name: "Вернуться к таске" }).click();
+  await expect(cut).toBeHidden();
+  await expect(block.getByRole("button", { name: "Нарезать ещё" })).toBeVisible();
 });
 
 test("режим ролика задаёт пункт, которым его добавили", async ({ page }) => {

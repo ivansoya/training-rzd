@@ -158,7 +158,6 @@
 
 /* ===================== ВТОРОЙ УРОВЕНЬ НАВИГАЦИИ ===================== */
 
-
 /* Переключатель темы в верхней строке: три состояния, а не два — «как в
  * системе» тоже осознанный выбор, и он должен быть виден. */
 /* Пустой экран — приглашение действовать, а не сообщение о пустоте. */
@@ -305,32 +304,12 @@ select {
   backdrop-filter: blur(3px);
 }
 
-.mag-modal,
-.mag-cut {
+.mag-modal {
   box-shadow:
     0 0 0 1px rgba(255, 77, 77, 0.28),
     0 0 40px rgba(255, 77, 77, 0.14),
     0 30px 80px rgba(0, 0, 0, 0.7);
 }
-
-/* Окно нарезки. Оно было ниже, чем нужно: кадр ужимался, дорожка участков
-   оказывалась в щели, и попасть по границе мышью было тяжело. */
-.mag-cut {
-  width: 1320px;
-  min-height: min(860px, calc(100vh - 48px));
-  background: var(--paper);
-  color: var(--ink);
-}
-
-.mag-cut-head { border-bottom-color: var(--rule); }
-.mag-cut-meta { color: var(--dim); }
-.mag-cut-btn {
-  background: var(--hair);
-  border-color: var(--rule);
-  color: var(--ink);
-}
-.mag-cut-left { background: var(--paper); }
-.mag-cut-stage video { max-height: 58vh; }
 
 /* Что делают с роликом прямо сейчас. Строка живёт в шапке блока рядом с
    меткой: подготовка идёт на сервере, и без неё свежий ролик выглядит просто
@@ -387,43 +366,3 @@ select {
   flex-shrink: 0;
 }
 
-/* Оценка нарезки — «сколько кадров добавится и сколько уйдёт». Цвета были
-   заданы светлыми числами: песочная рамка и коричневый текст на тёмном
-   становились нечитаемыми пятнами. */
-.mag-est {
-  background: var(--skip-in);
-  border-color: rgba(255, 176, 46, 0.42);
-  color: var(--skip);
-  box-shadow: var(--glow-skip);
-}
-
-.mag-est b,
-.mag-est strong { color: var(--ink); }
-
-.mag-est.bad {
-  background: var(--red-in);
-  border-color: rgba(255, 77, 77, 0.42);
-  color: var(--red);
-  box-shadow: var(--glow-red);
-}
-
-.mag-est-diff b.add { color: var(--done); }
-.mag-est-diff b.rm { color: var(--red); }
-
-/* Игла текущего кадра на ленте. Была цвета карточки с белым свечением —
-   то есть тёмной полоской на тёмном, которую приходилось искать. Красная
-   игла — то же, чем помечено «сейчас» во всём приложении. */
-.mag-cut-head-line {
-  background: var(--red);
-  box-shadow: 0 0 6px rgba(255, 77, 77, 0.9), 0 0 14px rgba(255, 77, 77, 0.45);
-}
-
-/* Кинолента окна рисуется на холст, а не приходит картинкой. */
-canvas.mag-cut-strip {
-  width: 100%;
-  height: 100%;
-  display: block;
-  opacity: 0.62;
-  pointer-events: none;
-  transition: opacity 0.15s linear;
-}

@@ -456,7 +456,8 @@ a.pcard:hover { border-color: var(--input); }
 
 .tp-reels { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-md); }
 .tp-reel {
-  display: grid; grid-template-columns: 120px minmax(0, 1fr) 120px auto; gap: 6px 14px; align-items: center;
+  /* Колонка действий постоянной ширины: «Нарезать» и «Нарезать ещё» не меняют длину дорожки. */
+  display: grid; grid-template-columns: 120px minmax(0, 1fr) 120px 172px; gap: 6px 14px; align-items: center;
   padding: 10px 12px; border-top: 1px solid var(--border); transition: background .15s;
 }
 .tp-reel:first-child { border-top: 0; }

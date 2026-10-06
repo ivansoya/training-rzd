@@ -76,7 +76,7 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag-card, .t-side { border: 1px solid transparent; border-radius: 12px; background: var(--card); padding: 22px; box-shadow: none; }
 .mag-card-h { margin-bottom: 20px; gap: 15px; align-items: center; }
 .mag-card-h h4 { font-size: 17px; font-weight: 600; letter-spacing: -.2px; }
-.mag-modal, .mag-cut, .mag-vmode { border: 1px solid var(--rule); border-radius: 14px; background: var(--card); box-shadow: 0 20px 70px #0008; }
+.mag-modal, .mag-vmode { border: 1px solid var(--rule); border-radius: 14px; background: var(--card); box-shadow: 0 20px 70px #0008; }
 .mag-modal { padding: 28px; }
 .mag-modal > h1 { font-size: 24px; font-weight: 650; margin-bottom: 8px; }
 .mag-modal-foot { padding-top: 18px; border-top: 1px solid var(--rule); }
@@ -85,7 +85,7 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag-exp-done span { color: #B1EBC7; }
 .mag-exp-progress i { background: var(--accent-soft); }
 .mag-exp-seg button.on { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 0 0 1px #F94D4D78; }
-.mag-tile-split, .mag-tile-n, .mag-tile-note, .mag-tile-mark, .mag-poster-play, .mag-poster-dur, .mag-from, .mag-one .mag-icon-btn { color: var(--ink); }
+.mag-tile-split, .mag-tile-n, .mag-tile-note, .mag-tile-mark, .mag-poster-play, .mag-poster-dur, .mag-from { color: var(--ink); }
 .mag-role, .t-pill { border-radius: 5px; letter-spacing: 0; text-transform: none; font-size: 12px; box-shadow: none; }
 .mag-role { background: var(--hair); color: var(--dim); border: 1px solid var(--rule); }
 .mag-role.admin { background: var(--accent-soft); color: var(--accent-text); }
@@ -155,7 +155,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-vmode-pick { padding: 18px; background: var(--sunk); border-color: var(--rule); }
 .mag-vmode-pick.on { background: var(--accent-soft); border-color: var(--red); }
 .mag-vmode-body span, .mag-vmode-warn { color: var(--dim); }
-.mag-cut-head { padding: 16px 22px; }
 .mag-drop { background: var(--sunk); border-color: var(--control-edge); border-radius: 12px; }
 
 /* Preparation, graphs, training, hardware and account use the same surfaces. */
@@ -308,7 +307,6 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
   56%, 72% { transform: translateX(min(0px, calc(100cqw - 100%))); }
   100% { transform: translateX(0); }
 }
-
 
 @media(min-width:1600px) {
   :root { --workspace-width: 232px; }

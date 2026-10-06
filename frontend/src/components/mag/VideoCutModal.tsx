@@ -1,23 +1,27 @@
+// Нарезка ролика на кадры: плеер, кинолента с участками, разведка под ней; справа план и итог.
+//
+// Участок рисуется протяжкой по ленте («Ножницы», C); «Рука» (H) и Shift+протяжка двигают
+// приближенное окно, щелчок без движения перематывает. План режет сервер; окно после нарезки
+// не закрывается — нарезают подходами.
+
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { pollJob } from "../../api/jobs";
-import {
-  cutVideo,
-  estimateCut,
-  videoFileUrl,
-} from "../../auth/api";
+import { cutVideo, estimateCut, videoFileUrl } from "../../auth/api";
 import type { CutEstimate, CutSegment, Segment, TaskVideoItem } from "../../auth/api";
-import { plural } from "../ru";
+import { Button, Dialog, Icon, Input, MenuItem, Meta, Notice, Popover, cx, layerDepth, useEscape } from "../../ui";
+import { plural, ru } from "../ru";
 import VideoStrip from "./VideoStrip";
-import Sep from "../Sep";
-import Banner from "../Banner";
 import { NumInput } from "../NumInput";
 import { ScoutBand, taskColors, useScouts } from "../agents/scout";
-import { hasLayer } from "./useEscape";
+import { useConfirm } from "./tasks/Confirm";
 
-const COLORS = ["#e21a1a", "#1f6feb", "#1a7f4b", "#8957e5", "#e8590c"];
+// Цвета участков — ряды палитры; брендовый красный значит действие или брак.
+const TONES = ["var(--c1)", "var(--c2)", "var(--c3)", "var(--c4)", "var(--c5)"];
 const STEPS_MS = [100, 250, 500, 1000, 2000, 5000];
 const RATES = [0.25, 0.5, 1, 2];
+// Короче — случайный щелчок с дрожью руки, а не участок.
+const MIN_SEG_MS = 200;
 
 // Тоньше 3 px отдельные засечки не различить — участок показывается штриховкой,
 // а разглядеть каждый кадр можно, приблизив ленту колесом.
@@ -64,8 +68,8 @@ export function parseTime(text: string, max: number): number | null {
 const fmtEdit = (ms: number) => (ms % 1000 ? fmtPrecise(ms) : fmtTime(ms));
 
 /** Поле времени с черновиком: разбор на уходе и по Enter, а не на каждой букве. */
-function TimeInput({ ms, max, disabled, onValue }: {
-  ms: number; max: number; disabled?: boolean; onValue: (ms: number) => void;
+function TimeInput({ ms, max, disabled, label, onValue }: {
+  ms: number; max: number; disabled?: boolean; label: string; onValue: (ms: number) => void;
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   const bad = draft !== null && parseTime(draft, max) === null;
@@ -75,19 +79,12 @@ function TimeInput({ ms, max, disabled, onValue }: {
     setDraft(null);
   };
   return (
-    <input
-      type="text"
-      className={bad ? "bad" : undefined}
-      value={draft ?? fmtEdit(ms)}
-      disabled={disabled}
-      aria-invalid={bad}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
+    <Input className="vc-time ui-mono" value={draft ?? fmtEdit(ms)} disabled={disabled} invalid={bad} aria-label={label}
+      onChange={(e) => setDraft(e.target.value)} onBlur={commit}
       onKeyDown={(e) => {
         if (e.key === "Enter") commit();
-        if (e.key === "Escape") setDraft(null);
-      }}
-    />
+        if (e.key === "Escape") { e.stopPropagation(); setDraft(null); }
+      }} />
   );
 }
 
@@ -110,14 +107,11 @@ function splitPlan(list: CutSegment[] | undefined) {
     if (s.end_ms - s.start_ms <= 1) ones.push({ ms: s.start_ms, thumb: null });
     else zones.push({ id: i, start_ms: s.start_ms, end_ms: s.end_ms, step_ms: s.step_ms });
   });
-  // Пустой план остаётся пустым. Готовый участок «первые 10 секунд» никто не
-  // заказывал: он навязывал кусок ролика, который почти всегда приходилось
-  // стирать, а «Применить» при этом обещало нарезать десяток лишних кадров.
+  // Пустой план остаётся пустым: готовый участок «первые 10 секунд» навязывал кусок ролика.
   return { zones, ones, nextId: (list?.length || 0) + 1 };
 }
 
-/** Отпечаток плана: те же участки в любом порядке — тот же план. У одиночного
- *  кадра шаг ничего не значит, его не сравниваем. */
+/** Отпечаток плана: те же участки в любом порядке — тот же план. У одиночного кадра шаг не сравниваем. */
 function planKey(list: { start_ms: number; end_ms: number; step_ms: number }[]): string {
   return JSON.stringify(
     list
@@ -126,41 +120,14 @@ function planKey(list: { start_ms: number; end_ms: number; step_ms: number }[]):
   );
 }
 
-interface MenuState {
-  x: number;
-  y: number;
-  kind: "step" | "rate";
-  segId?: number;
-}
-
-/** Сколько кадров даст участок плана. Правило одно на мастер нарезки и на
- *  карточку ролика: два счёта разошлись бы, и одно число называло бы другое
- *  враньём. */
+/** Сколько кадров даст участок плана. Правило одно на окно нарезки и на карточку ролика. */
 export function framesIn(s: { start_ms: number; end_ms: number; step_ms: number }): number {
   return Math.max(0, Math.ceil((s.end_ms - s.start_ms) / Math.max(1, s.step_ms)));
 }
 
-/** Кинолента окна: настоящие кадры того промежутка, который сейчас виден.
- *
- * Общая лента приходит с сервера одной широкой картинкой на весь ролик — на
- * общем плане этого хватает. Но при увеличении она просто растягивалась: сотня
- * пикселей превращалась в тысячу, и разметчик видел мыло вместо кадров, хотя
- * выбирает он именно по ним.
- *
- * Досылать нарезку с сервера незачем — сам ролик уже у клиента, им играет
- * плеер. Поэтому кадры снимаются здесь: свой скрытый плеер перематывается по
- * окну и рисует каждый кадр на холст. Плеер именно свой, а не общий с
- * подсказкой под курсором: перемотка у элемента одна, и две очереди к ней
- * отбирали бы кадры друг у друга.
- */
-function WindowStrip({
-  src, from, span, className,
-}: {
-  src: string;
-  from: number;
-  span: number;
-  className?: string;
-}) {
+/** Кинолента окна: настоящие кадры видимого промежутка, снятые своим скрытым плеером.
+ *  Общая лента с сервера при увеличении растягивалась в мыло, а выбирают именно по кадрам. */
+function WindowStrip({ src, from, span, className }: { src: string; from: number; span: number; className?: string }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [ready, setReady] = useState(false);
@@ -169,10 +136,8 @@ function WindowStrip({
     const canvas = canvasRef.current;
     const video = videoRef.current;
     if (!canvas || !video || span <= 0) return undefined;
-
     let live = true;
-    // Перемотка — это сеть и разжатие; на каждое движение колеса её затевать
-    // незачем. Ждём, пока окно устоится.
+    // Перемотка — это сеть и разжатие; ждём, пока окно устоится.
     const timer = window.setTimeout(() => void fill(), 260);
 
     async function seekTo(seconds: number): Promise<boolean> {
@@ -202,10 +167,8 @@ function WindowStrip({
       if (!live || !canvas || !video) return;
       const box = canvas.getBoundingClientRect();
       if (!box.width) return;
-      // Ширина плитки — компромисс: уже 80 px кадр перестаёт читаться, шире
-      // 130 их становится слишком мало, чтобы попасть по нужному месту.
-      const tileW = 104;
-      const tiles = Math.max(1, Math.round(box.width / tileW));
+      // Уже 80 px кадр не читается, шире 130 их слишком мало, чтобы попасть по месту.
+      const tiles = Math.max(1, Math.round(box.width / 104));
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       canvas.width = Math.round(box.width * dpr);
       canvas.height = Math.round(box.height * dpr);
@@ -213,17 +176,13 @@ function WindowStrip({
       if (!ctx) return;
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, box.width, box.height);
-
       const w = box.width / tiles;
       for (let i = 0; i < tiles; i += 1) {
         if (!live) return;
-        // Середина плитки, а не её край: кадр должен отвечать за тот кусок
-        // ленты, под которым он нарисован.
+        // Середина плитки: кадр отвечает за тот кусок ленты, под которым нарисован.
         const ms = from + ((i + 0.5) / tiles) * span;
         if (!(await seekTo(ms / 1000))) continue;
         if (!live || !video.videoWidth) return;
-        // Кадр вписывается по высоте и обрезается по ширине — как `cover`:
-        // иначе на широком ролике между плитками зияли бы поля.
         const scale = box.height / video.videoHeight;
         const drawW = video.videoWidth * scale;
         ctx.save();
@@ -244,9 +203,8 @@ function WindowStrip({
 
   return (
     <>
-      <video ref={videoRef} className="mag-peek" src={src} preload="auto" muted />
-      <canvas ref={canvasRef} className={className}
-        style={{ opacity: ready ? undefined : 0 }} />
+      <video ref={videoRef} className="vc-hidden" src={src} preload="auto" muted />
+      <canvas ref={canvasRef} className={className} style={{ opacity: ready ? undefined : 0 }} />
     </>
   );
 }
@@ -267,14 +225,11 @@ function drawThumb(v: HTMLVideoElement, w: number): string | null {
   }
 }
 
-export default function VideoCutModal({
-  taskId,
-  video,
-  editable,
-  startAtMs,
-  onClose,
-  onDone,
-}: {
+type Tool = "cut" | "hand";
+/** Что делает протяжка по ленте сейчас: двигает окно или рисует участок. */
+type Gesture = { kind: "pan"; x0: number; start0: number; moved: boolean } | { kind: "draw"; x0: number; a: number; b: number; moved: boolean };
+
+export default function VideoCutModal({ taskId, video, editable, startAtMs, onClose, onDone }: {
   taskId: string;
   video: TaskVideoItem;
   editable: boolean;
@@ -289,6 +244,7 @@ export default function VideoCutModal({
   const scouts = useScouts(taskId);
   const scout = scouts[video.id];
   const minSpan = Math.max(500, frameMs * 20);
+  const src = videoFileUrl(taskId, video.id);
 
   // Сохранённый план — то, из чего таска нарезана; открываем ровно его.
   const [plan0] = useState(() => splitPlan(video.segments));
@@ -297,14 +253,11 @@ export default function VideoCutModal({
   const [selected, setSelected] = useState<number | null>(plan0.zones[0]?.id ?? null);
   const [singles, setSingles] = useState<Single[]>(plan0.ones);
   const [est, setEst] = useState<CutEstimate>({});
-  const [confirm, setConfirm] = useState(false);
-  /** Идёт ли нарезка. Именно «идёт», а не «сколько сделано»: доля с сервера
-   *  прыгает рывками по участкам и врёт тем сильнее, чем крупнее шаг. */
+  /** Идёт ли нарезка: доля с сервера прыгает рывками по участкам и врёт. */
   const [busy, setBusy] = useState(false);
   /** Нарезка кончилась: сколько кадров прибавилось и сколько ушло. */
   const [done, setDone] = useState<{ added: number; removed: number } | null>(null);
-  /** Счётчик применённых планов. Двигает пересчёт оценки: сами участки после
-   *  нарезки не меняются, и без него оценка осталась бы вчерашней. */
+  /** Счётчик применённых планов: двигает пересчёт оценки, сами участки после нарезки те же. */
   const [applied, setApplied] = useState(0);
   const [error, setError] = useState<string | null>(null);
   // Плеер не играет формат (AVI, HEVC без декодера): говорим это, а не молчим чёрным.
@@ -314,32 +267,32 @@ export default function VideoCutModal({
   const [rate, setRate] = useState(1);
   const [trackW, setTrackW] = useState(0);
   const [full, setFull] = useState(false);
-  const [menu, setMenu] = useState<MenuState | null>(null);
+  // Меню шага по правой кнопке на метке участка — у курсора.
+  const [menu, setMenu] = useState<{ x: number; y: number; segId: number } | null>(null);
   const [custom, setCustom] = useState("");
+  const [confirm, confirmNode] = useConfirm();
 
-  // Окно ленты: с зумом всё время адресуется через него, а не через duration.
+  // Окно ленты: с зумом всё адресуется через него, а не через duration.
   const [view, setView] = useState({ start: 0, span: Math.max(1, duration) });
-  const [tool, setTool] = useState<"move" | "cut">("move");
-  const [sticky, setSticky] = useState(false);
-  const [pending, setPending] = useState<number | null>(null);
-  const [cutHover, setCutHover] = useState<number | null>(null);
+  const [tool, setTool] = useState<Tool>(editable ? "cut" : "hand");
+  const [gesture, setGesture] = useState<Gesture | null>(null);
   const [drag, setDrag] = useState<{ id: number; edge: "l" | "r" | "body"; grab: number } | null>(null);
-  const [hover, setHover] = useState<
-    { ms: number; x: number; bottom: number; thumb: string | null } | null
-  >(null);
+  const [hover, setHover] = useState<{ ms: number; x: number; bottom: number; thumb: string | null } | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const peekRef = useRef<HTMLVideoElement>(null);
   const trackRef = useRef<HTMLDivElement>(null);
   const leftRef = useRef<HTMLDivElement>(null);
-  const panRef = useRef<{ x0: number; start0: number; moved: boolean } | null>(null);
   const peekWant = useRef<number | null>(null);
   const peekCache = useRef<Map<number, string>>(new Map());
+  // Глубина стопки Esc с самим окном: выше неё открыто что-то поверх, и клавиши окна молчат.
+  const depth = useRef(0);
+  useEffect(() => {
+    depth.current = layerDepth();
+  }, []);
+  useEscape(() => setMenu(null), Boolean(menu));
 
-  const sel = segs.find((s) => s.id === selected) || null;
-
-  // Одиночный кадр — вырожденный участок: plan() на сервере берёт из него
-  // ровно один момент и сам отсеивает совпадения с участками.
+  // Одиночный кадр — вырожденный участок: plan() на сервере берёт из него ровно один момент.
   const cutSegments = useMemo<Segment[]>(
     () => [
       ...segs.map((s) => ({ start_ms: s.start_ms, end_ms: s.end_ms, step_ms: s.step_ms })),
@@ -352,31 +305,31 @@ export default function VideoCutModal({
     estimateCut(taskId, video.id, cutSegments).then(setEst).catch(() => {});
   }, [taskId, video.id, cutSegments, applied]);
 
-  // Что сейчас нарезано — от него меряем «план не применён». Двигается после
-  // удачной нарезки: prop `video` к тому времени ещё прежний.
+  // Что сейчас нарезано — от него меряем «план не применён». Двигается после удачной нарезки.
   const savedPlan = useRef(planKey(video.segments || []));
-  const [leaving, setLeaving] = useState(false);
 
-  /** Уйти из окна. Неприменённый план молча терялся от Esc, ✕ и «Отмены» —
-   *  теперь спрашиваем внутри окна. Пока режется, уйти нельзя вовсе: заслонка
-   *  так и говорит — «не закрывайте окно». */
-  function requestClose() {
+  /** Уйти из окна. Неприменённый план не теряется молча; пока режется, уйти нельзя. */
+  const requestClose = async () => {
     if (busy) return;
-    if (editable && planKey(cutSegments) !== savedPlan.current) setLeaving(true);
-    else onClose();
-  }
+    if (editable && planKey(cutSegments) !== savedPlan.current) {
+      const ok = await confirm({ title: "План не применён", icon: "x", danger: true, ok: "Закрыть без нарезки",
+        desc: "Участки и отдельные кадры, отмеченные здесь, пропадут." });
+      if (!ok) return;
+    }
+    onClose();
+  };
 
   useEffect(() => {
     if (startAtMs && videoRef.current) videoRef.current.currentTime = startAtMs / 1000;
   }, [startAtMs]);
 
-  useEffect(() => {
-    const el = trackRef.current;
+  // Лента появляется вместе с окном, а не при монтировании: Radix вставляет его в портал позже.
+  const trackBox = useCallback((el: HTMLDivElement | null) => {
+    (trackRef as { current: HTMLDivElement | null }).current = el;
     if (!el) return;
     const ro = new ResizeObserver(() => setTrackW(el.clientWidth));
     ro.observe(el);
     setTrackW(el.clientWidth);
-    return () => ro.disconnect();
   }, []);
 
   useEffect(() => {
@@ -389,8 +342,7 @@ export default function VideoCutModal({
     return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
 
-  // Пока идёт воспроизведение, головку двигает rAF: timeupdate приходит
-  // четыре раза в секунду и она заметно дёргается.
+  // Пока идёт воспроизведение, головку двигает rAF: timeupdate приходит четыре раза в секунду.
   useEffect(() => {
     if (!playing) return;
     let id = 0;
@@ -402,18 +354,12 @@ export default function VideoCutModal({
     return () => cancelAnimationFrame(id);
   }, [playing]);
 
-  const clampStart = useCallback(
-    (s: number, span: number) => Math.min(Math.max(0, s), Math.max(0, duration - span)),
-    [duration]
-  );
+  const clampStart = useCallback((s: number, span: number) => Math.min(Math.max(0, s), Math.max(0, duration - span)), [duration]);
 
-  // Приближение ленты: колесо у указателя (`ratio` — доля ширины), с Shift —
-  // сдвиг. Одно на ленту и полосу разведки под ней: у них общая шкала.
+  // Колесо у указателя приближает (`ratio` — доля ширины), с Shift — сдвигает. Общее у ленты и разведки.
   const zoomAt = useCallback((ratio: number, deltaY: number, shift: boolean, width: number) => {
     setView((v) => {
-      if (shift) {
-        return { ...v, start: clampStart(v.start + (deltaY / Math.max(1, width)) * v.span, v.span) };
-      }
+      if (shift) return { ...v, start: clampStart(v.start + (deltaY / Math.max(1, width)) * v.span, v.span) };
       const k = deltaY > 0 ? 1.25 : 1 / 1.25;
       const span = Math.min(Math.max(1, duration), Math.max(minSpan, v.span * k));
       const anchor = v.start + ratio * v.span;
@@ -421,8 +367,7 @@ export default function VideoCutModal({
     });
   }, [duration, minSpan, clampStart]);
 
-  // Колесо слушается нативно и не пассивно: у React onWheel нет права на
-  // preventDefault, и страница уедет вместо масштаба ленты.
+  // Колесо слушается нативно и не пассивно: у React onWheel нет права на preventDefault.
   useEffect(() => {
     const el = trackRef.current;
     if (!el) return;
@@ -433,12 +378,9 @@ export default function VideoCutModal({
     }
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, [zoomAt]);
+  }, [zoomAt, trackW]);
 
-  const pct = useCallback(
-    (ms: number) => ((ms - view.start) / view.span) * 100,
-    [view]
-  );
+  const pct = useCallback((ms: number) => ((ms - view.start) / view.span) * 100, [view]);
 
   function msAt(clientX: number): number {
     const r = trackRef.current!.getBoundingClientRect();
@@ -477,9 +419,7 @@ export default function VideoCutModal({
     // На последней миллисекунде участок t…t+1 схлопнулся бы и кадр пропал молча.
     const ms = Math.min(Math.max(0, Math.round(now)), Math.max(0, duration - 1));
     const thumb = v ? drawThumb(v, 160) : null;
-    setSingles((prev) =>
-      prev.some((s) => s.ms === ms) ? prev : [...prev, { ms, thumb }].sort((a, b) => a.ms - b.ms)
-    );
+    setSingles((prev) => (prev.some((s) => s.ms === ms) ? prev : [...prev, { ms, thumb }].sort((a, b) => a.ms - b.ms)));
   }
 
   function patch(id: number, next: Partial<Segment>) {
@@ -497,110 +437,91 @@ export default function VideoCutModal({
     setSelected(id);
   }
 
-  /** Ножницы: первый клик ставит один конец, второй — другой. */
-  function placeCut(ms: number) {
-    if (pending === null) {
-      setPending(ms);
-      return;
-    }
-    const a = Math.min(pending, ms);
-    const b = Math.max(pending, ms);
-    setPending(null);
-    setCutHover(null);
-    if (b - a < 200) return;
-    addSeg(a, b);
-    if (!sticky) setTool("move");
-  }
-
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (hasLayer()) return;
-      if (e.key === "Escape") {
-        if (menu) setMenu(null);
-        else if (leaving) setLeaving(false);
-        else if (confirm) setConfirm(false);
-        else if (pending !== null) setPending(null);
-        else if (!document.fullscreenElement) requestClose();
-        return;
-      }
-      if (leaving || confirm || busy) return;
+      if (layerDepth() > depth.current || busy || done) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
-      if (e.key === " ") {
+      // По коду клавиши: в русской раскладке key у этих клавиш другой.
+      if (e.code === "Space") {
         e.preventDefault();
         togglePlay();
-      } else if (e.key === "ArrowLeft") {
+      } else if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
         e.preventDefault();
-        if (e.shiftKey) seek((videoRef.current?.currentTime ?? 0) * 1000 - 1000);
-        else stepFrame(-1);
-      } else if (e.key === "ArrowRight") {
-        e.preventDefault();
-        if (e.shiftKey) seek((videoRef.current?.currentTime ?? 0) * 1000 + 1000);
-        else stepFrame(1);
-      } else if ((e.key === "f" || e.key === "F" || e.key === "а" || e.key === "А") && editable) {
+        const dir = e.code === "ArrowLeft" ? -1 : 1;
+        if (e.shiftKey) seek((videoRef.current?.currentTime ?? 0) * 1000 + dir * 1000);
+        else stepFrame(dir);
+      } else if (editable && e.code === "KeyF") {
         e.preventDefault();
         addSingle();
+      } else if (editable && (e.code === "KeyC" || e.code === "KeyH")) {
+        e.preventDefault();
+        setTool(e.code === "KeyC" ? "cut" : "hand");
       }
     }
     window.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
-    return () => {
-      window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
-    };
+    return () => window.removeEventListener("keydown", onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [onClose, editable, duration, frameMs, menu, pending, leaving, confirm, busy, cutSegments]);
+  }, [editable, duration, frameMs, busy, done]);
 
-  // ==== лента: панорама, перемотка, растяжка участков ====
+  // ==== лента: протяжка рисует участок или двигает окно, щелчок перематывает ====
 
   function onTrackDown(e: ReactPointerEvent<HTMLDivElement>) {
-    if (tool === "cut") {
-      placeCut(msAt(e.clientX));
-      return;
-    }
+    if (e.button === 2) return;
     trackRef.current?.setPointerCapture(e.pointerId);
-    panRef.current = { x0: e.clientX, start0: view.start, moved: false };
+    const pan = !editable || tool === "hand" || e.shiftKey || e.button === 1;
+    const ms = msAt(e.clientX);
+    setGesture(pan ? { kind: "pan", x0: e.clientX, start0: view.start, moved: false } : { kind: "draw", x0: e.clientX, a: ms, b: ms, moved: false });
   }
 
   function onTrackMove(e: ReactPointerEvent<HTMLDivElement>) {
-    if (tool === "cut" && pending !== null) {
-      setCutHover(msAt(e.clientX));
-      return;
-    }
     if (drag) {
       const ms = msAt(e.clientX);
-      setSegs((prev) =>
-        prev.map((s) => {
-          if (s.id !== drag.id) return s;
-          if (drag.edge === "l")
-            return { ...s, start_ms: Math.max(0, Math.min(ms, s.end_ms - 200)) };
-          if (drag.edge === "r")
-            return { ...s, end_ms: Math.min(duration, Math.max(ms, s.start_ms + 200)) };
-          const len = s.end_ms - s.start_ms;
-          const start = Math.min(Math.max(0, ms - drag.grab), Math.max(0, duration - len));
-          return { ...s, start_ms: start, end_ms: start + len };
-        })
-      );
+      setSegs((prev) => prev.map((s) => {
+        if (s.id !== drag.id) return s;
+        if (drag.edge === "l") return { ...s, start_ms: Math.max(0, Math.min(ms, s.end_ms - MIN_SEG_MS)) };
+        if (drag.edge === "r") return { ...s, end_ms: Math.min(duration, Math.max(ms, s.start_ms + MIN_SEG_MS)) };
+        const len = s.end_ms - s.start_ms;
+        const start = Math.min(Math.max(0, ms - drag.grab), Math.max(0, duration - len));
+        return { ...s, start_ms: start, end_ms: start + len };
+      }));
       return;
     }
-    const p = panRef.current;
-    if (!p) return;
-    const dx = e.clientX - p.x0;
-    if (!p.moved && Math.abs(dx) < 3) return;
-    p.moved = true;
+    const g = gesture;
+    if (!g) return;
+    const dx = e.clientX - g.x0;
+    if (!g.moved && Math.abs(dx) < 3) return;
+    if (g.kind === "draw") {
+      setGesture({ ...g, b: msAt(e.clientX), moved: true });
+      return;
+    }
     const r = trackRef.current!.getBoundingClientRect();
-    setView((v) => ({ ...v, start: clampStart(p.start0 - (dx / r.width) * v.span, v.span) }));
+    setGesture({ ...g, moved: true });
+    setView((v) => ({ ...v, start: clampStart(g.start0 - (dx / r.width) * v.span, v.span) }));
   }
 
   function onTrackUp(e: ReactPointerEvent<HTMLDivElement>) {
-    const p = panRef.current;
-    if (p && !p.moved && !drag) seek(msAt(e.clientX));
-    panRef.current = null;
-    setDrag(null);
+    const g = gesture;
+    setGesture(null);
+    if (drag) {
+      setDrag(null);
+      return;
+    }
+    if (!g) return;
+    if (!g.moved) {
+      seek(msAt(e.clientX));
+      return;
+    }
+    if (g.kind === "draw") {
+      const a = Math.min(g.a, g.b);
+      const b = Math.max(g.a, g.b);
+      if (b - a >= MIN_SEG_MS) addSeg(a, b);
+    }
   }
 
   /** Захват участка: первый раз только выбирает, тянуть можно уже выбранный. */
   function grabSeg(e: ReactPointerEvent<HTMLElement>, s: Seg, edge: "l" | "r" | "body") {
+    if (e.button !== 0) return;
     e.stopPropagation();
     if (!editable) return;
     const wasSelected = selected === s.id;
@@ -612,8 +533,7 @@ export default function VideoCutModal({
 
   // ==== засечки нарезки ====
 
-  // Уже нарезанные кадры и те, что исчезнут при применении: разницу плана и
-  // таски считает сервер — у клиента нет времён существующих кадров.
+  // Уже нарезанные кадры и те, что исчезнут при применении: разницу плана и таски считает сервер.
   const existingSet = useMemo(() => new Set(est.existing || []), [est.existing]);
 
   const { marks, bands, gone } = useMemo(() => {
@@ -625,30 +545,21 @@ export default function VideoCutModal({
       const gapPx = trackW ? (step / view.span) * trackW : 0;
       if (s.end_ms < view.start || s.start_ms > viewEnd) return;
       if (gapPx < MARK_MIN_PX) {
-        hatch.push({
-          left: s.start_ms,
-          width: s.end_ms - s.start_ms,
-          color: COLORS[i % COLORS.length],
-        });
+        hatch.push({ left: s.start_ms, width: s.end_ms - s.start_ms, color: TONES[i % TONES.length] });
         return;
       }
       const k0 = Math.max(0, Math.ceil((view.start - s.start_ms) / step));
       for (let t = s.start_ms + k0 * step; t < Math.min(s.end_ms, viewEnd); t += step) {
-        out.push({ ms: t, color: COLORS[i % COLORS.length] });
+        out.push({ ms: t, color: TONES[i % TONES.length] });
         if (out.length > MARK_CAP) return;
       }
     });
-    for (const s of singles) {
-      if (s.ms >= view.start && s.ms <= viewEnd) out.push({ ms: s.ms, color: "#ffd43b" });
-    }
-    const doomed = (est.doomed || [])
-      .filter((ms) => ms >= view.start && ms <= viewEnd)
-      .slice(0, MARK_CAP);
+    for (const s of singles) if (s.ms >= view.start && s.ms <= viewEnd) out.push({ ms: s.ms, color: "var(--fg)" });
+    const doomed = (est.doomed || []).filter((ms) => ms >= view.start && ms <= viewEnd).slice(0, MARK_CAP);
     return { marks: out, bands: hatch, gone: doomed };
   }, [segs, singles, est.doomed, view, trackW]);
 
-  /** Кадр для подсказки готовит второй, скрытый плеер — основной не дёргается.
-   *  Координаты — вьюпортные: карточка выше ленты, а лента режет по overflow. */
+  /** Кадр для подсказки готовит второй, скрытый плеер — основной не дёргается. Координаты вьюпортные. */
   function peek(ms: number, offsetLeft: number) {
     const r = trackRef.current?.getBoundingClientRect();
     const x = (r?.left ?? 0) + offsetLeft;
@@ -669,17 +580,12 @@ export default function VideoCutModal({
     const url = drawThumb(pv, 168);
     if (url) peekCache.current.set(want, url);
     setHover((h) => (h && h.ms === want ? { ...h, thumb: url } : h));
-    // Пустая строка вместо null — «пробовали, не вышло»: иначе очередь ниже
-    // будет вечно возвращаться к этому кадру.
-    setSingles((list) =>
-      list.some((s) => s.ms === want && s.thumb === null)
-        ? list.map((s) => (s.ms === want ? { ...s, thumb: url ?? "" } : s))
-        : list
-    );
+    // Пустая строка — «пробовали, не вышло»: иначе очередь ниже вечно возвращалась бы к этому кадру.
+    setSingles((list) => list.some((s) => s.ms === want && s.thumb === null)
+      ? list.map((s) => (s.ms === want ? { ...s, thumb: url ?? "" } : s)) : list);
   }
 
-  // Миниатюры одиночных кадров из сохранённого плана доснимаются по одной и
-  // уступают очередь подсказке под курсором — плеер на подсказки один.
+  // Миниатюры одиночных кадров из сохранённого плана доснимаются по одной и уступают подсказке.
   useEffect(() => {
     if (hover) return;
     const next = singles.find((s) => s.thumb === null);
@@ -696,28 +602,19 @@ export default function VideoCutModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [singles, hover]);
 
-  /** Нарезать по плану.
-   *
-   * Окно после нарезки не закрывается само. Нарезают почти всегда подходами:
-   * взяли участок, посмотрели, что вышло, взяли следующий — и автоматическое
-   * закрытие выбрасывало человека к таске, откуда он тут же лез обратно,
-   * заново искать место в ролике. Куда идти дальше, он решает сам.
-   */
+  /** Нарезать по плану. Окно после нарезки не закрывается: нарезают подходами. */
   async function run() {
     setError(null);
     setDone(null);
     setBusy(true);
     try {
       const { job_id } = await cutVideo(taskId, video.id, cutSegments);
-      // Итог — что сделано, а не что заказывали: прикидка могла разойтись с
-      // кадрами ролика, и «прибавилось 1» при нуле в базе вводило в заблуждение.
+      // Итог — что сделано, а не что заказывали.
       const made = await pollJob<{ frames?: number; removed?: number }>(job_id, () => {});
       const plan = { added: made?.frames ?? 0, removed: made?.removed ?? 0 };
-      // Таску перечитываем сразу, не дожидаясь ухода из окна: числа на
-      // карточке ролика должны сойтись к моменту возврата.
+      // Таску перечитываем сразу: числа на карточке ролика должны сойтись к возврату.
       onDone();
-      // И пересчитываем план: участки остались те же, но кадры по ним уже
-      // есть — без этого «Применить» звало бы нарезать их второй раз.
+      // Участки те же, но кадры по ним уже есть — без пересчёта «Применить» звало бы нарезать их снова.
       setApplied((n) => n + 1);
       savedPlan.current = planKey(cutSegments);
       setDone(plan);
@@ -728,632 +625,322 @@ export default function VideoCutModal({
     }
   }
 
+  /** Спрашиваем только когда есть что терять: чистое добавление идёт молча. */
+  async function apply() {
+    if (est.remove) {
+      const marked = est.remove_annotated ?? [];
+      const boxes = marked.reduce((n, a) => n + a.boxes, 0);
+      const ok = await confirm({
+        title: "Применить план?", icon: "cut", danger: marked.length > 0, ok: "Применить",
+        desc: <>
+          Нарежется {ru(est.add ?? 0)} {plural(est.add ?? 0, "кадр", "кадра", "кадров")}, исчезнет {ru(est.remove)}{" "}
+          {plural(est.remove, "кадр", "кадра", "кадров")}. Удаление окончательное — вместе с файлами.
+          {marked.length > 0 && <b className="vc-bad"> {marked.length} {plural(marked.length, "кадр", "кадра", "кадров")} из них
+            размечены — пропадёт {boxes} {plural(boxes, "бокс", "бокса", "боксов")}.</b>}
+        </>,
+        lines: marked.slice(0, 12).map((a) => `${fmtPrecise(a.ms)} — ${a.boxes} ${plural(a.boxes, "бокс", "бокса", "боксов")}`)
+          .concat(marked.length > 12 ? [`…и ещё ${marked.length - 12}`] : []),
+      });
+      if (!ok) return;
+    }
+    void run();
+  }
+
   const zoomed = view.span < duration - 1;
+  const draw = gesture?.kind === "draw" && gesture.moved ? gesture : null;
+  const menuSeg = menu ? segs.find((s) => s.id === menu.segId) ?? null : null;
+  const planFacts: [string, ReactNode][] = est.error ? [] : [
+    ["В плане", <span className="ui-mono">{ru(est.frames ?? 0)} {plural(est.frames ?? 0, "кадр", "кадра", "кадров")}</span>],
+    ["Объём", <span className="ui-mono">≈ {fmtBytes(est.size_bytes ?? 0)}</span>],
+    ["Изменится", !est.add && !est.remove ? <span className="t-muted">таска уже по плану</span> : (
+      <span className="vc-diff">
+        {!!est.add && <b className="add">+{ru(est.add)} нарежется</b>}
+        {!!est.remove && <b className="rm">−{ru(est.remove)} исчезнет</b>}
+      </span>
+    )],
+  ];
 
   return (
-    <div className="mag-backdrop">
-      <div className="mag-cut" onClick={(e) => e.stopPropagation()}>
-        <div className="mag-cut-head">
-          <b>{video.file_name}</b>
-          <span className="mag-cut-meta">
-            {fmtTime(duration)} <Sep /> {video.fps} к/с <Sep /> {video.width}×{video.height} <Sep />{" "}
-            {fmtBytes(video.size_bytes)}
-          </span>
-          <span className="mag-cut-sp" />
-          <button className="mag-cut-btn" type="button" onClick={requestClose} aria-label="Закрыть"
-            disabled={busy}>
-            ✕
-          </button>
-        </div>
+    <Dialog open onOpenChange={(v) => { if (!v) void requestClose(); }} closable={!busy} modalLock width={4000} height={4000} bare
+      className="vc" title={video.file_name}
+      desc={`${fmtTime(duration)} · ${video.fps} к/с · ${video.width}×${video.height} · ${fmtBytes(video.size_bytes)}`}
+      footer={<>
+        <span className="t-xs t-faint vc-keys">
+          {editable ? "Протяжка по ленте — участок · Shift+протяжка — сдвиг · колесо — масштаб · F — кадр · Пробел, ← → — плеер"
+            : "Колесо — масштаб · протяжка — сдвиг · Пробел, ← → — плеер"}
+        </span>
+        <span className="grow" />
+        <Button variant="ghost" onClick={() => void requestClose()} disabled={busy}>{editable ? "Отмена" : "Закрыть"}</Button>
+        {editable && (
+          <Button variant="primary" icon="cut" disabled={busy || !!est.error || (!est.add && !est.remove)} onClick={() => void apply()}>
+            Применить{est.add ? ` +${est.add}` : ""}{est.remove ? ` −${est.remove}` : ""}
+          </Button>
+        )}
+      </>}>
+      <div className="vc-body">
+        <div className={cx("vc-left", full && "full")} ref={leftRef}>
+          <div className="vc-stage">
+            <video ref={videoRef} src={src} preload="metadata" muted onClick={togglePlay}
+              onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
+              onTimeUpdate={(e) => setAt((e.target as HTMLVideoElement).currentTime * 1000)}
+              onError={() => setUnplayable(true)} />
+            {unplayable && (
+              <div className="vc-unplayable" role="alert">
+                Браузер не воспроизводит этот формат — плеер останется чёрным. Участки можно отметить по киноленте ниже: кадры нарежет сервер.
+              </div>
+            )}
+            {/* Скрытый плеер под подсказки: перематывать основной нельзя. */}
+            <video ref={peekRef} className="vc-hidden" src={src} preload="metadata" muted onSeeked={onPeekSeeked} />
+          </div>
 
-        <div className="mag-cut-body">
-          <div className={full ? "mag-cut-left full" : "mag-cut-left"} ref={leftRef}>
-            <div className="mag-cut-stage">
-              <video
-                ref={videoRef}
-                src={videoFileUrl(taskId, video.id)}
-                preload="metadata"
-                muted
-                onClick={togglePlay}
-                onPlay={() => setPlaying(true)}
-                onPause={() => setPlaying(false)}
-                onTimeUpdate={(e) => setAt((e.target as HTMLVideoElement).currentTime * 1000)}
-                onError={() => setUnplayable(true)}
-              />
-              {unplayable && (
-                <div className="mag-cut-unplayable" role="alert">
-                  Браузер не воспроизводит этот формат — плеер останется чёрным.
-                  Участки можно отметить по киноленте ниже: кадры нарежет сервер.
-                </div>
-              )}
-              {/* Скрытый плеер под подсказки: перематывать основной нельзя. */}
-              <video
-                ref={peekRef}
-                className="mag-peek"
-                src={videoFileUrl(taskId, video.id)}
-                preload="metadata"
-                muted
-                onSeeked={onPeekSeeked}
-              />
-            </div>
-
-            {/* Свои контролы вместо нативных: без шага в один кадр выбрать
-                конкретный кадр — угадайка, а полосы перемотки тут нет намеренно,
-                её роль играет кинолента ниже. */}
-            <div className="mag-player">
-              <button className="mag-pl-btn" type="button" onClick={togglePlay}
-                aria-label={playing ? "Пауза" : "Пуск"}>
-                {playing ? "❚❚" : "▶"}
-              </button>
-              <button className="mag-pl-btn" type="button" onClick={() => stepFrame(-1)}
-                title="Кадр назад (←)">‹|</button>
-              <button className="mag-pl-btn" type="button" onClick={() => stepFrame(1)}
-                title="Кадр вперёд (→)">|›</button>
-              <span className="mag-pl-time">
-                {fmtPrecise(at)}<i> / {fmtTime(duration)}</i>
-              </span>
-              {editable && (
-                <>
-                  <button
-                    className={tool === "cut" ? "mag-pl-btn on" : "mag-pl-btn"}
-                    type="button"
-                    title="Нарезка: клик по ленте ставит один конец, второй клик — другой"
-                    onClick={() => {
-                      if (tool === "cut") setSticky((v) => !v);
-                      else {
-                        setTool("cut");
-                        setSticky(false);
-                      }
-                      setPending(null);
-                    }}
-                  >
-                    ✂{sticky && tool === "cut" ? "•" : ""}
-                  </button>
-                  <button className="mag-pl-take" type="button" onClick={addSingle}
-                    aria-label="Снять кадр"
-                    title="Снять кадр на позиции головки (F)">
-                    <svg viewBox="0 0 20 20" width="15" height="15" aria-hidden="true">
-                      <path
-                        d="M7 4h6l1 2h3a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h3l1-2z"
-                        fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"
-                      />
-                      <circle cx="10" cy="11" r="3" fill="none" stroke="currentColor" strokeWidth="1.5" />
-                    </svg>
-                  </button>
-                </>
-              )}
-              <span className="mag-cut-sp" />
-              <button
-                className="mag-pl-btn wide"
-                type="button"
-                title="Скорость"
-                onClick={(e) => {
-                  const r = (e.target as HTMLElement).getBoundingClientRect();
-                  setMenu({ x: r.left, y: r.top, kind: "rate" });
-                }}
-              >
-                ×{rate.toLocaleString("ru-RU")}
-              </button>
-              <button className="mag-pl-btn" type="button" onClick={toggleFull}
-                title="Во весь экран">{full ? "⤢" : "⛶"}</button>
-            </div>
-
-            {/* Кинолента: колесо приближает, протяжка возит окно */}
-            <div
-              className={tool === "cut" ? "mag-cut-track cut" : "mag-cut-track"}
-              ref={trackRef}
-              onPointerDown={onTrackDown}
-              onPointerMove={onTrackMove}
-              onPointerUp={onTrackUp}
-              onPointerCancel={() => {
-                panRef.current = null;
-                setDrag(null);
-              }}
-            >
-              {/* На общем плане хватает ленты с сервера: она уже склеена и
-                  ничего не стоит. Стоит увеличить — и растянутая картинка
-                  превращается в мыло, поэтому кадры окна снимаются на месте
-                  из того же файла, которым играет плеер. */}
-              {zoomed ? (
-                <WindowStrip
-                  className="mag-cut-strip"
-                  src={videoFileUrl(taskId, video.id)}
-                  from={view.start}
-                  span={view.span}
-                />
-              ) : (
-                <VideoStrip
-                  className="mag-cut-strip"
-                  taskId={taskId}
-                  videoId={video.id}
-                  draggable={false}
-                  aspect={video.width && video.height ? video.width / video.height : undefined}
-                />
-              )}
-              {segs.map((s, i) => {
-                const color = COLORS[i % COLORS.length];
-                const active = selected === s.id;
-                return (
-                  <span
-                    key={s.id}
-                    className={active ? "mag-cut-seg on" : "mag-cut-seg"}
-                    style={{
-                      left: `${pct(s.start_ms)}%`,
-                      width: `${(( s.end_ms - s.start_ms) / view.span) * 100}%`,
-                      borderColor: color,
-                      background: `${color}26`,
-                    }}
-                  >
-                    {/* Ухватить участок можно только за толстые края и метку —
-                        середина остаётся лентой, по ней перематывают и возят. */}
-                    <b
-                      style={{ background: color }}
-                      onPointerDown={(e) => grabSeg(e, s, "body")}
-                      onContextMenu={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        setSelected(s.id);
-                        setCustom(String(s.step_ms / 1000));
-                        setMenu({ x: e.clientX, y: e.clientY, kind: "step", segId: s.id });
-                      }}
-                    >
-                      {fmtTime(s.end_ms - s.start_ms)} <Sep /> {fmtStep(s.step_ms)}
-                    </b>
-                    <i className="h l" style={{ background: color }}
-                      onPointerDown={(e) => grabSeg(e, s, "l")} />
-                    <i className="h r" style={{ background: color }}
-                      onPointerDown={(e) => grabSeg(e, s, "r")} />
-                  </span>
-                );
-              })}
-
-              {/* Одиночные кадры — ромбики поверх ленты */}
-              {singles.map((s) => (
-                <span
-                  key={s.ms}
-                  className="mag-cut-one"
-                  style={{ left: `${pct(s.ms)}%` }}
-                  title={fmtPrecise(s.ms)}
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
-                    seek(s.ms);
-                  }}
-                />
-              ))}
-
-              {/* Незакрытая нарезка: первый конец поставлен, ждём второй */}
-              {pending !== null && (
-                <>
-                  <span className="mag-cut-pend" style={{ left: `${pct(pending)}%` }} />
-                  {cutHover !== null && (
-                    <span
-                      className="mag-cut-ghost"
-                      style={{
-                        left: `${pct(Math.min(pending, cutHover))}%`,
-                        width: `${(Math.abs(cutHover - pending) / view.span) * 100}%`,
-                      }}
-                    />
-                  )}
-                </>
-              )}
-
-              {/* Единственное место, где видны кадры нарезки */}
-              <span className="mag-cut-marks">
-                {bands.map((b, i) => (
-                  <i
-                    key={`b${i}`}
-                    className="band"
-                    style={{
-                      left: `${pct(b.left)}%`,
-                      width: `${(b.width / view.span) * 100}%`,
-                      backgroundImage: `repeating-linear-gradient(90deg, ${b.color} 0 1px, transparent 1px 3px)`,
-                    }}
-                  />
-                ))}
-                {gone.map((ms) => (
-                  <i
-                    key={`x${ms}`}
-                    className="gone"
-                    title="Этот кадр исчезнет при применении плана"
-                    style={{ left: `${pct(ms)}%` }}
-                    onPointerEnter={(e) => peek(ms, e.currentTarget.offsetLeft + 4.5)}
-                    onPointerLeave={() => setHover(null)}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      seek(ms);
-                    }}
-                  >
-                    <b />
-                  </i>
-                ))}
-                {marks.map((m) => (
-                  <i
-                    key={`${m.color}-${m.ms}`}
-                    className={existingSet.has(m.ms) ? "has" : undefined}
-                    style={{ left: `${pct(m.ms)}%` }}
-                    onPointerEnter={(e) => peek(m.ms, e.currentTarget.offsetLeft + 4.5)}
-                    onPointerLeave={() => setHover(null)}
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      seek(m.ms);
-                    }}
-                  >
-                    <b style={{ background: m.color }} />
-                  </i>
-                ))}
-              </span>
-
-              <span className="mag-cut-head-line" style={{ left: `${pct(at)}%` }} />
-
-              {hover && (
-                <span
-                  className="mag-peek-card"
-                  style={{ left: `${hover.x}px`, bottom: `${hover.bottom}px` }}
-                >
-                  {hover.thumb ? <img src={hover.thumb} alt="" /> : <span className="mag-peek-wait" />}
-                  <b>{fmtPrecise(hover.ms)}</b>
-                </span>
-              )}
-            </div>
-
-            {/* Разведка — одной полосой ровно под лентой, в её окне; шкала
-                времени — под полосой, чипы классов — под шкалой. */}
-            {(() => {
-              const ticks = (
-                <div className="mag-cut-ticks">
-                  <span>{fmtTime(view.start)}</span>
-                  <span>{zoomed ? `окно ${fmtTime(view.span)} — колесо — масштаб` : "колесо — масштаб, протяжка — сдвиг"}</span>
-                  <span>{fmtTime(view.start + view.span)}</span>
-                </div>
-              );
-              return scout ? (
-                <ScoutBand taskId={taskId} videoId={video.id} scout={scout} colors={taskColors(scouts)}
-                  view={view} at={at} editable={editable} onSeek={seek}
-                  onPlan={(ranges) => ranges.forEach(([a, b]) => addSeg(a, Math.min(b, duration)))}
-                  onWheel={(ratio, deltaY, shift) =>
-                    zoomAt(ratio, deltaY, shift, trackRef.current?.getBoundingClientRect().width ?? 1)}>
-                  {ticks}
-                </ScoutBand>
-              ) : ticks;
-            })()}
-
-
-            {menu && (
+          {/* Свои контролы: без шага в один кадр выбрать кадр — угадайка; перемотку играет лента ниже. */}
+          <div className="vc-player">
+            <Button size="sm" variant="ghost" icon={playing ? "pause" : "play"} aria-label={playing ? "Пауза (Пробел)" : "Пуск (Пробел)"} onClick={togglePlay} />
+            <Button size="sm" variant="ghost" icon="chevL" aria-label="Кадр назад (←)" onClick={() => stepFrame(-1)} />
+            <Button size="sm" variant="ghost" icon="chevR" aria-label="Кадр вперёд (→)" onClick={() => stepFrame(1)} />
+            <span className="vc-time-now ui-mono">{fmtPrecise(at)}<i> / {fmtTime(duration)}</i></span>
+            {editable && (
               <>
-                <span className="mag-menu-veil" onPointerDown={() => setMenu(null)} />
-                <div className="mag-menu" style={{ left: menu.x, top: menu.y }}>
-                  {menu.kind === "rate"
-                    ? RATES.map((r) => (
-                        <button
-                          key={r}
-                          type="button"
-                          className={r === rate ? "on" : ""}
-                          onClick={() => {
-                            setRate(r);
-                            setMenu(null);
-                          }}
-                        >
-                          ×{r.toLocaleString("ru-RU")}
-                        </button>
-                      ))
-                    : (() => {
-                        const seg = segs.find((s) => s.id === menu.segId);
-                        if (!seg) return null;
-                        return (
-                          <>
-                            <span className="mag-menu-h">Шаг нарезки</span>
-                            {STEPS_MS.map((ms) => (
-                              <button
-                                key={ms}
-                                type="button"
-                                className={ms === seg.step_ms ? "on" : ""}
-                                onClick={() => {
-                                  patch(seg.id, { step_ms: ms });
-                                  setMenu(null);
-                                }}
-                              >
-                                {fmtStep(ms)}
-                              </button>
-                            ))}
-                            <span className="mag-menu-row">
-                              <input
-                                type="number"
-                                min="0.1"
-                                step="0.1"
-                                value={custom}
-                                onChange={(e) => setCustom(e.target.value)}
-                                onKeyDown={(e) => {
-                                  if (e.key !== "Enter") return;
-                                  e.preventDefault();
-                                  patch(seg.id, {
-                                    step_ms: Math.max(minStep, Math.round(Number(custom) * 1000)),
-                                  });
-                                  setMenu(null);
-                                }}
-                              />
-                              <span>с</span>
-                            </span>
-                            <button
-                              type="button"
-                              className="bad"
-                              onClick={() => {
-                                removeSeg(seg.id);
-                                setMenu(null);
-                              }}
-                            >
-                              Удалить участок
-                            </button>
-                          </>
-                        );
-                      })()}
+                <span className="vc-sep" />
+                <div className="ui-seg ui-seg-sm" role="group" aria-label="Инструмент ленты">
+                  <button type="button" aria-pressed={tool === "cut"} title="Ножницы (C): протяжка по ленте — новый участок" onClick={() => setTool("cut")}>
+                    <Icon name="cut" size={14} />Ножницы
+                  </button>
+                  <button type="button" aria-pressed={tool === "hand"} title="Рука (H): протяжка двигает приближенную ленту" onClick={() => setTool("hand")}>
+                    <Icon name="hand" size={14} />Рука
+                  </button>
                 </div>
+                <Button size="sm" icon="image" kbd="F" onClick={addSingle} title="Снять кадр на позиции головки">Кадр</Button>
               </>
+            )}
+            <span className="grow" />
+            <Popover align="end" width={140} trigger={<Button size="sm" variant="ghost" title="Скорость">×{rate.toLocaleString("ru-RU")}</Button>}>
+              {(close) => RATES.map((r) => (
+                <MenuItem key={r} selected={r === rate} onSelect={() => { setRate(r); close(); }}>×{r.toLocaleString("ru-RU")}</MenuItem>
+              ))}
+            </Popover>
+            <Button size="sm" variant="ghost" icon="fit" aria-label={full ? "Выйти из полного экрана" : "Во весь экран"} onClick={toggleFull} />
+          </div>
+
+          {/* Кинолента: колесо приближает, протяжка рисует участок или двигает окно. */}
+          <div className={cx("vc-track", editable && tool === "cut" ? "cut" : "hand", gesture?.kind === "pan" && gesture.moved && "panning")}
+            ref={trackBox} onPointerDown={onTrackDown} onPointerMove={onTrackMove} onPointerUp={onTrackUp}
+            onPointerCancel={() => { setGesture(null); setDrag(null); }}>
+            {/* На общем плане хватает склеенной ленты с сервера; при увеличении кадры окна снимаются на месте. */}
+            {zoomed ? <WindowStrip className="vc-strip" src={src} from={view.start} span={view.span} />
+              : <VideoStrip className="vc-strip" taskId={taskId} videoId={video.id} draggable={false}
+                aspect={video.width && video.height ? video.width / video.height : undefined} />}
+            {segs.map((s, i) => {
+              const color = TONES[i % TONES.length];
+              return (
+                <span key={s.id} className={cx("vc-seg", selected === s.id && "on")}
+                  style={{ left: `${pct(s.start_ms)}%`, width: `${((s.end_ms - s.start_ms) / view.span) * 100}%`, "--sc": color } as CSSProperties}>
+                  {/* Ухватить участок можно только за края и метку — середина остаётся лентой. */}
+                  <b onPointerDown={(e) => grabSeg(e, s, "body")}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (!editable) return;
+                      setSelected(s.id);
+                      setCustom(String(s.step_ms / 1000).replace(".", ","));
+                      // Меню высотой ~340 px у нижнего края прижимается вверх.
+                      setMenu({ x: Math.min(e.clientX, window.innerWidth - 220), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 350)), segId: s.id });
+                    }}>
+                    {fmtTime(s.end_ms - s.start_ms)} · {fmtStep(s.step_ms)}
+                  </b>
+                  <i className="h l" onPointerDown={(e) => grabSeg(e, s, "l")} />
+                  <i className="h r" onPointerDown={(e) => grabSeg(e, s, "r")} />
+                </span>
+              );
+            })}
+
+            {/* Одиночные кадры — ромбики поверх ленты */}
+            {singles.map((s) => (
+              <span key={s.ms} className="vc-one" style={{ left: `${pct(s.ms)}%` }} title={fmtPrecise(s.ms)}
+                onPointerDown={(e) => { e.stopPropagation(); seek(s.ms); }} />
+            ))}
+
+            {/* Участок, который сейчас тянут */}
+            {draw && (
+              <span className="vc-ghost" style={{ left: `${pct(Math.min(draw.a, draw.b))}%`, width: `${(Math.abs(draw.b - draw.a) / view.span) * 100}%` }}>
+                <b>{fmtTime(Math.abs(draw.b - draw.a))}</b>
+              </span>
+            )}
+
+            {/* Единственное место, где видны кадры нарезки */}
+            <span className="vc-marks">
+              {bands.map((b, i) => (
+                <i key={`b${i}`} className="band" style={{
+                  left: `${pct(b.left)}%`, width: `${(b.width / view.span) * 100}%`,
+                  backgroundImage: `repeating-linear-gradient(90deg, ${b.color} 0 1px, transparent 1px 3px)`,
+                }} />
+              ))}
+              {gone.map((ms) => (
+                <i key={`x${ms}`} className="gone" title="Этот кадр исчезнет при применении плана" style={{ left: `${pct(ms)}%` }}
+                  onPointerEnter={(e) => peek(ms, e.currentTarget.offsetLeft + 4.5)} onPointerLeave={() => setHover(null)}
+                  onPointerDown={(e) => { e.stopPropagation(); seek(ms); }}>
+                  <b />
+                </i>
+              ))}
+              {marks.map((m) => (
+                <i key={`${m.color}-${m.ms}`} className={existingSet.has(m.ms) ? "has" : undefined} style={{ left: `${pct(m.ms)}%` }}
+                  onPointerEnter={(e) => peek(m.ms, e.currentTarget.offsetLeft + 4.5)} onPointerLeave={() => setHover(null)}
+                  onPointerDown={(e) => { e.stopPropagation(); seek(m.ms); }}>
+                  <b style={{ background: m.color }} />
+                </i>
+              ))}
+            </span>
+
+            <span className="vc-head" style={{ left: `${pct(at)}%` }} />
+
+            {hover && (
+              <span className="vc-peek" style={{ left: `${hover.x}px`, bottom: `${hover.bottom}px` }}>
+                {hover.thumb ? <img src={hover.thumb} alt="" /> : <span className="vc-peek-wait" />}
+                <b>{fmtPrecise(hover.ms)}</b>
+              </span>
             )}
           </div>
 
-          <aside className="mag-cut-right">
-            {/* Свой слой прокрутки: колонка не должна вытягивать модалку под
-                свой список — её высоту задаёт левая часть. */}
-            <div className="mag-cut-scroll">
-            <h5>Участки нарезки</h5>
-            {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
+          {/* Разведка — полосой ровно под лентой, в её окне; шкала времени — под полосой. */}
+          {(() => {
+            const ticks = (
+              <div className="vc-ticks">
+                <span>{fmtTime(view.start)}</span>
+                <span>{zoomed ? `окно ${fmtTime(view.span)}` : "весь ролик"}</span>
+                <span>{fmtTime(view.start + view.span)}</span>
+              </div>
+            );
+            return scout ? (
+              <ScoutBand taskId={taskId} videoId={video.id} scout={scout} colors={taskColors(scouts)}
+                view={view} at={at} editable={editable} onSeek={seek}
+                onPlan={(ranges) => ranges.forEach(([a, b]) => addSeg(a, Math.min(b, duration)))}
+                onWheel={(ratio, deltaY, shift) => zoomAt(ratio, deltaY, shift, trackRef.current?.getBoundingClientRect().width ?? 1)}>
+                {ticks}
+              </ScoutBand>
+            ) : ticks;
+          })()}
+        </div>
 
+        <aside className="vc-side">
+          {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+          <section>
+            <h5>Участки <span className="ui-mono">{segs.length}</span></h5>
+            {segs.length === 0 && (
+              <p className="t-xs t-faint">{editable ? "Протяните по киноленте — получится участок. Края и метку потом можно двигать." : "Участков нет."}</p>
+            )}
             {segs.map((s, i) => (
-              <div
-                className={selected === s.id ? "mag-seg-card on" : "mag-seg-card"}
-                key={s.id}
-                onClick={() => setSelected(s.id)}
-              >
-                <div className="mag-seg-row">
-                  <span className="mag-seg-dot" style={{ background: COLORS[i % COLORS.length] }} />
-                  <TimeInput ms={s.start_ms} max={duration} disabled={!editable}
-                    onValue={(ms) => patch(s.id, { start_ms: ms })} />
-                  <span className="mag-seg-arr">→</span>
-                  <TimeInput ms={s.end_ms} max={duration} disabled={!editable}
-                    onValue={(ms) => patch(s.id, { end_ms: ms })} />
-                  <span className="mag-cut-sp" />
-                  {editable && (
-                    <button className="mag-icon-btn" type="button" onClick={() => removeSeg(s.id)}>
-                      ✕
-                    </button>
-                  )}
+              <div key={s.id} className={cx("vc-card", selected === s.id && "on")} style={{ "--sc": TONES[i % TONES.length] } as CSSProperties}
+                onClick={() => setSelected(s.id)}>
+                <div className="vc-card-r">
+                  <i className="vc-dot" />
+                  <TimeInput ms={s.start_ms} max={duration} disabled={!editable} label="Начало участка" onValue={(ms) => patch(s.id, { start_ms: ms })} />
+                  <Icon name="forward" size={13} />
+                  <TimeInput ms={s.end_ms} max={duration} disabled={!editable} label="Конец участка" onValue={(ms) => patch(s.id, { end_ms: ms })} />
+                  <span className="grow" />
+                  {editable && <Button size="sm" variant="ghost" icon="x" aria-label="Убрать участок" onClick={(e) => { e.stopPropagation(); removeSeg(s.id); }} />}
                 </div>
-                <div className="mag-seg-row sub">
-                  <label>шаг</label>
-                  <NumInput
-                    min={minStep / 1000}
-                    step={0.1}
-                    lazy
-                    value={s.step_ms / 1000}
-                    disabled={!editable}
-                    onValue={(n) => {
-                      if (n !== undefined) patch(s.id, { step_ms: Math.max(minStep, Math.round(n * 1000)) });
-                    }}
-                  />
-                  <span className="mag-seg-unit">с</span>
-                  <span className="mag-cut-sp" />
-                  <b>
-                    {framesIn(s)} {plural(framesIn(s), "кадр", "кадра", "кадров")}
-                  </b>
+                <div className="vc-card-r sub">
+                  <span className="t-xs t-muted">шаг</span>
+                  <NumInput className="ui-input ui-ctl ui-mono vc-step" min={minStep / 1000} step={0.1} lazy value={s.step_ms / 1000} disabled={!editable}
+                    aria-label="Шаг нарезки, с" onValue={(n) => { if (n !== undefined) patch(s.id, { step_ms: Math.max(minStep, Math.round(n * 1000)) }); }} />
+                  <span className="t-xs t-muted">с</span>
+                  <span className="grow" />
+                  <b className="ui-mono">{ru(framesIn(s))}</b>
+                  <span className="t-xs t-muted">{plural(framesIn(s), "кадр", "кадра", "кадров")}</span>
                 </div>
               </div>
             ))}
+          </section>
 
-            {editable && (
-              <button
-                className="mag-dashed"
-                type="button"
-                onClick={() => {
-                  const last = segs[segs.length - 1];
-                  const start = Math.min(last ? last.end_ms : 0, duration);
-                  addSeg(start, Math.min(start + 10000, duration));
-                }}
-              >
-                + Добавить участок
-              </button>
-            )}
-
-            <h5 className="mag-one-h">Отдельные кадры</h5>
+          <section>
+            <h5>Отдельные кадры <span className="ui-mono">{singles.length}</span></h5>
             {singles.length === 0 ? (
-              <p className="mag-cut-note">
-                {editable
-                  ? "Поставьте головку на киноленте и нажмите «+ Кадр» или клавишу F."
-                  : "Не выбраны."}
-              </p>
+              <p className="t-xs t-faint">{editable ? "Поставьте головку на нужный кадр и нажмите «Кадр» или F." : "Не выбраны."}</p>
             ) : (
-              <div className="mag-one-grid">
+              <div className="vc-ones">
                 {singles.map((s) => (
-                  <div className="mag-one" key={s.ms} onClick={() => seek(s.ms)}>
-                    {s.thumb ? <img src={s.thumb} alt="" /> : <span className="mag-one-noimg">кадр</span>}
-                    <span className="mag-one-t">{fmtPrecise(s.ms)}</span>
+                  <div key={s.ms} className="vc-one-t" role="button" tabIndex={0} onClick={() => seek(s.ms)}
+                    onKeyDown={(e) => { if (e.key === "Enter") seek(s.ms); }}>
+                    {s.thumb ? <img src={s.thumb} alt="" /> : <span className="vc-noimg">кадр</span>}
+                    <span className="ui-mono">{fmtPrecise(s.ms)}</span>
                     {editable && (
-                      <button
-                        className="mag-icon-btn"
-                        type="button"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setSingles((x) => x.filter((k) => k.ms !== s.ms));
-                        }}
-                      >
-                        ✕
+                      <button type="button" className="rm" aria-label={`Убрать кадр ${fmtPrecise(s.ms)}`}
+                        onClick={(e) => { e.stopPropagation(); setSingles((x) => x.filter((k) => k.ms !== s.ms)); }}>
+                        <Icon name="x" size={12} />
                       </button>
                     )}
                   </div>
                 ))}
               </div>
             )}
+          </section>
 
-            <div className={est.error ? "mag-est bad" : "mag-est"}>
-              {est.error ? (
-                est.error
-              ) : (
-                <>
-                  В плане {est.frames ?? 0}{" "}
-                  {plural(est.frames ?? 0, "кадр", "кадра", "кадров")}, примерно{" "}
-                  {fmtBytes(est.size_bytes ?? 0)}.
-                  <span className="mag-est-diff">
-                    {!est.add && !est.remove ? (
-                      <span>Таска уже соответствует плану.</span>
-                    ) : (
-                      <>
-                        {!!est.add && <b className="add">+{est.add} нарежется</b>}
-                        {!!est.remove && <b className="rm">−{est.remove} исчезнет</b>}
-                      </>
-                    )}
-                  </span>
-                </>
-              )}
-            </div>
-
+          <section className="vc-sum">
+            <h5>Итог</h5>
+            {est.error ? <Notice tone="error">{est.error}</Notice> : <Meta items={planFacts} />}
             {!!est.kept_accepted && (
-              <p className="mag-cut-note">
-                {est.kept_accepted} {plural(est.kept_accepted, "кадр", "кадра", "кадров")} уже
-                приняты в датасет — они данные проекта и планом не удаляются.
+              <p className="t-xs t-muted">
+                {est.kept_accepted} {plural(est.kept_accepted, "кадр", "кадра", "кадров")} уже приняты в датасет — они данные проекта и планом не удаляются.
               </p>
             )}
-            {sel && <p className="mag-cut-note">Правая кнопка по метке участка — шаг и удаление.</p>}
-            </div>
-          </aside>
-        </div>
+            {editable && segs.length > 0 && <p className="t-xs t-faint">Правая кнопка по метке участка — шаг и удаление.</p>}
+          </section>
+        </aside>
 
-        <div className="mag-cut-foot">
-          <span className="mag-cut-sp" />
-          <button className="mag-ghost" type="button" onClick={requestClose}>
-            Отмена
-          </button>
-          {editable && (
-            <button
-              className="mag-btn"
-              type="button"
-              disabled={!!est.error || (!est.add && !est.remove)}
-              onClick={() => (est.remove ? setConfirm(true) : run())}
-            >
-              Применить
-              {est.add ? ` +${est.add}` : ""}
-              {est.remove ? ` −${est.remove}` : ""}
-            </button>
-          )}
-        </div>
-
-        {/* Работа и её итог — поверх всего окна.
-            Полоска в углу подвала терялась: нарезка занимает десятки секунд,
-            человек за это время успевал тронуть план, которого она уже не
-            касалась. Заслонка честнее — пока режется, окно не редактируют. */}
+        {/* Работа и её итог — поверх всего окна: пока режется, план не трогают. */}
         {(busy || done) && (
-          <div className="mag-cut-veil">
-            <div className="mag-cut-work">
+          <div className="vc-veil">
+            <div className="vc-work" role="status">
               {busy ? (
                 <>
-                  <div className="mag-spin" aria-label="Нарезка идёт" role="status" />
+                  <span className="vc-spin" aria-hidden="true" />
                   <b>Режу кадры</b>
-                  <span>Не закрывайте окно — нарезка идёт на сервере.</span>
+                  <span className="t-sm t-muted">Не закрывайте окно — нарезка идёт на сервере.</span>
                 </>
-              ) : (
-                done && (
-                  <>
-                    <div className="mag-cut-ok" aria-hidden="true">✓</div>
-                    <b>Нарезано</b>
-                    <span>
-                      {done.added
-                        ? `Прибавилось ${done.added} ${plural(done.added, "кадр", "кадра", "кадров")}`
-                        : "План применён"}
-                      {done.removed
-                        ? `, ушло ${done.removed} ${plural(done.removed, "кадр", "кадра", "кадров")}`
-                        : ""}
-                      .
-                    </span>
-                    <div className="mag-cut-work-foot">
-                      <button className="mag-ghost" type="button" onClick={() => setDone(null)}>
-                        Продолжить нарезать
-                      </button>
-                      <button className="mag-btn" type="button" onClick={onClose}>
-                        Вернуться к таске
-                      </button>
-                    </div>
-                  </>
-                )
+              ) : done && (
+                <>
+                  <span className="vc-ok"><Icon name="tick" size={22} /></span>
+                  <b>Нарезано</b>
+                  <span className="t-sm t-muted">
+                    {done.added ? `Прибавилось ${ru(done.added)} ${plural(done.added, "кадр", "кадра", "кадров")}` : "План применён"}
+                    {done.removed ? `, ушло ${ru(done.removed)} ${plural(done.removed, "кадр", "кадра", "кадров")}` : ""}.
+                  </span>
+                  <div className="vc-work-f">
+                    <Button onClick={() => setDone(null)}>Продолжить нарезать</Button>
+                    <Button variant="primary" onClick={onClose}>Вернуться к таске</Button>
+                  </div>
+                </>
               )}
-            </div>
-          </div>
-        )}
-
-        {leaving && (
-          <div className="mag-confirm-veil" onClick={() => setLeaving(false)}>
-            <div className="mag-confirm" role="alertdialog" aria-modal="true"
-              aria-label="План не применён" onClick={(e) => e.stopPropagation()}>
-              <h3>План не применён</h3>
-              <p>Участки и отдельные кадры, отмеченные здесь, пропадут.</p>
-              <div className="mag-confirm-foot">
-                <button className="mag-ghost" type="button" autoFocus
-                  onClick={() => setLeaving(false)}>
-                  Остаться
-                </button>
-                <button className="mag-btn" type="button" onClick={onClose}>
-                  Закрыть без нарезки
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Спрашиваем только когда есть что терять: чистое добавление идёт молча. */}
-        {confirm && (
-          <div className="mag-confirm-veil" onClick={() => setConfirm(false)}>
-            <div className="mag-confirm" onClick={(e) => e.stopPropagation()}>
-              <h3>Применить план?</h3>
-              <p>
-                Нарежется {est.add ?? 0}{" "}
-                {plural(est.add ?? 0, "кадр", "кадра", "кадров")}, исчезнет{" "}
-                {est.remove ?? 0} {plural(est.remove ?? 0, "кадр", "кадра", "кадров")}.
-                Удаление окончательное — вместе с файлами.
-              </p>
-              {!!est.remove_annotated?.length && (
-                <div className="mag-confirm-bad">
-                  <b>
-                    {est.remove_annotated.length}{" "}
-                    {plural(est.remove_annotated.length, "кадр", "кадра", "кадров")} из них
-                    размечены — пропадёт{" "}
-                    {est.remove_annotated.reduce((n, a) => n + a.boxes, 0)}{" "}
-                    {plural(
-                      est.remove_annotated.reduce((n, a) => n + a.boxes, 0),
-                      "бокс",
-                      "бокса",
-                      "боксов"
-                    )}
-                    .
-                  </b>
-                  <ul>
-                    {est.remove_annotated.slice(0, 12).map((a) => (
-                      <li key={a.ms}>
-                        {fmtPrecise(a.ms)} — {a.boxes}{" "}
-                        {plural(a.boxes, "бокс", "бокса", "боксов")}
-                      </li>
-                    ))}
-                  </ul>
-                  {est.remove_annotated.length > 12 && (
-                    <span>…и ещё {est.remove_annotated.length - 12}</span>
-                  )}
-                </div>
-              )}
-              <div className="mag-confirm-foot">
-                <button className="mag-ghost" type="button" onClick={() => setConfirm(false)}>
-                  Отмена
-                </button>
-                <button
-                  className="mag-btn"
-                  type="button"
-                  onClick={() => {
-                    setConfirm(false);
-                    run();
-                  }}
-                >
-                  Применить
-                </button>
-              </div>
             </div>
           </div>
         )}
       </div>
-    </div>
+
+      {menu && menuSeg && (
+        <>
+          <span className="vc-menu-veil" onPointerDown={() => setMenu(null)} />
+          <div className="ui-pop vc-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+            <span className="vc-menu-h">Шаг нарезки</span>
+            {STEPS_MS.map((ms) => (
+              <MenuItem key={ms} selected={ms === menuSeg.step_ms} onSelect={() => { patch(menuSeg.id, { step_ms: ms }); setMenu(null); }}>{fmtStep(ms)}</MenuItem>
+            ))}
+            <div className="vc-menu-row">
+              <NumInput className="ui-input ui-ctl ui-mono" min={minStep / 1000} step={0.1} value={Number(custom.replace(",", ".")) || undefined}
+                aria-label="Свой шаг, с" onValue={(n) => setCustom(n === undefined ? "" : String(n))}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter") return;
+                  e.preventDefault();
+                  const n = Number(custom.replace(",", "."));
+                  if (n > 0) patch(menuSeg.id, { step_ms: Math.max(minStep, Math.round(n * 1000)) });
+                  setMenu(null);
+                }} />
+              <span className="t-xs t-muted">с, Enter</span>
+            </div>
+            <MenuItem icon="trash" danger onSelect={() => { removeSeg(menuSeg.id); setMenu(null); }}>Удалить участок</MenuItem>
+          </div>
+        </>
+      )}
+      {confirmNode}
+    </Dialog>
   );
 }
