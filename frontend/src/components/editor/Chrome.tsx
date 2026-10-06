@@ -1,5 +1,6 @@
 // Оболочка редакторов кадров и видео: шапка, плавающие панели, зум, запись, окно «Клавиши».
 
+import { useRef } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { Button, Dialog, Icon, Kbd, Popover, cx } from "../../ui";
 import type { IconName } from "../../ui";
@@ -90,6 +91,41 @@ export function ZoomChip({ scale, onZoom, onFit, grid, onGrid }: {
       {onGrid && (
         <Button variant="ghost" size="sm" icon="grid" aria-label="Сетка на фоне" aria-pressed={grid} onClick={onGrid} />
       )}
+    </div>
+  );
+}
+
+/** Граница над нижней панелью: тянется мышью и стрелками, двойной щелчок — как было. */
+export function Grip({ label, height, onHeight, onDone, onReset }: {
+  label: string;
+  height: number;
+  /** Высота нижней панели по ходу протяжки. */
+  onHeight: (h: number) => void;
+  /** Протяжка кончилась — запомнить. */
+  onDone: () => void;
+  onReset: () => void;
+}) {
+  const grab = useRef<{ y: number; h: number } | null>(null);
+  return (
+    <div className="ed-grip" role="separator" aria-orientation="horizontal" aria-label={label} aria-valuenow={height}
+      tabIndex={0} title="Тяните, чтобы поменять высоту. Двойной щелчок — как было"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        grab.current = { y: e.clientY, h: height };
+      }}
+      onPointerMove={(e) => { const g = grab.current; if (g) onHeight(g.h + g.y - e.clientY); }}
+      onPointerUp={() => { if (grab.current) onDone(); grab.current = null; }}
+      onPointerCancel={() => { grab.current = null; }}
+      onDoubleClick={onReset}
+      onKeyDown={(e) => {
+        if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+        e.preventDefault();
+        e.stopPropagation();
+        onHeight(height + (e.key === "ArrowUp" ? 24 : -24));
+        onDone();
+      }}>
+      <i />
     </div>
   );
 }

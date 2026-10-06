@@ -3,22 +3,11 @@
 
 .ag-muted { color: var(--faint); font-size: 12.5px; margin: 0; }
 
-/* --- подпись агента у кадра и рамки --- */
-
-.ag-who { display: block; font-size: 11.5px; color: var(--faint); }
-/* В строке объекта редактора подпись — своей строкой под именем класса. */
-.mag-ed-obj:has(.ag-who) { flex-wrap: wrap; row-gap: 2px; }
-.mag-ed-obj .ag-who { order: 5; flex: 1 0 100%; padding-left: 19px; line-height: 1.35; }
-.ag-who .agent { color: #b9a4ff; }
-.ag-who .fix { color: var(--skip); }
-
 /* «Разведка» у ролика и «Статистика разведки» в шапке таски — явные кнопки в
    фиолетовом агентов (как подпись «агент X v1» у рамок). */
 .ag-scout-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 4px 11px; border: 1px solid #8b73ff66; border-radius: 7px; background: #1d1733; color: #b9a4ff; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
 .ag-scout-btn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #8b73ff; }
 .ag-scout-btn:hover { border-color: #8b73ff; background: #2a2150; color: #d9ceff; }
-.vt-scout .vt-name { cursor: default; font-style: italic; }
-.vt-scout .vt-life { cursor: pointer; opacity: 0.55; }
 
 /* --- окно статистики разведки --- */
 .mag-modal.ag-stats { width: 1060px; display: grid; gap: 16px; }

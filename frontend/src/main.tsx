@@ -45,7 +45,6 @@ import "./styles/agents.css";
 // Общая палитра и компоновка подключаются после стилей компонентов.
 import "./styles/gabarit.css";
 import "./styles/workspace.css";
-import "./styles/timeline.css";
 // Редизайн: шрифты со своего домена (CSP: font-src 'self'), токены с мостом к
 // старым переменным, примитивы и каркас — последними, чтобы выигрывать порядком.
 import "@fontsource/onest/400.css";

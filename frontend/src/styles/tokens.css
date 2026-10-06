@@ -163,7 +163,7 @@ body { cursor: default; }
   color: var(--fg);
   font-family: var(--font);
 }
-.mag-ed, .lbx, .mag-cv, .mag-fs {
+.lbx, .mag-cv, .mag-fs {
   --ed-bg: var(--stage);
   --ed-chrome: var(--sidebar);
   --ed-panel: var(--sidebar);

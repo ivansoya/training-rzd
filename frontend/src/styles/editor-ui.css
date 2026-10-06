@@ -166,3 +166,130 @@
 .fe-v.empty[aria-pressed="true"] { background: color-mix(in srgb, var(--st-empty) 20%, transparent); color: var(--fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-empty) 60%, transparent); }
 .fe-v.skipped[aria-pressed="true"] { background: color-mix(in srgb, var(--st-skip) 18%, transparent); color: var(--fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-skip) 60%, transparent); }
 .fe-v.deleted:hover:not(:disabled) { color: var(--st-del); }
+
+/* ---------- граница над нижней панелью (Grip) ---------- */
+.ed-grip {
+  position: relative; display: grid; place-items: center; cursor: row-resize; touch-action: none;
+  background: var(--sidebar); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
+}
+.ed-grip i { width: 44px; height: 3px; border-radius: var(--r-full); background: var(--input); transition: background .12s, width .12s; }
+.ed-grip:hover i, .ed-grip:active i, .ed-grip:focus-visible i { background: var(--primary); width: 64px; }
+.ed-grip:focus-visible { outline: none; }
+
+.ed-top.waiting .ed-tool, .ed-top.waiting .ed-cls { opacity: .45; }
+
+/* ---------- видео «Дорожки снизу» ---------- */
+.ve-body { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(220px, 1fr) 9px minmax(0, var(--dock, 300px)); }
+.ve-body > .ed-main { min-height: 0; }
+.ve-side { bottom: 60px; }
+.ve-prep { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted-fg); white-space: nowrap; }
+.ve-prep i { width: 7px; height: 7px; border-radius: 50%; background: var(--c1); animation: ed-blink 1s ease-in-out infinite; }
+.ve-busy { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; pointer-events: none; }
+.ve-busy span {
+  width: 28px; height: 28px; border-radius: 50%; border: 2.5px solid color-mix(in srgb, var(--fg) 22%, transparent);
+  border-top-color: var(--fg); animation: ve-spin .8s linear infinite;
+}
+@keyframes ve-spin { to { rotate: 360deg; } }
+
+/* что на кадре: строка трека */
+.ve-pres { font-size: 11.5px; color: var(--faint); flex: none; }
+.ve-pres.key { color: var(--fg); }
+.ve-pres.hidden { color: var(--st-skip); }
+.ve-meta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; margin: 0; }
+.ve-meta > div { display: flex; flex-direction: column; gap: 1px; padding: 4px 7px; border: 1px solid var(--input); border-radius: var(--r); min-width: 0; }
+.ve-meta dt { font-size: 11px; color: var(--faint); }
+.ve-meta dd { margin: 0; font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ve-step { width: 72px; height: 28px; text-align: right; }
+
+/* док: транспорт и дорожки */
+.ve-dock { display: flex; flex-direction: column; min-height: 0; background: var(--sidebar); }
+.ve-tr { display: flex; align-items: center; gap: 4px; flex: none; min-width: 0; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.ve-time { font-size: 12.5px; padding: 0 4px 0 10px; white-space: nowrap; }
+.ve-pos { white-space: nowrap; }
+.ve-wait { width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: var(--faint); opacity: 0; transition: opacity .15s; flex: none; }
+.ve-wait.on { opacity: 1; animation: ed-blink 1s ease-in-out infinite; }
+.ve-tr .ui-select { min-width: 128px; }
+/* ¼ и 2× сами по себе разной ширины — ряд не должен дёргаться */
+.ve-tr .ui-seg button { min-width: 34px; justify-content: center; }
+.fe-v.empty.idle { color: var(--muted-fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-empty) 45%, transparent); }
+
+.ve-tl {
+  position: relative; flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto;
+  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--input) transparent;
+}
+.ve-pin { position: sticky; top: 0; z-index: 5; background: var(--sidebar); box-shadow: 0 1px 0 var(--border); }
+.ve-r { display: grid; grid-template-columns: 190px minmax(0, 1fr); height: 30px; border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent); }
+.ve-pin .ve-r:last-child { border-bottom: 0; }
+.ve-r.on { background: color-mix(in srgb, var(--hover) 55%, transparent); }
+.ve-r.off .ve-span, .ve-r.off .ve-kf { opacity: .35; }
+.ve-ruler { height: 26px; }
+.ve-n {
+  display: flex; align-items: center; gap: 7px; min-width: 0; padding: 0 4px 0 12px;
+  font-size: 12px; color: var(--muted-fg); border-right: 1px solid var(--border);
+}
+.ve-n > .ui-ic, .ve-n-b > .ui-ic { color: var(--faint); flex: none; }
+.ve-n-b {
+  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; height: 100%; padding: 0;
+  border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+}
+.ve-sys .ve-n-b { color: var(--muted-fg); }
+.ve-n-b:hover, .ve-n-b[aria-pressed="true"] { color: var(--fg); }
+.ve-n-b:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; border-radius: var(--r); }
+.ve-n .ui-btn { opacity: 0; }
+.ve-r:hover .ve-n .ui-btn, .ve-r.off .ve-n .ui-btn, .ve-n .ui-btn:focus-visible { opacity: 1; }
+.ve-k { margin-left: auto; padding: 0 4px; font: 600 10px var(--mono); color: var(--faint); border: 1px solid var(--border); border-radius: 4px; }
+.ve-n-b[aria-pressed="true"] .ve-k { color: var(--fg); border-color: var(--input); }
+
+/* полоса времени: запас по краям, чтобы ромб первого и последнего кадра не резало */
+.ve-l { position: relative; min-width: 0; margin: 0 14px 0 10px; cursor: pointer; touch-action: none; }
+.ve-ruler .ve-l:focus-visible { outline: none; box-shadow: inset 0 -2px 0 var(--ring); }
+.ve-tick { position: absolute; top: 5px; translate: -50% 0; font: 500 10px var(--mono); color: var(--faint); white-space: nowrap; pointer-events: none; }
+.ve-tick::after { content: ""; position: absolute; left: 50%; top: 15px; width: 1px; height: 5px; background: var(--input); }
+.ve-tick.first { translate: 0 0; }
+.ve-tick.first::after { left: 0; }
+.ve-ph { position: absolute; top: 0; bottom: -1px; width: 2px; margin-left: -1px; background: var(--primary); pointer-events: none; z-index: 3; }
+.ve-ph.head::before {
+  content: ""; position: absolute; top: 0; left: -5px; width: 12px; height: 9px;
+  background: var(--primary); clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+.ve-cov { position: absolute; top: 11px; height: 8px; border-radius: 2px; background: var(--st-done); pointer-events: none; }
+.ve-empty { position: absolute; top: 6px; width: 3px; height: 18px; margin-left: -1.5px; border-radius: 1px; background: var(--st-empty); }
+.ve-empty.off { opacity: .4; }
+.ve-heat { position: absolute; top: 9px; height: 12px; border-radius: 2px; background: var(--c3); pointer-events: none; }
+.ve-tick-s {
+  position: absolute; top: 6px; width: 3px; height: 18px; margin-left: -1.5px; padding: 0;
+  border: 0; border-radius: 1px; background: currentColor; cursor: pointer; transition: width .1s, margin .1s;
+}
+.ve-tick-s:hover { width: 5px; margin-left: -2.5px; }
+.ve-span {
+  position: absolute; top: 8px; height: 14px; border-radius: 4px; pointer-events: none;
+  background: color-mix(in srgb, var(--cc) 30%, transparent); border: 1px solid color-mix(in srgb, var(--cc) 70%, transparent);
+}
+.ve-span.ro { pointer-events: auto; }
+.ve-hid {
+  position: absolute; top: 8px; height: 14px; border-radius: 4px; pointer-events: none;
+  background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--fg) 24%, transparent) 0 2px, transparent 2px 6px);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg) 22%, transparent);
+}
+.ve-hid.ghost { z-index: 2; box-shadow: inset 0 0 0 1px var(--fg); }
+.ve-kf { position: absolute; top: 5px; width: 20px; height: 20px; margin-left: -10px; padding: 0; border: 0; background: none; cursor: grab; touch-action: none; z-index: 2; }
+.ve-kf::before {
+  content: ""; display: block; margin: auto; width: 10px; height: 10px; rotate: 45deg; border-radius: 1px;
+  background: var(--cc); border: 1.5px solid var(--sidebar); transition: scale .1s;
+}
+.ve-kf:hover::before, .ve-kf:focus-visible::before { scale: 1.25; }
+.ve-kf:focus-visible { outline: none; }
+.ve-kf.now::before { box-shadow: 0 0 0 2px var(--fg); }
+.ve-kf.gone::before { background: var(--sidebar); border: 2px solid var(--cc); }
+.ve-kf:active { cursor: grabbing; }
+.ve-grip {
+  position: absolute; top: 6px; width: 12px; height: 18px; padding: 0; z-index: 3; touch-action: none;
+  border: 1px solid var(--input); border-radius: 4px; background: var(--card); cursor: ew-resize;
+}
+.ve-grip::before { content: ""; position: absolute; inset: 4px 3px; border-inline: 1px solid var(--muted-fg); }
+.ve-grip.start { translate: calc(-100% - 8px) 0; }
+.ve-grip.end { translate: 8px 0; }
+.ve-grip:hover, .ve-grip:focus-visible { border-color: var(--ring); outline: none; }
+.ve-ghost { position: absolute; top: 4px; bottom: 4px; width: 2px; margin-left: -1px; background: var(--fg); pointer-events: none; z-index: 2; }
+.ve-none { display: flex; align-items: center; gap: 8px; margin: 0; padding: 14px 12px; font-size: 12.5px; color: var(--muted-fg); }
+.ve-menu { width: 250px; }

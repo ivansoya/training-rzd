@@ -161,60 +161,6 @@
   cursor: default;
 }
 
-/* Одно меню на два места: шаг участка по правой кнопке и скорость плеера. */
-.mag-menu-veil {
-  position: fixed;
-  inset: 0;
-  z-index: 20;
-}
-
-.mag-menu {
-  position: fixed;
-  z-index: 21;
-  transform: translateY(-100%);
-  min-width: 132px;
-  background: #1b2129;
-  border: 1px solid #333c46;
-  border-radius: 9px;
-  padding: 5px;
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.55);
-}
-
-.mag-menu button {
-  background: none;
-  border: none;
-  color: #e8ecef;
-  font-family: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  padding: 6px 9px;
-  border-radius: 6px;
-  cursor: pointer;
-}
-
-.mag-menu button:hover {
-  background: #2a323c;
-}
-
-.mag-menu button.on {
-  color: #ff9d9d;
-  font-weight: 700;
-}
-
-.mag-menu button.on::after {
-  content: " ✓";
-}
-
-.mag-menu button.bad {
-  color: #ff8b8b;
-  border-top: 1px solid #333c46;
-  border-radius: 0 0 6px 6px;
-  margin-top: 3px;
-}
-
 @keyframes mag-veil-in {
   from { opacity: 0; }
   to { opacity: 1; }

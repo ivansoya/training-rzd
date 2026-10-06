@@ -457,7 +457,7 @@ export default function TaskPage() {
       )}
       {annotating && (
         <VideoAnnotator code={code!} taskId={task.id} taskName={task.name} video={annotating} readOnly={!editable}
-          onClose={() => { setAnnotating(null); void load(); }} />
+          onClose={() => { setAnnotating(null); void load(); }} onChanged={() => void load()} />
       )}
       {editing && editing.list[editing.index] && (
         <AnnotationEditor code={code!} taskName={task.name} images={editing.list} index={editing.index}

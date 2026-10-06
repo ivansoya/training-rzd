@@ -40,8 +40,10 @@ const toggled = <T,>(set: Set<T>, v: T, on: boolean) => {
   return next;
 };
 
-export default function AgentRunDialog({ taskId, onClose, onStarted }: {
+export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: {
   taskId: string;
+  /** Открыть сразу на режиме и роликах — из редактора ролика. */
+  initial?: { mode: api.RunMode; videos: string[] };
   onClose: () => void;
   onStarted: (run: api.RunView) => void;
 }) {
@@ -49,8 +51,8 @@ export default function AgentRunDialog({ taskId, onClose, onStarted }: {
   const [agentId, setAgentId] = useState("");
   const [versionId, setVersionId] = useState("");
   const [sources, setSources] = useState<Set<"files" | "videos">>(new Set());
-  const [mode, setMode] = useState<api.RunMode>("frames");
-  const [videos, setVideos] = useState<Set<string>>(new Set());
+  const [mode, setMode] = useState<api.RunMode>(initial?.mode ?? "frames");
+  const [videos, setVideos] = useState<Set<string>>(() => new Set(initial?.videos));
   const [step, setStep] = useState(25);
   const [gap, setGap] = useState(2);
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
