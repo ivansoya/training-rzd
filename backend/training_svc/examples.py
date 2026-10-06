@@ -280,7 +280,8 @@ def gc(db):
     docs += [d for (d,) in db.execute(select(AugGraphVersion.doc).join(
         AugGraph, AugGraph.id == AugGraphVersion.graph_id).where(AugGraph.kind == "agent"))]
     for doc in docs:
-        for node in (doc or {}).get("nodes") or []:
+        # Строки нового документа знают класс по id — без `prepare` они не в счёт.
+        for node in agent_graph.prepare(doc or {}).get("nodes") or []:
             if node.get("type") == "text":
                 used.update(s for _, s in agent_graph.text_sets(node))
     stale = db.execute(select(AgentExamples).where(

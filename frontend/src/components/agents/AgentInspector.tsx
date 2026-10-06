@@ -12,10 +12,10 @@ import { NumInput } from "../NumInput";
 import {
   LIMITS, MAX_PASSES, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, TILE_OVERLAP, YOLOE_MB, callsPerView, inputSide,
   isExamples, mergeInputs, offLimits, promptsOf, rowTarget, rowsOf, switchTextModel, textConfDefault, textModel, tileSide,
-  viewCount, type FilterRow,
+  viewCount, type AgentClass, type FilterRow,
 } from "./agentDoc";
 import { agentTitle, type AgentNodeData } from "./AgentNodes";
-import { FilterClasses, NetClasses, PromptTable } from "./ClassTables";
+import { ClassList, FilterClasses, NetClasses, PromptTable } from "./ClassTables";
 import { decimal, iconOf, roleOf, toneOf } from "./look";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
@@ -34,7 +34,7 @@ const DETAIL = [
   { value: "subpart", label: "Подчасть" },
 ];
 
-export default function AgentInspector({ node, readOnly, weights, sam3Ready, sets, onSet, colorOf, incoming, loose,
+export default function AgentInspector({ node, readOnly, weights, sam3Ready, sets, onSet, classes, ensure, incoming, loose,
   onChange, onPickWeights, onRemove, pinned, onPin, frame, msPerCall }: {
   node: Node | null;
   readOnly: boolean;
@@ -42,8 +42,11 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   sam3Ready: boolean | null;
   sets: Map<string, api.ExampleSet>;
   onSet: (set: api.ExampleSet) => void;
-  colorOf: Map<string, { color: string; sources: unknown[] }>;
-  /** Классы агента, что приходят к узлу: «Фильтр» показывает только их. */
+  /** Классы агента — для выбора в строках узлов. */
+  classes: AgentClass[];
+  /** Класс агента по имени: найденный или заведённый. */
+  ensure: (name: string) => string | null;
+  /** Id классов агента, что приходят к узлу: «Фильтр» показывает только их. */
   incoming: string[];
   loose: boolean;
   onChange: (next: Record<string, unknown>) => void;
@@ -99,7 +102,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   const overlap = num(p.overlap, TILE_OVERLAP);
   const calls = callsPerView(d.kind, p);
   const examples = d.kind === "text" && model === "sam3"
-    ? promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.agent.trim() && isExamples(r)).length : 0;
+    ? promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.cls && isExamples(r)).length : 0;
   const tiling = Boolean(p.tiles);
   const views = frame ? viewCount(p, frame.w, frame.h, side) : null;
   const total = views ? views.whole + views.tiles : 1;
@@ -165,6 +168,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
 
   return (
     <section className="ge-sec ae-insp">
+      <ClassList classes={classes} />
       <div className="ge-sec-h">
         <span className="ge-tone" style={{ color: toneOf(d.kind) }}><Icon name={iconOf(d.kind)} /></span>
         <b className="t-ell">{agentTitle(d)}</b>
@@ -206,7 +210,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
               {passes}
               {weights && (
                 <div className="ae-wide">
-                  <NetClasses names={weights.names} rows={rowsOf({ params: p })} readOnly={readOnly} colorOf={colorOf}
+                  <NetClasses names={weights.names} rows={rowsOf({ params: p })} readOnly={readOnly} classes={classes} ensure={ensure}
                     onRows={(rows) => onChange({ classes: rows })} />
                 </div>
               )}
@@ -240,7 +244,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
               ) : number("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
               {passes}
               <div className="ae-wide">
-                <PromptTable rows={promptsOf({ params: p })} readOnly={readOnly} colorOf={colorOf} nodeConf={num(p.conf, textConfDefault(model))}
+                <PromptTable rows={promptsOf({ params: p })} readOnly={readOnly} classes={classes} ensure={ensure} nodeConf={num(p.conf, textConfDefault(model))}
                   model={model} sets={sets} onSet={onSet} onRows={(rows) => onChange({ prompts: rows })} />
               </div>
             </>
@@ -260,7 +264,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
               {number("min_side", "Сторона от, px", typeof p.min_side === "number" ? p.min_side : undefined, 1, true)}
               {number("max_side", "Сторона до, px", typeof p.max_side === "number" ? p.max_side : undefined, 1, true)}
               <div className="ae-wide">
-                <FilterClasses names={incoming} rows={(p.classes as FilterRow[] | undefined) ?? []} readOnly={readOnly} colorOf={colorOf}
+                <FilterClasses ids={incoming} rows={(p.classes as FilterRow[] | undefined) ?? []} readOnly={readOnly} classes={classes}
                   onRows={(rows) => onChange({ classes: rows })} />
               </div>
             </>

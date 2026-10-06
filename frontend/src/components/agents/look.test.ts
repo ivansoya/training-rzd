@@ -44,9 +44,10 @@ describe("вид узлов агента", () => {
 
   it("строка сети по тексту: слова и образцы", () => {
     const prompts = [
-      { prompt: "car", agent: "авто", on: true },
-      { kind: "examples", set: "s1", agent: "вагон", on: true },
-      { prompt: "", agent: "пусто", on: true },
+      { prompt: "car", cls: "c1", on: true },
+      { kind: "examples", set: "s1", cls: "c2", on: true },
+      { prompt: "", cls: "c3", on: true },
+      { prompt: "bus", on: true },
     ];
     expect(textLine({ model: "l", prompts }, false)).toBe("YOLOE-26 l, 1 сл. + 1 обр., conf 0,25");
     expect(textLine({ model: "sam3", prompts }, true)).toBe("нет весов SAM 3");

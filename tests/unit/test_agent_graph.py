@@ -558,3 +558,56 @@ def test_sam3_не_больше_16_строк_и_бронь_растёт_с_пр
 def test_длинный_промт_отвергается_словами():
     with pytest.raises(ag.AgentGraphError, match="длиннее 64"):
         ag.check(_text_doc(_text("t", [("слово " * 20, "Класс", True)])))
+
+
+def test_старый_документ_получает_список_классов_в_прежних_цветах():
+    doc = _doc()
+    doc["nodes"].insert(5, {"id": "flt", "type": "filter", "params": {
+        "classes": [{"cls": "вагон", "on": True, "conf": 0.5}, {"cls": "призрак", "on": False, "conf": 0}]}})
+    up = ag.upgrade(doc)
+    assert [(c["id"], c["name"], c["color"]) for c in up["classes"]] == [
+        ("c1", "вагон", ag.PALETTE[0]), ("c2", "цистерна", ag.PALETTE[1]),
+        ("c3", "рельс", ag.PALETTE[2]), ("c4", "шпала", ag.PALETTE[3])]
+    b = up["nodes"][2]["params"]["classes"]
+    assert b[2] == {"cls": "c1", "on": True}                     # «вагон» сети b — тот же класс
+    assert b[3] == {"agent": "знак", "on": False}                # выключенная без класса — подсказка
+    assert up["nodes"][5]["params"]["classes"] == [{"cls": "c1", "on": True, "conf": 0.5}]
+    assert "classes" not in doc                                  # исходный документ не тронут
+    assert ag.upgrade(up) is up
+
+
+def test_prepare_даёт_движку_имена_и_прогон_не_меняется():
+    old = ag.run(_doc(), lambda node: ANSWERS[node["id"]])
+    doc = ag.prepare(ag.upgrade(_doc()))
+    assert ag.prepare(doc) == doc                                # повторно — то же
+    new = ag.run(doc, lambda node: ANSWERS[node["id"]], ag.check(doc))
+    assert [(d["cls"], d["conf"]) for d in new] == [(d["cls"], d["conf"]) for d in old]
+
+
+def test_переименование_класса_доходит_до_узлов():
+    doc = ag.upgrade(_doc())
+    doc["classes"][0]["name"] = "полувагон"
+    got = ag.classes(doc)
+    assert got[0]["name"] == "полувагон" and got[0]["sources"] == [("a", 0), ("b", 2)]
+    out = ag.run(ag.prepare(doc), lambda node: ANSWERS[node["id"]])
+    assert "полувагон" in {d["cls"] for d in out}
+
+
+def test_неиспользуемый_класс_хранится_но_не_сопоставляется():
+    doc = ag.upgrade(_doc())
+    doc["classes"].append({"id": "x", "name": "лишний", "color": "#fff"})
+    ag.check(ag.prepare(doc))
+    assert "лишний" not in [c["name"] for c in ag.classes(doc)]
+
+
+@pytest.mark.parametrize("change,text", [
+    (lambda d: d["classes"].append({"id": "c9", "name": "ВАГОН"}), "повторяется"),
+    (lambda d: d["classes"].append({"id": "c1", "name": "другой"}), "Номер класса"),
+    (lambda d: d["classes"].__setitem__(0, {"id": "c1", "name": "  "}), "пустое имя"),
+    (lambda d: d["nodes"][1]["params"]["classes"][0].__setitem__("cls", "нет"), "без класса агента"),
+])
+def test_список_классов_проверяется(change, text):
+    doc = ag.upgrade(_doc())
+    change(doc)
+    with pytest.raises(ag.AgentGraphError, match=text):
+        ag.check(ag.prepare(doc))

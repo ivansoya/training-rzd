@@ -1,17 +1,19 @@
 // Таблицы в параметрах узла: классы «Сети», строки «Сети по тексту», классы «Фильтра».
 // Классов у сети бывает несколько десятков — поэтому поиск и фильтр, а не список галочек.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import * as api from "../../api/agents";
 import { Button, Input, Seg, cx } from "../../ui";
 import { NumInput } from "../NumInput";
 import {
-  CYRILLIC, exampleConfDefault, isExamples, offLimits, withConf, type FilterRow, type NetRow, type PromptRow, type TextModel,
+  CLASS_NAME_MAX, CYRILLIC, exampleConfDefault, foldName, isExamples, offLimits, withConf, type AgentClass, type FilterRow,
+  type NetRow, type PromptRow, type TextModel,
 } from "./agentDoc";
 import { ExampleStrip, ExamplesDialog } from "./ExamplesDialog";
 
 type Shown = "all" | "on" | "off";
-type ColorOf = Map<string, { color: string; sources: unknown[] }>;
+/** Класс агента по имени: найденный или заведённый редактором; пустое имя — null. */
+type Ensure = (name: string) => string | null;
 
 const SHOWN = [{ value: "all" as const, label: "Все" }, { value: "on" as const, label: "Включены" }, { value: "off" as const, label: "Выключены" }];
 
@@ -46,59 +48,91 @@ function Tick({ checked, label, disabled, onChange }: { checked: boolean; label:
     onChange={(e) => onChange(e.target.checked)} />;
 }
 
-/** Имя класса агента в строке; пустое на уходе из поля возвращается к исходному. */
-function AgentName({ value, fallback, color, merged, readOnly, label, onChange }: {
-  value: string; fallback: string; color?: string; merged?: number; readOnly: boolean; label: string; onChange: (v: string) => void;
+/** Класс агента в строке: поле с подсказками из списка агента. Имя из списка
+ *  выбирает класс, новое — заводит его; переименовывают класс в окне «Классы
+ *  агента», а не здесь. Пустое на уходе из поля возвращает прежний класс. */
+function ClassPick({ cls, hint, classes, readOnly, label, onPick }: {
+  cls?: string; hint: string; classes: AgentClass[]; readOnly: boolean; label: string; onPick: (name: string) => void;
 }) {
+  const c = classes.find((k) => k.id === cls);
+  const shown = c?.name ?? hint;
+  const [text, setText] = useState(shown);
+  useEffect(() => setText(shown), [shown]);
+  const commit = () => {
+    const clean = text.trim();
+    if (!clean || (c && foldName(clean) === foldName(c.name))) {
+      setText(shown);
+      return;
+    }
+    onPick(clean);
+  };
+  const merged = c?.sources.length ?? 0;
   return (
     <span className="ae-an">
-      <i style={{ background: color ?? "var(--input)" }} />
-      <input className="ui-input ui-ctl ae-in" value={value} disabled={readOnly} aria-label={label} title={value}
-        onChange={(e) => onChange(e.target.value)} onBlur={(e) => !e.target.value.trim() && onChange(fallback)} />
-      {merged && merged > 1 ? <b className="ae-merge" title="В этот класс агента сходятся несколько источников">×{merged}</b> : null}
+      <i className={c?.ref ? "ref" : undefined} style={{ background: c?.color ?? "var(--input)" }}
+        title={c?.ref ? `Класс проекта «${c.ref.project_name ?? "проект"}»` : undefined} />
+      <input className={cx("ui-input ui-ctl ae-in", !c && "t-faint")} value={text} disabled={readOnly} aria-label={label} title={shown}
+        list="ae-agent-classes" maxLength={CLASS_NAME_MAX} onChange={(e) => setText(e.target.value)} onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") setText(shown);
+        }} />
+      {merged > 1 ? <b className="ae-merge" title="В этот класс агента сходятся несколько источников">×{merged}</b> : null}
     </span>
   );
 }
 
+/** Подсказки полей класса — одни на шторку. */
+export function ClassList({ classes }: { classes: AgentClass[] }) {
+  return <datalist id="ae-agent-classes">{classes.map((c) => <option key={c.id} value={c.name} />)}</datalist>;
+}
+
 const filterBy = <T extends { on: boolean }>(rows: T[], shown: Shown) => rows.filter((r) => shown === "all" || (shown === "on" ? r.on : !r.on));
 
-export function NetClasses({ names, rows, readOnly, colorOf, onRows }: {
-  names: string[]; rows: NetRow[]; readOnly: boolean; colorOf: ColorOf; onRows: (rows: NetRow[]) => void;
+/** Строке, что включают, нужен класс: свой или по подсказке, иначе по имени из весов. */
+const bound = <R extends NetRow | PromptRow>(r: R, classes: AgentClass[], ensure: Ensure, fallback: string): R => {
+  if (r.cls && classes.some((c) => c.id === r.cls)) return { ...r, on: true };
+  const cls = ensure(r.agent || fallback);
+  const { agent: _hint, ...rest } = r;
+  return cls ? ({ ...rest, cls, on: true } as R) : { ...r, on: true };
+};
+
+export function NetClasses({ names, rows, readOnly, classes, ensure, onRows }: {
+  names: string[]; rows: NetRow[]; readOnly: boolean; classes: AgentClass[]; ensure: Ensure; onRows: (rows: NetRow[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const [shown, setShown] = useState<Shown>("all");
   const table: NetRow[] = names.map((n, i) => rows[i] ?? { agent: n, on: false });
   const set = (i: number, patch: Partial<NetRow>) => onRows(table.map((r, k) => (k === i ? { ...r, ...patch } : r)));
+  const nameOf = (r: NetRow) => classes.find((c) => c.id === r.cls)?.name ?? r.agent ?? "";
   const q = query.trim().toLowerCase();
   const visible = filterBy(table.map((r, i) => ({ ...r, i, name: names[i] })), shown)
-    .filter((r) => !q || `${r.name} ${r.agent}`.toLowerCase().includes(q));
+    .filter((r) => !q || `${r.name} ${nameOf(r)}`.toLowerCase().includes(q));
   return (
     <div className="ae-ct">
       <Head title="Классы сети" total={names.length} on={table.filter((r) => r.on).length} query={query} onQuery={setQuery}
         placeholder="Найти класс" shown={shown} onShown={setShown} readOnly={readOnly}
-        onAll={(on) => onRows(table.map((r) => ({ ...r, on })))} />
+        onAll={(on) => onRows(table.map((r, i) => (on ? bound(r, classes, ensure, names[i]) : { ...r, on })))} />
       <div className="ae-ct-row net head"><span /><span>№</span><span>в весах</span><span>класс агента</span></div>
       {visible.length === 0 && <p className="t-xs t-faint ae-ct-none">Ничего не найдено</p>}
-      {visible.map((r) => {
-        const c = r.on ? colorOf.get(r.agent.trim()) : undefined;
-        return (
-          <div key={r.i} className={cx("ae-ct-row net", !r.on && "off")}>
-            <Tick checked={r.on} disabled={readOnly} label={r.name} onChange={(on) => set(r.i, { on })} />
-            <span className="ui-mono t-faint">{r.i}</span>
-            <span className="ui-mono t-ell" title={r.name}>{r.name}</span>
-            <AgentName value={r.agent} fallback={r.name} color={c?.color} merged={c?.sources.length} readOnly={readOnly}
-              label={`Класс агента для ${r.name}`} onChange={(agent) => set(r.i, { agent })} />
-          </div>
-        );
-      })}
+      {visible.map((r) => (
+        <div key={r.i} className={cx("ae-ct-row net", !r.on && "off")}>
+          <Tick checked={r.on} disabled={readOnly} label={r.name}
+            onChange={(on) => set(r.i, on ? bound(table[r.i], classes, ensure, r.name) : { on })} />
+          <span className="ui-mono t-faint">{r.i}</span>
+          <span className="ui-mono t-ell" title={r.name}>{r.name}</span>
+          <ClassPick cls={r.cls} hint={r.agent ?? r.name} classes={classes} readOnly={readOnly}
+            label={`Класс агента для ${r.name}`} onPick={(name) => set(r.i, { cls: ensure(name) ?? undefined, agent: undefined })} />
+        </div>
+      ))}
     </div>
   );
 }
 
 /** Строки «Сети по тексту»: слово или набор образцов → класс агента, у каждой свой порог (пусто — порог узла).
  *  Слово по-русски не запрещено — модель его примет, только найдёт хуже или не то. */
-export function PromptTable({ rows, readOnly, colorOf, nodeConf, model, sets, onSet, onRows }: {
-  rows: PromptRow[]; readOnly: boolean; colorOf: ColorOf; nodeConf: number; model: TextModel;
+export function PromptTable({ rows, readOnly, classes, ensure, nodeConf, model, sets, onSet, onRows }: {
+  rows: PromptRow[]; readOnly: boolean; classes: AgentClass[]; ensure: Ensure; nodeConf: number; model: TextModel;
   sets: Map<string, api.ExampleSet>; onSet: (set: api.ExampleSet) => void; onRows: (rows: PromptRow[]) => void;
 }) {
   const [query, setQuery] = useState("");
@@ -111,11 +145,12 @@ export function PromptTable({ rows, readOnly, colorOf, nodeConf, model, sets, on
   const set = (i: number, patch: Partial<PromptRow>) => onRows(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
   const q = query.trim().toLowerCase();
   const label = (r: PromptRow) => (isExamples(r) ? sets.get(r.set ?? "")?.class_name ?? "образцы" : r.prompt ?? "");
-  const visible = filterBy(rows.map((r, i) => ({ ...r, i })), shown).filter((r) => !q || `${label(r)} ${r.agent}`.toLowerCase().includes(q));
+  const nameOf = (r: PromptRow) => classes.find((c) => c.id === r.cls)?.name ?? r.agent ?? "";
+  const visible = filterBy(rows.map((r, i) => ({ ...r, i })), shown).filter((r) => !q || `${label(r)} ${nameOf(r)}`.toLowerCase().includes(q));
   const add = () => {
     const clean = prompt.trim();
     if (!clean) return;
-    onRows([...rows, { kind: "text", prompt: clean, agent: agent.trim() || clean, on: true }]);
+    onRows([...rows, { kind: "text", prompt: clean, cls: ensure(agent.trim() || clean) ?? undefined, on: true }]);
     setPrompt("");
     setAgent("");
   };
@@ -129,19 +164,19 @@ export function PromptTable({ rows, readOnly, colorOf, nodeConf, model, sets, on
     <div className="ae-ct">
       <Head title="Строки" total={rows.length} on={rows.filter((r) => r.on).length} query={query} onQuery={setQuery}
         placeholder="Найти слово или класс" shown={shown} onShown={setShown} readOnly={readOnly}
-        onAll={(on) => onRows(rows.map((r) => ({ ...r, on })))} />
+        onAll={(on) => onRows(rows.map((r) => (on ? bound(r, classes, ensure, label(r)) : { ...r, on })))} />
       <div className="ae-ct-row pr head"><span /><span /><span>слово / образцы</span><span>класс агента</span><span className="r">порог</span><span /></div>
       {rows.length === 0 && <p className="t-xs t-faint ae-ct-none">Строк нет — добавьте слово или образцы ниже</p>}
       {rows.length > 0 && visible.length === 0 && <p className="t-xs t-faint ae-ct-none">Ничего не найдено</p>}
       {visible.map((r) => {
-        const c = r.on ? colorOf.get(r.agent.trim()) : undefined;
         const ex = isExamples(r);
         const exSet = ex ? sets.get(r.set ?? "") : undefined;
         const cyr = !ex && CYRILLIC.test(r.prompt ?? "");
         const opened = ex && open.has(r.set ?? "");
         return (
           <div key={r.i} className={cx("ae-ct-row pr", !r.on && "off")}>
-            <Tick checked={r.on} disabled={readOnly} label={label(r) || "строка"} onChange={(on) => set(r.i, { on })} />
+            <Tick checked={r.on} disabled={readOnly} label={label(r) || "строка"}
+              onChange={(on) => set(r.i, on ? bound(rows[r.i], classes, ensure, label(r)) : { on })} />
             <span className={cx("ae-kind", ex && "ex")} title={ex ? "образцы" : "слово"}>{ex ? "обр" : "сл"}</span>
             {ex ? (
               <button type="button" className="ae-src" aria-expanded={opened} onClick={() => toggle(r.set ?? "")}>
@@ -152,8 +187,8 @@ export function PromptTable({ rows, readOnly, colorOf, nodeConf, model, sets, on
               <input className="ui-input ui-ctl ae-in ui-mono" value={r.prompt ?? ""} disabled={readOnly} aria-label="Слово"
                 onChange={(e) => set(r.i, { prompt: e.target.value })} />
             )}
-            <AgentName value={r.agent} fallback={label(r)} color={c?.color} merged={c?.sources.length} readOnly={readOnly}
-              label={`Класс агента для ${label(r)}`} onChange={(a) => set(r.i, { agent: a })} />
+            <ClassPick cls={r.cls} hint={r.agent ?? label(r)} classes={classes} readOnly={readOnly}
+              label={`Класс агента для ${label(r)}`} onPick={(name) => set(r.i, { cls: ensure(name) ?? undefined, agent: undefined })} />
             <NumInput className="ui-input ui-ctl ae-in ui-mono r" min={0} max={1} step={0.05} allowEmpty disabled={readOnly}
               placeholder={String(nodeConf).replace(".", ",")} value={typeof r.conf === "number" ? r.conf : undefined}
               aria-label="Порог строки" aria-invalid={offLimits({ lo: 0, hi: 1 }, r.conf) || undefined}
@@ -182,13 +217,12 @@ export function PromptTable({ rows, readOnly, colorOf, nodeConf, model, sets, on
             onChange={(e) => setAgent(e.target.value)} />
           <Button type="submit" size="sm" icon="plus" disabled={!prompt.trim()}>Слово</Button>
           <Button size="sm" icon="images" onClick={() => setDialog(true)}>Образцы из разметки</Button>
-          <datalist id="ae-agent-classes">{[...colorOf.keys()].map((name) => <option key={name} value={name} />)}</datalist>
         </form>
       )}
       {dialog && (
         <ExamplesDialog onClose={() => setDialog(false)} onDone={(made, agentName) => {
           onSet(made);
-          onRows([...rows, withConf({ kind: "examples", set: made.id, agent: agentName, on: true }, exampleConfDefault(model))]);
+          onRows([...rows, withConf({ kind: "examples", set: made.id, cls: ensure(agentName) ?? undefined, on: true }, exampleConfDefault(model))]);
           setOpen((old) => new Set(old).add(made.id));
           setDialog(false);
         }} />
@@ -199,27 +233,28 @@ export function PromptTable({ rows, readOnly, colorOf, nodeConf, model, sets, on
 
 /** Классы «Фильтра»: те, что приходят на вход, с галочкой и порогом. Класса нет в таблице — пропускается
  *  с порогом 0, так же считает и сервер. Строки ушедших классов не выбрасываем: вернётся класс — вернётся правило. */
-export function FilterClasses({ names, rows, readOnly, colorOf, onRows }: {
-  names: string[]; rows: FilterRow[]; readOnly: boolean; colorOf: ColorOf; onRows: (rows: FilterRow[]) => void;
+export function FilterClasses({ ids, rows, readOnly, classes, onRows }: {
+  ids: string[]; rows: FilterRow[]; readOnly: boolean; classes: AgentClass[]; onRows: (rows: FilterRow[]) => void;
 }) {
-  const byName = new Map(rows.map((r) => [r.cls, r]));
-  const table = names.map((cls) => byName.get(cls) ?? { cls, on: true, conf: 0 });
+  const byId = new Map(rows.map((r) => [r.cls, r]));
+  const table = ids.map((cls) => byId.get(cls) ?? { cls, on: true, conf: 0 });
   const set = (cls: string, patch: Partial<FilterRow>) =>
-    onRows([...rows.filter((r) => !names.includes(r.cls)), ...table.map((r) => (r.cls === cls ? { ...r, ...patch } : r))]);
+    onRows([...rows.filter((r) => !ids.includes(r.cls)), ...table.map((r) => (r.cls === cls ? { ...r, ...patch } : r))]);
+  const def = (cls: string) => classes.find((c) => c.id === cls);
   return (
     <div className="ae-ct">
-      <Head title="Классы на входе" total={names.length} readOnly={readOnly} />
+      <Head title="Классы на входе" total={ids.length} readOnly={readOnly} />
       <div className="ae-ct-row flt head"><span /><span>класс агента</span><span className="r">уверенность от</span></div>
-      {names.length === 0 && <p className="t-xs t-faint ae-ct-none">Выше нет сетей с классами</p>}
+      {ids.length === 0 && <p className="t-xs t-faint ae-ct-none">Выше нет сетей с классами</p>}
       {table.map((r) => (
         <div key={r.cls} className={cx("ae-ct-row flt", !r.on && "off")}>
-          <Tick checked={r.on} disabled={readOnly} label={r.cls} onChange={(on) => set(r.cls, { on })} />
+          <Tick checked={r.on} disabled={readOnly} label={def(r.cls)?.name ?? r.cls} onChange={(on) => set(r.cls, { on })} />
           <span className="ae-an">
-            <i style={{ background: colorOf.get(r.cls)?.color ?? "var(--input)" }} />
-            <span className="t-ell" title={r.cls}>{r.cls}</span>
+            <i style={{ background: def(r.cls)?.color ?? "var(--input)" }} />
+            <span className="t-ell" title={def(r.cls)?.name}>{def(r.cls)?.name ?? r.cls}</span>
           </span>
           <NumInput className="ui-input ui-ctl ae-in ui-mono r" min={0} max={1} step={0.05} value={r.conf} disabled={readOnly || !r.on}
-            aria-label={`Порог для ${r.cls}`} aria-invalid={offLimits({ lo: 0, hi: 1 }, r.conf) || undefined}
+            aria-label={`Порог для ${def(r.cls)?.name ?? r.cls}`} aria-invalid={offLimits({ lo: 0, hi: 1 }, r.conf) || undefined}
             onValue={(v) => set(r.cls, { conf: v ?? 0 })} />
         </div>
       ))}

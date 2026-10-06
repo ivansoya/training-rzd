@@ -1,4 +1,4 @@
-// Документ агента на стороне браузера: классы агента и их цвета.
+// Документ агента на стороне браузера: список классов агента и их цвета.
 // Проверка формы — на сервере (common/agent_graph.py) при сохранении версии.
 // Здесь — только то, что нужно показывать, пока тянут провода, и заведомая
 // неполнота (`unfinished`): превью не зовёт сервер ради ответа «не выбраны
@@ -6,8 +6,11 @@
 
 import type { GraphNode } from "../../api/aug";
 
+/** Строка таблицы «Сети»: класс агента по id. `agent` — подсказка имени у строки
+ *  без класса (старый документ, новые веса): включат — класс найдётся или заведётся по ней. */
 export interface NetRow {
-  agent: string;
+  cls?: string;
+  agent?: string;
   on: boolean;
 }
 
@@ -17,7 +20,8 @@ export interface PromptRow {
   kind?: "text" | "examples";
   prompt?: string;
   set?: string;
-  agent: string;
+  cls?: string;
+  agent?: string;
   on: boolean;
   conf?: number | null;
 }
@@ -72,7 +76,7 @@ export function switchTextModel(p: Record<string, unknown>, next: TextModel) {
 export const promptsOf = (node: { params?: Record<string, unknown> }) =>
   ((node.params?.prompts as PromptRow[] | undefined) ?? []);
 
-/** Строка «Фильтра» — по имени класса агента, а не по номеру. */
+/** Строка «Фильтра» — по id класса агента. */
 export interface FilterRow {
   cls: string;
   on: boolean;
@@ -113,53 +117,148 @@ export function upstream(
   return seen;
 }
 
-export interface AgentClass {
+/** Ссылка на класс проекта: имя и цвет берутся из проекта, а там класс сопоставляется сам. */
+export interface ClassRef {
+  project: string;
+  cls: string;
+  project_name?: string;
+}
+
+/** Класс агента в списке документа (`doc.classes`), как в common/agent_graph.py. */
+export interface ClassDef {
+  id: string;
   name: string;
   color: string;
-  /** Откуда пришёл: «№17 wagon» у сети, ««person»» у «Сети по тексту». */
+  ref?: ClassRef;
+}
+
+export interface AgentClass extends ClassDef {
+  /** Откуда приходит: «№17 wagon» у сети, ««person»» у «Сети по тексту». Пусто — класс не используется. */
   sources: { node: string; index: number; label: string }[];
 }
 
-// Цвета классов агента — по порядку появления. Пересчитываются вместе со
-// списком, поэтому класс может сменить цвет, если выше в графе появился новый:
-// это цвет подсказки на холсте, а не цвет класса проекта.
+// Цвета новых классов — первый свободный из палитры; у документов до списка
+// классов цвет давал порядок появления, и `upgradeDoc` раздаёт их так же.
 export const PALETTE = [
   "#5AB0FF", "#E28CFF", "#7EE0C3", "#FF9F5A", "#F5D76E", "#9ED36A",
   "#FF7AA8", "#B48CFF", "#6FD6FF", "#FFB3A1", "#C8C1FF", "#8FE3A8",
 ];
+export const CLASS_NAME_MAX = 60;
 
 export const rowsOf = (node: GraphNode | { params?: Record<string, unknown> }) =>
   ((node.params?.classes as NetRow[] | undefined) ?? []);
 
-/** Классы агента: объединение включённых классов всех сетей по имени.
- *  Номер класса сети дальше узла не идёт — одно имя у двух сетей это один
- *  класс, а номер 0 у двух сетей ничего не значит. У «Сети по тексту» строка
- *  без промта класса не даёт — как `net_classes` на сервере. */
-export function agentClasses(
-  nodes: { id: string; type?: string; params?: Record<string, unknown> }[],
-  weightsNames: (node: string) => string[]
-): AgentClass[] {
-  const found = new Map<string, AgentClass>();
-  const add = (name: string, source: AgentClass["sources"][number]) => {
-    if (!found.has(name)) found.set(name, { name, color: "", sources: [] });
-    found.get(name)!.sources.push(source);
+/** Имена классов сравниваются без регистра — как `_fold` на сервере. */
+export const foldName = (s?: string) => (s ?? "").trim().toLowerCase();
+
+type DocNode = { id: string; type?: string; params?: Record<string, unknown> };
+
+/** Включённая строка, что ищет объекты: у «Сети по тексту» — только с промтом или набором. */
+const liveRow = (type: string | undefined, r: NetRow | PromptRow) =>
+  r.on && (type !== "text" || Boolean(rowTarget(r as PromptRow)));
+
+const rowsOfNode = (n: DocNode) => (n.type === "text" ? promptsOf(n) : rowsOf(n)) as (NetRow | PromptRow)[];
+
+/** Документ до списка классов → со списком — как agent_graph.upgrade: классы по
+ *  порядку появления включённых строк, цвета в том же порядке, строки по id. */
+export function upgradeDoc<D extends { nodes: DocNode[]; classes?: ClassDef[] }>(doc: D): D & { classes: ClassDef[] } {
+  if (Array.isArray(doc.classes)) return doc as D & { classes: ClassDef[] };
+  const table = new Map<string, ClassDef>();
+  const out: ClassDef[] = [];
+  for (const n of doc.nodes) {
+    if (n.type !== "net" && n.type !== "text") continue;
+    for (const r of rowsOfNode(n)) {
+      const key = foldName(r.agent);
+      if (!liveRow(n.type, r) || !key || table.has(key)) continue;
+      const c = { id: `c${out.length + 1}`, name: (r.agent ?? "").trim(), color: PALETTE[out.length % PALETTE.length] };
+      table.set(key, c);
+      out.push(c);
+    }
+  }
+  const nodes = doc.nodes.map((n) => {
+    if (n.type === "net" || n.type === "text") {
+      const key = n.type === "text" ? "prompts" : "classes";
+      const next = rowsOfNode(n).map((r) => {
+        const hit = table.get(foldName(r.agent));
+        if (!hit) return r;
+        const { agent: _hint, ...rest } = r;
+        return { ...rest, cls: hit.id };
+      });
+      return { ...n, params: { ...n.params, [key]: next } };
+    }
+    if (n.type === "filter") {
+      const next = ((n.params?.classes as FilterRow[] | undefined) ?? [])
+        .filter((r) => table.has(foldName(r.cls))).map((r) => ({ ...r, cls: table.get(foldName(r.cls))!.id }));
+      return { ...n, params: { ...n.params, classes: next } };
+    }
+    return n;
+  });
+  return { ...doc, nodes, classes: out };
+}
+
+/** Классы агента из списка документа с источниками — какие строки узлов в них
+ *  кладут находки. Номер класса сети дальше узла не идёт: две сети в одном
+ *  классе — один класс, а номер 0 у двух сетей ничего не значит. */
+export function agentClasses(defs: ClassDef[], nodes: DocNode[], weightsNames: (node: string) => string[]): AgentClass[] {
+  const sources = new Map<string, AgentClass["sources"]>();
+  const add = (cls: string | undefined, source: AgentClass["sources"][number]) => {
+    if (!cls) return;
+    if (!sources.has(cls)) sources.set(cls, []);
+    sources.get(cls)!.push(source);
   };
   for (const node of nodes) {
     if (node.type === "net") {
       const names = weightsNames(node.id);
       rowsOf(node).forEach((row, index) => {
-        const name = row.agent.trim();
-        if (row.on && name) add(name, { node: node.id, index, label: `№${index} ${names[index] ?? index}` });
+        if (row.on) add(row.cls, { node: node.id, index, label: `№${index} ${names[index] ?? index}` });
       });
     } else if (node.type === "text") {
       promptsOf(node).forEach((row, index) => {
-        const name = row.agent.trim();
-        if (!row.on || !name || !rowTarget(row)) return;
-        add(name, { node: node.id, index, label: isExamples(row) ? "образцы" : `«${rowTarget(row)}»` });
+        if (liveRow("text", row)) add(row.cls, { node: node.id, index, label: isExamples(row) ? "образцы" : `«${rowTarget(row)}»` });
       });
     }
   }
-  return [...found.values()].map((c, i) => ({ ...c, color: PALETTE[i % PALETTE.length] }));
+  return defs.map((c) => ({ ...c, sources: sources.get(c.id) ?? [] }));
+}
+
+const freshId = () => `k${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+
+/** Цвет нового класса: первый свободный из палитры, все заняты — по кругу. */
+export function nextColor(defs: ClassDef[]): string {
+  const taken = new Set(defs.map((c) => c.color.toUpperCase()));
+  return PALETTE.find((c) => !taken.has(c)) ?? PALETTE[defs.length % PALETTE.length];
+}
+
+/** Класс с таким именем (без регистра) — или новый свой. Id новых случайные:
+ *  удалённый «c4» не должен вернуться другим классом с чужим сопоставлением. */
+export function findOrCreate(defs: ClassDef[], name: string, extra?: Partial<ClassDef>): [ClassDef[], string | null] {
+  const clean = name.trim().slice(0, CLASS_NAME_MAX);
+  if (!clean) return [defs, null];
+  const hit = defs.find((c) => foldName(c.name) === foldName(clean));
+  if (hit) return [defs, hit.id];
+  const made: ClassDef = { id: freshId(), name: clean, color: nextColor(defs), ...extra };
+  return [[...defs, made], made.id];
+}
+
+/** Включённым строкам без класса — класс по подсказке имени или по `fallback`. */
+export function bindRows<R extends NetRow | PromptRow>(defs: ClassDef[], rows: R[], fallback: (r: R, i: number) => string): [ClassDef[], R[]] {
+  let next = defs;
+  const out = rows.map((r, i) => {
+    if (!r.on || (r.cls && next.some((c) => c.id === r.cls))) return r;
+    const [grown, id] = findOrCreate(next, r.agent || fallback(r, i));
+    next = grown;
+    if (!id) return r;
+    const { agent: _hint, ...rest } = r;
+    return { ...rest, cls: id } as R;
+  });
+  return [next, out];
+}
+
+/** Классы из паспорта версии: старые версии хранят имена, новые — объекты. */
+export function statClasses(list: unknown): { id?: string; name: string; color: string }[] {
+  return (Array.isArray(list) ? list : []).map((c, i) =>
+    typeof c === "string" ? { name: c, color: PALETTE[i % PALETTE.length] }
+      : { id: c.id, name: String(c.name ?? ""), color: c.color ?? PALETTE[i % PALETTE.length] });
 }
 
 export const TITLES: Record<string, string> = {
@@ -257,7 +356,7 @@ export function viewCount(p: Record<string, unknown>, w: number, h: number, side
 /** Вызовов модели на вид: у SAM 3 слова — один, каждая строка-образцы — свой. */
 export function callsPerView(kind: string, p: Record<string, unknown>): number {
   if (kind !== "text" || textModel(p) !== "sam3") return 1;
-  const rows = promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.agent.trim());
+  const rows = promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.cls);
   const ex = rows.filter(isExamples).length;
   return (rows.length > ex ? 1 : 0) + ex || 1;
 }
@@ -275,6 +374,7 @@ export function offLimits(limit: Limit | undefined, v: unknown) {
 export function unfinished(doc: {
   nodes: { id: string; type: string; params?: Record<string, unknown> }[];
   edges: { from: string; to: string; in: string }[];
+  classes?: ClassDef[];
 }): string | null {
   if (!doc.nodes.some((n) => n.type === "net" || n.type === "text")) return "Добавьте «Сеть» или «Сеть по тексту».";
   for (const n of doc.nodes) {
@@ -287,14 +387,16 @@ export function unfinished(doc: {
     const bad = Object.entries(LIMITS[n.type] ?? {}).find(([k, lim]) => offLimits(lim, p[k]));
     if (bad) return `${name}: исправьте число в поле.`;
   }
-  if (!agentClasses(doc.nodes, () => []).length) return "Включите хотя бы один класс у сети.";
+  const up = upgradeDoc(doc);
+  const used = agentClasses(up.classes, up.nodes, () => []).filter((c) => c.sources.length);
+  if (!used.length) return "Включите хотя бы один класс у сети.";
   return null;
 }
 
 /** Таблица классов «Сети» для новых весов. Номера прежней к ним не относятся,
- *  но класс, чьё имя в весах совпало с прежним, забирает свою строку — имя в
- *  агенте и галочку: переобученные веса с теми же классами не должны стирать
- *  настройку. Прочие — имя из весов, включены. */
+ *  но класс, чьё имя в весах совпало с прежним, забирает свою строку — класс
+ *  агента и галочку: переобученные веса с теми же классами не должны стирать
+ *  настройку. Прочие включены с подсказкой — именем из весов (класс даст `bindRows`). */
 export function carryClasses(oldNames: string[], oldRows: NetRow[], names: string[]): NetRow[] {
   const kept = new Map<string, NetRow>();
   oldNames.forEach((n, i) => {

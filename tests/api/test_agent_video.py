@@ -141,7 +141,7 @@ def _run(owner, setup, **body):
     by_name = {c["name"]: c["id"] for c in ctx["classes"]}
     res = owner.post(f"{BASE_URL}/api/agents/tasks/{setup['task']['id']}/runs", json={
         "graph_id": agent["id"], "version_id": version["id"], "sources": [], "step": STEP,
-        "mapping": {n: by_name.get(n) for n in version["classes"]}, **body})
+        "mapping": {c["id"]: by_name.get(c["name"]) for c in version["classes"]}, **body})
     assert res.status_code == 202, res.text
     run_id = res.json()["id"]
     deadline = time.time() + 600

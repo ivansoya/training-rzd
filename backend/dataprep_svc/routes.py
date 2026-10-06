@@ -121,6 +121,9 @@ def digest_of(doc):
                            str(e["to"]), str(e["in"])),
         ),
     }
+    # Список классов агента — смысл: переименовали класс — это новая версия.
+    if isinstance(doc.get("classes"), list):
+        body["classes"] = doc["classes"]
     text = json.dumps(body, ensure_ascii=False, sort_keys=True,
                       separators=(",", ":"))
     return hashlib.sha256(text.encode()).hexdigest()
@@ -318,6 +321,7 @@ def _loader(db):
 
 def _agent_stats(db, graph, doc):
     """Проверить агента и снять его паспорт. Бросает AgentGraphError."""
+    doc = agent_graph.prepare(doc)
     shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)).scalars().all()
     # Наборы образцов — запросом: модулей обучения в образе dataprep нет.
     sets = {str(r.id): r.status == "ready" for r in db.execute(
@@ -328,7 +332,7 @@ def _agent_stats(db, graph, doc):
     return {
         # Классы агента — в паспорт версии: окно запуска сопоставляет их с
         # классами проекта, не разбирая документ.
-        "classes": [c["name"] for c in agent_graph.classes(doc)],
+        "classes": [{k: c[k] for k in ("id", "name", "color", "ref")} for c in agent_graph.classes(doc)],
         "nets": sum(1 for n in doc["nodes"] if n["type"] in agent_graph.FINDERS),
         "nodes": len(doc["nodes"]),
     }

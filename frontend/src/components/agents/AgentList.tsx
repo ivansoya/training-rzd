@@ -7,13 +7,13 @@ import * as aug from "../../api/aug";
 import { Button, Card, Empty, Input, MenuItem, Notice, PageHeader, Popover, Seg, Table } from "../../ui";
 import { ago, count, ru } from "../ru";
 import { useConfirm } from "../mag/tasks/Confirm";
-import { PALETTE } from "./agentDoc";
+import { statClasses } from "./agentDoc";
 import { freeName } from "./look";
 
 const CHIPS = 4;
 const when = (iso: string) =>
   new Date(iso).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }).replace(".", "");
-type Stats = { classes?: string[]; nets?: number; nodes?: number } | null;
+type Stats = { classes?: unknown; nets?: number; nodes?: number } | null;
 
 export default function AgentList() {
   // null — список ещё не пришёл: «Агентов пока нет» не мигает тому, у кого их десяток.
@@ -91,7 +91,7 @@ export default function AgentList() {
   const shown = useMemo(() => {
     const needle = q.trim().toLowerCase();
     if (!needle) return all;
-    return all.filter((g) => `${g.name} ${((g.stats as Stats)?.classes ?? []).join(" ")}`.toLowerCase().includes(needle));
+    return all.filter((g) => `${g.name} ${statClasses((g.stats as Stats)?.classes).map((c) => c.name).join(" ")}`.toLowerCase().includes(needle));
   }, [all, q]);
   const used = all.filter((g) => (g.runs ?? 0) > 0).length;
   const desc = agents === null ? "Загружаю…"
@@ -130,7 +130,7 @@ export default function AgentList() {
               <tbody>
                 {shown.map((g) => {
                   const st = g.stats as Stats;
-                  const classes = st?.classes ?? [];
+                  const classes = statClasses(st?.classes);
                   const open = () => navigate(`/agents/${g.id}`);
                   return (
                     <tr key={g.id} className="gl-row" tabIndex={0} aria-label={`Агент ${g.name}`} onClick={open}
@@ -142,9 +142,9 @@ export default function AgentList() {
                       <td>{g.version ? <span className="ui-mono">v{g.version}</span> : <span className="t-xs t-faint">только черновик</span>}</td>
                       <td>
                         {classes.length === 0 ? <span className="t-faint">—</span> : (
-                          <span className="al-cls" title={classes.join(", ")}>
-                            {classes.slice(0, CHIPS).map((c, i) => (
-                              <span key={c} className="al-chip"><i style={{ background: PALETTE[i % PALETTE.length] }} />{c}</span>
+                          <span className="al-cls" title={classes.map((c) => c.name).join(", ")}>
+                            {classes.slice(0, CHIPS).map((c) => (
+                              <span key={c.id ?? c.name} className="al-chip"><i style={{ background: c.color }} />{c.name}</span>
                             ))}
                             {classes.length > CHIPS && <span className="t-xs t-muted">ещё {classes.length - CHIPS}</span>}
                           </span>

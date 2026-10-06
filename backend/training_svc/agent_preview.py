@@ -118,7 +118,7 @@ def _take(db):
 def _answer(db, warm, row):
     from training_svc import examples
 
-    doc = row.doc
+    doc = agent_graph.prepare(row.doc)
     sets = examples.rows_for(db, row.user_id, doc)
     order = agent_graph.check(doc, sam3=config.sam3_ready(),
                               examples={k: r.status == "ready" for k, r in sets.items()})

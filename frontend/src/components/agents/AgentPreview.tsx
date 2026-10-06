@@ -41,7 +41,7 @@ export function useAgentPreview(graphId: string, doc: GraphDoc, enabled: boolean
     }).catch((e) => setProblem((e as Error).message));
   }, [enabled]);
 
-  const graph = useMemo(() => ({ v: doc.v, nodes: doc.nodes.map(({ pos: _pos, ...n }) => n), edges: doc.edges }), [doc]);
+  const graph = useMemo(() => ({ v: doc.v, nodes: doc.nodes.map(({ pos: _pos, ...n }) => n), edges: doc.edges, classes: doc.classes }), [doc]);
   const key = JSON.stringify(graph);
   // Заведомо неполный граф сервер не зовём: ответ «не выбраны веса» известен и так.
   const missing = unfinished(graph);

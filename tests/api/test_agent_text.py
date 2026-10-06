@@ -81,7 +81,7 @@ def _run(owner, setup, graph, **body):
     version = agent["versions"][0]
     # Классы агента — только из включённых строк с промтом: «Инструмент»
     # выключен и в паспорт версии не попал.
-    assert version["classes"] == [PERSON]
+    assert [c["name"] for c in version["classes"]] == [PERSON]
     person = next(c["id"] for c in ctx["classes"] if c["name"] == PERSON)
     res = owner.post(f"{url}/runs", json={
         "graph_id": agent["id"], "version_id": version["id"], "sources": [], "step": STEP,

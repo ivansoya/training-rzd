@@ -410,6 +410,50 @@
 .ar-map-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; }
 .ar-map .ui-table td { height: 40px; }
 .ar-map .ui-table td:first-child { max-width: 220px; }
+.ar-lock { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 12.5px; color: var(--muted-fg); }
+.ar-locked { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; color: var(--muted-fg); min-width: 0; }
+
+/* окно «Классы агента» */
+.acl { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.acl-t { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--card); padding: 4px 12px; max-height: min(52vh, 520px); overflow: auto; }
+.acl-r {
+  display: grid; grid-template-columns: 18px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) auto; align-items: center; gap: 10px;
+  min-height: 40px; padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; min-width: 0;
+}
+.acl-r:last-child { border-bottom: 0; }
+.acl-r.head { min-height: 26px; font-size: 11px; color: var(--faint); }
+.acl-r.idle > :not(.acl-sw):not(.ui-btn):not(.acl-ask) { opacity: .6; }
+.acl-sw {
+  width: 16px; height: 16px; border-radius: 4px; border: 1px solid color-mix(in srgb, var(--fg) 15%, transparent);
+  background: var(--cc); padding: 0; display: block;
+}
+button.acl-sw { cursor: pointer; }
+button.acl-sw:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.acl-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.acl-name .ui-inp { height: 30px; }
+.acl-err, .acl-warn { font-size: 11px; color: var(--destructive); }
+.acl-warn { grid-column: 2 / -1; color: color-mix(in srgb, var(--st-skip) 85%, var(--fg)); }
+.acl-ref { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted-fg); }
+.acl-ref > .ui-ic { flex: none; }
+.acl-use { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.acl-node { border: 0; background: none; padding: 0; text-align: left; font: inherit; font-size: 12px; color: var(--muted-fg); cursor: pointer; }
+.acl-node:hover { color: var(--fg); text-decoration: underline; }
+.acl-ask { display: flex; gap: 4px; }
+.acl-add { display: flex; gap: 8px; }
+.acl-pick { display: flex; flex-direction: column; gap: 8px; border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px 12px; background: var(--card); }
+.acl-pick-h, .acl-pick-f { display: flex; align-items: center; gap: 8px; }
+.acl-pick-f { justify-content: flex-end; }
+.acl-pick-l { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 2px 16px; max-height: 260px; overflow: auto; }
+.acl-pick-r { display: grid; grid-template-columns: 16px 8px minmax(0, 1fr); align-items: center; gap: 8px; min-height: 28px; font-size: 12.5px; cursor: pointer; }
+.acl-pick-r > i { width: 8px; height: 8px; border-radius: 2px; }
+.acl-pick-r > small { grid-column: 3; font-size: 11px; color: var(--faint); margin-top: -4px; }
+.acl-pick-r.off { cursor: default; opacity: .55; }
+/* класс-ссылка на класс проекта: точка в кольце */
+.ae-an > i.ref { box-shadow: 0 0 0 1.5px var(--card), 0 0 0 2.5px var(--muted-fg); }
+@media (max-width: 640px) {
+  .acl-r { grid-template-columns: 18px minmax(0, 1fr) auto; }
+  .acl-r > .acl-ref, .acl-r > .acl-use, .acl-r.head > :nth-child(3), .acl-r.head > :nth-child(4) { display: none; }
+}
 .ar-bar {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border-radius: var(--r-md);
   border: 1px solid color-mix(in srgb, var(--agent) 35%, var(--border)); background: color-mix(in srgb, var(--agent) 6%, var(--card));

@@ -45,10 +45,20 @@ export const weightsFromRun = (runId: string) =>
 
 export const deleteWeights = (id: string) => del<{ ok: true }>(`agents/weights/${id}`);
 
+/** Класс версии в окне запуска. `lock` — id класса проекта, с которым ссылка
+ *  сопоставлена намертво (класс из этого же проекта). */
+export interface VersionClass {
+  id: string;
+  name: string;
+  color?: string;
+  ref?: { project: string; cls: string; project_name?: string } | null;
+  lock?: string;
+}
+
 export interface AgentVersion {
   id: string;
   version: number;
-  classes: string[];
+  classes: VersionClass[];
   created_at: string;
 }
 
@@ -203,6 +213,16 @@ export interface PreviewProject {
   images: number;
   frame: FrameSummary | null;
 }
+
+/** Проект человека с классами — откуда берут ссылки окна «Классы агента». */
+export interface ClassSource {
+  id: string;
+  code: string;
+  name: string;
+  classes: { id: string; name: string; color: string; class_index: number }[];
+}
+
+export const classSources = () => get<{ projects: ClassSource[] }>("agents/class-sources");
 
 export const previewProjects = () => get<{ projects: PreviewProject[] }>("agents/preview/projects");
 

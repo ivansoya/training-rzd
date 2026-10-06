@@ -36,6 +36,7 @@
 Сеть сюда приходит функцией `predict(node) -> [(номер, уверенность, x, y, w, h)]`
 (у SAM 3 седьмым — контур или None), SAM — `segment(node, box) -> (маски, оценки)`.
 """
+import copy
 import math
 import statistics
 import time
@@ -211,19 +212,130 @@ def text_conf(params):
     return num((params or {}).get("conf"), TEXT_CONF[family])
 
 
-def classes(doc):
-    """Классы агента по порядку появления: [{name, sources: [(узел, номер)]}].
+# --------------------------------------------------------------------------- #
+# Список классов агента
+#
+# С 06.10.2026 классы агента — свой список в документе (`classes`), а строки
+# узлов и «Фильтра» ссылаются на класс по id: переименование класса не рвёт
+# узлы. Класс бывает своим или ссылкой на класс проекта (`ref`): в том проекте
+# он сопоставляется сам. Имена в списке уникальны без учёта регистра — по
+# имени класс сопоставляется в чужом проекте и подписывается в разведке.
+#
+# Движок (прогон, NMS, «Фильтр», разведка) по-прежнему работает с именами:
+# `prepare` раскладывает имя класса в строки, и всё ниже его не замечает.
+# Документы до списка (`classes` нет) переводит `upgrade` — в той же раскладке
+# цветов, что давал порядок появления, поэтому на холсте ничего не перекрасится.
+# --------------------------------------------------------------------------- #
+PALETTE = ("#5AB0FF", "#E28CFF", "#7EE0C3", "#FF9F5A", "#F5D76E", "#9ED36A",
+           "#FF7AA8", "#B48CFF", "#6FD6FF", "#FFB3A1", "#C8C1FF", "#8FE3A8")
+CLASS_NAME_MAX = 60
 
-    Производные от графа: сменили веса или галочку — список другой. Поэтому
-    сопоставление с проектом держится за имена, а не за номера.
-    """
-    found = {}
+
+def _fold(name):
+    return str(name or "").strip().casefold()
+
+
+def _rows(node):
+    params = node.get("params") or {}
+    rows = params.get("prompts" if node.get("type") == "text" else "classes") or []
+    return [r for r in rows if isinstance(r, dict)]
+
+
+def upgrade(doc):
+    """Документ без списка классов → со списком. Новый возвращается как есть."""
+    if not isinstance(doc, dict) or isinstance(doc.get("classes"), list):
+        return doc
+    doc = copy.deepcopy(doc)
+    nodes = [n for n in doc.get("nodes") or [] if isinstance(n, dict)]
+    table, out = {}, []
+    for node in nodes:
+        if node.get("type") in FINDERS:
+            for _, name in net_classes(node):
+                if _fold(name) not in table:
+                    table[_fold(name)] = {"id": f"c{len(out) + 1}", "name": name.strip(),
+                                          "color": PALETTE[len(out) % len(PALETTE)]}
+                    out.append(table[_fold(name)])
+    for node in nodes:
+        if node.get("type") in FINDERS:
+            for row in _rows(node):
+                hit = table.get(_fold(row.get("agent")))
+                # Выключенная строка без своего класса хранит имя подсказкой:
+                # включат — класс найдётся или заведётся по нему.
+                if hit:
+                    row["cls"] = hit["id"]
+                    row.pop("agent", None)
+        elif node.get("type") == "filter":
+            params = node.get("params") or {}
+            params["classes"] = [{**r, "cls": table[_fold(r.get("cls"))]["id"]} for r in _rows(node)
+                                 if _fold(r.get("cls")) in table]
+    doc["classes"] = out
+    return doc
+
+
+def prepare(doc):
+    """Документ для проверки и прогона: `upgrade`, затем строкам узлов — имя
+    класса (`agent`), строкам «Фильтра» — имя вместо id. Повторный вызов на
+    готовом ничего не меняет."""
+    doc = copy.deepcopy(upgrade(doc))
+    if not isinstance(doc, dict) or doc.get("prepared"):
+        return doc
+    names = {c.get("id"): str(c.get("name") or "").strip()
+             for c in doc.get("classes") or [] if isinstance(c, dict)}
+    for node in doc.get("nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        if node.get("type") in FINDERS:
+            for row in _rows(node):
+                row["agent"] = names.get(row.get("cls"), "")
+        elif node.get("type") == "filter":
+            for row in _rows(node):
+                row["cls"] = names.get(row.get("cls"), "")
+    doc["prepared"] = True
+    return doc
+
+
+def classes(doc):
+    """Используемые классы агента в порядке списка: [{id, name, color, ref,
+    sources: [(узел, номер строки)]}]. Класс без включённой строки сюда не
+    попадает — разметки он не даст, и сопоставлять его незачем."""
+    doc = prepare(doc)
+    used = {}
     for node in doc.get("nodes") or []:
         if node.get("type") not in FINDERS:
             continue
-        for i, name in net_classes(node):
-            found.setdefault(name, []).append((node["id"], i))
-    return [{"name": n, "sources": s} for n, s in found.items()]
+        rows = (node.get("params") or {}).get("prompts" if node["type"] == "text" else "classes") or []
+        for i, _ in net_classes(node):
+            used.setdefault(rows[i].get("cls"), []).append((node["id"], i))
+    return [{"id": c["id"], "name": c["name"], "color": c.get("color"), "ref": c.get("ref"),
+             "sources": used[c["id"]]}
+            for c in doc.get("classes") or [] if isinstance(c, dict) and c.get("id") in used]
+
+
+def _check_classes(doc):
+    """Список классов: id и имена уникальны, включённые строки ссылаются на
+    существующий класс."""
+    seen_id, seen_name = set(), {}
+    for c in doc.get("classes") or []:
+        if not isinstance(c, dict) or not str(c.get("id") or "").strip():
+            raise AgentGraphError("У каждого класса агента должен быть свой номер.")
+        name = str(c.get("name") or "").strip()
+        if not name:
+            raise AgentGraphError("У класса агента пустое имя.")
+        if len(name) > CLASS_NAME_MAX:
+            raise AgentGraphError(f"Имя класса агента длиннее {CLASS_NAME_MAX} символов — «{name[:24]}…».")
+        if c["id"] in seen_id:
+            raise AgentGraphError(f"Номер класса агента повторяется: {c['id']}.")
+        if _fold(name) in seen_name:
+            raise AgentGraphError(f"Класс агента «{name}» повторяется — имена различаются не только регистром.")
+        seen_id.add(c["id"])
+        seen_name[_fold(name)] = name
+    for node in doc.get("nodes") or []:
+        if node.get("type") not in FINDERS:
+            continue
+        text = node.get("type") == "text"
+        for row in _rows(node):
+            if row.get("on") and (not text or _row_target(row)) and row.get("cls") not in seen_id:
+                raise AgentGraphError(f"{title(node)}: включена строка без класса агента.")
 
 
 def check(doc, weights=None, sam3=None, examples=None, clamp=False, frame=None, inputs=None):
@@ -232,7 +344,8 @@ def check(doc, weights=None, sam3=None, examples=None, clamp=False, frame=None, 
     веса SAM 3 на томе; None — не сверять. `examples` — {id набора: готов ли}
     у владельца; None — не сверять. `clamp` — числа вне `LIMITS` не отвергать,
     а зажимать в пределы (правит `doc` на месте): так запускаются версии,
-    сохранённые до появления пределов. `frame` — (ширина, высота) самого
+    сохранённые до появления пределов. Документ со списком классов приходит
+    уже через `prepare`. `frame` — (ширина, высота) самого
     большого кадра, на нём сверяется потолок проходов; `inputs` — {id весов:
     вход}, из него умолчание тайла у «Сети».
 
@@ -314,6 +427,8 @@ def check(doc, weights=None, sam3=None, examples=None, clamp=False, frame=None, 
             if model not in SAM_MODELS:
                 raise AgentGraphError(f"{title(node)}: неизвестная модель {model!r}.")
 
+    if isinstance(doc.get("classes"), list):
+        _check_classes(doc)
     order = _topo(nodes, taken_in)
     if order is None:
         raise AgentGraphError("Провода образуют кольцо.")

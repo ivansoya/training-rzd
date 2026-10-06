@@ -43,7 +43,7 @@ def _row(owner, graph_id):
 def test_список_агентов_считает_запуски_и_рамки(owner, agent, db):
     fresh = _row(owner, agent["id"])
     assert (fresh["runs"], fresh["boxes"], fresh["last_run_at"]) == (0, 0, None)
-    assert fresh["stats"]["classes"] == [PERSON]
+    assert [c["name"] for c in fresh["stats"]["classes"]] == [PERSON]
 
     project = owner.post(f"{BASE_URL}/api/projects", json={"name": tag()}).json()
     task = owner.post(f"{BASE_URL}/api/projects/{project['code']}/tasks", json={"name": tag()}).json()

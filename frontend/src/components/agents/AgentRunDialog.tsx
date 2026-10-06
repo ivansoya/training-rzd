@@ -1,8 +1,9 @@
 // «Разметить агентом» в таске и строка хода прогона.
 //
 // Сопоставление классов агента с классами проекта спрашивается целиком при первом запуске
-// в проекте и дальше приходит запомненным — сервер хранит его на пару «агент + проект».
-// Одинаковые имена подставляются сами.
+// в проекте и дальше приходит запомненным — сервер хранит его на пару «агент + проект»
+// по id класса агента. Одинаковые имена подставляются сами, а класс агента, взятый из
+// этого проекта, сопоставлен намертво — его строка с замком.
 //
 // Три режима (решения владельца 24.09.2026): новые кадры таски; каждый N-й кадр размечаемого
 // ролика, кроме тех, где уже работал человек; разведка — агент смотрит ролики любого режима
@@ -10,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../../api/agents";
-import { Badge, Button, Check, Dialog, Empty, Field, LinkButton, Notice, Progress, Radio, Select, Table } from "../../ui";
+import { Badge, Button, Check, Dialog, Empty, Field, Icon, LinkButton, Notice, Progress, Radio, Select, Table } from "../../ui";
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
 import ScoutOverview from "./ScoutOverview";
@@ -19,13 +20,16 @@ import { sampledCount } from "./scoutMath";
 const SOURCE_TITLE: Record<"files" | "videos", string> = { files: "Загружено файлами", videos: "Нарезано из роликов" };
 const NONE = "none";
 
-const guess = (names: string[], classes: api.RunContext["classes"], saved: Record<string, string | null> | undefined) => {
+/** Запомненное по id класса агента; у сопоставлений до списка классов ключ — имя. */
+const remembered = (c: api.VersionClass, saved: Record<string, string | null> | undefined) => saved?.[c.id] ?? saved?.[c.name];
+
+const guess = (list: api.VersionClass[], classes: api.RunContext["classes"], saved: Record<string, string | null> | undefined) => {
   const byName = new Map(classes.map((c) => [c.name.trim().toLowerCase(), c.id]));
   const ids = new Set(classes.map((c) => c.id));
   const out: Record<string, string | null> = {};
-  for (const name of names) {
-    const kept = saved?.[name];
-    out[name] = kept !== undefined && (kept === null || ids.has(kept)) ? kept : byName.get(name.trim().toLowerCase()) ?? null;
+  for (const c of list) {
+    const kept = remembered(c, saved);
+    out[c.id] = c.lock ?? (kept !== undefined && (kept === null || ids.has(kept)) ? kept : byName.get(c.name.trim().toLowerCase()) ?? null);
   }
   return out;
 };
@@ -67,18 +71,19 @@ export default function AgentRunDialog({ taskId, onClose, onStarted }: {
 
   const agent = ctx?.agents.find((a) => a.id === agentId);
   const version = agent?.versions.find((v) => v.id === versionId) ?? agent?.versions[0];
-  const names = useMemo(() => version?.classes ?? [], [version]);
+  const list = useMemo(() => version?.classes ?? [], [version]);
+  const locked = list.filter((c) => c.lock);
 
   // Новая версия или новый агент — сопоставление пересчитывается от запомненного.
   useEffect(() => {
-    if (ctx && agent) setMapping(guess(names, ctx.classes, ctx.mappings[agent.id]));
-  }, [ctx, agent, names]);
+    if (ctx && agent) setMapping(guess(list, ctx.classes, ctx.mappings[agent.id]));
+  }, [ctx, agent, list]);
 
   const auto = useMemo(() => {
     if (!ctx) return new Set<string>();
     const saved = agent ? ctx.mappings[agent.id] : undefined;
-    return new Set(names.filter((n) => saved?.[n] === undefined && mapping[n]));
-  }, [ctx, agent, names, mapping]);
+    return new Set(list.filter((c) => !c.lock && remembered(c, saved) === undefined && mapping[c.id]).map((c) => c.id));
+  }, [ctx, agent, list, mapping]);
 
   const eligible = (ctx?.videos ?? []).filter((v) => mode === "scout" || (v.mode === "annotate" && !v.closed));
   const chosen = eligible.filter((v) => videos.has(v.id));
@@ -194,7 +199,10 @@ export default function AgentRunDialog({ taskId, onClose, onStarted }: {
               </Radio>
             </div>
 
-            {mode !== "scout" && (
+            {mode !== "scout" && locked.length === list.length && list.length > 0 && (
+              <p className="ar-lock"><Icon name="link" size={14} />Все классы агента взяты из этого проекта — сопоставлять нечего.</p>
+            )}
+            {mode !== "scout" && locked.length < list.length && (
               <div className="ar-map">
                 <div className="ar-map-h">
                   <b>Классы агента → классы проекта</b>
@@ -202,18 +210,29 @@ export default function AgentRunDialog({ taskId, onClose, onStarted }: {
                 </div>
                 <Table>
                   <tbody>
-                    {names.map((name) => (
-                      <tr key={name}>
-                        <td className="t-ell">{name}</td>
-                        <td>
-                          <Select full size="sm" label={`Класс проекта для «${name}»`} value={mapping[name] ?? NONE}
-                            onChange={(v) => setMapping({ ...mapping, [name]: v === NONE ? null : v })}
-                            options={[{ value: NONE, label: "Не размечать" },
-                              ...ctx.classes.map((c) => ({ value: c.id, label: `${c.class_index} — ${c.name}` }))]} />
-                        </td>
-                        <td className="r">{auto.has(name) && <Badge variant="secondary">по имени</Badge>}</td>
-                      </tr>
-                    ))}
+                    {list.map((c) => {
+                      const target = ctx.classes.find((k) => k.id === mapping[c.id]);
+                      return (
+                        <tr key={c.id}>
+                          <td className="t-ell">{c.name}</td>
+                          <td>
+                            {c.lock ? (
+                              <span className="ar-locked" title="Класс агента взят из этого проекта — сопоставлен сам">
+                                <Icon name="lock" size={13} />{target ? `${target.class_index} — ${target.name}` : "класс проекта"}
+                              </span>
+                            ) : (
+                              <Select full size="sm" label={`Класс проекта для «${c.name}»`} value={mapping[c.id] ?? NONE}
+                                onChange={(v) => setMapping({ ...mapping, [c.id]: v === NONE ? null : v })}
+                                options={[{ value: NONE, label: "Не размечать" },
+                                  ...ctx.classes.map((k) => ({ value: k.id, label: `${k.class_index} — ${k.name}` }))]} />
+                            )}
+                          </td>
+                          <td className="r">
+                            {c.lock ? <Badge variant="secondary">по ссылке</Badge> : auto.has(c.id) && <Badge variant="secondary">по имени</Badge>}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </Table>
               </div>

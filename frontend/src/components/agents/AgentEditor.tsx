@@ -24,12 +24,13 @@ import { WireDraft, edgeTypes, type WireData } from "../aug/GraphNodes";
 import { keep, load } from "../aug/NodePreview";
 import { DRAWER_DEFAULT, clampDrawer } from "../aug/look";
 import {
-  agentClasses, callsPerView, carryClasses, isExamples, keepWired, promptsOf, rowTarget, rowsOf, textModel, tileSide, unfinished,
-  upstream, viewCount,
+  agentClasses, bindRows, callsPerView, carryClasses, findOrCreate, isExamples, keepWired, promptsOf, rowTarget, rowsOf, textModel,
+  tileSide, unfinished, upgradeDoc, upstream, viewCount, type ClassDef, type FilterRow, type NetRow, type PromptRow,
 } from "./agentDoc";
+import AgentClasses from "./AgentClasses";
 import AgentFound from "./AgentFound";
 import AgentInspector from "./AgentInspector";
-import { agentNodeTypes, type AgentNodeData } from "./AgentNodes";
+import { agentNodeTypes, agentTitle, type AgentNodeData } from "./AgentNodes";
 import AgentPalette, { AGENT_MIME } from "./AgentPalette";
 import AgentPreviewPane, { useAgentPreview } from "./AgentPreview";
 import SixFrames from "./SixFrames";
@@ -109,9 +110,10 @@ function toFlow(doc: GraphDoc): [Node[], Edge[]] {
   ];
 }
 
-function toDoc(nodes: Node[], edges: Edge[]): GraphDoc {
+function toDoc(nodes: Node[], edges: Edge[], classes: ClassDef[]): GraphDoc {
   return {
     v: 1,
+    classes,
     nodes: nodes.map((n) => ({
       id: n.id,
       type: (n.data as AgentNodeData).kind,
@@ -152,6 +154,12 @@ function Editor() {
   const [sets, setSets] = useState<Map<string, api.ExampleSet>>(new Map());
   const keepSet = useCallback((s: api.ExampleSet) => setSets((old) => new Map(old).set(s.id, s)), []);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
+  // Список классов агента — часть документа наравне с узлами: в черновике, в версии и в отмене.
+  const [defs, setDefs] = useState<ClassDef[]>([]);
+  const defsRef = useRef(defs);
+  defsRef.current = defs;
+  const [classesOpen, setClassesOpen] = useState(false);
+  const [projects, setProjects] = useState<api.ClassSource[] | null>(null);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selected, setSelected] = useState<string | null>(null);
   // Узел, закреплённый в превью глазом; нет его — превью идёт за выделением, без выделения — «Выход».
@@ -175,8 +183,8 @@ function Editor() {
   const main = useRef<HTMLDivElement>(null);
   const { screenToFlowPosition, fitView, zoomIn, zoomOut, getZoom } = useReactFlow();
   const history = useRef<hist.History>(hist.start(""));
-  const live = useRef({ nodes, edges });
-  live.current = { nodes, edges };
+  const live = useRef({ nodes, edges, defs });
+  live.current = { nodes, edges, defs };
   const flushing = useRef<Promise<unknown>>(Promise.resolve());
 
   // Старую версию и чужого агента смотрят, но не правят.
@@ -202,10 +210,13 @@ function Editor() {
         if (!alive) return;
         setGraph(got);
         setTitle(got.name);
-        const [ns, es] = toFlow(got.doc);
+        // Документ до списка классов переводится здесь же — как agent_graph.upgrade на сервере.
+        const doc = upgradeDoc(got.doc);
+        const [ns, es] = toFlow(doc);
         setNodes(ns);
         setEdges(es);
-        lastSaved.current = JSON.stringify(toDoc(ns, es));
+        setDefs(doc.classes);
+        lastSaved.current = JSON.stringify(toDoc(ns, es, doc.classes));
         history.current = hist.start(lastSaved.current);
         setChanged(Boolean(got.changed) || got.version === 0);
         setSaveState("saved");
@@ -225,12 +236,16 @@ function Editor() {
   }, [graphId, wanted, setNodes, setEdges, fitView]);
 
   useEffect(() => {
+    api.classSources().then((r) => setProjects(r.projects)).catch(() => setProjects([]));
+  }, []);
+
+  useEffect(() => {
     if (!savedAt) return;
     const t = window.setInterval(() => setNow(Date.now()), 10_000);
     return () => window.clearInterval(t);
   }, [savedAt]);
 
-  const draft = useMemo(() => toDoc(nodes, edges), [nodes, edges]);
+  const draft = useMemo(() => toDoc(nodes, edges, defs), [nodes, edges, defs]);
   const docKey = useMemo(() => JSON.stringify({ n: draft.nodes.map(({ pos: _p, ...n }) => n), e: draft.edges }), [draft]);
   // Ответ сервера относится к отправленному графу: правка его снимает.
   useEffect(() => setProblem(null), [docKey]);
@@ -249,13 +264,72 @@ function Editor() {
     const node = draft.nodes.find((n) => n.id === id);
     return node ? weightsOf(node.params ?? {})?.names ?? [] : [];
   }, [draft, weightsOf]);
-  const classes = useMemo(() => agentClasses(draft.nodes, namesOf), [draft, namesOf]);
-  const colorMap = useMemo(() => new Map(classes.map((c) => [c.name, c])), [classes]);
+  const classes = useMemo(() => agentClasses(defs, draft.nodes, namesOf), [defs, draft, namesOf]);
+  const used = useMemo(() => classes.filter((c) => c.sources.length), [classes]);
+  // Превью и разведка подписывают рамки именем класса — цвет ищется по нему.
+  const colorMap = useMemo(() => new Map(used.map((c) => [c.name, c])), [used]);
   const colorOf = useCallback((cls: string) => colorMap.get(cls)?.color ?? "var(--muted-fg)", [colorMap]);
   const incomingOf = useCallback((id: string) => {
     const up = upstream(id, draft.edges);
-    return agentClasses(draft.nodes.filter((n) => up.has(n.id)), namesOf).map((c) => c.name);
-  }, [draft, namesOf]);
+    return agentClasses(defs, draft.nodes.filter((n) => up.has(n.id)), namesOf).filter((c) => c.sources.length).map((c) => c.id);
+  }, [defs, draft, namesOf]);
+
+  // Класс по имени — найденный или новый свой. Через ref: за одно действие
+  // («включить все») классов заводится несколько, и каждый видит предыдущие.
+  const ensureClass = useCallback((name: string) => {
+    const [next, id] = findOrCreate(defsRef.current, name);
+    if (next !== defsRef.current) {
+      defsRef.current = next;
+      setDefs(next);
+    }
+    return id;
+  }, []);
+
+  // Ссылки на классы проектов держат имя и цвет живыми: переименовали класс в
+  // проекте — агент узнаёт об этом при открытии. Класс удалили — ссылка
+  // становится своим классом с последним именем. Нет доступа — не трогаем.
+  useEffect(() => {
+    if (readOnly || !projects || lastSaved.current === null) return;
+    const byProject = new Map(projects.map((p) => [p.id, p]));
+    let changed = false;
+    const next = defs.map((d) => {
+      if (!d.ref) return d;
+      const project = byProject.get(d.ref.project);
+      if (!project) return d;
+      const hit = project.classes.find((c) => c.id === d.ref!.cls);
+      if (!hit) {
+        changed = true;
+        const { ref: _gone, ...own } = d;
+        return own;
+      }
+      if (hit.name === d.name && hit.color === d.color && project.name === d.ref.project_name) return d;
+      changed = true;
+      return { ...d, name: hit.name, color: hit.color, ref: { ...d.ref, project_name: project.name } };
+    });
+    if (changed) setDefs(next);
+  }, [projects, defs, readOnly]);
+
+  // Убрать классы: строки узлов с ними выключаются и помнят имя подсказкой, «Фильтр» их забывает.
+  const removeClasses = useCallback((ids: string[]) => {
+    const gone = new Map(defsRef.current.filter((d) => ids.includes(d.id)).map((d) => [d.id, d.name]));
+    const loose = <R extends NetRow | PromptRow>(r: R): R => {
+      if (!r.cls || !gone.has(r.cls)) return r;
+      const { cls: _c, ...rest } = r;
+      return { ...rest, agent: gone.get(r.cls), on: false } as R;
+    };
+    setNodes((old) => old.map((n) => {
+      const d = n.data as AgentNodeData;
+      const p = d.params;
+      let next: Record<string, unknown> | null = null;
+      if (d.kind === "net") next = { classes: rowsOf({ params: p }).map(loose) };
+      else if (d.kind === "text") next = { prompts: promptsOf({ params: p }).map(loose) };
+      else if (d.kind === "filter") next = { classes: ((p.classes as FilterRow[] | undefined) ?? []).filter((r) => !gone.has(r.cls)) };
+      return next ? { ...n, data: { ...d, params: { ...p, ...next } } } : n;
+    }));
+    const left = defsRef.current.filter((d) => !gone.has(d.id));
+    defsRef.current = left;
+    setDefs(left);
+  }, [setNodes]);
 
   const preview = useAgentPreview(graphId ?? "", draft, Boolean(graph?.mine), six);
   const trace = preview.result?.nodes ?? null;
@@ -319,7 +393,7 @@ function Editor() {
       } else if (d.kind === "text") {
         const lack = textModel(p) === "sam3" && sam3Ready === false;
         const rows = promptsOf({ params: p });
-        const on = rows.filter((r) => r.on && rowTarget(r) && r.agent.trim()).length;
+        const on = rows.filter((r) => r.on && rowTarget(r) && r.cls).length;
         extra = { why: textLine(p, lack, frame), badge: `${on}/${rows.length}`, bad: lack || on === 0 };
       } else if (d.kind === "filter") {
         extra = { why: filterLine(p, incomingOf(n.id)) };
@@ -336,7 +410,7 @@ function Editor() {
     const doc = toDoc(nodes, [
       ...edges.filter((e) => !occupies(e, conn)),
       { id: "probe", source: conn.source, target: conn.target, sourceHandle: conn.sourceHandle ?? "out", targetHandle: conn.targetHandle ?? "in" } as Edge,
-    ]);
+    ], []);
     return !findCycle(doc.nodes, doc.edges);
   }, [edges, nodes]);
 
@@ -475,7 +549,10 @@ function Editor() {
   }, [draft, readOnly]);
 
   const restore = useCallback((text: string) => {
-    const [fresh, es] = toFlow(JSON.parse(text) as GraphDoc);
+    const doc = JSON.parse(text) as GraphDoc;
+    const [fresh, es] = toFlow(doc);
+    defsRef.current = doc.classes ?? [];
+    setDefs(defsRef.current);
     setNodes((old) => {
       const had = new Map(old.map((n) => [n.id, n]));
       return fresh.map((n) => {
@@ -495,7 +572,7 @@ function Editor() {
       const t = e.target as HTMLElement | null;
       if (t?.closest("textarea, select, [contenteditable='true']") || (t instanceof HTMLInputElement && !["range", "checkbox", "radio", "button"].includes(t.type))) return;
       e.preventDefault();
-      const nowDoc = JSON.stringify(toDoc(live.current.nodes, live.current.edges));
+      const nowDoc = JSON.stringify(toDoc(live.current.nodes, live.current.edges, live.current.defs));
       const [next, doc] = (act === "undo" ? hist.undo : hist.redo)(history.current, nowDoc);
       history.current = next;
       if (doc !== null) restore(doc);
@@ -549,7 +626,7 @@ function Editor() {
     setNote(null);
     setProblem(null);
     try {
-      const got = await aug.saveVersion(graphId, toDoc(nodes, edges));
+      const got = await aug.saveVersion(graphId, toDoc(nodes, edges, defs));
       setGraph(got);
       setChanged(false);
       setVersions((await aug.listVersions(graphId)).versions);
@@ -559,7 +636,7 @@ function Editor() {
     } finally {
       setBusy(false);
     }
-  }, [graphId, nodes, edges, graph?.version]);
+  }, [graphId, nodes, edges, defs, graph?.version]);
 
   const rename = useCallback(async () => {
     const clean = title.trim();
@@ -602,7 +679,6 @@ function Editor() {
     saveText,
     graph ? (graph.version ? `версия ${graph.version} из ${versions.length || graph.version}` : "версий пока нет") : null,
     !readOnly && changed ? "правки вне версий" : null,
-    count(classes.length, "класс", "класса", "классов"),
   ].filter(Boolean);
 
   return (
@@ -620,6 +696,9 @@ function Editor() {
         </div>
         {readOnly && graph && <Badge icon="lock">{wanted ? "старая версия — только чтение" : "чужой агент — только чтение"}</Badge>}
         <span className="grow" />
+        <Button size="sm" icon="tags" onClick={() => setClassesOpen(true)} title="Список классов агента: свои и из проектов">
+          {count(classes.length, "класс", "класса", "классов")}
+        </Button>
         <Select size="sm" icon="clock" label="Версия" value={wanted ?? "draft"} onChange={(v) => goVersion(v === "draft" ? null : v)}
           options={[
             { value: "draft", label: "Черновик", hint: changed ? "есть правки вне версий" : "совпадает с последней версией" },
@@ -738,7 +817,8 @@ function Editor() {
               sam3Ready={sam3Ready}
               sets={sets}
               onSet={keepSet}
-              colorOf={colorMap}
+              classes={classes}
+              ensure={ensureClass}
               incoming={current ? incomingOf(current.id) : []}
               loose={Boolean((current?.data as AgentNodeData | undefined)?.loose)}
               onChange={(next) => current && patchParams(current.id, next)}
@@ -751,7 +831,7 @@ function Editor() {
             />
             <AgentPreviewPane state={preview} nodes={shown} watch={watch} pinned={Boolean(pinned)} onPin={setEyeOn}
               colorOf={colorOf} enabled={Boolean(graph?.mine)} />
-            <AgentFound kind={watchKind} trace={watch && trace ? trace[watch] : undefined} classes={classes} colorOf={colorOf} />
+            <AgentFound kind={watchKind} trace={watch && trace ? trace[watch] : undefined} classes={used} colorOf={colorOf} />
           </div>
         </div>
 
@@ -766,16 +846,29 @@ function Editor() {
             setShelf((old) => (old.some((x) => x.id === w.id) ? old : [w, ...old]));
             const p = (pickedFor.data as AgentNodeData).params;
             // Те же веса — таблицу не трогаем: «Выбрать» на текущей строке сбрасывал бы переименования.
-            if (p.weights !== w.id)
-              patchParams(pickedFor.id, {
-                weights: w.id,
-                classes: carryClasses(weightsOf(p)?.names ?? [], rowsOf({ params: p }), w.names),
-                imgsz: w.imgsz ?? undefined,
-              });
+            if (p.weights !== w.id) {
+              const [next, rows] = bindRows(defsRef.current, carryClasses(weightsOf(p)?.names ?? [], rowsOf({ params: p }), w.names),
+                (_r, i) => w.names[i] ?? String(i));
+              defsRef.current = next;
+              setDefs(next);
+              patchParams(pickedFor.id, { weights: w.id, classes: rows, imgsz: w.imgsz ?? undefined });
+            }
             setPicking(null);
           }}
         />
       )}
+      <AgentClasses open={classesOpen} onClose={() => setClassesOpen(false)} classes={classes} readOnly={readOnly} projects={projects}
+        titleOf={(id) => {
+          const n = shown.find((k) => k.id === id);
+          return n ? agentTitle(n.data as AgentNodeData) : id;
+        }}
+        onChange={(next) => { defsRef.current = next; setDefs(next); }}
+        onRemove={removeClasses}
+        onShowNode={(id) => {
+          setClassesOpen(false);
+          setSelected(id);
+          setNodes((old) => old.map((n) => ({ ...n, selected: n.id === id })));
+        }} />
       {graphId && (
         <SixFrames open={six} onClose={() => setSix(false)} graphId={graphId} doc={draft} project={preview.project} colorOf={colorOf} />
       )}

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  CYRILLIC, agentClasses, carryClasses, isExamples, keepWired, offLimits, rowTarget, switchTextModel, unfinished,
+  CYRILLIC, PALETTE, agentClasses, bindRows, carryClasses, findOrCreate, isExamples, keepWired, offLimits, rowTarget, statClasses,
+  switchTextModel, unfinished, upgradeDoc,
 } from "./agentDoc";
 import type { PromptRow } from "./agentDoc";
 
@@ -23,7 +24,8 @@ describe("«Сеть по тексту»", () => {
         { prompt: "rag", agent: "Тряпьё", on: false },
       ] } },
     ];
-    const got = agentClasses(nodes, () => ["person"]);
+    const up = upgradeDoc({ nodes });
+    const got = agentClasses(up.classes, up.nodes, () => ["person"]);
     expect(got.map((c) => [c.name, c.sources.map((s) => s.label)])).toEqual([
       ["Человек", ["№0 person", "«person»", "«worker»"]],
     ]);
@@ -35,7 +37,8 @@ describe("«Сеть по тексту»", () => {
       { kind: "examples", set: "", agent: "Пусто", on: true },
       { kind: "text", prompt: "hammer", agent: "Инструмент", on: true },
     ] } }];
-    expect(agentClasses(nodes, () => []).map((c) => [c.name, c.sources.map((s) => s.label)])).toEqual([
+    const up = upgradeDoc({ nodes });
+    expect(agentClasses(up.classes, up.nodes, () => []).map((c) => [c.name, c.sources.map((s) => s.label)])).toEqual([
       ["Инструмент", ["образцы", "«hammer»"]],
     ]);
     expect(rowTarget({ kind: "examples", set: " s1 ", agent: "", on: true })).toBe("s1");
@@ -101,5 +104,45 @@ describe("порог строк-образцов", () => {
     expect(got.prompts[1].conf).toBe(0.3);
     const back = switchTextModel({ model: "sam3", prompts: got.prompts }, "l") as { prompts: PromptRow[] };
     expect(back.prompts[0].conf).toBe(0.1);
+  });
+});
+
+describe("список классов агента", () => {
+  it("старый документ — классы по появлению, цвета палитры, строки по id; как agent_graph.upgrade", () => {
+    const doc = {
+      nodes: [
+        { id: "a", type: "net", params: { classes: [{ agent: "вагон", on: true }, { agent: "знак", on: false }] } },
+        { id: "b", type: "net", params: { classes: [{ agent: "рельс", on: true }, { agent: "Вагон", on: true }] } },
+        { id: "f", type: "filter", params: { classes: [{ cls: "вагон", on: true, conf: 0.5 }, { cls: "призрак", on: true, conf: 0 }] } },
+      ],
+    };
+    const up = upgradeDoc(doc);
+    expect(up.classes).toEqual([{ id: "c1", name: "вагон", color: PALETTE[0] }, { id: "c2", name: "рельс", color: PALETTE[1] }]);
+    expect(up.nodes[0].params.classes).toEqual([{ cls: "c1", on: true }, { agent: "знак", on: false }]);
+    expect(up.nodes[1].params.classes).toEqual([{ cls: "c2", on: true }, { cls: "c1", on: true }]);
+    expect(up.nodes[2].params.classes).toEqual([{ cls: "c1", on: true, conf: 0.5 }]);
+    expect(upgradeDoc(up)).toBe(up);
+  });
+
+  it("имя без регистра находит класс, новое заводит со свободным цветом", () => {
+    const [defs, id] = findOrCreate([{ id: "c1", name: "Вагон", color: PALETTE[0] }], " вагон ");
+    expect(id).toBe("c1");
+    const [more, made] = findOrCreate(defs, "рельс");
+    expect(more).toHaveLength(2);
+    expect(more[1]).toMatchObject({ id: made, name: "рельс", color: PALETTE[1] });
+    expect(findOrCreate(defs, "  ")[1]).toBeNull();
+  });
+
+  it("включённым строкам без класса — класс по подсказке или по имени из весов", () => {
+    const [defs, rows] = bindRows([], [{ on: true, agent: "вагон" }, { on: true }, { on: false, agent: "знак" }], (_r, i) => `w${i}`);
+    expect(defs.map((c) => c.name)).toEqual(["вагон", "w1"]);
+    expect(rows[0]).toEqual({ on: true, cls: defs[0].id });
+    expect(rows[2]).toEqual({ on: false, agent: "знак" });
+  });
+
+  it("паспорт версии: старый — имена, новый — объекты с цветом", () => {
+    expect(statClasses(["a", "b"])).toEqual([{ name: "a", color: PALETTE[0] }, { name: "b", color: PALETTE[1] }]);
+    expect(statClasses([{ id: "c1", name: "a", color: "#000" }])).toEqual([{ id: "c1", name: "a", color: "#000" }]);
+    expect(statClasses(undefined)).toEqual([]);
   });
 });

@@ -8,7 +8,6 @@
 запускает только владелец. Запуск — в тех тасках, где он и так может
 размечать: исполнитель или администратор проекта.
 """
-import copy
 import hashlib
 import os
 import random
@@ -390,6 +389,29 @@ def _source_counts(db, task):
     return out
 
 
+def _version_classes(db, version, project):
+    """Используемые классы версии для окна запуска: [{id, name, color, ref,
+    lock}]. У версий до списка классов в паспорте только имена — тогда классы
+    берутся из документа. Ссылка показывает живое имя класса проекта, а в своём
+    проекте ещё и `lock` — id класса, с которым она сопоставлена намертво."""
+    got = (version.stats or {}).get("classes") or []
+    if not got or not isinstance(got[0], dict):
+        got = agent_graph.classes(version.doc)
+    refs = {_uuid((c.get("ref") or {}).get("cls")) for c in got if c.get("ref")} - {None}
+    live = {c.id: c for c in db.execute(select(LabelClass).where(LabelClass.id.in_(refs))).scalars()} if refs else {}
+    out = []
+    for c in got:
+        row = {k: c.get(k) for k in ("id", "name", "color", "ref")}
+        ref = c.get("ref") or {}
+        hit = live.get(_uuid(ref.get("cls")))
+        if hit is not None:
+            row.update(name=hit.name, color=hit.color)
+            if hit.project_id == project.id:
+                row["lock"] = str(hit.id)
+        out.append(row)
+    return out
+
+
 @bp.get("/api/agents/tasks/<task_id>")
 def run_context(task_id):
     """Всё для окна «Разметить агентом» одним запросом."""
@@ -417,7 +439,7 @@ def run_context(task_id):
                 "head": str(graph.head_version_id) if graph.head_version_id else str(versions[0].id),
                 "versions": [
                     {"id": str(v.id), "version": v.version,
-                     "classes": (v.stats or {}).get("classes") or [],
+                     "classes": _version_classes(db, v, project),
                      "created_at": v.created_at.isoformat()}
                     for v in versions
                 ],
@@ -507,18 +529,22 @@ def start_agent_run(task_id):
         except (TypeError, ValueError):
             return jsonify({"error": "Шаг и допуск — числа."}), 400
 
-        # Сопоставление: только классы этой версии и только классы проекта.
-        agent_classes = (version.stats or {}).get("classes") or []
+        # Сопоставление приходит по id класса агента, а прогон пишет по имени:
+        # имя в версии уникально, и разведка с разметкой видят его же. Ссылка
+        # на класс этого проекта сопоставлена намертво, что бы ни прислали.
         project_classes = {
             str(c) for c in db.execute(
                 select(LabelClass.id).where(LabelClass.project_id == project.id)
             ).scalars()
         }
         raw = data.get("mapping") or {}
-        mapping = {}
-        for name in agent_classes:
-            target = raw.get(name)
-            mapping[name] = target if target in project_classes else None
+        by_id, mapping = {}, {}
+        for c in agent_graph.classes(version.doc):
+            target = raw.get(c["id"], raw.get(c["name"]))
+            ref = c.get("ref") or {}
+            if ref.get("cls") in project_classes:
+                target = ref["cls"]
+            by_id[c["id"]] = mapping[c["name"]] = target if target in project_classes else None
         # Разведке сопоставление не нужно: она хранит имена классов агента и в
         # разметку не пишет ничего.
         if mode != "scout" and not any(mapping.values()):
@@ -528,7 +554,7 @@ def start_agent_run(task_id):
         # версии их могло ещё не быть.
         shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars().all()
         try:
-            agent_graph.check(copy.deepcopy(version.doc), clamp=True, frame=frame_sizes.largest(db, [project.id]),
+            agent_graph.check(agent_graph.prepare(version.doc), clamp=True, frame=frame_sizes.largest(db, [project.id]),
                               inputs={str(w.id): w.imgsz for w in shelf})
         except agent_graph.AgentGraphError as exc:
             return jsonify({"error": str(exc)}), 400
@@ -550,11 +576,12 @@ def start_agent_run(task_id):
         # окно откроется уже заполненным. Старые ключи других версий не
         # теряются — у версии 2 мог быть класс, которого нет у версии 3.
         # Разведка сопоставления не спрашивает — и помнить ей нечего.
+        # Помнится по id класса агента: переименование класса его не сбрасывает.
         saved = db.get(AgentClassMap, (graph.id, project.id))
         if mode != "scout" and saved is None:
-            db.add(AgentClassMap(graph_id=graph.id, project_id=project.id, mapping=mapping))
+            db.add(AgentClassMap(graph_id=graph.id, project_id=project.id, mapping=by_id))
         elif mode != "scout":
-            saved.mapping = {**(saved.mapping or {}), **mapping}
+            saved.mapping = {**(saved.mapping or {}), **by_id}
         run = AgentRun(
             project_id=project.id, task_id=task.id, graph_id=graph.id,
             version_id=version.id,
@@ -631,6 +658,29 @@ def preview_projects():
         db.close()
 
 
+@bp.get("/api/agents/class-sources")
+def class_sources():
+    """Проекты человека с их классами — для окна «Классы агента»: из них
+    берут ссылки, по ним же ссылки показывают живые имя и цвет."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        projects = db.execute(
+            select(Project).join(ProjectMember, ProjectMember.project_id == Project.id)
+            .where(ProjectMember.user_id == user.id).order_by(Project.name)
+        ).scalars().all()
+        by_project = {}
+        for c in db.execute(select(LabelClass).where(LabelClass.project_id.in_([p.id for p in projects]))
+                            .order_by(LabelClass.class_index)).scalars():
+            by_project.setdefault(c.project_id, []).append(
+                {"id": str(c.id), "name": c.name, "color": c.color, "class_index": c.class_index})
+        return jsonify({"projects": [{"id": str(p.id), "code": p.code, "name": p.name,
+                                      "classes": by_project.get(p.id, [])} for p in projects]})
+    finally:
+        db.close()
+
+
 def _preview_frame(db, project, image_id, step):
     """Кадр проекта: тот же, соседний по имени файла или случайный."""
     in_project = select(Image).where(Image.project_id == project.id)
@@ -653,7 +703,7 @@ def _preview_input(db, user, data):
     graph = db.get(AugGraph, _uuid(data.get("graph_id")))
     if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
         return None, None, (jsonify({"error": "Агент не найден."}), 404)
-    doc = data.get("doc")
+    doc = agent_graph.prepare(data.get("doc"))
     project = db.execute(select(Project).where(Project.code == data.get("project"))).scalar_one_or_none()
     if project is None or not has_role(role_in(db, user, project), "viewer"):
         return None, None, (jsonify({"error": "Проект не найден."}), 404)

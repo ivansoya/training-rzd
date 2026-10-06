@@ -16,7 +16,6 @@
 Каждый кадр — своя транзакция, и статус кадра перечитывается под замком:
 человек мог открыть и сохранить кадр, пока агент шёл к нему.
 """
-import copy
 import logging
 import os
 import threading
@@ -126,8 +125,8 @@ def execute(db, run):
     if version is None:
         _finish(db, run, "error", "Версии агента больше нет.")
         return True
-    # Копия: зажатые в пределы числа не должны уйти обратно в версию.
-    doc = copy.deepcopy(version.doc)
+    # `prepare` отдаёт копию: зажатые в пределы числа не уйдут обратно в версию.
+    doc = agent_graph.prepare(version.doc)
     from training_svc import examples
 
     sets = examples.rows_for(db, run.created_by, doc)

@@ -34,6 +34,8 @@ export interface GraphDoc {
   v?: number;
   nodes: GraphNode[];
   edges: GraphEdge[];
+  /** Только у агента: список классов (components/agents/agentDoc.ts, ClassDef). */
+  classes?: { id: string; name: string; color: string; ref?: { project: string; cls: string; project_name?: string } }[];
 }
 
 export interface GraphStats {

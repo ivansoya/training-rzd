@@ -94,7 +94,7 @@ export function netLine(p: Record<string, unknown>, w: { name: string; task: str
 export function textLine(p: Record<string, unknown>, sam3Missing: boolean, frame?: FrameSize | null): string {
   if (sam3Missing) return "нет весов SAM 3";
   const model = textModel(p);
-  const rows = promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.agent.trim());
+  const rows = promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.cls);
   const ex = rows.filter(isExamples).length;
   const yolo = model !== "sam3";
   return [
