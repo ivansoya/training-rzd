@@ -1,69 +1,98 @@
-// Редактор агента разметки.
+// Редактор агента разметки: «Холст и шторка», как у графа аугментаций.
 //
-// Тот же механизм, что у графа аугментаций: настоящая копия сохраняется сама
-// на каждой правке, версия — только по «Сохранить версию», и прогон в таске
-// всегда идёт версией. Отличается набор узлов и правая колонка: у «Сети»
-// классов бывает много, поэтому они в своём подокне с поиском, а вкладка
-// «Классы агента» показывает, откуда пришёл каждый.
-//
-// Проверку формы делает сервер при сохранении версии (common/agent_graph.py) —
-// второй проверяющий в браузере разошёлся бы с ним на первой правке. Пределы
-// чисел — исключение: форма берёт их из той же таблицы (agentDoc.LIMITS) и не
-// даёт за них выйти, иначе ошибка всплывала только на «Сохранить версию».
+// Черновик сохраняется сам на каждой правке, версия — только по «Сохранить версию»,
+// и прогон в таске всегда идёт версией. В шторке: параметры узла (у «Сети» таблица
+// классов прямо здесь), кадр превью с рамками узла и что он нашёл. Числа на проводах —
+// рамки с того же кадра: превью считает вход и выход каждого узла за один прогон.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from "react";
 import NotFound, { isMissing } from "../NotFound";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import {
-  Background,
-  BackgroundVariant,
-  Controls,
-  ReactFlow,
-  ReactFlowProvider,
-  addEdge,
-  useEdgesState,
-  useNodesState,
-  useReactFlow,
-  type Connection,
-  type Edge,
-  type Node,
+  Background, BackgroundVariant, ReactFlow, ReactFlowProvider, addEdge, useEdgesState, useNodesState, useReactFlow,
+  type Connection, type Edge, type Node,
 } from "@xyflow/react";
 import * as aug from "../../api/aug";
 import * as api from "../../api/agents";
 import type { GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
+import { Badge, Button, LinkButton, MenuItem, Notice, Select } from "../../ui";
+import { ago, count } from "../ru";
 import { edgeKey, findCycle } from "../aug/counts";
-import Banner from "../Banner";
-import { NumInput } from "../NumInput";
-import Sep from "../Sep";
+import * as hist from "../aug/history";
+import { WireDraft, edgeTypes, type WireData } from "../aug/GraphNodes";
+import { keep, load } from "../aug/NodePreview";
+import { DRAWER_DEFAULT, clampDrawer } from "../aug/look";
 import {
-  CYRILLIC, LIMITS, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODEL, TEXT_MODELS, TITLES, YOLOE_MB, agentClasses,
-  carryClasses, exampleConfDefault, isExamples, keepWired, mergeInputs, offLimits, promptsOf, rowTarget, rowsOf,
-  switchTextModel, textConfDefault, withConf,
-  textModel, upstream, type FilterRow, type Limit, type NetRow, type PromptRow, type TextModel,
+  agentClasses, carryClasses, isExamples, keepWired, promptsOf, rowTarget, rowsOf, textModel, unfinished, upstream,
 } from "./agentDoc";
+import AgentFound from "./AgentFound";
+import AgentInspector from "./AgentInspector";
 import { agentNodeTypes, type AgentNodeData } from "./AgentNodes";
-import AgentPreview from "./AgentPreview";
-import { ExampleStrip, ExamplesDialog } from "./ExamplesDialog";
+import AgentPalette, { AGENT_MIME } from "./AgentPalette";
+import AgentPreviewPane, { useAgentPreview } from "./AgentPreview";
+import SixFrames from "./SixFrames";
 import WeightsPicker from "./WeightsPicker";
+import {
+  defaults, filterLine, netBadge, netLine, onePort, plainLine, textLine, wireText, type Addable, type AgentKind,
+} from "./look";
 
 const DRAFT_WAIT_MS = 700;
-type Addable = "net" | "text" | "merge" | "nms" | "filter" | "sam";
-const PALETTE = [
-  ["net", "Сеть", "k-flow"],
-  ["text", "Сеть по тексту", "k-block"],
-  ["merge", "Объединение", "k-noise"],
-  ["nms", "NMS", "k-light"],
-  ["filter", "Фильтр", "k-light"],
-  ["sam", "Уточнение SAM", "k-geometry"],
-] as const;
+const DRAWER_KEY = "agent-drawer-h";
+const GAP = 260;
+
 let seq = 0;
-const freshId = (kind: string) => `${kind}${++seq}${Date.now() % 1000}`;
+const freshId = (kind: string, taken: Set<string>) => {
+  let id: string;
+  do id = `${kind}${++seq}_${Date.now() % 1000}`;
+  while (taken.has(id));
+  return id;
+};
+
+const kindOfNode = (n: Node | undefined) => (n?.data as AgentNodeData | undefined)?.kind;
+
+// Номер провода один у холста и у документа: «откуда:гнездо->куда:гнездо».
+const wireId = (c: { source?: string | null; sourceHandle?: string | null; target?: string | null; targetHandle?: string | null }) =>
+  edgeKey({ from: c.source ?? "", out: c.sourceHandle ?? "out", to: c.target ?? "", in: c.targetHandle ?? "in" });
+
+// В одно входное гнездо провод только один — два потока сводит «Объединение».
 const occupies = (e: Edge, c: { target?: string | null; targetHandle?: string | null }) =>
   e.target === c.target && (e.targetHandle ?? null) === (c.targetHandle ?? null);
-const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
-// Проходов TTA на вид — как agent_graph.variants на сервере.
-const tta = (p: Record<string, unknown>) => (p.tta_flip ? 2 : 1) * (p.tta_scales ? 3 : 1);
-const decimal = (v: number) => String(v).replace(".", ",");
+
+/** Куда встроить узел по щелчку: выделенный провод, провод после выделенного узла, провод в «Выход». */
+function spliceWire(nodes: Node[], edges: Edge[]): Edge | null {
+  const picked = nodes.find((n) => n.selected)?.id;
+  return (
+    edges.find((e) => e.selected) ??
+    edges.find((e) => picked && e.source === picked) ??
+    edges.find((e) => picked && e.target === picked) ??
+    edges.find((e) => kindOfNode(nodes.find((n) => n.id === e.target)) === "output") ??
+    null
+  );
+}
+
+function splice(edges: Edge[], wire: Edge, id: string, [pin, pout]: [string, string]): Edge[] {
+  return [
+    ...edges.filter((e) => e.id !== wire.id),
+    ...[
+      { source: wire.source, sourceHandle: wire.sourceHandle, target: id, targetHandle: pin },
+      { source: id, sourceHandle: pout, target: wire.target, targetHandle: wire.targetHandle },
+    ].map((c) => ({ ...c, id: wireId(c), type: "volume" }) as Edge),
+  ];
+}
+
+type XY = { x: number; y: number };
+
+/** Место узла в разрыве провода: на шаг правее начала; тесно — конец провода и всё правее отъезжают. */
+function roomIn(nodes: Node[], wire: Edge, y?: number): { at: XY; from: number; shift: number } | null {
+  const a = nodes.find((n) => n.id === wire.source)?.position;
+  const b = nodes.find((n) => n.id === wire.target)?.position;
+  if (!a || !b) return null;
+  return { at: { x: a.x + GAP, y: y ?? a.y }, from: b.x, shift: b.x > a.x ? Math.max(0, a.x + 2 * GAP - b.x) : 0 };
+}
+
+const pushRight = (nodes: Node[], x: number, by: number, skip?: string) =>
+  by ? nodes.map((n) => (n.id !== skip && n.position.x >= x ? { ...n, position: { ...n.position, x: n.position.x + by } } : n)) : nodes;
 
 function toFlow(doc: GraphDoc): [Node[], Edge[]] {
   return [
@@ -71,16 +100,11 @@ function toFlow(doc: GraphDoc): [Node[], Edge[]] {
       id: n.id,
       type: n.type,
       position: { x: n.pos?.[0] ?? 0, y: n.pos?.[1] ?? 0 },
+      // «Кадр» и «Выход» в агенте ровно по одному — не удаляются.
       deletable: (n.type as string) !== "frame" && n.type !== "output",
-      data: { kind: n.type, params: n.params ?? {} } as AgentNodeData,
+      data: { kind: n.type as AgentKind, params: n.params ?? {} } satisfies AgentNodeData,
     })),
-    doc.edges.map((e) => ({
-      id: edgeKey(e),
-      source: e.from,
-      sourceHandle: e.out,
-      target: e.to,
-      targetHandle: e.in,
-    })),
+    doc.edges.map((e) => ({ id: edgeKey(e), source: e.from, sourceHandle: e.out, target: e.to, targetHandle: e.in, type: "volume" })),
   ];
 }
 
@@ -93,19 +117,29 @@ function toDoc(nodes: Node[], edges: Edge[]): GraphDoc {
       params: (n.data as AgentNodeData).params,
       pos: [Math.round(n.position.x), Math.round(n.position.y)],
     })) as GraphNode[],
-    edges: edges.map((e) => ({
-      from: e.source,
-      out: e.sourceHandle ?? "out",
-      to: e.target,
-      in: e.targetHandle ?? "in",
-    })) as GraphEdge[],
+    edges: edges.map((e) => ({ from: e.source, out: e.sourceHandle ?? "out", to: e.target, in: e.targetHandle ?? "in" })) as GraphEdge[],
   };
+}
+
+const pointOf = (e: MouseEvent | TouchEvent): [number, number] => {
+  const p = "changedTouches" in e ? e.changedTouches[0] : e;
+  return [p?.clientX ?? 0, p?.clientY ?? 0];
+};
+
+function sinceText(at: number, now: number): string {
+  const s = Math.round((now - at) / 1000);
+  if (s < 10) return "только что";
+  if (s < 60) return `${s} с назад`;
+  return ago(new Date(at).toISOString(), now);
 }
 
 function Editor() {
   const { graphId } = useParams<{ graphId: string }>();
+  const location = useLocation();
   const [search, setSearch] = useSearchParams();
   const wanted = search.get("version") ?? undefined;
+  const goVersion = (id: string | null) => setSearch(id ? { version: id } : {}, { state: location.state });
+
   const [missing, setMissing] = useState(false);
   const [graph, setGraph] = useState<aug.GraphDetail | null>(null);
   const [title, setTitle] = useState("");
@@ -113,30 +147,41 @@ function Editor() {
   const [shelf, setShelf] = useState<api.Weights[]>([]);
   // Лежат ли веса SAM 3 на сервере; null — ещё не знаем, и не пугаем.
   const [sam3Ready, setSam3Ready] = useState<boolean | null>(null);
-  // Наборы образцов, на которые ссылаются строки: паспорт и миниатюры.
+  // Наборы образцов, на которые ссылаются строки «Сети по тексту».
   const [sets, setSets] = useState<Map<string, api.ExampleSet>>(new Map());
   const keepSet = useCallback((s: api.ExampleSet) => setSets((old) => new Map(old).set(s.id, s)), []);
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  const [tab, setTab] = useState<"node" | "classes">("node");
+  // Узел, закреплённый в превью глазом; нет его — превью идёт за выделением, без выделения — «Выход».
+  const [eyeOn, setEyeOn] = useState<string | null>(null);
+  const togglePin = useCallback((id: string) => setEyeOn((cur) => (cur === id ? null : id)), []);
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  const [aim, setAim] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
+  const [six, setSix] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [drawerH, setDrawerH] = useState(() => load(DRAWER_KEY, DRAWER_DEFAULT + 60));
   const lastSaved = useRef<string | null>(null);
   const pending = useRef<GraphDoc | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | string>("saved");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
   const [changed, setChanged] = useState(false);
   const wrap = useRef<HTMLDivElement>(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const main = useRef<HTMLDivElement>(null);
+  const { screenToFlowPosition, fitView, zoomIn, zoomOut, getZoom } = useReactFlow();
+  const history = useRef<hist.History>(hist.start(""));
+  const live = useRef({ nodes, edges });
+  live.current = { nodes, edges };
+  const flushing = useRef<Promise<unknown>>(Promise.resolve());
 
-  const readOnly = Boolean(wanted);
+  // Старую версию и чужого агента смотрят, но не правят.
+  const readOnly = Boolean(wanted) || (graph ? !graph.mine : false);
   const byWeights = useMemo(() => new Map(shelf.map((w) => [w.id, w])), [shelf]);
-  const weightsOf = useCallback(
-    (params: Record<string, unknown>) => byWeights.get(String(params.weights ?? "")),
-    [byWeights]
-  );
+  const weightsOf = useCallback((params: Record<string, unknown>) => byWeights.get(String(params.weights ?? "")), [byWeights]);
 
   useEffect(() => {
     api.listWeights().then((r) => {
@@ -151,6 +196,7 @@ function Editor() {
     lastSaved.current = null;
     (async () => {
       try {
+        await flushing.current;
         const got = await aug.getGraph(graphId, wanted);
         if (!alive) return;
         setGraph(got);
@@ -159,9 +205,12 @@ function Editor() {
         setNodes(ns);
         setEdges(es);
         lastSaved.current = JSON.stringify(toDoc(ns, es));
+        history.current = hist.start(lastSaved.current);
         setChanged(Boolean(got.changed) || got.version === 0);
         setSaveState("saved");
+        setSavedAt(got.draft_at ? new Date(got.draft_at).getTime() : null);
         setVersions((await aug.listVersions(graphId)).versions);
+        window.requestAnimationFrame(() => void fitView({ maxZoom: 1, padding: 0.2 }));
       } catch (e) {
         if (!alive) return;
         // Мусорный id — «не найден», а не пустой холст с активной кнопкой сохранения.
@@ -172,21 +221,263 @@ function Editor() {
     return () => {
       alive = false;
     };
-  }, [graphId, wanted, setNodes, setEdges]);
+  }, [graphId, wanted, setNodes, setEdges, fitView]);
+
+  useEffect(() => {
+    if (!savedAt) return;
+    const t = window.setInterval(() => setNow(Date.now()), 10_000);
+    return () => window.clearInterval(t);
+  }, [savedAt]);
 
   const draft = useMemo(() => toDoc(nodes, edges), [nodes, edges]);
+  const docKey = useMemo(() => JSON.stringify({ n: draft.nodes.map(({ pos: _p, ...n }) => n), e: draft.edges }), [draft]);
+  // Ответ сервера относится к отправленному графу: правка его снимает.
+  useEffect(() => setProblem(null), [docKey]);
 
   const wantedSets = useMemo(
-    () => [...new Set(draft.nodes.filter((n) => n.type === ("text" as string))
+    () => [...new Set(draft.nodes.filter((n) => (n.type as string) === "text")
       .flatMap((n) => promptsOf(n).filter(isExamples).map((r) => r.set ?? "")).filter(Boolean))],
     [draft]
   );
   useEffect(() => {
-    const missing = wantedSets.filter((id) => !sets.has(id));
-    if (missing.length) api.listExamples(missing).then((r) => r.sets.forEach(keepSet)).catch(() => undefined);
+    const lack = wantedSets.filter((id) => !sets.has(id));
+    if (lack.length) api.listExamples(lack).then((r) => r.sets.forEach(keepSet)).catch(() => undefined);
   }, [wantedSets, sets, keepSet]);
 
-  // Автосохранение настоящей копии — как у графа аугментаций.
+  const namesOf = useCallback((id: string) => {
+    const node = draft.nodes.find((n) => n.id === id);
+    return node ? weightsOf(node.params ?? {})?.names ?? [] : [];
+  }, [draft, weightsOf]);
+  const classes = useMemo(() => agentClasses(draft.nodes, namesOf), [draft, namesOf]);
+  const colorMap = useMemo(() => new Map(classes.map((c) => [c.name, c])), [classes]);
+  const colorOf = useCallback((cls: string) => colorMap.get(cls)?.color ?? "var(--muted-fg)", [colorMap]);
+  const incomingOf = useCallback((id: string) => {
+    const up = upstream(id, draft.edges);
+    return agentClasses(draft.nodes.filter((n) => up.has(n.id)), namesOf).map((c) => c.name);
+  }, [draft, namesOf]);
+
+  const preview = useAgentPreview(graphId ?? "", draft, Boolean(graph?.mine), six);
+  const trace = preview.result?.nodes ?? null;
+  const flaw = unfinished(draft);
+
+  const killWire = useCallback((id: string) => setEdges((old) => old.filter((e) => e.id !== id)), [setEdges]);
+  const wires = useMemo(
+    () => edges.map((e) => {
+      const w = wireText(kindOfNode(nodes.find((n) => n.id === e.source)), trace, e.source);
+      return {
+        ...e,
+        data: {
+          ...(e.data ?? {}),
+          amount: w.amount,
+          text: w.text,
+          hot: Boolean(selected) && (e.source === selected || e.target === selected),
+          aim: e.id === aim,
+          kill: readOnly ? undefined : killWire,
+        } satisfies WireData,
+      };
+    }),
+    [edges, nodes, trace, killWire, readOnly, selected, aim]
+  );
+
+  // Подписи карточек считаются здесь: имя весов живёт на полке, и его смена не правка агента.
+  const shown = useMemo(() => {
+    const linked = new Set(edges.flatMap((e) => [e.source, e.target]));
+    return nodes.map((n) => {
+      const d = n.data as AgentNodeData;
+      const p = d.params;
+      let extra: Partial<AgentNodeData> = {};
+      if (d.kind === "net") {
+        const w = weightsOf(p);
+        extra = { caption: w?.name.replace(/\.pt$/i, ""), why: netLine(p, w), badge: w ? netBadge(p, w.names.length) : undefined, bad: !p.weights };
+      } else if (d.kind === "text") {
+        const lack = textModel(p) === "sam3" && sam3Ready === false;
+        const rows = promptsOf({ params: p });
+        const on = rows.filter((r) => r.on && rowTarget(r) && r.agent.trim()).length;
+        extra = { why: textLine(p, lack), badge: `${on}/${rows.length}`, bad: lack || on === 0 };
+      } else if (d.kind === "filter") {
+        extra = { why: filterLine(p, incomingOf(n.id)) };
+      } else {
+        extra = { why: plainLine(d.kind, p) };
+      }
+      return { ...n, data: { ...d, ...extra, loose: !linked.has(n.id), eye: n.id === eyeOn, onEye: togglePin } };
+    });
+  }, [nodes, edges, weightsOf, sam3Ready, incomingOf, eyeOn, togglePin]);
+
+  const canConnect = useCallback((conn: Connection | Edge) => {
+    if (!conn.source || !conn.target || conn.source === conn.target) return false;
+    // Занятое гнездо не отвергаем: прежний провод из него уйдёт.
+    const doc = toDoc(nodes, [
+      ...edges.filter((e) => !occupies(e, conn)),
+      { id: "probe", source: conn.source, target: conn.target, sourceHandle: conn.sourceHandle ?? "out", targetHandle: conn.targetHandle ?? "in" } as Edge,
+    ]);
+    return !findCycle(doc.nodes, doc.edges);
+  }, [edges, nodes]);
+
+  const onConnect = useCallback(
+    (conn: Connection) => setEdges((old) => addEdge({ ...conn, id: wireId(conn), type: "volume" }, old.filter((e) => !occupies(e, conn)))),
+    [setEdges]
+  );
+
+  // Провод перецепляется за конец; брошенный мимо всякого гнезда — снят.
+  const moved = useRef(false);
+  const onReconnect = useCallback((old: Edge, conn: Connection) => {
+    moved.current = true;
+    setEdges((list) => [
+      ...list.filter((e) => e.id !== old.id && !occupies(e, conn)),
+      { ...old, id: wireId(conn), source: conn.source, sourceHandle: conn.sourceHandle, target: conn.target, targetHandle: conn.targetHandle },
+    ]);
+  }, [setEdges]);
+  const onReconnectEnd = useCallback((_e: unknown, edge: Edge, _s: unknown, state: { toHandle: unknown | null }) => {
+    if (!moved.current && !state?.toHandle) killWire(edge.id);
+  }, [killWire]);
+
+  /** Провод под точкой экрана: ближайший в пределах 14 px экрана при любом масштабе. */
+  const wireAt = useCallback((x: number, y: number): string | null => {
+    const p = screenToFlowPosition({ x, y });
+    const tol = 14 / getZoom();
+    let best: string | null = null;
+    let bestD = tol;
+    for (const g of wrap.current?.querySelectorAll<SVGGElement>(".react-flow__edge[data-id]") ?? []) {
+      const path = g.querySelector<SVGPathElement>("path.ge-wire");
+      if (!path) continue;
+      const len = path.getTotalLength();
+      for (let s = 0; s <= len; s += Math.max(2, tol / 2)) {
+        const q = path.getPointAtLength(s);
+        const dist = Math.hypot(q.x - p.x, q.y - p.y);
+        if (dist < bestD) {
+          bestD = dist;
+          best = g.dataset.id ?? null;
+        }
+      }
+    }
+    return best;
+  }, [screenToFlowPosition, getZoom]);
+
+  const addNode = useCallback((kind: Addable, at?: XY, into?: string | null) => {
+    const id = freshId(kind, new Set(live.current.nodes.map((n) => n.id)));
+    const box = wrap.current?.getBoundingClientRect();
+    const pins = onePort(kind);
+    // Брошенный на провод встаёт в разрыв; по щелчку — в цепочку перед «Выходом» или за выделенным.
+    const wire = !pins ? null : into ? live.current.edges.find((e) => e.id === into) ?? null
+      : at ? null : spliceWire(live.current.nodes, live.current.edges);
+    const fit = wire && pins ? roomIn(live.current.nodes, wire, at?.y) : null;
+    const point = fit?.at ?? at ?? screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 600) / 2, y: (box?.top ?? 0) + 160 });
+    if (wire && pins) setEdges((old) => splice(old, wire, id, pins));
+    setNodes((old0) => {
+      const old = fit ? pushRight(old0, fit.from, fit.shift) : old0;
+      let spot = point;
+      // Два щелчка подряд клали узлы друг на друга — занято, сдвигаем лесенкой.
+      while (!fit && old.some((n) => Math.abs(n.position.x - spot.x) < 24 && Math.abs(n.position.y - spot.y) < 24))
+        spot = { x: spot.x + 36, y: spot.y + 36 };
+      return [...old.map((n) => ({ ...n, selected: false })),
+        { id, type: kind, position: spot, selected: true, data: { kind, params: defaults(kind) } satisfies AgentNodeData }];
+    });
+    setSelected(id);
+  }, [screenToFlowPosition, setNodes, setEdges]);
+
+  const patchParams = useCallback((id: string, next: Record<string, unknown>) => {
+    setNodes((old) => old.map((n) => (n.id === id
+      ? { ...n, data: { ...(n.data as AgentNodeData), params: { ...(n.data as AgentNodeData).params, ...next } } } : n)));
+    // Входов у «Объединения» стало меньше — провода с исчезнувших гнёзд уходят той же правкой.
+    if ("inputs" in next) setEdges((old) => keepWired(old, id, next));
+  }, [setNodes, setEdges]);
+
+  const removeNode = useCallback((id: string) => {
+    const kind = kindOfNode(live.current.nodes.find((n) => n.id === id));
+    if (kind === "frame" || kind === "output") return;
+    setNodes((old) => old.filter((n) => n.id !== id));
+    setEdges((old) => old.filter((e) => e.source !== id && e.target !== id));
+    setSelected(null);
+  }, [setNodes, setEdges]);
+
+  const unlink = useCallback((id: string) => setEdges((old) => old.filter((e) => e.source !== id && e.target !== id)), [setEdges]);
+
+  const openMenu = useCallback((event: ReactMouseEvent, node: Node) => {
+    if (readOnly) return;
+    event.preventDefault();
+    const box = wrap.current?.getBoundingClientRect();
+    if (!box) return;
+    setMenu({ id: node.id, x: Math.min(event.clientX - box.left + 4, box.width - 240), y: Math.min(event.clientY - box.top + 4, box.height - 110) });
+  }, [readOnly]);
+
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: KeyboardEvent) => e.key === "Escape" && setMenu(null);
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [menu]);
+
+  // Висящий узел с одним входом и выходом, брошенный на провод, тоже встаёт в разрыв.
+  const spliceable = useCallback((node: Node) => !readOnly && Boolean(onePort((node.data as AgentNodeData).kind))
+    && !live.current.edges.some((e) => e.source === node.id || e.target === node.id), [readOnly]);
+  const onNodeDrag = useCallback((event: MouseEvent | TouchEvent, node: Node) =>
+    setAim(spliceable(node) ? wireAt(...pointOf(event)) : null), [spliceable, wireAt]);
+  const onNodeDragStop = useCallback((event: MouseEvent | TouchEvent, node: Node) => {
+    setAim(null);
+    if (!spliceable(node)) return;
+    const wire = live.current.edges.find((e) => e.id === wireAt(...pointOf(event)));
+    const pins = onePort((node.data as AgentNodeData).kind);
+    if (!wire || !pins) return;
+    setEdges((old) => splice(old, wire, node.id, pins));
+    const fit = roomIn(live.current.nodes, wire, node.position.y);
+    if (fit) setNodes((old) => pushRight(old, fit.from, fit.shift, node.id).map((n) => (n.id === node.id ? { ...n, position: fit.at } : n)));
+  }, [spliceable, wireAt, setEdges, setNodes]);
+
+  const onDrop = (event: ReactDragEvent) => {
+    event.preventDefault();
+    setAim(null);
+    const kind = event.dataTransfer.getData(AGENT_MIME) as Addable;
+    if (!kind || readOnly) return;
+    const p = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+    // Карточка встаёт серединой под курсор.
+    addNode(kind, { x: p.x - 84, y: p.y - 34 }, wireAt(event.clientX, event.clientY));
+  };
+  const onDragOver = (event: ReactDragEvent) => {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    const hit = wireAt(event.clientX, event.clientY);
+    if (hit !== aim) setAim(hit);
+  };
+
+  // Снимок в историю — когда правка улеглась: протяжка даёт десятки промежуточных состояний.
+  useEffect(() => {
+    if (readOnly || lastSaved.current === null) return;
+    const text = JSON.stringify(draft);
+    const timer = window.setTimeout(() => { history.current = hist.record(history.current, text); }, 400);
+    return () => window.clearTimeout(timer);
+  }, [draft, readOnly]);
+
+  const restore = useCallback((text: string) => {
+    const [fresh, es] = toFlow(JSON.parse(text) as GraphDoc);
+    setNodes((old) => {
+      const had = new Map(old.map((n) => [n.id, n]));
+      return fresh.map((n) => {
+        const was = had.get(n.id);
+        return was ? { ...was, position: n.position, data: { ...(was.data as AgentNodeData), params: (n.data as AgentNodeData).params } } : n;
+      });
+    });
+    setEdges(es);
+  }, [setNodes, setEdges]);
+
+  useEffect(() => {
+    if (readOnly) return;
+    const onKey = (e: KeyboardEvent) => {
+      const act = hist.keyAction(e);
+      if (!act) return;
+      // В текстовом поле Ctrl+Z — отмена набора в поле.
+      const t = e.target as HTMLElement | null;
+      if (t?.closest("textarea, select, [contenteditable='true']") || (t instanceof HTMLInputElement && !["range", "checkbox", "radio", "button"].includes(t.type))) return;
+      e.preventDefault();
+      const nowDoc = JSON.stringify(toDoc(live.current.nodes, live.current.edges));
+      const [next, doc] = (act === "undo" ? hist.undo : hist.redo)(history.current, nowDoc);
+      history.current = next;
+      if (doc !== null) restore(doc);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [readOnly, restore]);
+
+  // Автосохранение черновика: сравнивается весь документ, с координатами.
   useEffect(() => {
     if (!graphId || readOnly || lastSaved.current === null) return;
     const text = JSON.stringify(draft);
@@ -200,6 +491,8 @@ function Editor() {
         pending.current = null;
         setChanged(got.changed);
         setSaveState("saved");
+        setSavedAt(Date.now());
+        setNow(Date.now());
       } catch (e) {
         setSaveState((e as Error).message);
       }
@@ -207,12 +500,13 @@ function Editor() {
     return () => window.clearTimeout(timer);
   }, [draft, graphId, readOnly]);
 
+  // Ушли, не дождавшись паузы, — последняя правка уходит сразу.
   useEffect(() => {
     const flush = () => {
       const doc = pending.current;
       if (graphId && doc && JSON.stringify(doc) !== lastSaved.current) {
         pending.current = null;
-        aug.saveDraft(graphId, doc, true).catch(() => undefined);
+        flushing.current = aug.saveDraft(graphId, doc, true).catch(() => undefined);
       }
     };
     window.addEventListener("pagehide", flush);
@@ -220,170 +514,7 @@ function Editor() {
       window.removeEventListener("pagehide", flush);
       flush();
     };
-  }, [graphId]);
-
-  const namesOf = useCallback(
-    (id: string) => {
-      const node = draft.nodes.find((n) => n.id === id);
-      return node ? weightsOf(node.params ?? {})?.names ?? [] : [];
-    },
-    [draft, weightsOf]
-  );
-  const classes = useMemo(() => agentClasses(draft.nodes, namesOf), [draft, namesOf]);
-  const colorOf = useMemo(() => new Map(classes.map((c) => [c.name, c])), [classes]);
-  // Классы, что приходят к выбранному узлу: «Фильтр» показывает только их.
-  const incoming = useMemo(() => {
-    if (!selected) return [];
-    const up = upstream(selected, draft.edges);
-    return agentClasses(draft.nodes.filter((n) => up.has(n.id)), namesOf).map((c) => c.name);
-  }, [selected, draft, namesOf]);
-
-  // Подписи карточек считаются здесь, а не хранятся в документе: имя весов
-  // живёт на полке, и переименование файла не должно рождать правку графа.
-  const shown = useMemo(
-    () =>
-      nodes.map((n) => {
-        const d = n.data as AgentNodeData;
-        if (d.kind === "text") {
-          const model = textModel(d.params);
-          const rows = promptsOf(d);
-          const on = rows.filter((r) => r.on && rowTarget(r) && r.agent.trim()).length;
-          const exN = rows.filter((r) => r.on && rowTarget(r) && isExamples(r)).length;
-          const missing = model === "sam3" && sam3Ready === false;
-          const yolo = model !== "sam3";
-          return {
-            ...n,
-            data: {
-              ...d,
-              why: missing
-                ? "нет весов SAM 3"
-                : [
-                    yolo ? `YOLOE-26 ${model}` : "SAM 3",
-                    exN ? `${on - exN ? `${on - exN} сл. + ` : ""}${exN} обр.` : null,
-                    `conf ${decimal(num(d.params.conf, textConfDefault(model)))}`,
-                    yolo && d.params.tiles ? "плитки" : null,
-                    yolo && tta(d.params) > 1 ? `TTA ×${tta(d.params)}` : null,
-                  ].filter(Boolean).join(", "),
-              badge: `${on}/${rows.length}`,
-              bad: missing || on === 0,
-            },
-          };
-        }
-        if (d.kind === "filter") {
-          const up = upstream(n.id, draft.edges);
-          return { ...n, data: { ...d, incoming: agentClasses(draft.nodes.filter((x) => up.has(x.id)), namesOf).map((c) => c.name) } };
-        }
-        if (d.kind !== "net") return n;
-        const w = weightsOf(d.params);
-        const rows = rowsOf({ params: d.params });
-        const caption = w ? w.name.replace(/\.pt$/i, "") : undefined;
-        return {
-          ...n,
-          data: {
-            ...d,
-            caption,
-            why: w
-              ? [
-                  // С подписью имя весов уходит из заголовка сюда: без него две
-                  // сети на одних весах не отличить от сетей на разных.
-                  d.params.label ? caption : null,
-                  `${w.task}, ${num(d.params.imgsz, w.imgsz ?? 640)}, conf ${String(num(d.params.conf, 0.25)).replace(".", ",")}`,
-                  d.params.tiles ? "плитки" : null,
-                  tta(d.params) > 1 ? `TTA ×${tta(d.params)}` : null,
-                ].filter(Boolean).join(", ")
-              : undefined,
-            badge: w ? `${rows.filter((r) => r.on).length}/${w.names.length}` : undefined,
-          },
-        };
-      }),
-    [nodes, weightsOf, sam3Ready, draft, namesOf]
-  );
-
-  const canConnect = useCallback(
-    (conn: Connection | Edge) => {
-      if (!conn.source || !conn.target || conn.source === conn.target) return false;
-      const doc = toDoc(nodes, [
-        ...edges.filter((e) => !occupies(e, conn)),
-        { id: "probe", source: conn.source, target: conn.target,
-          sourceHandle: conn.sourceHandle ?? "out", targetHandle: conn.targetHandle ?? "in" } as Edge,
-      ]);
-      return !findCycle(doc.nodes, doc.edges);
-    },
-    [edges, nodes]
-  );
-
-  const onConnect = useCallback(
-    (conn: Connection) =>
-      setEdges((old) =>
-        addEdge(
-          {
-            ...conn,
-            id: edgeKey({
-              from: conn.source ?? "",
-              out: conn.sourceHandle ?? "out",
-              to: conn.target ?? "",
-              in: conn.targetHandle ?? "in",
-            }),
-          },
-          old.filter((e) => !occupies(e, conn))
-        )
-      ),
-    [setEdges]
-  );
-
-  const patchParams = useCallback(
-    (id: string, next: Record<string, unknown>) => {
-      setNodes((old) =>
-        old.map((n) =>
-          n.id === id
-            ? { ...n, data: { ...(n.data as AgentNodeData), params: { ...(n.data as AgentNodeData).params, ...next } } }
-            : n
-        )
-      );
-      if ("inputs" in next) setEdges((old) => keepWired(old, id, next));
-    },
-    [setNodes, setEdges]
-  );
-
-  const addNode = useCallback(
-    (kind: Addable, at?: { x: number; y: number }) => {
-      const id = freshId(kind);
-      const box = wrap.current?.getBoundingClientRect();
-      const point =
-        at ?? screenToFlowPosition({ x: (box?.left ?? 0) + (box?.width ?? 600) / 2, y: (box?.top ?? 0) + 160 });
-      const params = {
-        net: { weights: null, classes: [], conf: 0.25 },
-        text: { model: TEXT_MODEL, prompts: [], conf: textConfDefault(TEXT_MODEL), imgsz: TEXT_IMGSZ },
-        merge: { inputs: 2 },
-        nms: { iou: 0.6, agnostic: false },
-        filter: { classes: [], min_side: null, max_side: null },
-        sam: { ...SAM_DEFAULTS },
-      }[kind];
-      setNodes((old) => {
-        // Два щелчка по палитре подряд клали узлы ровно друг на друга, и
-        // второй казался пропавшим. Занято — сдвигаем лесенкой.
-        let spot = point;
-        while (old.some((n) => Math.abs(n.position.x - spot.x) < 24 && Math.abs(n.position.y - spot.y) < 24))
-          spot = { x: spot.x + 36, y: spot.y + 36 };
-        return [
-          ...old.map((n) => ({ ...n, selected: false })),
-          { id, type: kind, position: spot, selected: true, data: { kind, params } as AgentNodeData },
-        ];
-      });
-      setSelected(id);
-      setTab("node");
-    },
-    [screenToFlowPosition, setNodes]
-  );
-
-  const removeNode = useCallback(
-    (id: string) => {
-      setNodes((old) => old.filter((n) => n.id !== id));
-      setEdges((old) => old.filter((e) => e.source !== id && e.target !== id));
-      setSelected(null);
-    },
-    [setNodes, setEdges]
-  );
+  }, [graphId, wanted]);
 
   const save = useCallback(async () => {
     if (!graphId) return;
@@ -418,159 +549,185 @@ function Editor() {
     }
   }, [graphId, graph, title]);
 
-  const current = nodes.find((n) => n.id === selected) ?? null;
+  const room = () => main.current?.clientHeight ?? 800;
+  const setDrawer = (h: number, remember = true) => {
+    const v = clampDrawer(h, room());
+    setDrawerH(v);
+    if (remember) keep(DRAWER_KEY, v);
+  };
+  const grab = useRef<{ y: number; h: number } | null>(null);
+
   if (missing) return <NotFound message="Агент не найден: его удалили или ссылка неверна." back="/agents" backLabel="К моим агентам" />;
+
+  const current = shown.find((n) => n.id === selected) ?? null;
+  const output = nodes.find((n) => kindOfNode(n) === "output") ?? null;
+  const pinned = eyeOn && nodes.some((n) => n.id === eyeOn) ? eyeOn : null;
+  const watch = pinned ?? (selected && nodes.some((n) => n.id === selected) ? selected : output?.id ?? null);
+  const watchKind = kindOfNode(nodes.find((n) => n.id === watch)) ?? null;
+  const nextVersion = Math.max(0, ...versions.map((v) => v.version)) + 1;
   const pickedFor = picking ? nodes.find((n) => n.id === picking) : null;
 
-  return (
-    <div className="g-ged ag-ged">
-      <aside className="g-pal">
-        <h4>Узлы</h4>
-        {PALETTE.map(([kind, label, klass]) => (
-          <button
-            key={kind}
-            type="button"
-            className={`g-pal-item ${klass}`}
-            disabled={readOnly}
-            draggable={!readOnly}
-            onDragStart={(e) => e.dataTransfer.setData("application/mag-agent-node", kind)}
-            onClick={() => addNode(kind)}
-          >
-            {label}
-          </button>
-        ))}
-      </aside>
+  const saveText = readOnly ? null
+    : saveState === "saving" ? "сохраняю черновик…"
+    : saveState !== "saved" ? `черновик не сохранился: ${saveState}`
+    : savedAt ? `черновик сохранён ${sinceText(savedAt, now)}` : "черновик совпадает с версией";
+  const sub = [
+    saveText,
+    graph ? (graph.version ? `версия ${graph.version} из ${versions.length || graph.version}` : "версий пока нет") : null,
+    !readOnly && changed ? "правки вне версий" : null,
+    count(classes.length, "класс", "класса", "классов"),
+  ].filter(Boolean);
 
-      <div className="g-canvas">
-        <div className="g-canvas-top">
-          <Link to="/agents" className="g-ctx-back" title="К агентам">←</Link>
-          <input
-            className="ttl"
-            value={title}
-            disabled={readOnly}
-            aria-label="Имя агента"
-            size={Math.max(8, title.length)}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => void rename()}
+  return (
+    <div className="ge ae">
+      <header className="ge-h">
+        <LinkButton variant="ghost" icon="chevL" to="/agents" aria-label="К моим агентам" />
+        <div className="ge-title">
+          <input className="ge-name ui-ctl" value={title} disabled={readOnly} aria-label="Имя агента" size={Math.max(8, title.length)}
+            onChange={(e) => setTitle(e.target.value)} onBlur={() => void rename()}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
               if (e.key === "Escape") setTitle(graph?.name ?? "");
-            }}
-          />
-          <span className="ver">
-            {graph?.version ? `версия ${graph.version} из ${versions.length}` : "версий нет"}
-          </span>
-          {!readOnly && changed && <span className="ver edits">правки вне версий</span>}
-          {!readOnly && (
-            <span className={`g-saved${saveState === "saved" || saveState === "saving" ? "" : " bad"}`} role="status">
-              {saveState === "saved" ? "сохранено" : saveState === "saving" ? "сохраняю…" : `не сохранилось: ${saveState}`}
-            </span>
-          )}
-          {readOnly && <span className="pill wait">старая версия — только чтение</span>}
-          <div className="sp">
-            <select
-              value={wanted ?? ""}
-              onChange={(e) => (e.target.value ? setSearch({ version: e.target.value }) : setSearch({}))}
-              aria-label="Версия"
+            }} />
+          <span className={saveState !== "saved" && saveState !== "saving" ? "bad" : undefined} role="status">{sub.join(" · ")}</span>
+        </div>
+        {readOnly && graph && <Badge icon="lock">{wanted ? "старая версия — только чтение" : "чужой агент — только чтение"}</Badge>}
+        <span className="grow" />
+        <Select size="sm" icon="clock" label="Версия" value={wanted ?? "draft"} onChange={(v) => goVersion(v === "draft" ? null : v)}
+          options={[
+            { value: "draft", label: "Черновик", hint: changed ? "есть правки вне версий" : "совпадает с последней версией" },
+            ...versions.map((v) => ({
+              value: v.id,
+              label: `Версия ${v.version}`,
+              hint: [new Date(v.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).replace(".", ""), v.note].filter(Boolean).join(" · "),
+            })),
+          ]} />
+        <Button size="sm" icon="images" disabled={!graph?.mine || Boolean(flaw) || !preview.project} onClick={() => setSix(true)}
+          title={flaw ?? (!preview.project ? "Нет проекта с кадрами" : "«Выход» агента на шести случайных кадрах")}>Превью на 6 кадрах</Button>
+        <Button size="sm" variant="primary" icon="save" disabled={busy || readOnly || Boolean(flaw)} onClick={save}
+          title={flaw ? `Сперва доделайте агента: ${flaw}` : "Создать новую версию — её запускают в тасках"}>Сохранить версию {nextVersion}</Button>
+      </header>
+
+      <div className="ge-body">
+        <div className="ge-main" ref={main} style={{ "--dh": `${drawerH}px` } as CSSProperties}>
+          <div className="ge-canvas" ref={wrap}>
+            <ReactFlow
+              className="ge-flow"
+              colorMode="dark"
+              nodes={shown}
+              edges={wires}
+              nodeTypes={agentNodeTypes}
+              edgeTypes={edgeTypes}
+              onNodesChange={onNodesChange}
+              onEdgesChange={onEdgesChange}
+              nodesDraggable={!readOnly}
+              onConnect={readOnly ? undefined : onConnect}
+              onReconnect={readOnly ? undefined : onReconnect}
+              onReconnectStart={() => { moved.current = false; }}
+              onReconnectEnd={onReconnectEnd}
+              reconnectRadius={12}
+              connectionRadius={30}
+              connectionLineComponent={WireDraft}
+              edgesReconnectable={!readOnly}
+              nodesConnectable={!readOnly}
+              deleteKeyCode={readOnly ? null : ["Delete", "Backspace"]}
+              isValidConnection={canConnect}
+              onSelectionChange={({ nodes: picked }) => setSelected(picked[0]?.id ?? null)}
+              onNodeContextMenu={openMenu}
+              onPaneClick={() => setMenu(null)}
+              onMoveStart={() => setMenu(null)}
+              onNodeDragStart={() => setMenu(null)}
+              onNodeDrag={onNodeDrag}
+              onNodeDragStop={onNodeDragStop}
+              onDrop={onDrop}
+              onDragOver={onDragOver}
+              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node | null)) setAim(null); }}
+              minZoom={0.25}
+              maxZoom={1.8}
+              proOptions={{ hideAttribution: true }}
+              defaultEdgeOptions={{ type: "volume" }}
             >
-              <option value="">настоящая</option>
-              {versions.length > 0 && (
-                <optgroup label="Версии">
-                  {versions.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      версия {v.version}
-                    </option>
-                  ))}
-                </optgroup>
-              )}
-            </select>
-            <button type="button" className="mag-btn" disabled={busy || readOnly} onClick={save}>
-              Сохранить версию
-            </button>
+              <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+            </ReactFlow>
+            <div className="ge-tools">
+              <Button size="sm" icon="fit" aria-label="Вписать агента" onClick={() => void fitView({ maxZoom: 1, padding: 0.2, duration: 200 })} />
+              <Button size="sm" icon="zin" aria-label="Приблизить" onClick={() => void zoomIn({ duration: 150 })} />
+              <Button size="sm" icon="zout" aria-label="Отдалить" onClick={() => void zoomOut({ duration: 150 })} />
+            </div>
+            {(flaw || problem || note) && (
+              <div className="ge-notes">
+                {/* Недоделка без крестика: убрать её можно, только доделав агента. */}
+                {flaw && !readOnly && <Notice tone="warn">{flaw}</Notice>}
+                {problem && <Notice tone="error" onClose={() => setProblem(null)}>{problem}</Notice>}
+                {note && <Notice tone="ok" onClose={() => setNote(null)}>{note}</Notice>}
+              </div>
+            )}
+            {menu && nodes.some((n) => n.id === menu.id) && (() => {
+              const fixed = ["frame", "output"].includes(kindOfNode(nodes.find((n) => n.id === menu.id)) ?? "");
+              return (
+                <div className="ui-pop ge-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+                  <MenuItem icon="eye" onSelect={() => { togglePin(menu.id); setMenu(null); }}>
+                    {menu.id === eyeOn ? "Открепить превью" : "Закрепить в превью"}</MenuItem>
+                  <MenuItem icon="x" disabled={!edges.some((e) => e.source === menu.id || e.target === menu.id)}
+                    onSelect={() => { unlink(menu.id); setMenu(null); }}>Убрать все связи</MenuItem>
+                  <MenuItem icon="trash" danger hint={fixed ? "Кадр и выход есть всегда" : "Delete"} disabled={fixed}
+                    onSelect={() => { removeNode(menu.id); setMenu(null); }}>Удалить узел</MenuItem>
+                </div>
+              );
+            })()}
           </div>
-        </div>
 
-        {problem && <div className="mag-error">{problem}</div>}
-        {note && <Banner onClose={() => setNote(null)}>{note}</Banner>}
-
-        <div className="g-canvas-body" ref={wrap}>
-          <ReactFlow
-            className="g-graph"
-            nodes={shown}
-            edges={edges}
-            nodeTypes={agentNodeTypes}
-            onNodesChange={onNodesChange}
-            onEdgesChange={onEdgesChange}
-            nodesDraggable={!readOnly}
-            nodesConnectable={!readOnly}
-            edgesReconnectable={false}
-            onConnect={readOnly ? undefined : onConnect}
-            deleteKeyCode={readOnly ? null : ["Delete", "Backspace"]}
-            isValidConnection={canConnect}
-            onSelectionChange={({ nodes: picked }) => {
-              setSelected(picked[0]?.id ?? null);
-              if (picked[0]) setTab("node");
+          <div className="ge-grip" role="separator" aria-orientation="horizontal" aria-label="Граница холста и шторки"
+            aria-valuenow={drawerH} tabIndex={0} title="Тяните, чтобы поменять высоту шторки. Двойной щелчок — как было"
+            onPointerDown={(e) => {
+              e.preventDefault();
+              e.currentTarget.setPointerCapture(e.pointerId);
+              grab.current = { y: e.clientY, h: drawerH };
             }}
-            onDrop={(event) => {
-              event.preventDefault();
-              const kind = event.dataTransfer.getData("application/mag-agent-node");
-              if (PALETTE.some(([k]) => k === kind) && !readOnly)
-                addNode(kind as Addable, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
+            onPointerMove={(e) => {
+              const g = grab.current;
+              if (g) setDrawer(g.h + g.y - e.clientY, false);
             }}
-            onDragOver={(event) => {
-              event.preventDefault();
-              event.dataTransfer.dropEffect = "copy";
+            onPointerUp={() => {
+              if (grab.current) keep(DRAWER_KEY, drawerH);
+              grab.current = null;
             }}
-            fitView
-            fitViewOptions={{ maxZoom: 1, padding: 0.25 }}
-            minZoom={0.25}
-            maxZoom={1.8}
-            proOptions={{ hideAttribution: true }}
-          >
-            <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="#232629" />
-            <Controls showInteractive={false} />
-          </ReactFlow>
-        </div>
+            onPointerCancel={() => { grab.current = null; }}
+            onDoubleClick={() => setDrawer(DRAWER_DEFAULT + 60)}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                e.preventDefault();
+                setDrawer(drawerH + (e.key === "ArrowUp" ? 24 : -24));
+              }
+            }}>
+            <i />
+          </div>
 
-        {graphId && (
-          <AgentPreview
-            graphId={graphId}
-            doc={draft}
-            node={current ? { id: current.id, data: current.data as AgentNodeData } : null}
-            colorOf={colorOf}
-          />
-        )}
-      </div>
-
-      <aside className="ag-side">
-        <div className="ag-side-tabs" role="tablist">
-          <button type="button" role="tab" aria-selected={tab === "node"} onClick={() => setTab("node")}>
-            Узел
-          </button>
-          <button type="button" role="tab" aria-selected={tab === "classes"} onClick={() => setTab("classes")}>
-            Классы агента <span className="mono">{classes.length}</span>
-          </button>
-        </div>
-        <div className="ag-side-body">
-          {tab === "classes" ? (
-            <AgentClassList classes={classes} />
-          ) : (
-            <NodePanel
+          <div className="ge-drawer">
+            <AgentInspector
               node={current}
               readOnly={readOnly}
               weights={current ? weightsOf((current.data as AgentNodeData).params) : undefined}
               sam3Ready={sam3Ready}
               sets={sets}
               onSet={keepSet}
-              colorOf={colorOf}
-              incoming={incoming}
+              colorOf={colorMap}
+              incoming={current ? incomingOf(current.id) : []}
+              loose={Boolean((current?.data as AgentNodeData | undefined)?.loose)}
               onChange={(next) => current && patchParams(current.id, next)}
               onPickWeights={() => current && setPicking(current.id)}
               onRemove={() => current && removeNode(current.id)}
+              pinned={Boolean(current) && current?.id === eyeOn}
+              onPin={() => current && togglePin(current.id)}
             />
-          )}
+            <AgentPreviewPane state={preview} nodes={shown} watch={watch} pinned={Boolean(pinned)} onPin={setEyeOn}
+              colorOf={colorOf} enabled={Boolean(graph?.mine)} />
+            <AgentFound kind={watchKind} trace={watch && trace ? trace[watch] : undefined} classes={classes} colorOf={colorOf} />
+          </div>
         </div>
-      </aside>
+
+        <AgentPalette onPick={(kind) => addNode(kind)} disabled={readOnly} />
+      </div>
 
       {pickedFor && (
         <WeightsPicker
@@ -579,8 +736,7 @@ function Editor() {
           onPick={(w) => {
             setShelf((old) => (old.some((x) => x.id === w.id) ? old : [w, ...old]));
             const p = (pickedFor.data as AgentNodeData).params;
-            // Те же веса — таблицу не трогаем: «Выбрать» на текущей строке
-            // молча сбрасывал переименования и выключенные классы.
+            // Те же веса — таблицу не трогаем: «Выбрать» на текущей строке сбрасывал бы переименования.
             if (p.weights !== w.id)
               patchParams(pickedFor.id, {
                 weights: w.id,
@@ -591,693 +747,9 @@ function Editor() {
           }}
         />
       )}
-    </div>
-  );
-}
-
-function AgentClassList({ classes }: { classes: ReturnType<typeof agentClasses> }) {
-  if (!classes.length) return <p className="ag-muted">Классов нет: выберите веса у «Сети» и включите классы.</p>;
-  return (
-    <div className="ag-cls">
-      {classes.map((c) => (
-        <div key={c.name} className="ag-ac">
-          <i className="ag-dot" style={{ background: c.color }} />
-          <span>{c.name}</span>
-          {c.sources.length > 1 && <b className="ag-merge">×{c.sources.length}</b>}
-          <span className="ag-src">
-            {c.sources.map((s) => (
-              <span key={`${s.node}:${s.index}`}>
-                {s.label}
-              </span>
-            ))}
-          </span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function NodePanel({
-  node,
-  readOnly,
-  weights,
-  sam3Ready,
-  sets,
-  onSet,
-  colorOf,
-  incoming,
-  onChange,
-  onPickWeights,
-  onRemove,
-}: {
-  node: Node | null;
-  readOnly: boolean;
-  weights?: api.Weights;
-  sam3Ready: boolean | null;
-  sets: Map<string, api.ExampleSet>;
-  onSet: (set: api.ExampleSet) => void;
-  colorOf: Map<string, { color: string; sources: unknown[] }>;
-  incoming: string[];
-  onChange: (next: Record<string, unknown>) => void;
-  onPickWeights: () => void;
-  onRemove: () => void;
-}) {
-  if (!node) return <p className="ag-muted">Выберите узел на холсте.</p>;
-  const d = node.data as AgentNodeData;
-  const p = d.params;
-  const model = textModel(p);
-  const missing = d.kind === "text" && model === "sam3" && sam3Ready === false;
-  // Пределы — из той же таблицы, что у сервера. Значение вне их (сохранённое
-  // до пределов) подсвечено: поле держит его, пока человек не исправит.
-  const limit = (key: string): Limit | undefined => LIMITS[d.kind]?.[key];
-  const numInput = (key: string, value: number | undefined, step: number, empty?: boolean) => {
-    const lim = limit(key);
-    const bad = offLimits(lim, p[key]);
-    return (
-      <NumInput
-        id={`ag-${key}`}
-        value={value}
-        min={lim?.lo}
-        max={lim?.hi}
-        step={step}
-        integer={lim?.int}
-        allowEmpty={empty}
-        placeholder={empty ? "—" : undefined}
-        disabled={readOnly}
-        aria-invalid={bad || undefined}
-        title={bad && lim ? `от ${decimal(lim.lo)} до ${decimal(lim.hi)}` : undefined}
-        // Пустое необязательное поле — «без предела», поэтому null, а не умолчание.
-        onValue={(v) => onChange({ [key]: v ?? null })}
-      />
-    );
-  };
-  const field = (key: string, label: string, value: number, step: number) => (
-    <div className="mag-field ag-num">
-      <label htmlFor={`ag-${key}`}>{label}</label>
-      {numInput(key, value, step)}
-    </div>
-  );
-  const optional = (key: string, label: string, value: unknown) => (
-    <div className="mag-field ag-num">
-      <label htmlFor={`ag-${key}`}>{label}</label>
-      {numInput(key, typeof value === "number" ? value : undefined, 1, true)}
-    </div>
-  );
-
-  const passes = (
-    <>
-      {(
-        [
-          ["tiles", "Плитки размером со вход и целый кадр"],
-          ["tta_flip", "TTA: отражение по горизонтали"],
-          ["tta_scales", "TTA: масштабы ×0,8 и ×1,25"],
-        ] as const
-      ).map(([key, label]) => (
-        <label key={key} className="ag-check ag-flag">
-          <input type="checkbox" checked={Boolean(p[key])} disabled={readOnly}
-            onChange={(e) => onChange({ [key]: e.target.checked })} />
-          {label}
-        </label>
-      ))}
-      {Boolean(p.tiles) && (
-        <div className="ag-two">
-          {field("overlap", "Перекрытие плиток", num(p.overlap, 0.2), 0.05)}
-          {field("glue", "Склейка от, IoS", num(p.glue, 0.5), 0.05)}
-        </div>
+      {graphId && (
+        <SixFrames open={six} onClose={() => setSix(false)} graphId={graphId} doc={draft} project={preview.project} colorOf={colorOf} />
       )}
-    </>
-  );
-
-  return (
-    <div className="ag-node">
-      <div className="g-insp-name">{TITLES[d.kind]}</div>
-      {d.kind !== "frame" && d.kind !== "output" && (
-        <div className="mag-field">
-          <label htmlFor="ag-label">Подпись</label>
-          <input id="ag-label" value={String(p.label ?? "")} disabled={readOnly} maxLength={60}
-            onChange={(e) => onChange({ label: e.target.value || undefined })} />
-        </div>
-      )}
-
-      {d.kind === "net" && (
-        <>
-          <div className="ag-weights">
-            {weights ? (
-              <>
-                <b className="mono">{weights.name}</b>
-                <span>
-                  {weights.task} <Sep /> imgsz {weights.imgsz ?? "—"} <Sep />{" "}
-                  {weights.names.length} кл.
-                </span>
-                {weights.run && <span>из обучения «{weights.run.name}»</span>}
-              </>
-            ) : (
-              <span className="ag-warn-text">Веса не выбраны</span>
-            )}
-          </div>
-          {!readOnly && (
-            <button type="button" className="mag-ghost ag-wide" onClick={onPickWeights}>
-              {weights ? "Сменить веса" : "Выбрать веса"}
-            </button>
-          )}
-          {weights && (
-            <NetClasses
-              names={weights.names}
-              rows={rowsOf({ params: p })}
-              readOnly={readOnly}
-              colorOf={colorOf}
-              onRows={(rows) => onChange({ classes: rows })}
-            />
-          )}
-          {/* IoU здесь нет: у yolo26 NMS нет вовсе, у yolo11 и v8 он встроен
-              с мягким 0,7. Гасить дубли — узлом «NMS», его видно на холсте. */}
-          <div className="ag-two">
-            {field("conf", "Уверенность от", num(p.conf, 0.25), 0.05)}
-            {field("imgsz", "Размер входа", num(p.imgsz, weights?.imgsz ?? 640), 32)}
-          </div>
-          {passes}
-        </>
-      )}
-
-      {d.kind === "text" && (
-        <>
-          <div className="mag-field">
-            <label>Модель</label>
-            <div className="ag-seg" role="group" aria-label="Модель">
-              {TEXT_MODELS.map((m) => (
-                <button key={m} type="button" aria-pressed={model === m} disabled={readOnly}
-                  onClick={() => onChange(switchTextModel(p, m))}>
-                  {m === "sam3" ? "SAM 3" : m}
-                </button>
-              ))}
-            </div>
-            <div className="ag-seg-cap"><span>YOLOE-26</span></div>
-          </div>
-          <div className={`ag-weights${missing ? " ag-miss" : ""}`}>
-            {model !== "sam3" ? (
-              <>
-                <b className="mono">yoloe-26{model}-seg.pt</b>
-                <span>{YOLOE_MB[model]} МБ <Sep /> в образе <Sep /> только рамки</span>
-              </>
-            ) : missing ? (
-              <>
-                <b>Нет весов SAM 3 на сервере</b>
-                <span>Нужен файл _autolabel/sam3/sam3.pt — без него версию не сохранить.</span>
-              </>
-            ) : (
-              <>
-                <b className="mono">sam3.pt</b>
-                <span>3,45 ГБ <Sep /> на сервере <Sep /> рамка и контур</span>
-              </>
-            )}
-          </div>
-          <PromptTable
-            rows={promptsOf({ params: p })}
-            readOnly={readOnly}
-            colorOf={colorOf}
-            nodeConf={num(p.conf, textConfDefault(model))}
-            model={model}
-            sets={sets}
-            onSet={onSet}
-            onRows={(rows) => onChange({ prompts: rows })}
-          />
-          {model === "sam3" ? (
-            <>
-              <div className="ag-two">
-                {field("conf", "Порог узла", num(p.conf, textConfDefault(model)), 0.05)}
-              </div>
-              <div className="ag-cap">Контур</div>
-              <div className="ag-two">
-                {field("polygon_points", "Точек до", num(p.polygon_points, SAM_DEFAULTS.polygon_points), 8)}
-                {field("min_area", "Кусок от, px²", num(p.min_area, SAM_DEFAULTS.min_area), 16)}
-              </div>
-              <label className="ag-check ag-flag">
-                <input type="checkbox" checked={p.fill_holes !== false} disabled={readOnly}
-                  onChange={(e) => onChange({ fill_holes: e.target.checked })} />
-                Заливать дыры
-              </label>
-            </>
-          ) : (
-            <>
-              <div className="ag-two">
-                {field("conf", "Порог узла", num(p.conf, textConfDefault(model)), 0.05)}
-                {field("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
-              </div>
-              {passes}
-            </>
-          )}
-        </>
-      )}
-
-      {d.kind === "merge" && field("inputs", "Входов", mergeInputs(p), 1)}
-
-      {d.kind === "nms" && (
-        <>
-          {field("iou", "IoU от", num(p.iou, 0.6), 0.05)}
-          <label className="ag-check ag-flag">
-            <input type="checkbox" checked={Boolean(p.agnostic)} disabled={readOnly}
-              onChange={(e) => onChange({ agnostic: e.target.checked })} />
-            Между классами
-          </label>
-        </>
-      )}
-
-      {d.kind === "filter" && (
-        <>
-          <FilterClasses
-            names={incoming}
-            rows={(p.classes as FilterRow[] | undefined) ?? []}
-            readOnly={readOnly}
-            colorOf={colorOf}
-            onRows={(rows) => onChange({ classes: rows })}
-          />
-          <div className="ag-two">
-            {optional("min_side", "Сторона от, px", p.min_side)}
-            {optional("max_side", "Сторона до, px", p.max_side)}
-          </div>
-        </>
-      )}
-
-      {d.kind === "sam" && (
-        <>
-          <div className="mag-field">
-            <label htmlFor="ag-model">Модель</label>
-            <select id="ag-model" value={String(p.model ?? SAM_DEFAULTS.model)} disabled={readOnly}
-              onChange={(e) => onChange({ model: e.target.value })}>
-              {SAM_MODELS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-            </select>
-          </div>
-          <div className="mag-field">
-            <label htmlFor="ag-detail">Детализация</label>
-            <select id="ag-detail" value={String(p.detail ?? SAM_DEFAULTS.detail)} disabled={readOnly}
-              onChange={(e) => onChange({ detail: e.target.value })}>
-              <option value="auto">Как решит модель</option>
-              <option value="object">Объект целиком</option>
-              <option value="part">Часть</option>
-              <option value="subpart">Подчасть</option>
-            </select>
-          </div>
-          <div className="ag-two">
-            {field("score_min", "Порог маски", num(p.score_min, SAM_DEFAULTS.score_min), 0.05)}
-            {field("min_area", "Кусок от, px²", num(p.min_area, SAM_DEFAULTS.min_area), 16)}
-          </div>
-          <div className="ag-two">
-            {field("polygon_points", "Точек до", num(p.polygon_points, SAM_DEFAULTS.polygon_points), 8)}
-            <label className="ag-check">
-              <input type="checkbox" checked={p.fill_holes !== false} disabled={readOnly}
-                onChange={(e) => onChange({ fill_holes: e.target.checked })} />
-              Заливать дыры
-            </label>
-          </div>
-        </>
-      )}
-
-      {(d.kind === "frame" || d.kind === "output") && <p className="ag-muted">Параметров нет.</p>}
-
-      {!readOnly && d.kind !== "frame" && d.kind !== "output" && (
-        <button type="button" className="mag-ghost mag-danger ag-wide" onClick={onRemove}>
-          Удалить узел
-        </button>
-      )}
-    </div>
-  );
-}
-
-/** Таблица «Сети по тексту»: строка — слово или набор образцов → класс
- *  агента, у каждой свой порог (пусто — порог узла). Строки заводит человек,
- *  поэтому здесь есть «Добавить» и крестик, которых нет у классов сети. Слово
- *  по-русски не запрещено — модель его примет, только найдёт хуже или не то. */
-function PromptTable({
-  rows,
-  readOnly,
-  colorOf,
-  nodeConf,
-  model,
-  sets,
-  onSet,
-  onRows,
-}: {
-  rows: PromptRow[];
-  readOnly: boolean;
-  colorOf: Map<string, { color: string; sources: unknown[] }>;
-  nodeConf: number;
-  model: TextModel;
-  sets: Map<string, api.ExampleSet>;
-  onSet: (set: api.ExampleSet) => void;
-  onRows: (rows: PromptRow[]) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "on" | "off">("all");
-  const [prompt, setPrompt] = useState("");
-  const [agent, setAgent] = useState("");
-  // Раскрытые полосы образцов — по id набора, а не по номеру строки: номер
-  // съезжал при удалении строки выше, и раскрытой оказывалась соседняя.
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  const [dialog, setDialog] = useState(false);
-  const set = (i: number, patch: Partial<PromptRow>) => onRows(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
-  const q = query.trim().toLowerCase();
-  const label = (r: PromptRow) => (isExamples(r) ? sets.get(r.set ?? "")?.class_name ?? "образцы" : r.prompt ?? "");
-  const visible = rows
-    .map((r, i) => ({ ...r, i }))
-    .filter((r) => filter === "all" || (filter === "on" ? r.on : !r.on))
-    .filter((r) => !q || `${label(r)} ${r.agent}`.toLowerCase().includes(q));
-  const add = () => {
-    const clean = prompt.trim();
-    if (!clean) return;
-    onRows([...rows, { kind: "text", prompt: clean, agent: agent.trim() || clean, on: true }]);
-    setPrompt("");
-    setAgent("");
-  };
-  const toggle = (id: string) =>
-    setOpen((old) => {
-      const next = new Set(old);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-
-  return (
-    <div className="ag-cls">
-      <div className="ag-cls-h">
-        <div className="ag-cls-title">
-          <b>Строки</b>
-          <span className="mono">
-            {rows.length} <Sep /> в агент {rows.filter((r) => r.on).length}
-          </span>
-        </div>
-        <input className="ag-search" placeholder="Поиск по слову, образцам и классу" value={query}
-          onChange={(e) => setQuery(e.target.value)} />
-        <div className="ag-pills">
-          {(
-            [
-              ["all", "Все"],
-              ["on", "Включены"],
-              ["off", "Выключены"],
-            ] as const
-          ).map(([v, l]) => (
-            <button key={v} type="button" aria-pressed={filter === v} onClick={() => setFilter(v)}>
-              {l}
-            </button>
-          ))}
-          <span className="ag-grow" />
-          {!readOnly && (
-            <>
-              <button type="button" title="Включить все" onClick={() => onRows(rows.map((r) => ({ ...r, on: true })))}>
-                + все
-              </button>
-              <button type="button" title="Выключить все" onClick={() => onRows(rows.map((r) => ({ ...r, on: false })))}>
-                − все
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-      <div className="ag-pr ag-cr-head">
-        <span />
-        <span />
-        <span>слово / образцы</span>
-        <span>класс агента</span>
-        <span className="ag-pr-thr-h">порог</span>
-        <span />
-      </div>
-      <div className="ag-cls-body ag-pr-body">
-        {rows.length === 0 && <p className="ag-muted">Строк нет — добавьте слово или образцы ниже.</p>}
-        {rows.length > 0 && visible.length === 0 && <p className="ag-muted">Ничего не найдено.</p>}
-        {visible.map((r) => {
-          const c = r.on ? colorOf.get(r.agent.trim()) : undefined;
-          const ex = isExamples(r);
-          const exSet = ex ? sets.get(r.set ?? "") : undefined;
-          const cyr = !ex && CYRILLIC.test(r.prompt ?? "");
-          return (
-            <div key={r.i} className={`ag-pr${r.on ? "" : " off"}${cyr ? " cyr" : ""}`}>
-              <input
-                type="checkbox"
-                checked={r.on}
-                disabled={readOnly}
-                aria-label={label(r) || "строка"}
-                onChange={(e) => set(r.i, { on: e.target.checked })}
-              />
-              <span className={`ag-kind${ex ? " ex" : ""}`} title={ex ? "образцы" : "слово"}>{ex ? "обр" : "сл"}</span>
-              {ex ? (
-                <button type="button" className="ag-src-btn" aria-expanded={open.has(r.set ?? "")} onClick={() => toggle(r.set ?? "")}>
-                  <b>{exSet?.class_name ?? "набор"} {open.has(r.set ?? "") ? "▾" : "▸"}</b>
-                  <span className="mono">{exSet ? <>{exSet.items.length} обр. <Sep /> {exSet.project}</> : "загружаю…"}</span>
-                </button>
-              ) : (
-                <input
-                  className="ag-pr-in mono"
-                  value={r.prompt ?? ""}
-                  disabled={readOnly}
-                  aria-label="Слово"
-                  onChange={(e) => set(r.i, { prompt: e.target.value })}
-                />
-              )}
-              <span className="ag-an">
-                <i className="ag-dot" style={{ background: c?.color ?? "var(--hair)" }} />
-                <input
-                  value={r.agent}
-                  disabled={readOnly}
-                  aria-label={`Класс агента для ${label(r)}`}
-                  title={r.agent}
-                  onChange={(e) => set(r.i, { agent: e.target.value })}
-                  onBlur={(e) => !e.target.value.trim() && set(r.i, { agent: label(r) })}
-                />
-                {c && c.sources.length > 1 && (
-                  <b className="ag-merge" title="В этот класс агента сходятся несколько строк">
-                    ×{c.sources.length}
-                  </b>
-                )}
-              </span>
-              <NumInput
-                className="ag-pr-thr mono"
-                min={0}
-                max={1}
-                step={0.05}
-                allowEmpty
-                disabled={readOnly}
-                placeholder={String(nodeConf).replace(".", ",")}
-                value={typeof r.conf === "number" ? r.conf : undefined}
-                aria-label="Порог строки"
-                aria-invalid={offLimits({ lo: 0, hi: 1 }, r.conf) || undefined}
-                onValue={(v) => set(r.i, { conf: v ?? null })}
-              />
-              {!readOnly ? (
-                <button type="button" className="ag-x" aria-label={`Удалить строку ${label(r)}`}
-                  onClick={() => onRows(rows.filter((_, k) => k !== r.i))}>
-                  ×
-                </button>
-              ) : <span />}
-              {cyr && <span className="ag-pr-warn">Слово по-русски — модель понимает английский</span>}
-              {ex && open.has(r.set ?? "") && exSet && (
-                <ExampleStrip
-                  set={exSet}
-                  readOnly={readOnly}
-                  onSet={(next) => {
-                    onSet(next);
-                    // Набор неизменяем: правка рождает новый id — раскрытой
-                    // остаётся та же строка.
-                    setOpen((old) => new Set([...old].map((id) => (id === exSet.id ? next.id : id))));
-                    set(r.i, { set: next.id });
-                  }}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {!readOnly && (
-        <>
-          <form className="ag-pr-add" onSubmit={(e) => { e.preventDefault(); add(); }}>
-            <input className="ag-search mono" placeholder="слово" value={prompt}
-              aria-label="Новое слово" onChange={(e) => setPrompt(e.target.value)} />
-            <input className="ag-search" placeholder="класс агента" value={agent} list="ag-agent-classes"
-              aria-label="Класс агента для нового слова" onChange={(e) => setAgent(e.target.value)} />
-            <button type="submit" className="mag-ghost" disabled={!prompt.trim()}>+ Слово</button>
-            <datalist id="ag-agent-classes">
-              {[...colorOf.keys()].map((name) => <option key={name} value={name} />)}
-            </datalist>
-          </form>
-          <div className="ag-pr-ex">
-            <button type="button" className="ag-ex-btn" onClick={() => setDialog(true)}>+ Образцы из разметки</button>
-          </div>
-        </>
-      )}
-      {dialog && (
-        <ExamplesDialog
-          onClose={() => setDialog(false)}
-          onDone={(made, agentName) => {
-            onSet(made);
-            onRows([...rows, withConf({ kind: "examples", set: made.id, agent: agentName, on: true },
-              exampleConfDefault(model))]);
-            setOpen((old) => new Set(old).add(made.id));
-            setDialog(false);
-          }}
-        />
-      )}
-    </div>
-  );
-}
-
-/** Подокно классов сети: номер и имя из весов, класс агента правится в строке.
- *  Классов у сети бывает несколько десятков — поэтому поиск и фильтр, а не
- *  список галочек. */
-function NetClasses({
-  names,
-  rows,
-  readOnly,
-  colorOf,
-  onRows,
-}: {
-  names: string[];
-  rows: NetRow[];
-  readOnly: boolean;
-  colorOf: Map<string, { color: string; sources: unknown[] }>;
-  onRows: (rows: NetRow[]) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<"all" | "on" | "off">("all");
-  const table: NetRow[] = names.map((n, i) => rows[i] ?? { agent: n, on: false });
-  const set = (i: number, patch: Partial<NetRow>) =>
-    onRows(table.map((r, k) => (k === i ? { ...r, ...patch } : r)));
-  const q = query.trim().toLowerCase();
-  const visible = table
-    .map((r, i) => ({ ...r, i, name: names[i] }))
-    .filter((r) => filter === "all" || (filter === "on" ? r.on : !r.on))
-    .filter((r) => !q || `${r.name} ${r.agent}`.toLowerCase().includes(q));
-
-  return (
-    <div className="ag-cls ag-net-cls">
-      <div className="ag-cls-h">
-        <div className="ag-cls-title">
-          <b>Классы сети</b>
-          <span className="mono">
-            {names.length} <Sep /> в агент {table.filter((r) => r.on).length}
-          </span>
-        </div>
-        <input className="ag-search" placeholder="Поиск по имени" value={query} onChange={(e) => setQuery(e.target.value)} />
-        <div className="ag-pills">
-          {(
-            [
-              ["all", "Все"],
-              ["on", "Включены"],
-              ["off", "Выключены"],
-            ] as const
-          ).map(([v, l]) => (
-            <button key={v} type="button" aria-pressed={filter === v} onClick={() => setFilter(v)}>
-              {l}
-            </button>
-          ))}
-          <span className="ag-grow" />
-          {!readOnly && (
-            <>
-              <button type="button" title="Включить все" onClick={() => onRows(table.map((r) => ({ ...r, on: true })))}>
-                + все
-              </button>
-              <button type="button" title="Выключить все" onClick={() => onRows(table.map((r) => ({ ...r, on: false })))}>
-                − все
-              </button>
-            </>
-          )}
-        </div>
-      </div>
-      <div className="ag-cr ag-cr-head">
-        <span />
-        <span>№</span>
-        <span>в весах</span>
-        <span>класс агента</span>
-      </div>
-      <div className="ag-cls-body">
-        {visible.length === 0 && <p className="ag-muted">Ничего не найдено.</p>}
-        {visible.map((r) => {
-          const c = r.on ? colorOf.get(r.agent.trim()) : undefined;
-          return (
-            <div key={r.i} className={`ag-cr${r.on ? "" : " off"}`}>
-              <input
-                type="checkbox"
-                checked={r.on}
-                disabled={readOnly}
-                aria-label={r.name}
-                onChange={(e) => set(r.i, { on: e.target.checked })}
-              />
-              <span className="mono ag-id">{r.i}</span>
-              <span className="mono ag-wn" title={r.name}>
-                {r.name}
-              </span>
-              <span className="ag-an">
-                <i className="ag-dot" style={{ background: c?.color ?? "var(--hair)" }} />
-                <input
-                  value={r.agent}
-                  disabled={readOnly}
-                  aria-label={`Класс агента для ${r.name}`}
-                  onChange={(e) => set(r.i, { agent: e.target.value })}
-                  onBlur={(e) => !e.target.value.trim() && set(r.i, { agent: r.name })}
-                />
-                {c && c.sources.length > 1 && (
-                  <b className="ag-merge" title="В этот класс агента сходятся несколько классов сетей">
-                    ×{c.sources.length}
-                  </b>
-                )}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/** Таблица «Фильтра»: классы, что приходят на вход, с галочкой и порогом.
- *  Строки держатся за имя класса агента. Класса нет в сохранённой таблице —
- *  он пропускается с порогом 0: так же считает и сервер. */
-function FilterClasses({
-  names,
-  rows,
-  readOnly,
-  colorOf,
-  onRows,
-}: {
-  names: string[];
-  rows: FilterRow[];
-  readOnly: boolean;
-  colorOf: Map<string, { color: string }>;
-  onRows: (rows: FilterRow[]) => void;
-}) {
-  const byName = new Map(rows.map((r) => [r.cls, r]));
-  const table = names.map((cls) => byName.get(cls) ?? { cls, on: true, conf: 0 });
-  // Строки классов, которых выше больше нет, не выбрасываем: вернётся класс —
-  // вернётся и его правило.
-  const set = (cls: string, patch: Partial<FilterRow>) =>
-    onRows([...rows.filter((r) => !names.includes(r.cls)), ...table.map((r) => (r.cls === cls ? { ...r, ...patch } : r))]);
-
-  return (
-    <div className="ag-cls ag-flt">
-      <div className="ag-cls-h">
-        <div className="ag-cls-title">
-          <b>Классы на входе</b>
-          <span className="mono">{names.length}</span>
-        </div>
-      </div>
-      <div className="ag-cr ag-cr-head">
-        <span />
-        <span>класс агента</span>
-        <span>уверенность от</span>
-      </div>
-      <div className="ag-cls-body">
-        {names.length === 0 && <p className="ag-muted">Выше нет сетей с классами.</p>}
-        {table.map((r) => (
-          <div key={r.cls} className={`ag-cr${r.on ? "" : " off"}`}>
-            <input type="checkbox" checked={r.on} disabled={readOnly} aria-label={r.cls}
-              onChange={(e) => set(r.cls, { on: e.target.checked })} />
-            <span className="ag-an">
-              <i className="ag-dot" style={{ background: colorOf.get(r.cls)?.color ?? "var(--hair)" }} />
-              <span className="ag-wn" title={r.cls}>{r.cls}</span>
-            </span>
-            <NumInput className="ag-conf mono" min={0} max={1} step={0.05} value={r.conf}
-              disabled={readOnly || !r.on} aria-label={`Порог для ${r.cls}`}
-              aria-invalid={offLimits({ lo: 0, hi: 1 }, r.conf) || undefined}
-              onValue={(v) => set(r.cls, { conf: v ?? 0 })} />
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -1289,3 +761,4 @@ export default function AgentEditor() {
     </ReactFlowProvider>
   );
 }
+

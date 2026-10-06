@@ -129,24 +129,34 @@ def _answer(db, warm, row):
             if got is None or got.owner_id != row.user_id:
                 raise agent_graph.AgentGraphError(f"{agent_graph.title(node)}: весов нет на полке.")
             weights[node["id"]] = got
-    image = db.get(Image, row.image_id)
     sam3 = [n for n in doc["nodes"] if n["type"] == "text"
             and agent_graph.text_model(n.get("params")) == "sam3"]
     warm.ensure_device(db, VRAM_MB + sum(agent_graph.text_vram_mb(n) for n in sam3))
     started = time.monotonic()
     models = warm.models(doc, weights, sets)
-    predict, segment = agent_runner.frame_fns(
-        os.path.join(config.DATA_DIR, image.file_path), image.file_name, models, weights, warm.device)
+
+    def trace_of(image):
+        predict, segment = agent_runner.frame_fns(
+            os.path.join(config.DATA_DIR, image.file_path), image.file_name, models, weights, warm.device)
+        trace = {}
+        agent_graph.run(doc, predict, order, segment, trace)
+        return trace
+
+    out = {"device": "cpu" if warm.device == "cpu" else "cuda", "note": warm.note}
+    batch = doc.get("batch")
+    if batch:
+        # Несколько кадров разом: модели те же, отдаём только «Выход» каждого.
+        exit_id = next(n["id"] for n in doc["nodes"] if n["type"] == "output")
+        frames = []
+        for image_id in batch:
+            image = db.get(Image, agent_runner._uuid(image_id))
+            if image is not None:
+                frames.append({"id": str(image.id), "out": trace_of(image)[exit_id]["out"]})
+        return {**out, "frames": frames, "ms": round((time.monotonic() - started) * 1000)}
     # Вход и выход каждого узла целиком — обнаружений десятки, а смена
     # выбранного узла в редакторе тогда ничего не пересчитывает.
-    trace = {}
-    agent_graph.run(doc, predict, order, segment, trace)
-    return {
-        "nodes": trace,
-        "device": "cpu" if warm.device == "cpu" else "cuda",
-        "note": warm.note,
-        "ms": round((time.monotonic() - started) * 1000),
-    }
+    trace = trace_of(db.get(Image, row.image_id))
+    return {**out, "nodes": trace, "ms": round((time.monotonic() - started) * 1000)}
 
 
 def _trim(warm):

@@ -21,7 +21,7 @@ from common import selection as sel_lib
 from common.auth import current_user, has_role, may_manage, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
-    GRAPH_KINDS, AgentExamples, AgentWeights, AugGraph, AugGraphUse, AugGraphVersion,
+    GRAPH_KINDS, AgentExamples, AgentRun, AgentWeights, AugGraph, AugGraphUse, AugGraphVersion,
     DataprepJob, Project, ProjectAugGraph, TrainRun, TrainSet, TrainSetFeed, User,
     utcnow,
 )
@@ -151,7 +151,20 @@ def _graph_view(db, graph, head=None):
         "stats": head.stats if head else None,
         "ports": head.port_names if head else {"in": [], "out": []},
         "used_by_sets": int(used_by),
+        **(_agent_use(db, graph) if graph.kind == "agent" else {}),
     }
+
+
+def _agent_use(db, graph):
+    """Запуски агента в тасках всех проектов: сколько, сколько рамок, когда последний."""
+    rows = db.execute(
+        select(AgentRun.created_at, AgentRun.stats, AgentRun.params)
+        .where(AgentRun.graph_id == graph.id)
+    ).all()
+    # Разведка рамок не ставит — её находки в счёт не идут.
+    boxes = sum(int((st or {}).get("boxes") or 0) for _, st, pr in rows if (pr or {}).get("mode") != "scout")
+    last = max((at for at, _, _ in rows), default=None)
+    return {"runs": len(rows), "boxes": boxes, "last_run_at": last.isoformat() if last else None}
 
 
 @bp.get("/api/aug/graphs")

@@ -63,6 +63,10 @@ export interface GraphSummary {
   stats: GraphStats | null;
   ports: { in: string[]; out: string[] };
   used_by_sets: number;
+  /** Только у агентов: запуски в тасках, поставленные рамки, последний запуск. */
+  runs?: number;
+  boxes?: number;
+  last_run_at?: string | null;
 }
 
 export interface GraphDetail extends GraphSummary {

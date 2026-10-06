@@ -1,140 +1,71 @@
-// Карточки узлов агента на холсте. Вид — тот же, что у графа аугментаций
-// (.g-node из graph.css): это один редактор с другим набором узлов.
+// Карточки узлов агента на холсте — тот же вид, что у графа аугментаций (ge-node):
+// род с иконкой и глазом, имя, строка параметров. Провода — общие (aug/GraphNodes).
 
 import { Handle, Position, type NodeProps } from "@xyflow/react";
-import type { ReactNode } from "react";
-import { TITLES, mergeInputs, nodeTitle } from "./agentDoc";
+import type { CSSProperties } from "react";
+import { Icon, cx } from "../../ui";
+import { mergeInputs, nodeTitle } from "./agentDoc";
+import { iconOf, roleOf, toneOf, type AgentKind } from "./look";
 
 export interface AgentNodeData extends Record<string, unknown> {
-  kind: "frame" | "net" | "text" | "merge" | "nms" | "filter" | "sam" | "output";
+  kind: AgentKind;
   params: Record<string, unknown>;
-  /** Подпись сети: имя весов и паспорт. Считает редактор — у него полка. */
+  /** Имя весов у «Сети» без подписи — считает редактор, у него полка. */
   caption?: string;
+  /** Строка под именем. */
   why?: string;
-  /** Сколько классов сети включено в агента. */
+  /** Сколько классов сети или строк текста включено. */
   badge?: string;
-  /** Узел в таком виде версию не сохранит: нет весов, промтов или SAM 3. */
+  /** Узел в таком виде версию не сохранит: нет весов, строк или SAM 3. */
   bad?: boolean;
-  /** Классы агента, что приходят к «Фильтру»: правила для прочих не в счёт. */
-  incoming?: string[];
+  /** Ни одного провода. */
+  loose?: boolean;
+  /** Закреплён в превью глазом. */
+  eye?: boolean;
+  onEye?: (id: string) => void;
 }
 
-function Card({
-  data,
-  klass,
-  title,
-  ins,
-  outs,
-  children,
-}: {
-  data: AgentNodeData;
-  klass: string;
-  /** Своё имя карточки; без него — имя узла с подписью. */
-  title?: string;
-  ins: string[];
-  outs: string[];
-  children?: ReactNode;
-}) {
+/** Имя узла, как на карточке и в превью. */
+export function agentTitle(d: AgentNodeData): string {
+  if (d.kind === "net" && !d.params.label) return d.caption ? `Сеть — ${d.caption}` : "Сеть";
+  return nodeTitle(d.kind, d.params);
+}
+
+/** Входные гнёзда — как agent_graph.ports. */
+const insOf = (d: AgentNodeData) =>
+  d.kind === "frame" ? [] : d.kind === "merge" ? Array.from({ length: mergeInputs(d.params) }, (_, i) => `i${i}`) : ["in"];
+
+function AgentCard({ id, data, selected }: NodeProps) {
+  const d = data as AgentNodeData;
+  const ins = insOf(d);
+  const outs = d.kind === "output" ? [] : ["out"];
   const at = (i: number, n: number) => `${((i + 1) / (n + 1)) * 100}%`;
   return (
-    <div className={`g-node ${klass}`}>
+    <div className={cx("ge-node", selected && "sel", d.loose && "loose", d.bad && "bad")}
+      style={{ "--gc": toneOf(d.kind) } as CSSProperties}>
       {ins.map((name, i) => (
-        <Handle key={name} id={name} type="target" position={Position.Left} style={{ top: at(i, ins.length) }} />
+        <Handle key={`in-${name}`} id={name} type="target" position={Position.Left} style={{ top: at(i, ins.length) }} />
       ))}
       {outs.map((name, i) => (
-        <Handle key={name} id={name} type="source" position={Position.Right} style={{ top: at(i, outs.length) }} />
+        <Handle key={`out-${name}`} id={name} type="source" position={Position.Right} style={{ top: at(i, outs.length) }} />
       ))}
-      <div className="g-node-title">{title ?? nodeTitle(data.kind, data.params)}</div>
-      {data.why && <div className="g-node-why">{data.why}</div>}
-      {data.badge && <div className="g-node-mult">{data.badge}</div>}
-      {children}
+      <span className="ge-node-k">
+        <Icon name={iconOf(d.kind)} size={13} />
+        <span>{roleOf(d.kind)}</span>
+        {d.badge && <span className="ae-badge">{d.badge}</span>}
+        <button type="button" className={cx("ge-eye nodrag", d.eye && "on")} title={d.eye ? "Открепить превью" : "Закрепить в превью"}
+          aria-label={d.eye ? "Открепить превью" : "Закрепить в превью"} aria-pressed={Boolean(d.eye)}
+          onClick={(e) => { e.stopPropagation(); d.onEye?.(id); }}>
+          <Icon name="eye" size={13} />
+        </button>
+      </span>
+      <b className="ge-node-t">{agentTitle(d)}</b>
+      {d.why && <small className="ge-node-p">{d.why}</small>}
     </div>
   );
 }
 
-export { TITLES, mergeInputs };
-
-const side = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? String(v) : null);
-
-function FilterNode({ data }: NodeProps) {
-  const d = data as AgentNodeData;
-  // Правило класса, которого на входе нет, ничего не режет — и в счёт не идёт.
-  const rules = ((d.params.classes as { cls: string; on: boolean; conf: number }[] | undefined) ?? []).filter(
-    (r) => (d.incoming ?? []).includes(r.cls) && (!r.on || r.conf > 0)
-  ).length;
-  const lo = side(d.params.min_side);
-  const hi = side(d.params.max_side);
-  const size = lo || hi ? `сторона ${lo ?? "0"}–${hi ?? "∞"} px` : null;
-  const why = [rules ? `правил ${rules}` : null, size].filter(Boolean).join(", ") || "пропускает всё";
-  return <Card data={{ ...d, why }} klass="k-light" ins={["in"]} outs={["out"]} />;
-}
-
-const decimal = (v: unknown, d: number) =>
-  String(typeof v === "number" && Number.isFinite(v) ? v : d).replace(".", ",");
-
-function NmsNode({ data }: NodeProps) {
-  const d = data as AgentNodeData;
-  const why = `IoU ${decimal(d.params.iou, 0.6)}, ${d.params.agnostic ? "между классами" : "внутри класса"}`;
-  return <Card data={{ ...d, why }} klass="k-light" ins={["in"]} outs={["out"]} />;
-}
-
-function SamNode({ data }: NodeProps) {
-  const d = data as AgentNodeData;
-  const model = String(d.params.model ?? "sam2.1_hiera_small").replace("sam2.1_hiera_", "").replace("_plus", "+");
-  return (
-    <Card data={{ ...d, why: `SAM2.1 ${model} → полигон` }} klass="k-geometry" ins={["in"]} outs={["out"]} />
-  );
-}
-
-function FrameNode({ data }: NodeProps) {
-  const d = data as AgentNodeData;
-  return <Card data={{ ...d, why: "кадр таски" }} klass="k-source" title="Кадр" ins={[]} outs={["out"]} />;
-}
-
-function NetNode({ data }: NodeProps) {
-  const d = data as AgentNodeData;
-  return (
-    <Card
-      data={d}
-      klass={`k-flow${d.params.weights ? "" : " bad"}`}
-      title={d.params.label ? undefined : d.caption ? `Сеть — ${d.caption}` : "Сеть — выберите веса"}
-      ins={["in"]}
-      outs={["out"]}
-    />
-  );
-}
-
-// Подпись и значок считает редактор — ему известно, лежат ли веса SAM 3.
-function TextNode({ data }: NodeProps) {
-  const d = data as AgentNodeData;
-  return <Card data={d} klass={`k-block${d.bad ? " bad" : ""}`} ins={["in"]} outs={["out"]} />;
-}
-
-function MergeNode({ data }: NodeProps) {
-  const d = data as AgentNodeData;
-  const n = mergeInputs(d.params);
-  return (
-    <Card
-      data={{ ...d, why: `${n} ${n < 5 ? "входа" : "входов"}` }}
-      klass="k-noise"
-      ins={Array.from({ length: n }, (_, i) => `i${i}`)}
-      outs={["out"]}
-    />
-  );
-}
-
-function OutputNode({ data }: NodeProps) {
-  const d = data as AgentNodeData;
-  return <Card data={{ ...d, why: "в разметку" }} klass="k-output" title="Выход" ins={["in"]} outs={[]} />;
-}
-
 export const agentNodeTypes = {
-  frame: FrameNode,
-  net: NetNode,
-  text: TextNode,
-  merge: MergeNode,
-  nms: NmsNode,
-  filter: FilterNode,
-  sam: SamNode,
-  output: OutputNode,
+  frame: AgentCard, net: AgentCard, text: AgentCard, merge: AgentCard,
+  nms: AgentCard, filter: AgentCard, sam: AgentCard, output: AgentCard,
 };

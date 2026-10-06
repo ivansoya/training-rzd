@@ -1,27 +1,34 @@
-// Мои агенты разметки. Как и графы, живут вне проектов: агент принадлежит
-// человеку и переносится из проекта в проект вместе со своими весами.
+// «Мои агенты». Как и графы, живут вне проектов: агент принадлежит человеку и переносится
+// из проекта в проект вместе со своими весами. Запускают его в таске — версией.
 
-import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useCallback, useEffect, useMemo, useState, type SyntheticEvent } from "react";
+import { useNavigate } from "react-router-dom";
 import * as aug from "../../api/aug";
-import Banner from "../Banner";
-import { count } from "../ru";
+import { Button, Card, Empty, Input, MenuItem, Notice, PageHeader, Popover, Seg, Table } from "../../ui";
+import { ago, count, ru } from "../ru";
+import { useConfirm } from "../mag/tasks/Confirm";
+import { PALETTE } from "./agentDoc";
+import { freeName } from "./look";
+
+const CHIPS = 4;
+const when = (iso: string) =>
+  new Date(iso).toLocaleDateString("ru-RU", { day: "numeric", month: "short", year: "numeric" }).replace(".", "");
+type Stats = { classes?: string[]; nets?: number; nodes?: number } | null;
 
 export default function AgentList() {
+  // null — список ещё не пришёл: «Агентов пока нет» не мигает тому, у кого их десяток.
   const [agents, setAgents] = useState<aug.GraphSummary[] | null>(null);
+  const [archived, setArchived] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [making, setMaking] = useState(false);
-  // Архив — отдельным списком, как у графов: оттуда агента возвращают.
-  const [archived, setArchived] = useState(false);
-  // Карточка, на которой спрашиваем «В архив?». Сразу по щелчку агент
-  // пропадал из списка, а вернуть его было неоткуда.
-  const [asking, setAsking] = useState<string | null>(null);
-  const [working, setWorking] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [confirm, confirmNode] = useConfirm();
   const navigate = useNavigate();
 
   const refresh = useCallback(async () => {
     try {
       setAgents((await aug.listGraphs("agent", archived)).graphs);
+      setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -29,20 +36,18 @@ export default function AgentList() {
 
   useEffect(() => {
     setAgents(null);
-    setAsking(null);
-    refresh();
+    void refresh();
   }, [refresh]);
 
-  // Имя не спрашиваем — как у графов: правится в шапке редактора.
+  /** Завести агента и сразу открыть: имя правится в шапке редактора. */
   const create = async () => {
     if (making) return;
     setMaking(true);
+    setError(null);
     try {
-      // Имя держат только живые агенты: из архива смотрим на них же.
-      const taken = new Set((await aug.listGraphs("agent")).graphs.map((g) => g.name));
-      let name = "Новый агент";
-      for (let n = 2; taken.has(name); n++) name = `Новый агент ${n}`;
-      const got = await aug.createGraph(name, undefined, "agent");
+      // Имя держат только живые агенты — и из архива смотрим на них же.
+      const taken = (await aug.listGraphs("agent")).graphs.map((g) => g.name);
+      const got = await aug.createGraph(freeName(taken), undefined, "agent");
       navigate(`/agents/${got.id}`);
     } catch (e) {
       setError((e as Error).message);
@@ -50,111 +55,126 @@ export default function AgentList() {
     }
   };
 
-  /** Удалить агента из архива. С рамками в проектах сервер откажет и скажет почему. */
+  /** С рамками в проектах сервер откажет и скажет почему. */
   const remove = async (g: aug.GraphSummary) => {
-    if (!window.confirm(`Удалить агента «${g.name}» со всеми версиями?`)) return;
-    setWorking(g.id);
-    setError(null);
+    const ok = await confirm({
+      title: `Удалить агента «${g.name}»?`, danger: true, icon: "trash", ok: "Удалить",
+      desc: g.runs ? "Он уже ставил рамки в тасках — сервер может не дать удалить. Тогда уберите его в архив." : "Со всеми версиями. Вернуть не получится.",
+    });
+    if (!ok) return;
     try {
       await aug.deleteGraph(g.id);
       setAgents((old) => (old ?? []).filter((x) => x.id !== g.id));
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setWorking(null);
     }
   };
 
+  /** Архивного агента не предлагают в окне запуска; рамки, что он поставил, остаются. */
   const shelve = async (g: aug.GraphSummary, away: boolean) => {
-    setWorking(g.id);
-    setError(null);
+    if (away) {
+      const ok = await confirm({
+        title: `Убрать агента «${g.name}» в архив?`, icon: "archive", ok: "В архив",
+        desc: "Его перестанут предлагать при запуске в тасках. Поставленные рамки останутся как были.",
+      });
+      if (!ok) return;
+    }
     try {
       await aug.patchGraph(g.id, { archived: away });
-      setAsking(null);
       setAgents((old) => (old ?? []).filter((x) => x.id !== g.id));
     } catch (e) {
       setError((e as Error).message);
-    } finally {
-      setWorking(null);
     }
   };
 
+  const all = agents ?? [];
+  const shown = useMemo(() => {
+    const needle = q.trim().toLowerCase();
+    if (!needle) return all;
+    return all.filter((g) => `${g.name} ${((g.stats as Stats)?.classes ?? []).join(" ")}`.toLowerCase().includes(needle));
+  }, [all, q]);
+  const used = all.filter((g) => (g.runs ?? 0) > 0).length;
+  const desc = agents === null ? "Загружаю…"
+    : [count(all.length, "агент", "агента", "агентов"), used ? `${used} уже размечали` : ""].filter(Boolean).join(" · ");
+  const stop = (e: SyntheticEvent) => e.stopPropagation();
+
   return (
-    <div className="mag-content">
-      <div className="mag-pass-strip">
-        <div className="mag-pass-id">
-          <h1 className="mag-h1">{archived ? "Мои агенты — архив" : "Мои агенты"}</h1>
-        </div>
-        <button className="mag-ghost mag-ghost-inline" type="button" aria-pressed={archived}
-          onClick={() => setArchived((v) => !v)}>
-          {archived ? "← Мои агенты" : "Архив"}
-        </button>
-        {!archived && (
-          <button className="mag-btn mag-pass-export" type="button" disabled={making} onClick={create}>
-            Новый агент
-          </button>
-        )}
-      </div>
+    <div className="page">
+      <PageHeader title="Мои агенты" desc={desc} actions={<>
+        <Seg<"live" | "arch"> label="Какие агенты" value={archived ? "arch" : "live"} onChange={(v) => setArchived(v === "arch")}
+          options={[{ value: "live", label: "Действующие" }, { value: "arch", label: "Архив", icon: "archive" }]} />
+        {all.length > 0 && <Input icon="search" className="gl-q" placeholder="Найти агента или класс" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Найти агента" />}
+        {!archived && <Button variant="primary" icon="plus" disabled={making} onClick={create}>Новый агент</Button>}
+      </>} />
+      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
 
-      {error && <Banner className="mag-error" onClose={() => setError(null)}>{error}</Banner>}
+      {agents !== null && all.length === 0 && (archived ? <Empty icon="archive" title="В архиве пусто" /> : (
+        <div className="gl-empty">
+          <b>Агентов пока нет</b>
+          <p>Агент разметки — схема «кадр → сети → обработка рамок → выход»: сеть на своих весах или по тексту, NMS, фильтр, уточнение SAM.
+            Он живёт в вашей библиотеке и запускается в любой таске, где вы исполнитель или администратор. Веса берутся из обучений или с диска.</p>
+          <Button variant="primary" icon="plus" disabled={making} onClick={create}>Собрать первого агента</Button>
+        </div>
+      ))}
 
-      {agents?.length === 0 && archived ? (
-        <div className="mag-empty-big">
-          <b>В архиве пусто.</b>
-        </div>
-      ) : agents?.length === 0 ? (
-        <div className="mag-empty-big">
-          <b>Агентов пока нет.</b>
-          <p>Кадр, сеть со своими весами и выход. Веса берутся из прогонов
-            обучения проекта — сперва обучите модель во вкладке «Обучение».</p>
-          <button className="mag-btn" type="button" disabled={making} onClick={create}>
-            Собрать первого агента
-          </button>
-        </div>
-      ) : (
-        <div className="g-graphs">
-          {(agents ?? []).map((g) => {
-            const classes = (g.stats as unknown as { classes?: string[] } | null)?.classes ?? [];
-            return (
-              <div key={g.id} className="g-graph-card">
-                <Link to={`/agents/${g.id}`} className="name">{g.name}</Link>
-                {classes.length > 0 && (
-                  <span className="desc">{classes.slice(0, 6).join(", ")}{classes.length > 6 ? ` и ещё ${classes.length - 6}` : ""}</span>
-                )}
-                <span className="foot">
-                  <span>{g.version ? `версия ${g.version}` : "без версии"}</span>
-                  <span>{count(classes.length, "класс", "класса", "классов")}</span>
-                  {archived ? (
-                    <>
-                      <button type="button" className="g-graph-del" disabled={working === g.id} onClick={() => shelve(g, false)}>
-                        Вернуть
-                      </button>
-                      <button type="button" className="g-graph-del" disabled={working === g.id} onClick={() => remove(g)}>
-                        Удалить
-                      </button>
-                    </>
-                  ) : asking === g.id ? (
-                    <>
-                      <span className="ag-warn-text ag-ask">В архив?</span>
-                      <button type="button" className="g-graph-del" disabled={working === g.id} autoFocus
-                        onClick={() => shelve(g, true)}>
-                        Да
-                      </button>
-                      <button type="button" className="g-graph-del" onClick={() => setAsking(null)}>
-                        Нет
-                      </button>
-                    </>
-                  ) : (
-                    <button type="button" className="g-graph-del" onClick={() => setAsking(g.id)}>
-                      В архив
-                    </button>
-                  )}
-                </span>
-              </div>
-            );
-          })}
-        </div>
+      {all.length > 0 && (
+        <Card flush className="gl-card">
+          {shown.length === 0 ? <Empty compact icon="search" title="Под поиск ничего не подошло" /> : (
+            <Table className="gl-tbl">
+              <thead>
+                <tr>
+                  <th>Агент</th><th>Версия</th><th>Классы</th><th className="r">Сетей</th><th className="r">Запусков</th>
+                  <th className="r">Рамок</th><th>Последний запуск</th><th>Создан</th><th />
+                </tr>
+              </thead>
+              <tbody>
+                {shown.map((g) => {
+                  const st = g.stats as Stats;
+                  const classes = st?.classes ?? [];
+                  const open = () => navigate(`/agents/${g.id}`);
+                  return (
+                    <tr key={g.id} className="gl-row" tabIndex={0} aria-label={`Агент ${g.name}`} onClick={open}
+                      onKeyDown={(e) => { if (e.key === "Enter") open(); }}>
+                      <td className="gl-name">
+                        <b>{g.name}</b>
+                        {g.description && <p>{g.description}</p>}
+                      </td>
+                      <td>{g.version ? <span className="ui-mono">v{g.version}</span> : <span className="t-xs t-faint">только черновик</span>}</td>
+                      <td>
+                        {classes.length === 0 ? <span className="t-faint">—</span> : (
+                          <span className="al-cls" title={classes.join(", ")}>
+                            {classes.slice(0, CHIPS).map((c, i) => (
+                              <span key={c} className="al-chip"><i style={{ background: PALETTE[i % PALETTE.length] }} />{c}</span>
+                            ))}
+                            {classes.length > CHIPS && <span className="t-xs t-muted">ещё {classes.length - CHIPS}</span>}
+                          </span>
+                        )}
+                      </td>
+                      <td className="r ui-mono">{st?.nets ?? <span className="t-faint">—</span>}</td>
+                      <td className="r ui-mono">{g.runs ? ru(g.runs) : <span className="t-faint">—</span>}</td>
+                      <td className="r ui-mono">{g.boxes ? ru(g.boxes) : <span className="t-faint">—</span>}</td>
+                      <td className="gl-when">{g.last_run_at ? ago(g.last_run_at) : <span className="t-faint">не запускали</span>}</td>
+                      <td className="gl-when">{when(g.created_at)}</td>
+                      <td className="r gl-act" onClick={stop} onKeyDown={stop}>
+                        <Popover align="end" width={280} trigger={<Button size="sm" variant="ghost" icon="more" aria-label={`Действия с агентом ${g.name}`} />}>
+                          {(close) => (<>
+                            <MenuItem icon="workflow" onSelect={() => { close(); open(); }}>Открыть</MenuItem>
+                            <MenuItem icon="archive" onSelect={() => { close(); void shelve(g, !archived); }}
+                              hint={archived ? "Снова предлагать при запуске" : "Рамки останутся"}>{archived ? "Вернуть из архива" : "В архив…"}</MenuItem>
+                            <MenuItem icon="trash" danger onSelect={() => { close(); void remove(g); }}
+                              hint={g.runs ? "Уже ставил рамки" : "Со всеми версиями"}>Удалить…</MenuItem>
+                          </>)}
+                        </Popover>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </Table>
+          )}
+        </Card>
       )}
+      {confirmNode}
     </div>
   );
 }

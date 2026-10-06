@@ -203,6 +203,19 @@ export const runPreview = (
   signal?: AbortSignal
 ) => post<AgentPreview>("agents/preview", body, signal);
 
+/** «Выход» агента на нескольких случайных кадрах — один прогон моделей на сервере. */
+export interface PreviewFrames {
+  frames: { image: AgentPreview["image"]; human: HumanShape[]; out: PreviewDet[] }[];
+  device: "cuda" | "cpu";
+  note: string | null;
+  ms: number;
+}
+
+export const runPreviewFrames = (
+  body: { graph_id: string; doc: unknown; project: string; count: number },
+  signal?: AbortSignal
+) => post<PreviewFrames>("agents/preview/frames", body, signal);
+
 // --- Наборы образцов «Сети по тексту» (training_svc/examples.py) -----------
 
 export interface ExampleItem {

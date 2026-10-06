@@ -1,136 +1,69 @@
-// Превью агента: один кадр через черновик графа, вход и выход выбранного узла.
+// Превью агента: один кадр через черновик графа — вход и выход каждого узла.
 //
-// Решения владельца (24.09.2026). Считает training-worker на карте с тёплыми
-// моделями (training_svc/agent_preview.py), пересчёт живой — через 300 мс
-// после правки. Кадр не меняется, меняется набор рамок, поэтому шторки нет:
-// выход узла — сплошным в цвет класса агента, отсеянное узлом — серым
-// пунктиром. У «Уточнения SAM» полигон поверх исходной рамки, а там, где SAM
-// не справился, — рамка с пометкой. «Разметка человека» — белым контуром.
-//
-// Сервер отдаёт вход и выход каждого узла за один прогон: смена выбранного
-// узла ничего не пересчитывает. Перемещение карточек по холсту — тоже: в
-// запрос уходит граф без координат.
+// Считает training-worker на карте с тёплыми моделями (training_svc/agent_preview.py),
+// пересчёт живой — через 300 мс после правки. Сервер отдаёт все узлы за один прогон:
+// смена выбранного узла ничего не пересчитывает, а провода берут отсюда число рамок.
+// Перемещение карточек тоже не пересчитывает: координаты в запрос не идут.
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { Node } from "@xyflow/react";
 import * as api from "../../api/agents";
-import type { AgentPreview as Result, PreviewDet } from "../../api/agents";
+import type { AgentPreview as Result } from "../../api/agents";
 import type { GraphDoc } from "../../api/aug";
-import Sep from "../Sep";
-import { nodeTitle, unfinished } from "./agentDoc";
-import type { AgentNodeData } from "./AgentNodes";
+import { Button, Dialog, Icon, Popover, Select, Switch } from "../../ui";
+import { keep, load } from "../aug/NodePreview";
+import { unfinished } from "./agentDoc";
+import AgentFrame from "./AgentFrame";
+import { agentTitle, type AgentNodeData } from "./AgentNodes";
+import { droppedOf } from "./look";
 
 const WAIT_MS = 300;
-const LABEL_PX = 12;
-const MIN_H = 220;
-const DEFAULT_H = 380;
+type Step = "same" | "next" | "prev" | "random";
 
-function load<T>(key: string, fallback: T): T {
-  try {
-    const raw = window.localStorage.getItem(key);
-    return raw === null ? fallback : (JSON.parse(raw) as T);
-  } catch {
-    return fallback;
-  }
-}
-function keep(key: string, value: unknown) {
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    /* не помним — не страшно */
-  }
-}
+export type AgentPreviewState = ReturnType<typeof useAgentPreview>;
 
-const ring = (pts: [number, number][]) => pts.map((p) => p.join(",")).join(" ");
-const pct = (v: number) => v.toFixed(2).replace(".", ",");
-
-function Det({ d, color, dashed, mark }: { d: PreviewDet; color: string; dashed?: boolean; mark?: string }) {
-  const [x, y, w, h] = d.box;
-  const style = { stroke: color, strokeDasharray: dashed ? "6 4" : undefined } as CSSProperties;
-  return (
-    <g>
-      {d.parts ? (
-        d.parts.map((p, i) => <polygon key={i} points={ring(p)} style={{ ...style, fill: `${color}26` }} />)
-      ) : (
-        <rect x={x} y={y} width={w} height={h} style={style} />
-      )}
-      <text x={x} y={y} style={{ fill: color }}>
-        {`${d.cls} ${pct(d.conf)}${mark ? ` ${mark}` : ""}`}
-      </text>
-    </g>
-  );
-}
-
-export default function AgentPreview({
-  graphId,
-  doc,
-  node,
-  colorOf,
-}: {
-  graphId: string;
-  doc: GraphDoc;
-  /** Выбранный узел; без выбора — «Выход». */
-  node: { id: string; data: AgentNodeData } | null;
-  colorOf: Map<string, { color: string }>;
-}) {
-  const saved = `agent-preview:${graphId}`;
-  const [open, setOpen] = useState(() => load("agent-preview-open", true));
-  const [height, setHeight] = useState(() => load("agent-preview-h", DEFAULT_H));
-  const [projects, setProjects] = useState<{ code: string; name: string; images: number }[]>([]);
-  const [pick, setPick] = useState(() => load<{ project?: string; image?: string | null }>(saved, {}));
-  const [human, setHuman] = useState(() => load("agent-preview-human", true));
+/** Живое превью черновика: кадр проекта помнится на агента. `paused` — не звать сервер (идёт пакет на 6 кадров). */
+export function useAgentPreview(graphId: string, doc: GraphDoc, enabled: boolean, paused: boolean) {
+  const store = `agent-preview:${graphId}`;
+  const [projects, setProjects] = useState<{ code: string; name: string; images: number }[] | null>(null);
+  const [pick, setPick] = useState(() => load<{ project?: string; image?: string | null }>(store, {}));
   const [result, setResult] = useState<Result | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const grab = useRef<{ y: number; h: number } | null>(null);
-  // Ширина кадра на экране — от неё размер подписей в пикселях кадра.
-  const [shownW, setShownW] = useState(0);
-  const watch = useRef<ResizeObserver | null>(null);
-  const frameRef = useCallback((el: HTMLDivElement | null) => {
-    watch.current?.disconnect();
-    if (!el) return;
-    watch.current = new ResizeObserver(([e]) => setShownW(e.contentRect.width));
-    watch.current.observe(el);
-  }, []);
-  const step = useRef<"same" | "next" | "prev" | "random">(pick.image ? "same" : "random");
+  const step = useRef<Step>(pick.image ? "same" : "random");
   const [nudge, setNudge] = useState(0);
 
   useEffect(() => {
+    if (!enabled) return;
     api.previewProjects().then((r) => {
       setProjects(r.projects);
       setPick((p) => (p.project && r.projects.some((x) => x.code === p.project) ? p : { project: r.projects[0]?.code }));
     }).catch((e) => setProblem((e as Error).message));
-  }, []);
+  }, [enabled]);
 
-  // Координаты карточек в запрос не идут: перетаскивание узла — не правка агента.
-  const graph = useMemo(
-    () => ({ v: doc.v, nodes: doc.nodes.map(({ pos: _pos, ...n }) => n), edges: doc.edges }),
-    [doc]
-  );
+  const graph = useMemo(() => ({ v: doc.v, nodes: doc.nodes.map(({ pos: _pos, ...n }) => n), edges: doc.edges }), [doc]);
   const key = JSON.stringify(graph);
-  // Заведомо неполный граф сервер не зовём: у нового агента каждая правка
-  // давала 400 в консоль и красное «не выбраны веса» до первого провода.
+  // Заведомо неполный граф сервер не зовём: ответ «не выбраны веса» известен и так.
   const missing = unfinished(graph);
 
   useEffect(() => {
-    if (!open || !pick.project || missing) return;
+    if (!enabled || paused || !pick.project || missing) return;
     const ctrl = new AbortController();
     const timer = window.setTimeout(async () => {
       setBusy(true);
       try {
         const got = await api.runPreview(
-          { graph_id: graphId, doc: graph, project: pick.project!, image_id: pick.image ?? null, step: step.current },
-          ctrl.signal
-        );
+          { graph_id: graphId, doc: graph, project: pick.project!, image_id: pick.image ?? null, step: step.current }, ctrl.signal);
         step.current = "same";
         setResult(got);
         setProblem(null);
         if (got.image.id !== pick.image) {
           const next = { project: pick.project, image: got.image.id };
-          keep(saved, next);
+          keep(store, next);
           setPick(next);
         }
       } catch (e) {
-        const err = e as Error & { status?: number; payload?: { superseded?: boolean } };
+        const err = e as Error & { payload?: { superseded?: boolean } };
         if (err.name === "AbortError" || err.payload?.superseded) return;
         // Прошлый кадр с рамками под ошибкой читался бы как ответ на эту правку.
         setResult(null);
@@ -145,116 +78,134 @@ export default function AgentPreview({
     };
     // `graph` меняется вместе с `key`; ключ — чтобы не дёргать сервер на тот же граф.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, open, pick.project, nudge, graphId, missing]);
+  }, [key, enabled, paused, pick.project, nudge, graphId, missing]);
 
-  const go = (s: "next" | "prev" | "random") => {
+  const go = (s: Exclude<Step, "same">) => {
     step.current = s;
     setNudge((n) => n + 1);
   };
+  const setProject = (code: string) => {
+    step.current = "random";
+    setPick({ project: code });
+  };
+  const project = projects?.find((p) => p.code === pick.project) ?? null;
+  return { projects, project, setProject, result, problem: missing ? null : problem, busy, missing, go };
+}
 
-  const target = node && (node.data.kind !== "frame") ? node : null;
-  const outputId = doc.nodes.find((n) => n.type === "output")?.id;
-  const shownId = target?.id ?? outputId;
-  const trace = shownId && result ? result.nodes[shownId] : undefined;
-  const kind = target?.data.kind ?? "output";
-  const outIds = new Set(trace?.out.map((d) => d.id));
-  const dropped = trace?.in.filter((d) => !outIds.has(d.id)) ?? [];
-  const color = (cls: string) => colorOf.get(cls)?.color ?? "#9aa0a6";
-  const k = result && shownW ? result.image.width / shownW : 1;
+export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, colorOf, enabled }: {
+  state: AgentPreviewState;
+  nodes: Node[];
+  /** Узел в превью: закреплённый, выделенный или «Выход». */
+  watch: string | null;
+  pinned: boolean;
+  onPin: (id: string | null) => void;
+  colorOf: (cls: string) => string;
+  /** Чужой агент: превью считает только владелец. */
+  enabled: boolean;
+}) {
+  const { projects, project, setProject, result, problem, busy, missing, go } = state;
+  const [human, setHuman] = useState(() => load("agent-preview-human", true));
+  const [full, setFull] = useState(false);
+  const node = nodes.find((n) => n.id === watch);
+  const d = node?.data as AgentNodeData | undefined;
+  const trace = watch && result ? result.nodes[watch] : undefined;
+  const layers = trace && {
+    out: d?.kind === "frame" ? [] : trace.out,
+    dropped: droppedOf(trace),
+    samIn: d?.kind === "sam" ? trace.in : undefined,
+    sam: d?.kind === "sam",
+    human: human ? result!.human : [],
+  };
+  const setHumanKept = (v: boolean) => { setHuman(v); keep("agent-preview-human", v); };
+  const frameText = result ? `${result.image.file_name} · ${result.image.width} × ${result.image.height}` : "";
+
+  const nav = (big?: boolean) => (
+    <>
+      <Button size={big ? undefined : "sm"} variant="ghost" icon="chevL" disabled={!result} aria-label="Предыдущий кадр" onClick={() => go("prev")} />
+      <Button size={big ? undefined : "sm"} variant="ghost" icon="shuffle" onClick={() => go("random")} disabled={!project}>Случайный</Button>
+      <Button size={big ? undefined : "sm"} variant="ghost" icon="chevR" disabled={!result} aria-label="Следующий кадр" onClick={() => go("next")} />
+    </>
+  );
+
+  let stage: ReactNode;
+  if (!enabled) stage = <Empty icon="lock">Превью считает только владелец агента</Empty>;
+  else if (missing) stage = <Empty icon="route">{missing}</Empty>;
+  else if (problem) stage = <Empty icon="alert" bad>{problem}</Empty>;
+  else if (projects && !projects.length) stage = <Empty icon="images">Нет проектов с кадрами — превью не на чем показать</Empty>;
+  else if (!result || !layers) stage = <Empty>{busy ? "Считаю кадр…" : "Готовлю превью…"}</Empty>;
+  else stage = <AgentFrame image={result.image} layers={layers} colorOf={colorOf} busy={busy} onOpen={() => setFull(true)} />;
 
   return (
-    <section className="g-pv ag-pv" style={open ? { height } : undefined}>
-      {open && (
-        <div
-          className="g-pv-grip"
-          role="separator"
-          aria-orientation="horizontal"
-          aria-label="Высота превью"
-          onPointerDown={(e) => {
-            (e.target as HTMLElement).setPointerCapture(e.pointerId);
-            grab.current = { y: e.clientY, h: height };
-          }}
-          onPointerMove={(e) => {
-            if (grab.current) setHeight(Math.max(MIN_H, grab.current.h - (e.clientY - grab.current.y)));
-          }}
-          onPointerUp={() => {
-            grab.current = null;
-            keep("agent-preview-h", height);
-          }}
-        />
-      )}
-      <div className="g-pv-head">
-        <button type="button" className="mag-ghost" aria-expanded={open}
-          onClick={() => { keep("agent-preview-open", !open); setOpen(!open); }}>
-          {open ? "Скрыть превью" : "Превью"}
-        </button>
-        {open && (
-          <>
-            <b>{nodeTitle(kind, target?.data.params)}</b>
-            <span className="g-pv-vsep" />
-            <label className="g-pv-pick">
-              <span>Проект</span>
-              <select className="g-pv-select" value={pick.project ?? ""}
-                onChange={(e) => { step.current = "random"; setPick({ project: e.target.value }); }}>
-                {projects.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
-              </select>
-            </label>
-            <button type="button" className="mag-ghost" onClick={() => go("prev")} disabled={!result} title="Предыдущий кадр">←</button>
-            <button type="button" className="mag-ghost" onClick={() => go("random")}>Случайный</button>
-            <button type="button" className="mag-ghost" onClick={() => go("next")} disabled={!result} title="Следующий кадр">→</button>
-            <label className="g-pv-chk">
-              <input type="checkbox" checked={human} onChange={(e) => { keep("agent-preview-human", e.target.checked); setHuman(e.target.checked); }} />
-              Разметка человека
-            </label>
-            <span className="g-pv-grow" />
-            {trace && kind !== "output" && (
-              <span className="mono">пришло {trace.in.length} → ушло {trace.out.length}</span>
-            )}
-            {trace && kind === "output" && <span className="mono">в разметку {trace.out.length}</span>}
-            {result && (
-              <span className="g-pv-lbl mono">
-                {result.device === "cuda" ? "карта" : "процессор"} <Sep /> {result.ms} мс
-              </span>
-            )}
-          </>
+    <section className="ge-sec ge-pv ae-pv">
+      <div className="ge-sec-h">
+        {/* Выбор в списке закрепляет узел, как глаз на карточке. */}
+        <Select size="sm" icon={pinned ? "eye" : "pointer"} label="Узел в превью" value={watch ?? undefined} placeholder="Узел не выбран"
+          onChange={(id) => onPin(id)} options={nodes.map((n) => ({ value: n.id, label: agentTitle(n.data as AgentNodeData) }))} />
+        {watch && (
+          <Button size="sm" variant="ghost" icon="eye" className={pinned ? "ge-pin on" : "ge-pin"} aria-pressed={pinned}
+            onClick={() => onPin(pinned ? null : watch)}
+            title={pinned ? "Открепить — превью снова пойдёт за выделением" : "Закрепить: превью останется на этом узле"}>
+            {pinned ? "Закреплён" : "За выделением"}
+          </Button>
         )}
-      </div>
-      {open && (
-        <div className="ag-pv-body">
-          {result?.note && <div className="g-pv-warn block">На процессоре — {result.note}</div>}
-          {problem && !missing && <div className="g-pv-warn block">{problem}</div>}
-          <div className="g-pv-stage">
-            {missing ? (
-              <p className="g-pv-empty">{missing}</p>
-            ) : !result ? (
-              <p className="g-pv-empty">{busy ? "Считаю кадр…" : problem ? "" : "Выберите проект."}</p>
-            ) : (
-              <div ref={frameRef} className={`ag-pv-frame${busy ? " busy" : ""}`}
-                style={{ "--ar": `${result.image.width} / ${result.image.height}` } as CSSProperties}>
-                <img src={`/api/images/${result.image.id}/file`} alt={result.image.file_name} />
-                <svg viewBox={`0 0 ${result.image.width} ${result.image.height}`} preserveAspectRatio="xMidYMid meet"
-                  // Подпись живёт в пикселях кадра, а читать её с экрана: 12 px
-                  // экрана — это 12 × (ширина кадра / ширина на экране) пикселей
-                  // кадра. Прежняя доля ширины кадра давала ~6 px на экране.
-                  style={{ fontSize: LABEL_PX * k, ["--ag-halo" as string]: `${3 * k}px` } as CSSProperties}>
-                  {human && result.human.map((s, i) =>
-                    s.type === "polygon"
-                      ? (s.geometry.parts ?? []).map((p, k) => <polygon key={`${i}.${k}`} points={ring(p)} className="ag-pv-human" />)
-                      : <rect key={i} x={s.geometry.x} y={s.geometry.y} width={s.geometry.w} height={s.geometry.h} className="ag-pv-human" />
-                  )}
-                  {dropped.map((d) => <Det key={`x${d.id}`} d={d} color="#8a8f98" dashed />)}
-                  {kind === "sam" && trace?.in.map((d) => <Det key={`i${d.id}`} d={{ ...d, parts: undefined }} color={color(d.cls)} dashed />)}
-                  {trace?.out.map((d) => (
-                    <Det key={d.id} d={d} color={color(d.cls)}
-                      mark={kind === "sam" ? (d.parts ? `SAM ${pct(d.sam ?? 0)}` : "SAM не справился") : undefined} />
-                  ))}
-                </svg>
-                <div className="ag-pv-name mono">{result.image.file_name} <Sep /> {result.image.width} × {result.image.height}</div>
+        <span className="grow" />
+        <Popover align="end" width={300} trigger={<Button size="sm" variant="ghost" icon="settings" aria-label="Настройки превью" />}>
+          <div className="ge-pv-set">
+            {projects && projects.length > 0 && (
+              <div className="ui-field">
+                <div className="ui-field-l"><label>Проект</label></div>
+                <Select full size="sm" label="Проект" value={project?.code} onChange={setProject}
+                  options={projects.map((p) => ({ value: p.code, label: p.name, hint: `${p.images} кадров` }))} />
               </div>
             )}
+            <div className="ge-flag">
+              <span>Разметка человека</span>
+              <Switch checked={human} label="Разметка человека" onChange={setHumanKept} />
+            </div>
           </div>
-        </div>
+        </Popover>
+        <Button size="sm" variant="ghost" icon="fit" disabled={!layers} aria-label="Превью во весь экран" onClick={() => setFull(true)} />
+      </div>
+      <div className="ge-pv-stage">{stage}</div>
+      {result && !problem && !missing && (
+        <>
+          <div className="ae-pv-nav">{nav()}</div>
+          <p className="t-xs t-faint">
+            <span className="ae-pv-file t-ell" title={frameText}>{frameText}</span>
+            {result.device === "cuda" ? "на карте" : "на процессоре"} · {result.ms} мс{project ? ` · ${project.name}` : ""}
+            {result.note ? ` — ${result.note}` : ""}
+          </p>
+        </>
       )}
+
+      <Dialog open={full && Boolean(layers)} onOpenChange={setFull} width={4000} height={4000} bare className="ge-full"
+        title={d ? agentTitle(d) : "Превью"} desc={frameText}>
+        {result && layers && (
+          <div className="ge-full-b">
+            <div className="ge-full-stage">
+              <AgentFrame image={result.image} layers={layers} colorOf={colorOf} busy={busy} />
+            </div>
+            <div className="ge-full-bar">
+              {nav(true)}
+              <label className="ge-six-flag" htmlFor="ae-full-human">
+                <Switch id="ae-full-human" checked={human} onChange={setHumanKept} />
+                <span>Разметка человека</span>
+              </label>
+              <span className="grow" />
+              {trace && <span className="t-sm t-muted">пришло <b className="ui-mono">{trace.in.length}</b> → ушло <b className="ui-mono">{trace.out.length}</b></span>}
+            </div>
+          </div>
+        )}
+      </Dialog>
     </section>
+  );
+}
+
+function Empty({ icon, bad, children }: { icon?: "lock" | "route" | "alert" | "images"; bad?: boolean; children: ReactNode }) {
+  return (
+    <div className={bad ? "ge-no-prev bad" : "ge-no-prev"}>
+      {icon && <Icon name={icon} size={22} />}
+      <span>{children}</span>
+    </div>
   );
 }

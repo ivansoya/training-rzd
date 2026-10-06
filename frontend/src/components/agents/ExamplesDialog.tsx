@@ -1,25 +1,28 @@
-// Наборы образцов «Сети по тексту»: окно сборки из разметки проекта и полоса
-// миниатюр под строкой.
+// Наборы образцов «Сети по тексту»: окно сборки из разметки проекта и полоса миниатюр под строкой.
 //
-// Набор неизменяем (training_svc/examples.py): убрать, переставить и добрать
-// создают новый набор, и строка черновика переходит на него. Иначе правка
-// черновика незаметно меняла бы уже сохранённые версии агента.
+// Набор неизменяем (training_svc/examples.py): убрать, переставить и добрать создают новый набор,
+// и строка черновика переходит на него. Иначе правка черновика меняла бы сохранённые версии агента.
 
 import { useEffect, useMemo, useState, type DragEvent } from "react";
 import * as api from "../../api/agents";
-import { useEscape } from "../mag/useEscape";
+import { Button, Check, Dialog, Field, Input, Notice, Select, cx } from "../../ui";
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
-import Sep from "../Sep";
-import { useBackdrop } from "../useBackdrop";
-import { useDialog } from "../useDialog";
 
 const COLLAGE_MAX = 8;
 
-export function ExamplesDialog({
-  onDone,
-  onClose,
-}: {
+function usable(cls: api.ExampleSources["classes"][number], off: Set<string>) {
+  let u = 0;
+  let f = 0;
+  for (const [id, s] of Object.entries(cls.datasets)) {
+    if (off.has(id)) continue;
+    u += s.usable;
+    f += s.frames;
+  }
+  return { usable: u, frames: f };
+}
+
+export function ExamplesDialog({ onDone, onClose }: {
   onDone: (set: api.ExampleSet, agent: string) => void;
   onClose: () => void;
 }) {
@@ -52,9 +55,6 @@ export function ExamplesDialog({
     }).catch((e) => setError(e.message));
   }, [project]);
 
-  const box = useDialog();
-  // Пока собирается, окно не закрывается ничем: сборка уже идёт на сервере.
-  useEscape(busy ? () => undefined : onClose);
   const cls = src?.classes.find((c) => c.id === classId);
   const got = cls ? usable(cls, off) : { usable: 0, frames: 0 };
   const name = agent ?? cls?.name ?? "";
@@ -65,10 +65,7 @@ export function ExamplesDialog({
     setError(null);
     try {
       const ids = src.datasets.map((d) => d.id).filter((id) => !off.has(id));
-      const r = await api.createExamples({
-        project, class_id: cls.id, n, collage, ctx,
-        datasets: off.size ? ids : null,
-      });
+      const r = await api.createExamples({ project, class_id: cls.id, n, collage, ctx, datasets: off.size ? ids : null });
       onDone(r.set, name.trim() || cls.name);
     } catch (e) {
       setError((e as Error).message);
@@ -77,109 +74,78 @@ export function ExamplesDialog({
     }
   };
 
+  const numField = (label: string, value: number, set: (v: number) => void, props: { min: number; max: number; step?: number; integer?: boolean }, hint?: string) => (
+    <Field label={label} hint={hint}>
+      {(id) => <NumInput id={id} className="ui-input ui-ctl ui-mono" value={value} disabled={busy} {...props} onValue={(v) => v !== undefined && set(v)} />}
+    </Field>
+  );
+
   return (
-    <div className="mag-backdrop" {...useBackdrop(busy ? () => undefined : onClose)}>
-      <div ref={box} className="mag-modal ag-exdlg" role="dialog" aria-modal="true" aria-labelledby="ex-title" tabIndex={-1}
-        onClick={(e) => e.stopPropagation()}>
-        <h1 id="ex-title">Образцы из разметки</h1>
-        {error && <div className="mag-error">{error}</div>}
-        <div className="ag-two">
-          <div className="mag-field">
-            <label htmlFor="ex-project">Проект</label>
-            <select id="ex-project" value={project} disabled={busy || !projects}
-              onChange={(e) => { setProject(e.target.value); setAgent(null); }}>
-              {projects?.map((p) => <option key={p.code} value={p.code}>{p.name}</option>)}
-            </select>
-          </div>
-          <div className="mag-field">
-            <label htmlFor="ex-class">Класс проекта</label>
-            <select id="ex-class" value={classId} disabled={busy || !src}
-              onChange={(e) => { setClassId(e.target.value); setAgent(null); }}>
-              {src?.classes.map((c) => (
-                <option key={c.id} value={c.id}>{c.name} — {count(usable(c, off).usable, "рамка", "рамки", "рамок")}</option>
-              ))}
-            </select>
-          </div>
+    // Пока собирается, окно не закрывается ничем: сборка уже идёт на сервере.
+    <Dialog open onOpenChange={(v) => !v && onClose()} closable={!busy} width={640} title="Образцы из разметки"
+      desc="Ручные рамки класса проекта — вырезками для YOLOE и коллажем для SAM 3"
+      footer={<>
+        {busy && <span className="t-xs t-muted">Собираю: рамки, вырезки, векторы YOLOE четырёх размеров…</span>}
+        <span className="grow" />
+        <Button variant="ghost" disabled={busy} onClick={onClose}>Отмена</Button>
+        <Button variant="primary" icon="images" disabled={busy || !cls || got.usable === 0} onClick={build}>{busy ? "Собираю…" : "Собрать"}</Button>
+      </>}>
+      <div className="ae-ex">
+        {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+        <div className="ae-ex-2">
+          <Field label="Проект">
+            {(id) => <Select id={id} full label="Проект" value={project || undefined} disabled={busy || !projects} placeholder="Загружаю…"
+              onChange={(v) => { setProject(v); setAgent(null); }} options={(projects ?? []).map((p) => ({ value: p.code, label: p.name }))} />}
+          </Field>
+          <Field label="Класс проекта">
+            {(id) => <Select id={id} full label="Класс проекта" value={classId || undefined} disabled={busy || !src} placeholder="Загружаю…"
+              onChange={(v) => { setClassId(v); setAgent(null); }}
+              options={(src?.classes ?? []).map((c) => ({ value: c.id, label: c.name, hint: count(usable(c, off).usable, "годная рамка", "годные рамки", "годных рамок") }))} />}
+          </Field>
         </div>
-        <div className="mag-field">
-          <label>Датасеты</label>
-          <div className="ag-exds">
-            {src?.datasets.map((d) => (
-              <label key={d.id}>
-                <input type="checkbox" checked={!off.has(d.id)} disabled={busy}
-                  onChange={(e) => setOff((old) => {
-                    const next = new Set(old);
-                    if (e.target.checked) next.delete(d.id); else next.add(d.id);
-                    return next;
-                  })} />
-                <span>{d.name}</span>
-                <span className="mono">{count(d.frames, "кадр", "кадра", "кадров")}</span>
-              </label>
-            ))}
-          </div>
+        {src && src.datasets.length > 0 && (
+          <Field label="Датасеты">
+            {() => (
+              <div className="ae-ex-ds">
+                {src.datasets.map((d) => (
+                  <Check key={d.id} checked={!off.has(d.id)} disabled={busy}
+                    onChange={(on) => setOff((old) => {
+                      const next = new Set(old);
+                      if (on) next.delete(d.id); else next.add(d.id);
+                      return next;
+                    })}>
+                    {d.name} <span className="ui-mono t-faint">{count(d.frames, "кадр", "кадра", "кадров")}</span>
+                  </Check>
+                ))}
+              </div>
+            )}
+          </Field>
+        )}
+        <div className="ae-ex-3">
+          {numField("Образцов", n, setN, { min: 1, max: 256, integer: true })}
+          {numField("В коллаже SAM 3", collage, setCollage, { min: 1, max: COLLAGE_MAX, integer: true })}
+          {numField("Вырезка, ×", ctx, setCtx, { min: 1, max: 16, step: 0.5 }, "Поле вокруг рамки")}
         </div>
-        <div className="ag-three">
-          <div className="mag-field ag-num">
-            <label htmlFor="ex-n">Образцов</label>
-            <NumInput id="ex-n" min={1} max={256} integer value={n} disabled={busy}
-              onValue={(v) => v !== undefined && setN(v)} />
-          </div>
-          <div className="mag-field ag-num">
-            <label htmlFor="ex-collage">В коллаже SAM 3</label>
-            <NumInput id="ex-collage" min={1} max={COLLAGE_MAX} integer value={collage} disabled={busy}
-              onValue={(v) => v !== undefined && setCollage(v)} />
-          </div>
-          <div className="mag-field ag-num">
-            <label htmlFor="ex-ctx">Вырезка, ×</label>
-            <NumInput id="ex-ctx" min={1} max={16} step={0.5} value={ctx} disabled={busy}
-              onValue={(v) => v !== undefined && setCtx(v)} />
-          </div>
-        </div>
-        <div className="mag-field">
-          <label htmlFor="ex-agent">Класс агента</label>
-          <input id="ex-agent" value={name} disabled={busy} onChange={(e) => setAgent(e.target.value)} />
-        </div>
+        <Field label="Класс агента" hint="Под этим именем находки уйдут дальше по графу">
+          {(id) => <Input id={id} value={name} disabled={busy} onChange={(e) => setAgent(e.target.value)} />}
+        </Field>
         {cls && (
-          <p className="ag-exnote">
-            Годится <b className="mono">{ru(got.usable)}</b> {plural(got.usable, "ручная рамка", "ручные рамки", "ручных рамок")}{" "}
-            на <b className="mono">{ru(got.frames)}</b> {plural(got.frames, "кадре", "кадрах", "кадрах")}
+          <p className="t-sm t-muted">
+            Годится <b className="ui-mono">{ru(got.usable)}</b> {plural(got.usable, "ручная рамка", "ручные рамки", "ручных рамок")} на{" "}
+            <b className="ui-mono">{ru(got.frames)}</b> {plural(got.frames, "кадре", "кадрах", "кадрах")}
             {got.usable === 0 ? null : n > got.usable
-              ? <span className="ag-warn-text"> — возьмём все {ru(got.usable)}</span>
+              ? <span className="ge-warn"> — возьмём все {ru(got.usable)}</span>
               : n > got.frames ? ` — ${ru(n - got.frames)} придётся брать вторыми с тех же кадров`
                 : ` — по одной с ${ru(n)} ${plural(n, "кадра", "разных кадров", "разных кадров")}`}
           </p>
         )}
-        <div className="ag-foot">
-          {busy && <span className="ag-muted">Собираю: рамки, вырезки, векторы YOLOE четырёх размеров…</span>}
-          <span className="ag-grow" />
-          <button type="button" className="mag-ghost" disabled={busy} onClick={onClose}>Отмена</button>
-          <button type="button" className="mag-btn" disabled={busy || !cls || got.usable === 0} onClick={build}>
-            {busy ? "Собираю…" : "Собрать"}
-          </button>
-        </div>
       </div>
-    </div>
+    </Dialog>
   );
 }
 
-function usable(cls: api.ExampleSources["classes"][number], off: Set<string>) {
-  let u = 0;
-  let f = 0;
-  for (const [id, s] of Object.entries(cls.datasets)) {
-    if (off.has(id)) continue;
-    u += s.usable;
-    f += s.frames;
-  }
-  return { usable: u, frames: f };
-}
-
-/** Полоса миниатюр набора. Первые `collage` идут в коллаж SAM 3 — они
- *  обведены; порядок меняется перетаскиванием. */
-export function ExampleStrip({
-  set,
-  readOnly,
-  onSet,
-}: {
+/** Полоса миниатюр набора. Первые `collage` идут в коллаж SAM 3 — они обведены; порядок меняется перетаскиванием. */
+export function ExampleStrip({ set, readOnly, onSet }: {
   set: api.ExampleSet;
   readOnly: boolean;
   onSet: (next: api.ExampleSet) => void;
@@ -215,21 +181,17 @@ export function ExampleStrip({
   };
 
   return (
-    <div className="ag-strip">
-      <div className="ag-thumbs">
+    <div className="ae-strip">
+      <div className="ae-thumbs">
         {set.items.map((it, k) => (
-          <div
-            key={it.uid}
-            className={`ag-th${k < collage ? " col" : ""}${drag === k ? " drag" : ""}${over === k ? " over" : ""}`}
-            draggable={!readOnly && !busy}
-            title={`${it.file_name} — ${it.side} px`}
+          <div key={it.uid} className={cx("ae-th", k < collage && "col", drag === k && "drag", over === k && "over")}
+            draggable={!readOnly && !busy} title={`${it.file_name} — ${it.side} px`}
             onDragStart={() => setDrag(k)}
             onDragOver={(e) => { if (drag !== null) { e.preventDefault(); setOver(k); } }}
             onDragLeave={() => setOver((o) => (o === k ? null : o))}
             onDrop={drop(k)}
-            onDragEnd={() => { setDrag(null); setOver(null); }}
-          >
-            <img src={api.exampleCrop(set.id, it.uid)} alt={`образец ${k + 1}`} loading="lazy" />
+            onDragEnd={() => { setDrag(null); setOver(null); }}>
+            <img src={api.exampleCrop(set.id, it.uid)} alt={`образец ${k + 1}`} loading="lazy" draggable={false} />
             <span className="n">{k + 1}</span>
             {!readOnly && set.items.length > 1 && (
               <button type="button" className="rm" disabled={busy} aria-label={`Убрать образец ${k + 1}`}
@@ -238,19 +200,14 @@ export function ExampleStrip({
           </div>
         ))}
       </div>
-      {error && <div className="mag-error">{error}</div>}
-      <div className="ag-strip-foot">
-        <span className="ag-strip-src">
-          {set.project} <Sep /> {count(set.items.length, "рамка", "рамки", "рамок")} с {ru(set.frames)}{" "}
-          {plural(set.frames, "кадра", "кадров", "кадров")} <Sep /> ×{String(set.params.ctx).replace(".", ",")}
+      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+      <div className="ae-strip-f">
+        <span className="t-ell">
+          {set.project} · {count(set.items.length, "рамка", "рамки", "рамок")} с {ru(set.frames)} {plural(set.frames, "кадра", "кадров", "кадров")} · ×{String(set.params.ctx).replace(".", ",")}
         </span>
-        <span className="ag-lg"><i />в коллаже SAM 3: {collage} из {set.items.length}</span>
-        <span className="ag-grow" />
-        {!readOnly && (
-          <button type="button" className="mag-ghost ag-sm" disabled={busy} onClick={() => derive({ add: 4 })}>
-            {busy ? "…" : "Добрать 4"}
-          </button>
-        )}
+        <span className="ae-strip-lg"><i />в коллаже SAM 3: {collage} из {set.items.length}</span>
+        <span className="grow" />
+        {!readOnly && <Button size="sm" variant="ghost" icon="plus" disabled={busy} onClick={() => derive({ add: 4 })}>{busy ? "…" : "Добрать 4"}</Button>}
       </div>
     </div>
   );

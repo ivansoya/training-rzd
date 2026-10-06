@@ -27,6 +27,8 @@ export interface WireData extends Record<string, unknown> {
   /** Над проводом держат узел: отпустят — встанет в разрыв. */
   aim?: boolean;
   kill?: (id: string) => void;
+  /** Своя подпись вместо числа: у агента «кадр» и честный ноль рамок. */
+  text?: string;
 }
 
 export interface NodeData extends Record<string, unknown> {
@@ -350,7 +352,7 @@ export function VolumeEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosit
       <EdgeLabelRenderer>
         <span className={cx("ge-wl", (selected || wire?.hot) && "hot")}
           style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}>
-          {amount > 0 ? ru(amount) : "—"}
+          {wire?.text ?? (amount > 0 ? ru(amount) : "—")}
         </span>
         {/* Крестик — кнопкой в слое подписей: в SVG он оказывался под ручками перецепки. */}
         {selected && kill && (

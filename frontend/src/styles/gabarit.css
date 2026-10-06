@@ -158,19 +158,6 @@
 
 /* ===================== ВТОРОЙ УРОВЕНЬ НАВИГАЦИИ ===================== */
 
-.g-ctx-back {
-  color: var(--dim);
-  text-decoration: none;
-  font-size: 17px;
-  line-height: 1;
-  padding: 4px 6px;
-  border-radius: var(--radius-s);
-}
-
-.g-ctx-back:hover {
-  color: var(--ink);
-  background: var(--hair);
-}
 
 /* Переключатель темы в верхней строке: три состояния, а не два — «как в
  * системе» тоже осознанный выбор, и он должен быть виден. */
