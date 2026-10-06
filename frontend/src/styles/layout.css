@@ -272,7 +272,11 @@ a.pcard:hover { border-color: var(--input); }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fr-chips { position: absolute; left: 5px; right: 5px; bottom: 5px; display: flex; flex-wrap: wrap; gap: 3px; }
-.fr-chips span { padding: 1px 5px; border-radius: 3px; background: var(--cc); color: var(--on-swatch); font: 600 9.5px var(--font); }
+.fr-chips span {
+  padding: 1px 6px; border-radius: var(--r-sm); font: 500 10px/1.35 var(--font);
+  background: color-mix(in srgb, var(--cc) 34%, color-mix(in srgb, var(--stage) 86%, transparent));
+  border: 1px solid color-mix(in srgb, var(--cc) 55%, transparent); color: color-mix(in srgb, var(--cc) 30%, var(--on-frame));
+}
 .fr-more > img { filter: blur(2px) brightness(.45); scale: 1.08; transition: filter .25s ease, scale .35s ease; }
 .fr-more:hover > img, .fr-more:focus-visible > img { filter: blur(1.5px) brightness(.62); scale: 1.14; }
 .fr-more:disabled { cursor: progress; }

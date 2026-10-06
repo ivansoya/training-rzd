@@ -4,10 +4,11 @@ import { imageThumbUrl } from "../../auth/api";
 import ShapeMini from "./ShapeMini";
 import type { MiniShape } from "./ShapeMini";
 
-/** Кинолента под кадром: превью с разметкой, обводка несёт состояние.
+/** Кинолента: превью с разметкой, обводка несёт состояние.
  *
- * Высоту тянут за верхнюю границу и она запоминается — сколько ленты нужно,
- * зависит от работы: при сплошной разметке важнее кадр, при выборочной — лента.
+ * Горизонтальная под кадром (лайтбокс) тянется за верхнюю кромку, вертикальная
+ * слева от кадра (редактор) — за правую. Размер запоминается: сколько ленты
+ * нужно, зависит от работы.
  */
 
 /** Фигура на превью — ровно то, что нужно слою разметки. */
@@ -23,52 +24,59 @@ export interface FilmItem {
   title?: string;
 }
 
-const MIN_H = 96;
-const MAX_H = 360;
-const DEFAULT_H = 186;
+const SIZE = {
+  horizontal: { min: 96, max: 360, def: 186, key: "mag-film-h" },
+  vertical: { min: 84, max: 240, def: 120, key: "mag-film-w" },
+};
 // Отступы ленты, отступ до полосы прокрутки и сама полоса.
 const PAD = 38;
+const PAD_V = 30;
 
-function stored(key: string): number {
-  const raw = Number(window.localStorage.getItem(key));
-  return raw >= MIN_H && raw <= MAX_H ? raw : DEFAULT_H;
+function stored(key: string, s: { min: number; max: number; def: number }): number {
+  try {
+    const raw = Number(window.localStorage.getItem(key));
+    return raw >= s.min && raw <= s.max ? raw : s.def;
+  } catch {
+    return s.def;
+  }
 }
 
 export default function FilmStrip({
   items,
   index,
   onPick,
-  storageKey = "mag-film-h",
+  vertical = false,
+  storageKey,
   onHeight,
-  grabHelp,
+  onSize,
 }: {
   items: FilmItem[];
   index: number;
   onPick: (i: number) => void;
+  vertical?: boolean;
   storageKey?: string;
   onHeight?: (h: number) => void;
-  /** Метки справки для верхней кромки: что она делает, знает хозяин — у него
-   *  и лежит список всех подсказок редактора. Своей всплывашки у ленты нет:
-   *  вечные подсказки из интерфейса убраны. */
-  grabHelp?: Record<string, unknown>;
+  /** Размер поперёк ленты: высота горизонтальной, ширина вертикальной. */
+  onSize?: (px: number) => void;
 }) {
-  const [height, setHeight] = useState(() => stored(storageKey));
+  const lim = SIZE[vertical ? "vertical" : "horizontal"];
+  const key = storageKey ?? lim.key;
+  const [size, setSize] = useState(() => stored(key, lim));
   const railRef = useRef<HTMLDivElement>(null);
-  const resize = useRef<{ y: number; h: number } | null>(null);
+  const resize = useRef<{ at: number; size: number } | null>(null);
 
-  useEffect(() => { onHeight?.(height); }, [height, onHeight]);
+  useEffect(() => { onHeight?.(size); onSize?.(size); }, [size, onHeight, onSize]);
 
   useEffect(() => {
     const el = railRef.current;
     const active = el?.children[index] as HTMLElement | undefined;
-    active?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
-  }, [index]);
+    active?.scrollIntoView({ block: vertical ? "center" : "nearest", inline: "center", behavior: "smooth" });
+  }, [index, vertical]);
 
-  // Колесо катит ленту вдоль: вертикальной прокрутки у неё нет, а поворот
-  // колеса над лентой означает ровно «покажи соседние кадры».
+  // Колесо над горизонтальной лентой катит её вдоль: вертикальной прокрутки у неё нет.
   useEffect(() => {
     const el = railRef.current;
-    if (!el) return;
+    if (!el || vertical) return;
     function onWheel(e: WheelEvent) {
       const delta = e.deltaY || e.deltaX;
       if (!delta) return;
@@ -77,40 +85,45 @@ export default function FilmStrip({
     }
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [vertical]);
 
   function onGrabDown(e: ReactPointerEvent<HTMLDivElement>) {
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    resize.current = { y: e.clientY, h: height };
+    resize.current = { at: vertical ? e.clientX : e.clientY, size };
   }
 
   function onGrabMove(e: ReactPointerEvent<HTMLDivElement>) {
     const r = resize.current;
     if (!r) return;
-    // Тянем вверх — лента растёт.
-    const next = Math.max(MIN_H, Math.min(r.h + (r.y - e.clientY), MAX_H));
-    setHeight(next);
+    // Горизонтальная растёт вверх, вертикальная — вправо.
+    const delta = vertical ? e.clientX - r.at : r.at - e.clientY;
+    setSize(Math.max(lim.min, Math.min(r.size + delta, lim.max)));
   }
 
   function onGrabUp() {
     if (!resize.current) return;
     resize.current = null;
-    window.localStorage.setItem(storageKey, String(height));
+    try { window.localStorage.setItem(key, String(size)); } catch { /* не запомнится */ }
   }
 
-  const cell = height - PAD;
+  const cellW = vertical ? size - PAD_V : (size - PAD) * (4 / 3);
+  const cellH = vertical ? (size - PAD_V) * (3 / 4) : size - PAD;
 
   return (
-    <div className="mag-fs" style={{ height }}>
+    <div className={vertical ? "mag-fs v" : "mag-fs"} style={vertical ? { width: size } : { height: size }}>
       <div
         className="mag-fs-grab"
         onPointerDown={onGrabDown}
         onPointerMove={onGrabMove}
         onPointerUp={onGrabUp}
-        {...(grabHelp || {})}
+        onDoubleClick={() => {
+          setSize(lim.def);
+          try { window.localStorage.setItem(key, String(lim.def)); } catch { /* не запомнится */ }
+        }}
         role="separator"
-        aria-orientation="horizontal"
+        aria-orientation={vertical ? "vertical" : "horizontal"}
+        title={vertical ? "Потяните — ширина ленты; двойной щелчок — как было" : "Потяните — высота ленты"}
       />
       <div className="mag-fs-rail" ref={railRef}>
         {items.map((im, i) => (
@@ -118,7 +131,7 @@ export default function FilmStrip({
             key={im.id}
             type="button"
             className={`mag-fs-cell ${im.ring || ""}${i === index ? " cur" : ""}`}
-            style={{ width: cell * (4 / 3), height: cell }}
+            style={{ width: cellW, height: cellH }}
             onClick={() => onPick(i)}
             title={im.title}
           >

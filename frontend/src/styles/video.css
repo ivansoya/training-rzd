@@ -918,36 +918,6 @@
   color: var(--red);
 }
 
-/* Действие в меню по правой кнопке: «сделать треком» и подобные. */
-.mag-cmenu-act {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  border: 0;
-  border-top: 1px solid #333c46;
-  background: none;
-  color: var(--ed-ink);
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  padding: 8px;
-  margin-top: 1px;
-  cursor: pointer;
-}
-
-.mag-cmenu-act:hover { background: var(--ed-btn); }
-
-/* Недоступное действие: видно, что оно есть, и подпись рядом говорит, почему
-   сейчас нельзя. Убрать его совсем значило бы заставить искать, куда делось. */
-.mag-cmenu-act.off { opacity: 0.45; cursor: default; }
-.mag-cmenu-act.off:hover { background: none; }
-
-.mag-cmenu-act em {
-  font-style: normal;
-  font-size: 11px;
-  color: var(--ed-faint);
-}
-
 /* Ступень, которая ещё готовится. В выборе её нет — переключиться на неё
    значит получить пустой экран, — но знать про неё человеку полезно. */
 .mag-ved-quality-wait {

@@ -19,7 +19,7 @@ import { frameActions } from "./frameActions";
 import * as history from "./editHistory";
 import { empty, type History } from "./editHistory";
 import TagPicker from "./TagPicker";
-import { hasLayer, useEscape } from "./useEscape";
+import { hasLayer } from "./useEscape";
 import { useAutosave } from "./useAutosave";
 import { withSavedIds } from "./savedIds";
 import type { Tag } from "../../api/tags";
@@ -27,69 +27,56 @@ import { useAutoLabel } from "./useAutoLabel";
 import AutoStatus from "./AutoStatus";
 import { useLive } from "../../live/LiveProvider";
 import type { AutoRefine } from "../../auth/api";
-import Sep from "../Sep";
 import type { TaskBox } from "../../auth/api";
+import { Button, Notice, StackBar, Switch } from "../../ui";
+import { ru } from "../ru";
+import AutoSettings from "../editor/AutoSettings";
+import ClassPicker from "../editor/ClassPicker";
+import { EditorHead, Float, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip } from "../editor/Chrome";
+import { AutoBar, FrameBar, FrameSide } from "../editor/FramePanels";
+import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad } from "../editor/look";
+import type { KeyGroup } from "../editor/look";
 
-/** Кто поставил рамку: человек, агент человека или человек после агента. */
-function Who({ box }: { box?: TaskBox }) {
-  if (!box?.author && !box?.agent) return null;
-  const agent = box.agent ? `«${box.agent.name}» v${box.agent.version}` : "";
-  return (
-    <span className="ag-who">
-      {box.author}
-      {/* Тире, а не <Sep />: в строке объекта любой <i> красится как
-          цветовая метка класса. */}
-      {box.agent && box.source === "model" && <> — <span className="agent">агент {agent}</span></>}
-      {box.agent && box.source !== "model" && <> — <span className="fix">поправлено после {agent}</span></>}
-    </span>
-  );
-}
-
-/** Управление редактором: клавиша и что она делает.
- *
- * Тот же приём, что в разметчике видео, и по той же причине: один список на две
- * задачи — подсветку самого элемента и панель со всеми сочетаниями. Держать их
- * порознь значило бы, что однажды они разойдутся и подсказка начнёт врать про
- * клавишу.
- *
- * Краткие названия видны на панели инструментов, подробные сочетания —
- * в справке и в подсказках при включённом режиме справки.
- */
-const HELP = {
-  close: ["Esc", "Выйти из разметки"],
-  select: ["V", "Выбор и правка"],
-  box: ["B", "Рамка. Ещё раз B — залипание, рисовать подряд"],
-  polygon: ["P", "Контур. Замкнуть — клик по первой точке или Enter"],
-  polyOpts: ["", "Настройки контура: двигать ли его и части по отдельности"],
-  auto: ["A", "Полуавтомат: обвести объект по клику"],
-  autoOpts: ["", "Параметры полуавтомата"],
-  addPart: ["⇧P", "Следующий контур ляжет в выбранный объект"],
-  vertex: ["Alt", "Новая точка контура под курсором"],
-  del: ["Del", "Удалить объект, а при раздельных частях — часть"],
-  undo: ["Ctrl+Z", "Отменить правку. Ctrl+Shift+Z или Ctrl+Y — повторить"],
-  cls: ["1–9", "Класс для новых объектов"],
-  empty: ["E", "Кадр фоновый: объектов на нём нет"],
-  skip: ["S", "Отложить кадр"],
-  trash: ["X", "Забраковать кадр"],
-  next: ["Пробел", "Следующий кадр"],
-  step: ["← →", "Предыдущий и следующий кадр"],
-  zoomIn: ["", "Приблизить"],
-  zoomOut: ["", "Отдалить"],
-  fit: ["0", "Вписать кадр в окно"],
-  grid: ["", "Сетка на фоне"],
-  pan: ["Shift + протяжка", "Двигать полотно. Колесо — зум"],
-  strip: ["", "Кинолента таски. Потяните верхнюю кромку — изменить высоту"],
-} as const;
-
-type HelpId = keyof typeof HELP;
-
-/** Разметить элемент для справки: подсветится и покажет свою подсказку. */
-function hk(id: HelpId) {
-  const [key, text] = HELP[id];
-  return { "data-hk": key || undefined, "data-ht": text, "data-help": "" };
-}
+/** Окно «Клавиши»: всё управление редактора кадров. */
+const KEYS: KeyGroup[] = [
+  { title: "Инструменты", keys: [
+    ["V", "Выбор и правка"],
+    ["B", "Рамка. Ещё раз B — залипание, рисовать подряд"],
+    ["P", "Контур. Замкнуть — щелчок по первой точке или Enter"],
+    ["Shift+P", "Следующий контур ляжет в выбранный объект"],
+    ["A", "Полуавтомат SAM2 поверх рамки или контура"],
+    ["1–9", "Класс: при выбранном объекте — перекрасить его"],
+    ["Alt", "Новая точка контура под курсором"],
+  ] },
+  { title: "Правка", keys: [
+    ["Del", "Удалить объект, а при раздельных частях — часть"],
+    ["Ctrl+Z", "Отменить правку"],
+    ["Ctrl+Shift+Z / Ctrl+Y", "Повторить"],
+    ["Esc", "Снять начатое по шагу, на дне — выйти из разметки"],
+  ] },
+  { title: "Кадр", keys: [
+    ["E", "Пусто: объектов на кадре нет (ещё раз — снять)"],
+    ["S", "Отложить кадр (ещё раз — снять)"],
+    ["X", "Брак; у забракованного — вернуть"],
+    ["Пробел", "Далее; при показанном полуавтоматом — закрепить"],
+    ["← / →", "Предыдущий и следующий кадр"],
+  ] },
+  { title: "Вид", keys: [
+    ["Колесо", "Зум"],
+    ["Shift+протяжка", "Двигать полотно"],
+    ["0", "Вписать кадр"],
+    ["Tab", "Спрятать или показать панели"],
+    ["?", "Это окно"],
+  ] },
+  { title: "Полуавтомат", keys: [
+    ["Щелчок", "Объект под курсором; щелчок мимо — закрепить"],
+    ["Shift+щелчок", "Уточнить показанное или доуточнить рамку"],
+    ["Shift+правая", "Убрать участок из показанного"],
+  ] },
+];
 
 const GREY = { name: "", color: "#9aa4ae" };
+const SIDE_W = 280;
 
 // Последняя запись разметки, в том числе ушедшая при закрытии редактора.
 // Страница таски ждёт её перед тем, как перечитать кадры: иначе чтение,
@@ -155,7 +142,6 @@ export default function AnnotationEditor({
   const image = images[index];
 
   const [classes, setClasses] = useState<LabelClass[]>([]);
-  const [query, setQuery] = useState("");
   const [active, setActive] = useState<number | null>(null);
   const [boxes, setBoxes] = useState<CanvasShape[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
@@ -172,7 +158,6 @@ export default function AnnotationEditor({
   // Ctrl+Z это вернёт, но только если сдвиг заметили сразу.
   const [canMovePoly, setCanMovePoly] = useState(false);
   const [splitParts, setSplitParts] = useState(false);
-  const [polyPanel, setPolyPanel] = useState(false);
   // Инструмент говорит, ЧТО получится: рамка или контур. Полуавтомат — не
   // четвёртый инструмент, а способ ввода поверх текущего, и живёт отдельным
   // тумблером: «полуавтоматом по контурам» выражается двумя клавишами, а не
@@ -194,7 +179,6 @@ export default function AnnotationEditor({
   const [autoPrompt, setAutoPrompt] = useState<CanvasShape | null>(null);
   // Индекс бокса, который сейчас уточняем: на закреплении он заменяется.
   const [replacing, setReplacing] = useState<number | null>(null);
-  const [autoPanel, setAutoPanel] = useState(false);
   const [refine, setRefine] = useState<AutoRefine>({
     detail: "auto", score_min: 0.3, min_area: 64, fill_holes: true, polygon_points: 64,
   });
@@ -217,15 +201,16 @@ export default function AnnotationEditor({
   }, []);
 
   const [scale, setScale] = useState(1);
-  const [filmH, setFilmH] = useState(164);
+  const [filmW, setFilmW] = useState(120);
   // Счётчик «перечитать кадр»: отброшенная правка возвращает разметку с сервера.
   const [reloadKey, setReloadKey] = useState(0);
   const [grid, setGrid] = useState(true);
-  const [help, setHelp] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
+  // Tab прячет плавающие панели — кадр виден целиком
+  const [panels, setPanels] = useState(true);
+  // Объекты, скрытые глазом в списке: только вид, в разметке они остаются
+  const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
-
-  // Справка — свой слой: Esc закрывает её, а не весь редактор под ней.
-  useEscape(() => setHelp(false), help);
 
   const canvas = useRef<CanvasHandle>(null);
   // Разметка «как сейчас» — синхронно, мимо отрисовки: запись, отмена и уход
@@ -271,6 +256,7 @@ export default function AnnotationEditor({
     setAddTo(null);
     setSelected(null);
     setSelPart(null);
+    setHidden(new Set());
     autosave.settle(image?.rev);
     // Ошибка прошлого кадра к этому не относится.
     setError(null);
@@ -300,13 +286,7 @@ export default function AnnotationEditor({
     : [];
   const canEmpty = actions.includes("empty");
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return classes;
-    return classes.filter(
-      (c) => c.name.toLowerCase().includes(q) || String(c.class_index) === q
-    );
-  }, [classes, query]);
+  const progress = useMemo(() => progressOf(images), [images]);
 
   // Всё, что нужно записи, — через ref: запись стоит в очереди и может
   // выполниться после следующей отрисовки, а брать ей надо свежее.
@@ -392,6 +372,8 @@ export default function AnnotationEditor({
       hist.current = history.record(hist.current, boxesRef.current);
       if (gesture.current === "down") gesture.current = "recorded";
     }
+    // Номера скрытых держатся за место в списке — при смене числа объектов они съехали бы
+    if (next.length !== boxesRef.current.length) setHidden((h) => (h.size ? new Set() : h));
     boxesRef.current = next;
     setBoxes(next);
     touch();
@@ -796,26 +778,14 @@ export default function AnnotationEditor({
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (hasLayer()) return;
-      // Клавиши молчат, пока человек печатает, — но флажок и ползунок это не
-      // печать. Прежде любой <input> глушил инструменты, и после клика по
-      // галке в панели V/B/P переставали работать до тех пор, пока не
-      // щёлкнешь мимо: молчаливо и необъяснимо.
-      const el = e.target as HTMLElement | null;
-      const tag = el?.tagName;
-      const typing =
-        tag === "TEXTAREA" ||
-        (tag === "INPUT" &&
-          !["checkbox", "radio", "range", "button", "submit"].includes(
-            (el as HTMLInputElement).type
-          ));
-      if (typing || el?.isContentEditable) return;
-      // Стрелки на ползунке и списке двигают их значение, а не кадр: «Порог»
-      // листал кадры вместо того, чтобы меняться.
-      if (
-        tag === "SELECT" ||
-        (tag === "INPUT" && (el as HTMLInputElement).type === "range" &&
-          /^(Arrow|Page|Home|End)/.test(e.key))
-      ) return;
+      // Флажок и ползунок — не печать: после щелчка по ним V/B/P работают
+      if (isTyping(e.target) || ownsArrows(e.target, e.key)) return;
+      if (e.key === "?") { setKeysOpen(true); e.preventDefault(); return; }
+      if (e.code === "Tab" && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        setPanels((v) => !v);
+        e.preventDefault();
+        return;
+      }
       // Отмена и повтор. По коду клавиши, а не по букве: в русской раскладке
       // e.key у Z — «я».
       if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.code === "KeyZ" || e.code === "KeyY")) {
@@ -895,7 +865,7 @@ export default function AnnotationEditor({
         default: {
           const digit = /^Digit([1-9])$/.exec(e.code);
           if (!digit) return;
-          const c = visible[Number(digit[1]) - 1];
+          const c = digitClass(classes, e.code);
           if (c) pickClass(c.class_index);
         }
       }
@@ -907,7 +877,7 @@ export default function AnnotationEditor({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [go, close, step, selected, selPart, splitParts, visible, tool, autoOn,
+  }, [go, close, step, selected, selPart, splitParts, classes, tool, autoOn,
       addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
       pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty]);
 
@@ -982,546 +952,205 @@ export default function AnnotationEditor({
 
   if (!image) return null;
 
-  const isEmpty = image.task_status === "empty";
-  const isSkipped = image.task_status === "skipped";
-  const isDeleted = image.task_status === "deleted";
+  const pad = stagePad({ panels, film: filmW, side: SIDE_W });
+  const canPrev = images.slice(0, index).some((im) => im.task_status !== "deleted");
+  const canNext = images.slice(index + 1).some((im) => im.task_status !== "deleted");
+  const autoTitle = auto.state === "ready" ? undefined
+    : auto.state === "error" ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}` : "Модель готовится…";
 
   return (
-    <div
-      className={help ? "mag-ed help" : "mag-ed"}
-      role="dialog" aria-modal="true" aria-label="Разметка"
-    >
-      <div className="mag-ed-head">
-        <b>{taskName}</b>
-        <span className="mag-ed-cnt">кадр {index + 1} из {images.length}</span>
-        {/* Класс, который получат новые объекты. В списке справа он тоже
-            подсвечен, но глаз при разметке смотрит не туда. */}
-        {active !== null && (
-          <button
-            type="button"
-            className={autoOn ? "mag-ed-active on" : "mag-ed-active"}
-            {...hk("cls")}
-            onClick={(e) => {
-              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-              setMenu({ i: null, x: r.left, y: r.bottom + 6, prev: selected });
-            }}
-          >
-            <i style={{ background: labelOf(active).color }} />
-            {labelOf(active).name || active}
-            <b>▾</b>
-          </button>
-        )}
-        {isDeleted && <span className="mag-ed-flag del">кадр забракован</span>}
-        {isEmpty && <span className="mag-ed-flag nul">фоновый кадр</span>}
-        {isSkipped && <span className="mag-ed-flag skip">отложен</span>}
-        <span className="mag-ed-sp" />
-        {error && (
-          <span className="mag-ed-err">
-            {error}
-            <button type="button" aria-label="Скрыть ошибку" onClick={() => setError(null)}>✕</button>
-          </span>
-        )}
-        {saveState === "stale" ? (
-          <span className="mag-ed-unsaved">
-            кадр изменил другой человек
-            <button type="button" className="mag-ed-discard" onClick={discard}>
-              Показать его версию
-            </button>
-          </span>
-        ) : saveState === "refused" ? (
-          <span className="mag-ed-unsaved">
-            не сохранено: {saveErr}
-            <button type="button" className="mag-ed-discard" onClick={discard}>
-              Отбросить правку
-            </button>
-          </span>
-        ) : saveState === "failed" ? (
-          <span className="mag-ed-unsaved" title={saveErr || undefined}>
-            не сохранено — повторяю
-          </span>
-        ) : (
-          <span className={saveState === "saved" ? "mag-ed-saved" : "mag-ed-saving"}>
-            {saveState === "saved" ? "сохранено" : "сохраняю…"}
-          </span>
-        )}
-        <button
-          className={help ? "mag-ed-btn on" : "mag-ed-btn"}
-          type="button"
-          onClick={() => setHelp((v) => !v)}
-          aria-pressed={help}
-        >
-          справка
-        </button>
-        <button
-          className="mag-ed-btn"
-          type="button"
-          onClick={() => void close()}
-          aria-label="Закрыть"
-          {...hk("close")}
-        >
-          ✕
-        </button>
-      </div>
-
-      {/* Справка: гасим всё, оставляя светиться органы управления. Подсказки
-          по наведению вместо вечных всплывашек — они мешали работать. */}
-      {help && (
-        <>
-          <div className="mag-ed-dim" onClick={() => setHelp(false)} />
-          <div className="mag-ed-help">
-            <b>Управление</b>
-            <div className="mag-ed-help-list">
-              {Object.entries(HELP)
-                .filter(([, [key]]) => key)
-                .map(([id, [key, text]]) => (
-                  <div key={id}>
-                    <kbd>{key}</kbd>
-                    <span>{text}</span>
-                  </div>
-                ))}
+    <div className="ed fe" role="dialog" aria-modal="true" aria-label="Разметка кадров">
+      <EditorHead
+        onBack={() => void close()}
+        backLabel="К таске (Esc)"
+        title={taskName}
+        sub={<>Кадр <span className="ui-mono">{ru(index + 1)}</span> из <span className="ui-mono">{ru(images.length)}</span> · {image.file_name}</>}
+        extra={
+          <div className="ed-prog" title={STATUS_LOOK.map((s) => `${s.label}: ${progress.counts[s.id]}`).join(" · ")}>
+            <StackBar label="Прогресс" parts={STATUS_LOOK.map((s) => ({ label: s.label, value: progress.counts[s.id], color: s.color }))} />
+            <div className="row t-xs t-muted">
+              <span>решено <span className="ui-mono">{ru(progress.decided)}</span></span>
+              <span className="grow" />
+              <span className="ui-mono">{Math.round(progress.pct * 100)} %</span>
             </div>
-            <p>
-              Наведите на любую кнопку — покажет, что она делает. Щелчок мимо
-              закрывает справку.
-            </p>
           </div>
-        </>
+        }
+      >
+        <SaveNote state={saveState} error={saveErr} onDiscard={discard} />
+        <i className="ed-vsep" />
+        <Button variant="ghost" size="sm" icon="keyboard" kbd="?" onClick={() => setKeysOpen(true)}>Клавиши</Button>
+        <Button variant="ghost" size="sm" icon="sliders" kbd="Tab" aria-pressed={!panels}
+          title={panels ? "Спрятать панели" : "Показать панели"} onClick={() => setPanels((v) => !v)}>Панели</Button>
+      </EditorHead>
+
+      {error && (
+        <div className="ed-notes"><Notice tone="error" onClose={() => setError(null)}>{error}</Notice></div>
       )}
 
-      <div className="mag-ed-body">
-        {/* Рейк: только вид и инструменты, решений по кадру здесь нет */}
-        <div className="mag-ed-rail">
-          <button
-            className={tool === "select" ? "mag-tool on" : "mag-tool"}
-            type="button"
-            onClick={() => { setTool("select"); setLock(false); setAddTo(null); }}
-            {...hk("select")}
-          >
-            <span>V</span><small>Выбор</small>
-          </button>
-          <button
-            className={tool === "box" ? "mag-tool on" : "mag-tool"}
-            type="button"
-            disabled={frozen}
-            onClick={() => pickTool("box")}
-            {...hk("box")}
-          >
-            <span>B</span><small>Бокс</small>
-            {tool === "box" && lock && <i className="mag-tool-lock" />}
-          </button>
-          <button
-            className={tool === "polygon" ? "mag-tool on" : "mag-tool"}
-            type="button"
-            disabled={frozen}
-            onClick={() => { setTool("polygon"); setAddTo(null); }}
-            {...hk("polygon")}
-          >
-            <span>P</span><small>Контур</small>
-          </button>
-          {tool === "polygon" && (
-            <button
-              className={polyPanel ? "mag-tool on" : "mag-tool"}
-              type="button"
-              onClick={() => setPolyPanel((v) => !v)}
-              {...hk("polyOpts")}
-            >
-              <span>⚙</span><small>Контур</small>
-            </button>
-          )}
-          {/* Полуавтомат стоит за чертой: он не четвёртый инструмент, а способ
-              ввода поверх текущего. До готовности модели кнопка приглушена и
-              пульсирует — первый подъём весов занимает десятки секунд. */}
-          <hr />
-          <button
-            className={
-              (autoOn ? "mag-tool on" : "mag-tool") +
-              (auto.state === "starting" ? " warming" : "")
-            }
-            type="button"
-            disabled={frozen || auto.state !== "ready"}
-            onClick={pickAuto}
-            {...hk("auto")}
-            // Всплывашка остаётся только у неготовой кнопки, и это не
-            // подсказка, а диагноз: почему на неё нельзя нажать. Справка
-            // такого сказать не может — она про замысел, а не про состояние.
-            title={
-              auto.state === "ready"
-                ? undefined
-                : auto.state === "error"
-                  ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}`
-                  : "Модель готовится…"
-            }
-          >
-            <span>A</span><small>SAM2</small>
-          </button>
-          {autoOn && (
-            <button
-              className={autoPanel ? "mag-tool on" : "mag-tool"}
-              type="button"
-              onClick={() => setAutoPanel((v) => !v)}
-              {...hk("autoOpts")}
-            >
-              <span>⚙</span><small>SAM2</small>
-            </button>
-          )}
-          <hr />
-          <button className="mag-tool" type="button" {...hk("zoomIn")}
-            onClick={() => canvas.current?.zoomBy(1.3)}>
-            <span>+</span><small>Зум</small>
-          </button>
-          <button className="mag-tool" type="button" {...hk("zoomOut")}
-            onClick={() => canvas.current?.zoomBy(1 / 1.3)}>
-            <span>−</span><small>Зум</small>
-          </button>
-          <button className="mag-tool wide" type="button" {...hk("fit")}
-            onClick={() => canvas.current?.fit()}>
-            {Math.round(scale * 100)}%
-          </button>
-          <hr />
-          <button
-            className={grid ? "mag-tool on" : "mag-tool"}
-            type="button"
-            onClick={() => setGrid((g) => !g)}
-            {...hk("grid")}
-          >
-            <span>▦</span><small>Сетка</small>
-          </button>
-        </div>
+      <div
+        className={autoLive && auto.busy ? "ed-main auto-wait" : "ed-main"}
+        style={{ ["--pt" as string]: `${pad.top}px`, ["--pr" as string]: `${pad.right}px`,
+          ["--pb" as string]: `${pad.bottom}px`, ["--pl" as string]: `${pad.left}px` }}
+        onPointerDownCapture={() => { gesture.current = "down"; }}
+      >
+        <BoxCanvas
+          ref={canvas}
+          imageId={image.id}
+          fileName={image.file_name}
+          width={iw}
+          height={ih}
+          boxes={boxes}
+          hiddenItems={hidden}
+          labelOf={labelOf}
+          editable={!frozen}
+          tool={tool}
+          auto={autoLive}
+          autoMode={autoMode}
+          autoPoints={autoPts}
+          autoPreview={autoPrev}
+          activeClass={active}
+          selected={selected}
+          selectedPart={selPart}
+          splitParts={splitParts}
+          canMovePoly={canMovePoly}
+          grid={grid}
+          reserve={56}
+          onSelect={pick}
+          onBoxes={edit}
+          onDrawn={() => { if (!lock) setTool("select"); }}
+          onPolygon={onPolygon}
+          onScale={setScale}
+          onContext={(i, x, y, at) =>
+            setMenu({ i, x, y, ...at, prev: selected })
+          }
+          onAutoPoint={onAutoPoint}
+          onAutoBox={onAutoBox}
+          onAutoCommit={commitAuto}
+        />
 
-        {/* Настройки контура. Тумблер здесь, а двигают части в «выборе»: это
-            привычка человека, а не режим — заведя её однажды, к ней не
-            возвращаются. */}
-        {tool === "polygon" && polyPanel && (
-          <div className="mag-auto-panel">
-            <h5>Контур</h5>
-            <label className="mag-auto-check">
-              <input
-                type="checkbox"
-                checked={canMovePoly}
-                onChange={(e) => {
-                  setCanMovePoly(e.target.checked);
-                  if (!e.target.checked) setSplitParts(false);
-                }}
-              />
-              <span>Двигать контуры</span>
-            </label>
-            <label className={canMovePoly ? "mag-auto-check" : "mag-auto-check off"}>
-              <input
-                type="checkbox"
-                disabled={!canMovePoly}
-                checked={splitParts}
-                onChange={(e) => {
-                  setSplitParts(e.target.checked);
-                  if (!e.target.checked) setSelPart(null);
-                }}
-              />
-              <span>Части по отдельности</span>
-            </label>
-          </div>
+        {panels && (
+          <Float className="ed-top" role="toolbar" label="Инструменты">
+            <ToolButton icon="pointer" label="Выбор" k="V" pressed={tool === "select"}
+              onClick={() => { setTool("select"); setLock(false); setAddTo(null); }} />
+            <ToolButton icon="bbox" label="Рамка" k="B" pressed={tool === "box"} disabled={frozen}
+              locked={tool === "box" && lock} onClick={() => pickTool("box")} />
+            <ToolButton icon="poly" label="Контур" k="P" pressed={tool === "polygon"} disabled={frozen}
+              onClick={() => { setTool("polygon"); setAddTo(null); }} />
+            <ToolMenu label="Настройки контура" width={260}>
+              <div className="ed-set-b">
+                <div className="ui-pop-h">Контур</div>
+                <label className="ed-set-row">
+                  <span>Двигать контуры</span>
+                  <Switch label="Двигать контуры" checked={canMovePoly}
+                    onChange={(v) => { setCanMovePoly(v); if (!v) setSplitParts(false); }} />
+                </label>
+                <label className="ed-set-row">
+                  <span>Части по отдельности</span>
+                  <Switch label="Части по отдельности" checked={splitParts} disabled={!canMovePoly}
+                    onChange={(v) => { setSplitParts(v); if (!v) setSelPart(null); }} />
+                </label>
+                <p className="ed-set-hint">Контур правят по вершинам; перенос целиком включается здесь.</p>
+              </div>
+            </ToolMenu>
+            <i className="ed-vsep" />
+            <ToolButton icon="sparkle" label="Полуавтомат SAM2" k="A" pressed={autoOn}
+              disabled={frozen || auto.state !== "ready"} warming={auto.state === "starting"}
+              title={autoTitle} onClick={pickAuto} />
+            <ToolMenu label="Настройки полуавтомата" width={300}>
+              <AutoSettings refine={refine} onRefine={setRefine} mode={autoMode}
+                onMode={(m) => { setAutoMode(m); clearAuto(); }} polygon={tool === "polygon"}
+                afterSelect={afterCommit === "select"} onAfterSelect={(v) => setAfterCommit(v ? "select" : "new")}
+                error={auto.error} />
+            </ToolMenu>
+            <i className="ed-vsep" />
+            <ClassPicker classes={classes} active={active}
+              onPick={(ci) => pickClass(ci)}
+              onCreate={frozen ? undefined : async (name) => {
+                try {
+                  const c = await ensureClass(code, name);
+                  setClasses((prev) => (prev.some((p) => p.id === c.id) ? prev : [...prev, c]));
+                  pickClass(c.class_index);
+                } catch (e) {
+                  setError((e as Error).message);
+                }
+              }} />
+          </Float>
         )}
 
-        {/* Окошко параметров полуавтомата. Показываем только то, что влияет
-            на результат при текущем инструменте. */}
-        {autoOn && autoPanel && (
-          <div className="mag-auto-panel">
-            <h5>Полуавтомат</h5>
-            <label className="mag-auto-row">
-              <span>Вид</span>
-              <select
-                value={autoMode}
-                onChange={(e) => { setAutoMode(e.target.value as "points" | "box"); clearAuto(); }}
-              >
-                <option value="points">Точки</option>
-                <option value="box">Область</option>
-              </select>
-            </label>
-            <label className="mag-auto-row">
-              <span>Детализация</span>
-              <select
-                value={refine.detail}
-                onChange={(e) => setRefine((r) => ({ ...r, detail: e.target.value as AutoRefine["detail"] }))}
-              >
-                <option value="auto">Как решит модель</option>
-                <option value="object">Объект целиком</option>
-                <option value="part">Часть</option>
-                <option value="subpart">Подчасть</option>
-              </select>
-            </label>
-            <label className="mag-auto-row">
-              <span>Порог</span>
-              <input
-                type="range" min="0" max="0.9" step="0.05"
-                value={refine.score_min ?? 0}
-                onChange={(e) => setRefine((r) => ({ ...r, score_min: Number(e.target.value) }))}
-              />
-              <b>{(refine.score_min ?? 0).toFixed(2)}</b>
-            </label>
-            <label className="mag-auto-row">
-              <span>Мелочь, px²</span>
-              <input
-                type="number" min="0" step="16"
-                value={refine.min_area ?? 0}
-                onChange={(e) => setRefine((r) => ({ ...r, min_area: Number(e.target.value) }))}
-              />
-            </label>
-            <label className="mag-auto-check">
-              <input
-                type="checkbox"
-                checked={!!refine.fill_holes}
-                onChange={(e) => setRefine((r) => ({ ...r, fill_holes: e.target.checked }))}
-              />
-              <span>Закрывать дыры в объекте</span>
-            </label>
-            {/* Число точек контура появляется только у контурного инструмента:
-                на границы рамки оно не влияет вовсе, и в боксовой работе это
-                был бы ползунок, который ничего не делает. */}
-            {tool === "polygon" && (
-              <label className="mag-auto-row">
-                <span>Точек в контуре</span>
-                <input
-                  type="range" min={8} max={200} step={4}
-                  value={refine.polygon_points ?? 64}
-                  onChange={(e) =>
-                    setRefine((r) => ({ ...r, polygon_points: Number(e.target.value) }))
-                  }
-                />
-                <b>{refine.polygon_points ?? 64}</b>
-              </label>
-            )}
-            <label className="mag-auto-check">
-              <input
-                type="checkbox"
-                checked={afterCommit === "select"}
-                onChange={(e) => setAfterCommit(e.target.checked ? "select" : "new")}
-              />
-              <span>После закрепления выходить в выбор</span>
-            </label>
-            <p className="mag-auto-hint">
-              {autoMode === "points" ? (
-                <>
-                  Клик — объект под курсором. Shift+клик уточняет, Shift+правая
-                  убирает участок, Shift по боксу доуточняет его. Пробел или
-                  клик мимо — закрепить.
-                </>
-              ) : (
-                <>
-                  Обведите объект — модель уточнит границы. Пробел, клик или
-                  новая рамка — закрепить.
-                </>
-              )}
-            </p>
-            {auto.error && <div className="mag-auto-err">{auto.error}</div>}
-          </div>
-        )}
-
-        {/* Окно кадра: холст и плашки поверх него. Плашки — соседи холста, а
-            не его дети: иначе нажатие на кнопку начинало бы рамку. */}
-        <div
-          className={autoLive && auto.busy ? "mag-ed-view auto-wait" : "mag-ed-view"}
-          onPointerDownCapture={() => { gesture.current = "down"; }}
-        >
+        <div className="ed-plates">
           <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn}
             quiet={frozen} onRetry={auto.retry} onDismiss={() => auto.setError(null)} />
-          <BoxCanvas
-            ref={canvas}
-            imageId={image.id}
-            fileName={image.file_name}
-            width={iw}
-            height={ih}
-            boxes={boxes}
-            labelOf={labelOf}
-            editable={!frozen}
-            tool={tool}
-            auto={autoLive}
-            autoMode={autoMode}
-            autoPoints={autoPts}
-            autoPreview={autoPrev}
-            activeClass={active}
-            selected={selected}
-            selectedPart={selPart}
-            splitParts={splitParts}
-            canMovePoly={canMovePoly}
-            grid={grid}
-            reserve={filmH + 92}
-            onSelect={pick}
-            onBoxes={edit}
-            onDrawn={() => { if (!lock) setTool("select"); }}
-            onPolygon={onPolygon}
-            onScale={setScale}
-            onContext={(i, x, y, at) =>
-              setMenu({ i, x, y, ...at, prev: selected })
-            }
-            onAutoPoint={onAutoPoint}
-            onAutoBox={onAutoBox}
-            onAutoCommit={commitAuto}
-          />
-
-          {/* Показанное надо чем-то принять, и это должно быть видно, а не
-              держаться в голове. Панель живёт ровно пока есть что закреплять —
-              и на это время занимает место плашки кадра: Пробел сейчас
-              закрепляет, а не листает. */}
-          {autoPrev ? (
-            <div className="mag-auto-bar">
-              <button className="mag-auto-ok" type="button" onClick={commitAuto}>
-                Закрепить <kbd>Пробел</kbd>
-              </button>
-              <button className="mag-auto-no" type="button" onClick={clearAuto}>
-                Отменить <kbd>Esc</kbd>
-              </button>
-            </div>
-          ) : (
-            /* Решения по кадру — поверх кадра и полупрозрачно, фон появляется
-               при наведении (решение владельца 24.09.2026). Только то, что
-               можно нажать сейчас: см. frameActions. */
-            <div className="mag-ed-vbar" role="toolbar" aria-label="Решение по кадру">
-              {actions.includes("accept") && (
-                <button className="mag-ed-vb ok" type="button"
-                  title="Разметка агента верна — кадр размечен"
-                  onClick={() => verdict("annotated", true)}>
-                  Принять
-                </button>
-              )}
-              {actions.includes("empty") && (
-                <button className="mag-ed-vb nul" type="button" aria-pressed={isEmpty}
-                  onClick={() => toggle("empty")} {...hk("empty")}>
-                  Пусто
-                </button>
-              )}
-              {actions.includes("skip") && (
-                <button className="mag-ed-vb warn" type="button" aria-pressed={isSkipped}
-                  onClick={() => toggle("skipped")} {...hk("skip")}>
-                  Отложить
-                </button>
-              )}
-              {actions.includes("trash") && (
-                <button className="mag-ed-vb del" type="button" onClick={trash} {...hk("trash")}>
-                  Удалить
-                </button>
-              )}
-              {actions.includes("restore") && (
-                <button className="mag-ed-vb" type="button" onClick={trash} {...hk("trash")}>
-                  Вернуть
-                </button>
-              )}
-              <button className="mag-ed-vb go" type="button" onClick={() => go(1)} {...hk("next")}>
-                Далее →
-              </button>
-            </div>
+          {addTo !== null && (
+            <div className="mag-auto-plate" role="status">Следующий контур ляжет в выбранный объект · Esc — отменить</div>
           )}
         </div>
 
-        <aside className="mag-ed-side">
-          <h5>Класс</h5>
-          <input
-            className="mag-ed-search"
-            type="text"
-            value={query}
-            placeholder="Поиск класса…"
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <div className="mag-ed-classes">
-            {visible.map((c, i) => (
-              <button
-                key={c.id}
-                type="button"
-                className={c.class_index === active ? "mag-ed-cls on" : "mag-ed-cls"}
-                onClick={() => pickClass(c.class_index)}
-              >
-                <i style={{ background: c.color }} />
-                <span className="mag-ed-cls-name">{c.name}</span>
-                {i < 9 && <kbd>{i + 1}</kbd>}
-              </button>
-            ))}
-          </div>
-          {/* Кнопка появляется только когда поиск ничего не дал: сначала
-              посмотри, потом заводи — иначе плодятся дубликаты. */}
-          {query.trim() && visible.length === 0 && !frozen && (
-            <button className="mag-ed-newcls" type="button"
-              onClick={() => {
-                ensureClass(code, query.trim())
-                  .then((c) => {
-                    setClasses((prev) => (prev.some((p) => p.id === c.id) ? prev : [...prev, c]));
-                    pickClass(c.class_index);
-                    setQuery("");
-                  })
-                  .catch((e) => setError((e as Error).message));
-              }}>
-              Ничего не нашлось — создать «{query.trim()}»
-            </button>
-          )}
+        {panels && (
+          <Float className="fe-film" label="Кадры таски">
+            <FilmStrip
+              vertical
+              items={images.map((im) => ({
+                id: im.id,
+                width: im.width,
+                height: im.height,
+                boxes: im.boxes,
+                ring: im.task_status,
+                title: `${im.file_name} — ${im.annotations} разметок`,
+              }))}
+              index={index}
+              onPick={jump}
+              onSize={setFilmW}
+            />
+          </Float>
+        )}
 
-          {/* Таг правится здесь и только здесь: человек видит кадр, когда
-              решает про его условия съёмки. Работает и в закрытой таске —
-              закрытие останавливает разметку, а таг это паспорт кадра. */}
-          <h5>Таги кадра</h5>
-          <TagPicker
-            code={code}
-            all={tags}
-            value={image?.tag_ids || []}
-            disabled={!canTag}
-            compact
-            placeholder="таг кадра"
-            onChange={(next) => image && onTags(image.id, next)}
-            onCreated={onTagCreated}
-          />
+        {panels && (
+          <Float className="fe-side" label="Кадр и объекты">
+            <FrameSide
+              status={image.task_status}
+              tags={
+                <TagPicker code={code} all={tags} value={image.tag_ids || []} disabled={!canTag} compact
+                  placeholder="таг кадра" onChange={(next) => onTags(image.id, next)} onCreated={onTagCreated} />
+              }
+              boxes={boxes}
+              labelOf={labelOf}
+              meta={meta}
+              classes={classes}
+              selected={selected}
+              hidden={hidden}
+              frozen={frozen}
+              onSelect={(i) => pick(i)}
+              onHide={(i) => setHidden((h) => {
+                const next = new Set(h);
+                if (next.has(i)) next.delete(i); else next.add(i);
+                return next;
+              })}
+              onClass={(i, ci) => pickClass(ci, i)}
+              onDelete={(i) => { edit(boxes.filter((_, k) => k !== i)); pick(null); }}
+              onAddContour={(i) => { pick(i); setAddTo(i); setTool("polygon"); }}
+            />
+          </Float>
+        )}
 
-          <h5>На кадре <Sep /> {boxes.length}</h5>
-          <div className="mag-ed-objs">
-            {boxes.length === 0 ? (
-              <p className="mag-ed-objects-empty">
-                {isEmpty
-                  ? "Кадр объявлен фоновым — объектов на нём нет."
-                  : "На кадре пока ничего не обведено."}
-              </p>
+        {panels && (
+          <Float className="ed-bot" role="toolbar" label={autoPrev ? "Показанное моделью" : "Решение по кадру"}>
+            {autoPrev ? (
+              <AutoBar onCommit={commitAuto} onCancel={clearAuto} />
             ) : (
-              boxes.map((b, i) => (
-                <div
-                  key={i}
-                  className={i === selected ? "mag-ed-obj on" : "mag-ed-obj"}
-                  onClick={() => setSelected(i)}
-                >
-                  <i style={{ background: labelOf(b.class_index).color }} />
-                  <span className="mag-ed-obj-name">
-                    {labelOf(b.class_index).name || `класс ${b.class_index}`}
-                  </span>
-                  <span className="sp">{Math.round(b.w)}×{Math.round(b.h)}</span>
-                  <Who box={meta.get(b.id ?? "")} />
-                  {!frozen && (
-                    <button
-                      className="mag-ed-obj-x"
-                      type="button"
-                      aria-label="Удалить объект"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        edit(boxes.filter((_, k) => k !== i));
-                        setSelected(null);
-                      }}
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              ))
+              <FrameBar index={index} total={images.length} canPrev={canPrev} canNext={canNext}
+                actions={actions} status={image.task_status}
+                onPrev={() => void go(-1)} onNext={() => void go(1)}
+                onAccept={() => void verdict("annotated", true)}
+                onToggle={(s) => void toggle(s)} onTrash={() => void trash()} onGo={() => void go(1)} />
             )}
-          </div>
-          
-        </aside>
+          </Float>
+        )}
+
+        <ZoomChip scale={scale} onZoom={(k) => canvas.current?.zoomBy(k)} onFit={() => canvas.current?.fit()}
+          grid={grid} onGrid={() => setGrid((g) => !g)} />
       </div>
 
-      <FilmStrip
-        grabHelp={hk("strip")}
-        items={images.map((im) => ({
-          id: im.id,
-          width: im.width,
-          height: im.height,
-          boxes: im.boxes,
-          ring: im.task_status,
-          title: `${im.file_name} — ${im.annotations} разметок`,
-        }))}
-        index={index}
-        onPick={jump}
-        onHeight={setFilmH}
-      />
+      <KeysDialog open={keysOpen} onOpenChange={setKeysOpen} groups={KEYS} />
 
       {menu && (
         <ClassMenu

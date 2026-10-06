@@ -346,12 +346,14 @@ const mini = await page.evaluate(() => {
   const cell = document.querySelector(".mag-fs-cell");
   const svg = cell?.querySelector(".mag-shp");
   if (!svg) return null;
-  const box = svg.querySelector(".mag-shp-box");
-  const poly = svg.querySelector(".mag-shp-poly");
+  // Рамка — путь из h/v, контур — из L; заливки у обоих нет, как на холсте
+  const lines = [...svg.querySelectorAll(".mag-shp-line")];
+  const box = lines.find((l) => !l.getAttribute("d").includes("L"));
+  const poly = lines.find((l) => l.getAttribute("d").includes("L"));
   return {
     слойЕсть: true,
-    рамок: svg.querySelectorAll(".mag-shp-box").length,
-    контуров: svg.querySelectorAll(".mag-shp-poly").length,
+    рамок: lines.filter((l) => !l.getAttribute("d").includes("L")).length,
+    контуров: lines.filter((l) => l.getAttribute("d").includes("L")).length,
     заливкаРамки: box ? getComputedStyle(box).fill : null,
     заливкаКонтура: poly ? getComputedStyle(poly).fill : null,
     // Слой поверх картинки обязан быть прозрачным: имя `.mag-mini` уже было

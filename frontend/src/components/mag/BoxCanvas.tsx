@@ -11,6 +11,7 @@ import {
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { imageFileUrl, imagePreviewUrl } from "../../auth/api";
 import * as poly from "./polygon";
+import { inkOn } from "../editor/look";
 import type { Point, Ring } from "./polygon";
 import {
   HIT,
@@ -119,6 +120,8 @@ const HANDLES = ["tl", "tc", "tr", "lc", "rc", "bl", "bc", "br"];
 const VERTEX_R = 7;
 // Углы и середины: середины прибавляются только на крупном объекте.
 const CORNERS = new Set(["tl", "tr", "bl", "br"]);
+// Подпись видна всегда, если меньшая сторона рамки на экране не меньше этого
+const LABEL_AT = 40;
 
 function clampBox(b: CanvasBox, w: number, h: number): CanvasBox {
   // За границей кадра бокс даст координату вне [0,1] при экспорте — ровно ту,
@@ -217,7 +220,10 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   /** Индексы объектов, которые рисуются прерывисто: объект на кадре есть, но
    *  заслонён, и в разметку этот кадр не пойдёт. */
   dashed?: Set<number>;
+  /** Скрытые классы: в лайтбоксе гасят класс целиком. */
   hidden?: Set<number>;
+  /** Скрытые объекты по номеру в списке: глаз в строке объекта редактора. */
+  hiddenItems?: Set<number>;
   labels?: boolean;
   editable?: boolean;
   /** Картинка догоняет запрошенный кадр. Рисовать в это время нельзя: объект
@@ -278,7 +284,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, src, bitmap, fileName, width, height, boxes, labelOf, dashed, hidden,
+    imageId, src, bitmap, fileName, width, height, boxes, labelOf, dashed, hidden, hiddenItems,
     labels = true, editable = false, waiting = false, tool = "select", auto = false,
     autoMode = "points", autoPoints, autoPreview = null, activeClass = null,
     selected = null, selectedPart = null, splitParts = false, canMovePoly = false,
@@ -292,6 +298,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   const [hires, setHires] = useState(false);
   const [dragKind, setDragKind] = useState<Drag["kind"] | null>(null);
   const [shift, setShift] = useState(false);
+  // Объект под курсором: его подпись проявляется в полную силу
+  const [hot, setHot] = useState<number | null>(null);
   // Alt держат — значит целятся вставить вершину. Показываем, куда она встанет:
   // не в курсор, а на грань, которую разделит. Иначе рука, промахнувшаяся мимо
   // контура, вывернула бы его и не поняла почему.
@@ -808,7 +816,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
         height="100%"
       >
         {boxes.map((s, i) => {
-          if (hidden?.has(s.class_index)) return null;
+          if (hidden?.has(s.class_index) || hiddenItems?.has(i)) return null;
           const meta = labelOf(s.class_index);
           const on = i === selected;
           const box = boundsOf(s);
@@ -895,7 +903,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           }
 
           return (
-            <g key={i} className={cls} style={{ ["--bc" as string]: meta.color }}>
+            <g key={i} className={cls + (hot === i ? " hot" : "")} style={{ ["--bc" as string]: meta.color }}
+              onPointerEnter={() => setHot(i)} onPointerLeave={() => setHot((h) => (h === i ? null : h))}>
               {/* Тело: ловит клик и ничего не рисует. У контура это его форма,
                   причём **каждая часть своей фигурой** — по ней часть и
                   выделяется отдельно от соседних. У бокса — прямоугольник. */}
@@ -946,9 +955,9 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   />
                 )}
 
-              {/* Якоря выбранного бокса. */}
-              {on && editable && !contour && corners &&
-                HANDLES.filter((c) => mids || CORNERS.has(c)).map((corner) => {
+              {/* Якоря выбранного бокса: четыре угла всегда, середины — у крупного. */}
+              {on && editable && !contour &&
+                HANDLES.filter((c) => (mids && corners) || CORNERS.has(c)).map((corner) => {
                   const hx = corner.includes("l") ? px : corner.includes("r") ? px2 : (px + px2) / 2;
                   const hy = corner.includes("t") ? py : corner.includes("b") ? py2 : (py + py2) / 2;
                   return (
@@ -1103,15 +1112,30 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       {labels && (
         <div className="mag-cv-labels">
           {boxes.map((s, i) => {
-            if (hidden?.has(s.class_index)) return null;
+            if (hidden?.has(s.class_index) || hiddenItems?.has(i)) return null;
             const meta = labelOf(s.class_index);
             const box = boundsOf(s);
-            const [px, py] = sx(box.x, box.y);
+            const [lx, py] = sx(box.x, box.y);
+            const [rx, by] = sx(box.x + box.w, box.y + box.h);
+            // У мелких подпись только под курсором и у выбранного: на плотном кадре они слипались.
+            // Скрытая остаётся в разметке прозрачной — так она проявляется и гаснет плавно
+            const off = Math.min(rx - lx, by - py) < LABEL_AT && i !== selected && i !== hot;
             return (
               <span
                 key={i}
-                className="mag-cv-lb"
-                style={{ left: px, top: py, background: meta.color }}
+                aria-hidden={off || undefined}
+                className={"mag-cv-lb" + (off ? " off" : "") + (i === selected ? " on" : "") +
+                  (hot === i ? " hot" : "") + (inkOn(meta.color) === "dark" ? " ink-dark" : "")}
+                style={{ left: lx, top: py, ["--bc" as string]: meta.color }}
+                onPointerEnter={() => setHot(i)}
+                onPointerLeave={() => setHot((h) => (h === i ? null : h))}
+                // Щелчок по подписи выбирает её рамку и не начинает рисование под ней
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSelect?.(i, null);
+                }}
               >
                 {meta.name || s.class_index}
               </span>

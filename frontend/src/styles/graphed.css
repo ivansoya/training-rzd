@@ -167,10 +167,7 @@
 .ge-cmp:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .ge-cmp.busy { opacity: .7; transition: opacity .2s; }
 .ge-layer { position: absolute; inset: 0; }
-.ge-layer > img, .ge-layer > svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-.ge-layer > svg { fill: none; stroke-width: 2px; vector-effect: non-scaling-stroke; overflow: visible; }
-.ge-layer > svg rect, .ge-layer > svg polygon { vector-effect: non-scaling-stroke; stroke-width: 2px; fill: none; }
-.ge-layer > svg text { stroke: none; font: 600 22px var(--font); paint-order: stroke; }
+.ge-layer > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .ge-layer.after { clip-path: inset(0 0 0 var(--x, 50%)); }
 .ge-knob { position: absolute; top: 0; bottom: 0; left: var(--x, 50%); width: 2px; margin-left: -1px; background: var(--on-frame); pointer-events: none; }
 .ge-knob::after {
@@ -283,11 +280,7 @@
 /* кадр превью с рамками */
 .ae-frame { position: relative; width: 100%; aspect-ratio: var(--ar, 16 / 9); border-radius: var(--r-md); overflow: hidden; background: var(--stage); user-select: none; }
 .ae-frame.busy { opacity: .7; transition: opacity .2s; }
-.ae-frame > img, .ae-frame > svg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-.ae-frame > svg { overflow: visible; pointer-events: none; }
-.ae-frame rect, .ae-frame polygon { fill: none; stroke-width: 2px; vector-effect: non-scaling-stroke; }
-.ae-frame text { font-weight: 600; font-family: var(--font); stroke: var(--stage); stroke-width: var(--halo, 3px); paint-order: stroke; }
-.ae-frame .ae-human { stroke: var(--on-frame); stroke-opacity: .85; stroke-width: 1.5px; }
+.ae-frame > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .ge-full-stage .ae-frame { width: min(100cqw, calc(100cqh * var(--arn, 1.78))); }
 .ae-pv-nav { display: flex; align-items: center; gap: 2px; }
 .ae-pv-file { display: block; color: var(--muted-fg); }

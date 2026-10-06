@@ -15,6 +15,8 @@ import * as api from "../../api/aug";
 import type { CatalogueNode, GraphDoc, PreviewPic, PreviewResult, PreviewStep } from "../../api/aug";
 import { Button, Dialog, Field, Icon, Popover, Seg, Select, Switch, cx } from "../../ui";
 import { titleOf, ru, type NodeData } from "./GraphNodes";
+import Marks from "../editor/Marks";
+import type { Mark } from "../editor/Marks";
 
 const WAIT_MS = 300;
 
@@ -76,24 +78,17 @@ export function Layer({ result, view, marks, className }: {
   return (
     <div className={cx("ge-layer", className)}>
       <img src={pic.url} alt="" draggable={false} />
-      {/* viewBox равен размеру картинки, вписываются одинаково — слой не съедет. */}
       {marks && (
-        <svg viewBox={`0 0 ${pic.w} ${pic.h}`} aria-hidden="true">
-          {view.shapes.map((s, i) => {
-            const cls = result.classes[s.c];
-            const color = cls?.color ?? "var(--faint)";
-            const at = s.box
-              ? [s.box[0], s.box[1]]
-              : [Math.min(...s.rings!.flat().map((p) => p[0])), Math.min(...s.rings!.flat().map((p) => p[1]))];
-            return (
-              <g key={i} stroke={color}>
-                {s.box ? <rect x={s.box[0]} y={s.box[1]} width={s.box[2]} height={s.box[3]} />
-                  : s.rings!.map((ring, j) => <polygon key={j} points={ring.map((p) => p.join(",")).join(" ")} />)}
-                <text x={at[0]} y={at[1] - 5} fill={color}>{cls?.name ?? `класс ${s.c}`}</text>
-              </g>
-            );
-          })}
-        </svg>
+        <Marks width={pic.w} height={pic.h} items={view.shapes.map((s, i): Mark => {
+          const cls = result.classes[s.c];
+          const pts = s.rings?.flat() ?? [];
+          const [x, y, w, h] = s.box ?? (() => {
+            const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+            const x0 = Math.min(...xs), y0 = Math.min(...ys);
+            return [x0, y0, Math.max(...xs) - x0, Math.max(...ys) - y0];
+          })();
+          return { key: String(i), x, y, w, h, parts: s.rings, color: cls?.color ?? "var(--faint)", label: cls?.name ?? `класс ${s.c}` };
+        })} />
       )}
     </div>
   );

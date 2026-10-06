@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { LabelClass } from "../../auth/api";
+import { Icon, Input, Swatch, useEscape } from "../../ui";
+import { filterClasses } from "../editor/look";
 
-/** Меню смены класса у выбранного бокса: правая кнопка на разметке.
+/** Меню правой кнопки на разметке: смена класса с поиском, действия, удаление.
  *
  * С поиском, потому что классов в проекте десятки: пролистывать список правой
  * кнопкой дольше, чем набрать две буквы.
@@ -20,15 +22,11 @@ export default function ClassMenu({
   at: { x: number; y: number };
   current: number | null;
   onPick: (classIndex: number) => void;
-  /** Есть только когда меню открыто на детекции, а не на плашке класса. */
+  /** Есть только когда меню открыто на объекте, а не на плашке класса. */
   onDelete?: () => void;
-  /** Подпись у удаления: «детекцию», «объект», «трек» — что именно уйдёт. */
+  /** Подпись у удаления: «объект», «трек целиком» — что именно уйдёт. */
   deleteLabel?: string;
-  /** Действия поверх смены класса: например, превратить объект в трек.
-   *
-   *  Недоступное действие остаётся в списке, а не исчезает: пропав, оно
-   *  заставило бы искать, куда делось, — а так подпись рядом объясняет, почему
-   *  сейчас нельзя. */
+  /** Действия поверх смены класса. Недоступное остаётся в списке с причиной, а не исчезает. */
   actions?: {
     label: string;
     hint?: string;
@@ -39,83 +37,65 @@ export default function ClassMenu({
 }) {
   const [query, setQuery] = useState("");
   const box = useRef<HTMLDivElement>(null);
-  const input = useRef<HTMLInputElement>(null);
+  const [pos, setPos] = useState({ left: at.x, top: at.y });
 
-  useEffect(() => { input.current?.focus(); }, []);
+  useEscape(onClose);
 
+  // capture: закрыться нужно раньше, чем холст обработает нажатие мимо меню
   useEffect(() => {
     function away(e: PointerEvent) {
       if (!box.current?.contains(e.target as Node)) onClose();
     }
-    function key(e: KeyboardEvent) {
-      if (e.key === "Escape") { e.stopPropagation(); onClose(); }
-    }
-    // capture: закрыться нужно раньше, чем холст обработает нажатие.
     window.addEventListener("pointerdown", away, true);
-    window.addEventListener("keydown", key, true);
-    return () => {
-      window.removeEventListener("pointerdown", away, true);
-      window.removeEventListener("keydown", key, true);
-    };
+    return () => window.removeEventListener("pointerdown", away, true);
   }, [onClose]);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return classes;
-    return classes.filter(
-      (c) => c.name.toLowerCase().includes(q) || String(c.class_index) === q
-    );
-  }, [classes, query]);
+  // У края окна меню разворачивается внутрь — по настоящему размеру, а не по догадке
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(8, Math.min(at.x, window.innerWidth - width - 8)),
+      top: at.y + height + 8 <= window.innerHeight ? at.y : Math.max(8, window.innerHeight - height - 8),
+    });
+  }, [at.x, at.y]);
 
-  // У края окна меню разворачивается внутрь, а не уезжает за границу.
-  const left = Math.min(at.x, window.innerWidth - 236);
-  const top = Math.min(at.y, window.innerHeight - 300);
+  const visible = useMemo(() => filterClasses(classes, query), [classes, query]);
 
   return (
-    <div className="mag-cmenu" ref={box} style={{ left, top }} role="menu">
-      <input
-        ref={input}
-        className="mag-ed-search"
-        type="text"
-        value={query}
-        placeholder="Класс…"
+    <div className="ui-pop ed-cmenu" ref={box} style={pos} role="menu"
+      onContextMenu={(e) => e.preventDefault()}>
+      <Input icon="search" autoFocus placeholder="Класс…" value={query}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
           if (e.key === "Enter" && visible[0]) onPick(visible[0].class_index);
-        }}
-      />
-      <div className="mag-cmenu-list">
+        }} />
+      <div className="ed-cmenu-list">
         {visible.length === 0 ? (
-          <p className="mag-ed-hint">Ничего не нашлось.</p>
+          <p className="ed-clsp-none">Ничего не нашлось.</p>
         ) : (
           visible.map((c) => (
-            <button
-              key={c.id}
-              type="button"
-              className={c.class_index === current ? "mag-ed-cls on" : "mag-ed-cls"}
-              onClick={() => onPick(c.class_index)}
-            >
-              <i style={{ background: c.color }} />
-              <span className="mag-ed-cls-name">{c.name}</span>
+            <button key={c.id} type="button" role="menuitemradio" aria-checked={c.class_index === current}
+              className="ui-opt" aria-current={c.class_index === current || undefined}
+              onClick={() => onPick(c.class_index)}>
+              <Swatch color={c.color} />
+              <span className="ui-opt-t t-ell">{c.name}</span>
+              {c.class_index === current && <Icon name="tick" size={14} />}
             </button>
           ))
         )}
       </div>
+      {(actions?.length || onDelete) && <div className="ui-pop-sep" />}
       {actions?.map((a) => (
-        <button
-          key={a.label}
-          type="button"
-          className={a.disabled ? "mag-cmenu-act off" : "mag-cmenu-act"}
-          disabled={a.disabled}
-          onClick={a.run}
-        >
-          {a.label}
-          {a.hint && <em>{a.hint}</em>}
+        <button key={a.label} type="button" role="menuitem" className="ui-opt" disabled={a.disabled} onClick={a.run}>
+          <span className="ui-opt-t">{a.label}{a.hint && <span className="ui-opt-h">{a.hint}</span>}</span>
         </button>
       ))}
       {onDelete && (
-        <button type="button" className="mag-cmenu-del" onClick={onDelete}>
-          Удалить {deleteLabel || "детекцию"}
+        <button type="button" role="menuitem" className="ui-opt danger" onClick={onDelete}>
+          <Icon name="trash" size={14} />
+          <span className="ui-opt-t">Удалить {deleteLabel || "объект"}</span>
         </button>
       )}
     </div>

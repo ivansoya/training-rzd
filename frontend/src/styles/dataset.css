@@ -22,151 +22,11 @@
   color: var(--skip);
 }
 
-/* ===== Панель фильтров ===== */
-.mag-filters {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-  margin-bottom: 12px;
-}
-
-.mag-filters select {
-  width: auto;
-  min-width: 128px;
-  padding: 6px 26px 6px 9px;
-  font-size: 12.5px;
-  border-radius: 7px;
-  background-position: right 9px center;
-}
-
-.mag-filters-sp {
-  margin-left: auto;
-}
-
-.mag-filters .mag-ghost-inline {
-  padding: 6px 12px;
-  font-size: 12.5px;
-}
-
 /* Включённый фильтр читается как нажатая клавиша, а не как обычная кнопка */
 .mag-ghost-inline.on {
   background: var(--mag-graphite);
   border-color: var(--mag-graphite);
   color: var(--on-acc);
-}
-
-.mag-switch {
-  display: inline-flex;
-  border: 1px solid var(--rule);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.mag-switch button {
-  border: 0;
-  background: var(--card);
-  padding: 6px 12px;
-  font-size: 12px;
-  font-family: inherit;
-  font-weight: 600;
-  color: var(--mag-muted);
-  cursor: pointer;
-}
-
-.mag-switch button + button {
-  border-left: 1px solid var(--rule);
-}
-
-.mag-switch button.on {
-  background: var(--mag-graphite);
-  color: var(--on-acc);
-}
-
-.mag-found {
-  font-size: 12px;
-  color: var(--mag-muted);
-  margin-bottom: 12px;
-  font-variant-numeric: tabular-nums;
-}
-
-/* ===== Сетка превью ===== */
-.mag-tiles {
-  display: grid;
-  gap: 8px;
-}
-
-.mag-tiles.s { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
-.mag-tiles.m { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
-.mag-tiles.l { grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
-
-.mag-tile {
-  position: relative;
-  display: block;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  overflow: hidden;
-  background: var(--hair);
-  aspect-ratio: 4 / 3;
-  cursor: pointer;
-  /* Браузер пропускает отрисовку того, что за экраном: в режиме ленты это
-     разница между плавной прокруткой и подвисшей вкладкой. */
-  content-visibility: auto;
-  contain-intrinsic-size: 190px 142px;
-}
-
-.mag-tile img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.mag-tile:hover {
-  outline: 2px solid var(--mag-red);
-  outline-offset: -2px;
-}
-
-.mag-tile:focus-visible {
-  outline: 2px solid var(--mag-red);
-  outline-offset: 2px;
-}
-
-.mag-tile-split,
-.mag-tile-n {
-  position: absolute;
-  bottom: 5px;
-  font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
-  letter-spacing: 0.04em;
-  background: rgba(29, 35, 41, 0.8);
-  color: var(--on-acc);
-  padding: 1px 5px;
-  border-radius: 3px;
-}
-
-.mag-tile-split { left: 5px; }
-.mag-tile-n { right: 5px; }
-
-/* Кадр без разметки — негативный пример, а не потеря; помечаем, не пряча */
-.mag-tile-n.zero { background: rgba(168, 106, 0, 0.9); }
-
-.mag-feed-foot {
-  text-align: center;
-  padding: 22px 0 6px;
-  font-size: 12.5px;
-  color: var(--mag-muted);
-  font-variant-numeric: tabular-nums;
-}
-
-/* --- кинолента --- */
-
-@media (max-width: 860px) {
-
-  .mag-filters-sp {
-    margin-left: 0;
-  }
 }
 
 /* ===================================================================== */
@@ -206,24 +66,6 @@
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
-
-/* Пометка на плитке: из какого датасета кадр или путь образца по графу. */
-.mag-tile-note {
-  position: absolute;
-  left: 5px;
-  bottom: 5px;
-  max-width: calc(100% - 56px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font: 600 8.5px ui-monospace, Menlo, Consolas, monospace;
-  padding: 1px 5px;
-  border-radius: 3px;
-  color: var(--on-acc);
-  background: rgba(29, 35, 41, 0.78);
-}
-/* Часть набора уезжает наверх, чтобы не спорить с пометкой за угол. */
-.mag-tile:has(.mag-tile-note) .mag-tile-split { top: 5px; bottom: auto; }
 
 /* ===== Выбор классов ===== */
 .mag-pick { position: relative; }

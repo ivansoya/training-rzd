@@ -64,34 +64,19 @@ export default function ShapeMini({
       preserveAspectRatio="xMidYMid slice"
       aria-hidden="true"
     >
-      {boxes.map((b, i) =>
-        b.kind === "polygon" && b.parts?.length ? (
-          <path
-            key={i}
-            className="mag-shp-poly"
-            style={{ ["--bc" as string]: b.color }}
-            d={b.parts
-              .filter((ring) => ring.length > 2)
-              .map(
-                (ring) =>
-                  "M" + ring.map(([x, y]) => `${x} ${y}`).join("L") + "Z"
-              )
-              .join("")}
-            vectorEffect="non-scaling-stroke"
-          />
-        ) : (
-          <rect
-            key={i}
-            className="mag-shp-box"
-            style={{ ["--bc" as string]: b.color }}
-            x={b.x}
-            y={b.y}
-            width={Math.max(b.w, 0)}
-            height={Math.max(b.h, 0)}
-            vectorEffect="non-scaling-stroke"
-          />
-        )
-      )}
+      {boxes.map((b, i) => {
+        // Как на холсте: тёмная подложка под линией цвета класса, без заливки
+        const d = b.kind === "polygon" && b.parts?.length
+          ? b.parts.filter((ring) => ring.length > 2)
+            .map((ring) => "M" + ring.map(([x, y]) => `${x} ${y}`).join("L") + "Z").join("")
+          : `M${b.x} ${b.y}h${Math.max(b.w, 0)}v${Math.max(b.h, 0)}h${-Math.max(b.w, 0)}Z`;
+        return (
+          <g key={i} style={{ ["--bc" as string]: b.color }}>
+            <path className="mag-shp-hull" d={d} vectorEffect="non-scaling-stroke" />
+            <path className="mag-shp-line" d={d} vectorEffect="non-scaling-stroke" />
+          </g>
+        );
+      })}
     </svg>
   );
 }

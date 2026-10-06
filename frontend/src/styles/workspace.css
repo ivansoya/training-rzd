@@ -85,7 +85,7 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
 .mag-exp-done span { color: #B1EBC7; }
 .mag-exp-progress i { background: var(--accent-soft); }
 .mag-exp-seg button.on { color: var(--ink); background: var(--accent-soft); box-shadow: inset 0 0 0 1px #F94D4D78; }
-.mag-tile-split, .mag-tile-n, .mag-tile-note, .mag-tile-mark, .mag-poster-play, .mag-poster-dur, .mag-from { color: var(--ink); }
+.mag-poster-play, .mag-poster-dur, .mag-from { color: var(--ink); }
 .mag-role, .t-pill { border-radius: 5px; letter-spacing: 0; text-transform: none; font-size: 12px; box-shadow: none; }
 .mag-role { background: var(--hair); color: var(--dim); border: 1px solid var(--rule); }
 .mag-role.admin { background: var(--accent-soft); color: var(--accent-text); }
@@ -196,33 +196,14 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-ed-head > b { font-size: 14px; font-weight: 600; }
 .mag-ed-btn { padding: 7px 11px; border-color: var(--ed-edge); border-radius: 7px; font-size: 12px; }
 .mag-ed-btn.on, .mag-ed-active.on { background: var(--accent-soft); border-color: var(--red); color: var(--ink); box-shadow: none; }
-/* Окно кадра: холст и плашки поверх него. */
-.mag-ed-view { position: relative; flex: 1; min-width: 0; display: flex; }
-/* Решения по кадру поверх кадра: в покое полупрозрачно и без фона, фон — на
-   наведении и на фокусе с клавиатуры (решение владельца 24.09.2026). */
-.mag-ed-vbar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9; display: flex; gap: 6px; padding: 6px; border: 1px solid transparent; border-radius: 11px; transition: background-color .16s, border-color .16s, box-shadow .16s; }
-.mag-ed-vbar:is(:hover, :focus-within) { background: rgba(31, 30, 41, .9); border-color: var(--ed-edge); box-shadow: 0 12px 30px rgba(0, 0, 0, .45); backdrop-filter: blur(8px); }
-.mag-ed-vb { opacity: .55; padding: 7px 13px; border: 1px solid rgba(247, 247, 248, .24); border-radius: 7px; background: rgba(15, 15, 21, .3); color: var(--ed-ink); font: inherit; font-size: 12.5px; line-height: 1.2; white-space: nowrap; cursor: pointer; transition: opacity .16s, background-color .16s, border-color .16s; }
-.mag-ed-vbar:is(:hover, :focus-within) .mag-ed-vb { opacity: 1; background: var(--ed-btn); border-color: var(--ed-edge); }
-.mag-ed-vbar .mag-ed-vb:hover { border-color: var(--control-edge); }
-.mag-ed-vb.ok { border-color: rgba(46, 224, 122, .5); color: #c8f7dc; }
-.mag-ed-vbar:is(:hover, :focus-within) .mag-ed-vb.ok { background: var(--done-in); border-color: var(--done); }
-.mag-ed-vb.go { border-color: rgba(46, 224, 122, .35); }
-.mag-ed-vbar:is(:hover, :focus-within) .mag-ed-vb.go { background: var(--s-done); border-color: var(--s-done); color: var(--on-acc); font-weight: 600; }
-.mag-ed-vb.del { color: #ffc6ad; }
-.mag-ed-vbar .mag-ed-vb.del:hover { background: #38272E; border-color: var(--del); }
-/* Нажатые пометки видны и в покое: это состояние кадра, а не кнопка. */
-.mag-ed-vbar .mag-ed-vb.nul[aria-pressed="true"] { background: var(--null-in); border-color: var(--null); color: #d4e5ff; }
-.mag-ed-vbar .mag-ed-vb.warn[aria-pressed="true"] { background: var(--skip-in); border-color: var(--skip); color: #ffe4b8; }
-.mag-ed.help .mag-ed-vbar { z-index: 41; }
-.mag-ed.help .mag-ed-vb { opacity: 1; }
+
 .mag-ed-saved { color: var(--dim); }
 .mag-ed-rail { width: 66px; padding: 12px 6px; gap: 8px; overflow-y: auto; }
 .mag-tool { width: 48px; min-height: 40px; flex-shrink: 0; border-radius: 7px; border: 1px solid transparent; background: transparent; color: var(--dim); }
 .mag-tool:hover { background: var(--ed-btn); color: var(--ink); }
 .mag-tool.on { background: var(--accent-soft); border-color: var(--red); color: var(--ink); box-shadow: inset 3px 0 var(--red); }
-.mag-ed-side { width: 308px; background: var(--ed-panel); border-left: 1px solid var(--ed-edge); padding: 18px; gap: 12px; }
-.mag-ed-side h5, .mag-ved-side h5 { font: 600 14px/1.4 "Segoe UI",sans-serif; color: var(--ink); letter-spacing: 0; text-transform: none; margin: 0; }
+
+.mag-ved-side h5 { font: 600 14px/1.4 "Segoe UI",sans-serif; color: var(--ink); letter-spacing: 0; text-transform: none; margin: 0; }
 .mag-ed-search { min-height: 36px; font-size: 13px; border: 1px solid var(--control-edge); color: var(--ink); background: var(--sunk); border-radius: 7px; padding: 8px 10px; }
 .mag-ed-cls { padding: 9px 10px; font-size: 13px; border-radius: 6px; gap: 8px; border: 1px solid transparent; }
 .mag-ed-cls.on { color: var(--ink); border-color: #F94D4D78; background: var(--accent-soft); box-shadow: none; }
@@ -268,7 +249,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-menu { background: var(--card); color: var(--ink); border-color: var(--rule); box-shadow: 0 12px 35px #0008; }
 .mag-menu button:hover { background: var(--hair); }
 
-.mag-ghost-inline.on, .mag-switch button.on { background: var(--accent-soft); border-color: #F94D4D78; color: var(--ink); }
+.mag-ghost-inline.on { background: var(--accent-soft); border-color: #F94D4D78; color: var(--ink); }
 .mag-step { padding: 22px; border-radius: 12px; gap: 18px; }
 .mag-step.now { box-shadow: none; border-color: #F94D4D78; }
 .mag-step-num { border-radius: 7px; }
@@ -317,7 +298,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-pass-nums > div { padding: 18px; }
 .mag-ved { grid-template-columns: 60px minmax(0,1fr) 280px; }
 .mag-ed-rail { width: 60px; }
-.mag-ed-side { width: 280px; }
+
 .mag-ved-side { width: auto; padding: 15px 12px; }
 .mag-ed-head { gap: 8px; padding: 9px 12px; }
 .mag-ved-plan { max-width: 150px; white-space: normal; }
@@ -341,7 +322,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-brand, .mag-panel { padding: 36px; }
 .mag-brand h2 { font-size: 32px; }
 .mag-ed-head { flex-wrap: wrap; }
-.mag-ed-side { display: flex; width: 240px; }
+
 }
 @media(max-width:600px) {
 .mag-content-head, .workspace-project-head { flex-wrap: wrap; gap: 16px; }
@@ -370,8 +351,7 @@ h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair
 .mag-ved-side { grid-column: 1/-1; grid-row: 4; border-left: 0; border-top: 1px solid var(--rule); max-height: 500px; }
 .mag-ved-bottom { max-height: none; }
 .mag-ved .mag-tool { width: 39px; }
-.mag-ed-side { width: 185px; padding: 12px; }
-.mag-ed-head .mag-ed-plan { white-space: normal; }
+
   
 .mag-ved .mag-auto-bar { left: 60px; bottom: 16px; }
 }

@@ -94,8 +94,8 @@
    вагоне, и это не вкус — это единственный способ читаться на любом кадре. */
 .mag-cv-hull {
   fill: none;
-  stroke: rgba(0, 0, 0, 0.72);
-  stroke-width: 3.5;
+  stroke: rgba(0, 0, 0, 0.7);
+  stroke-width: 3;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
@@ -127,11 +127,9 @@
   opacity: 0.85;
 }
 
-/* Выбранный светится и чуть прибавляет в весе: на пёстром кадре одного
-   изменения заливки мало. */
+/* Выбранный прибавляет в весе — без свечения: оно размывало границу объекта */
 .mag-cv-sh.on .mag-cv-line {
   stroke-width: 2;
-  filter: drop-shadow(0 0 5px color-mix(in srgb, var(--bc) 75%, transparent));
 }
 
 /* Заслонённый: объект есть, но в разметку этот кадр не пойдёт. Подложку рвём
@@ -142,12 +140,14 @@
   stroke-dasharray: 7 5;
 }
 
-/* Тихая заливка цветом класса — у невыбранного. Она говорит «объект вот
-   тут» боковым зрением, не мешая смотреть на кадр. Выбранный заливку
-   отдаёт: под ним нужно видеть пиксели, ради которых всё и затевалось. */
+/* Заливка только под курсором: в покое кадр чистый, выбранный пиксели не прячет */
 .mag-cv-sh .mag-cv-hit {
-  fill: color-mix(in srgb, var(--bc) 12%, transparent);
+  fill: transparent;
   transition: fill 0.12s ease;
+}
+
+.mag-cv-sh.hot:not(.on) .mag-cv-hit {
+  fill: color-mix(in srgb, var(--bc) 10%, transparent);
 }
 
 .mag-cv-sh.on .mag-cv-hit {
@@ -182,9 +182,9 @@
   transform-origin: center;
 }
 
+/* Наведение только увеличивает: якорь остаётся цвета класса, белого нет */
 .mag-cv-h:hover {
-  fill: var(--ed-ink);
-  transform: scale(1.25);
+  transform: scale(1.3);
 }
 
 .mag-cv-h.tl, .mag-cv-h.br { cursor: nwse-resize; }
@@ -206,7 +206,6 @@
 }
 
 .mag-cv-v:hover {
-  fill: var(--ed-ink);
   transform: scale(1.35);
 }
 
@@ -325,15 +324,48 @@
   overflow: hidden;
 }
 
+/* Подпись — ярлык над левым верхним углом, тонированный цветом класса.
+   В покое полупрозрачный, под курсором и у выбранного — в полную силу; щелчок выбирает рамку. */
 .mag-cv-lb {
   position: absolute;
-  transform: translateY(-100%);
-  color: #fff;
-  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
-  padding: 1px 5px;
-  border-radius: 3px 3px 0 0;
+  transform: translate(-1px, calc(-100% - 4px));
+  pointer-events: auto;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: var(--r);
+  border: 1px solid color-mix(in srgb, var(--bc) 55%, transparent);
+  background: color-mix(in srgb, var(--bc) 34%, color-mix(in srgb, var(--stage) 86%, transparent));
+  color: color-mix(in srgb, var(--bc) 30%, var(--on-frame));
+  font: 500 11.5px/1.35 var(--font);
   white-space: nowrap;
-  line-height: 1.4;
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--stage) 60%, transparent);
+  backdrop-filter: blur(6px);
+  opacity: 0.55;
+  transition: opacity 0.18s ease, background-color 0.12s ease, color 0.12s ease;
+}
+
+/* Подпись мелкого объекта вне наведения и выбора: прозрачна и мышь не ловит */
+.mag-cv-lb.off {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.mag-cv-lb.hot,
+.mag-cv-lb.on {
+  opacity: 1;
+}
+
+/* Выбранный — плашка цвета класса целиком, текст по яркости цвета */
+.mag-cv-lb.on {
+  background: var(--bc);
+  border-color: var(--bc);
+  color: var(--on-frame);
+}
+
+.mag-cv-lb.on.ink-dark {
+  color: var(--on-swatch);
 }
 
 .mag-cv-frame {
@@ -384,8 +416,7 @@
 /* Органы управления остаются над затемнением — в этом весь смысл справки:
    видно, чем управляют, а не общий силуэт окна. */
 .mag-ed.help .mag-ed-head,
-.mag-ed.help .mag-ed-rail,
-.mag-ed.help .mag-ed-side {
+.mag-ed.help .mag-ed-rail {
   position: relative;
   z-index: 41;
 }
@@ -517,29 +548,18 @@
   overflow: visible;
 }
 
-.mag-shp-box {
-  fill: color-mix(in srgb, var(--bc) 20%, transparent);
-  stroke: var(--bc);
-  stroke-width: 1.5;
-}
-
-.mag-shp-poly {
-  fill: color-mix(in srgb, var(--bc) 38%, transparent);
-  stroke: var(--bc);
-  stroke-width: 1.5;
+.mag-shp-hull {
+  fill: none;
+  stroke: rgba(0, 0, 0, 0.6);
+  stroke-width: 2.5;
   stroke-linejoin: round;
 }
 
-/* Подпись класса на плитке датасета: вёрсткой, а не в SVG. */
-.mag-tile-lb {
-  position: absolute;
-  transform: translateY(-100%);
-  color: #fff;
-  font: 700 9px ui-monospace, Menlo, Consolas, monospace;
-  padding: 1px 4px;
-  border-radius: 3px 3px 0 0;
-  white-space: nowrap;
-  pointer-events: none;
+.mag-shp-line {
+  fill: none;
+  stroke: var(--bc);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
 }
 
 /* ===== Кинолента ===== */
@@ -749,28 +769,6 @@
 
 .mag-ed-err button:hover { opacity: 1; }
 
-/* Запись не прошла: правка жива только в редакторе. Цвет ошибки, а не
-   ожидания — «сохраняю…» тут было бы неправдой. */
-.mag-ed-unsaved {
-  color: #ff8a80;
-  font-size: 11.5px;
-  font-weight: 600;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-
-/* Отказ сервера: единственный выход с кадра — отбросить правку */
-.mag-ed-discard {
-  margin-left: 8px;
-  font: inherit;
-  color: inherit;
-  background: transparent;
-  border: 1px solid currentColor;
-  border-radius: 4px;
-  padding: 1px 6px;
-  cursor: pointer;
-}
-
 /* Состояние кадра словами: цвет один, а причин у обводки в ленте пять */
 .mag-ed-flag {
   font: 600 9.5px ui-monospace, Menlo, Consolas, monospace;
@@ -928,99 +926,6 @@
   opacity: 0.85;
 }
 
-/* Окошко параметров полуавтомата — рядом с рейком, поверх холста */
-.mag-auto-panel {
-  position: absolute;
-  left: 52px;
-  top: 12px;
-  z-index: 8;
-  width: 236px;
-  background: #1b2129;
-  border: 1px solid #333c46;
-  border-radius: 10px;
-  padding: 12px;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
-}
-
-.mag-auto-panel h5 {
-  margin: 0 0 10px;
-  font: 700 9px ui-monospace, Menlo, Consolas, monospace;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ed-dim);
-}
-
-.mag-auto-row,
-.mag-auto-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: #cbd5e0;
-}
-
-/* Настройка, которую нечем включить, пока не включена та, от которой она
-   зависит. Гасим, но оставляем на месте: исчезнув, она заставила бы искать,
-   куда делась. */
-.mag-auto-check.off {
-  opacity: 0.45;
-  cursor: default;
-}
-
-.mag-auto-row > span:first-child {
-  width: 82px;
-  flex: none;
-  color: var(--ed-dim);
-}
-
-.mag-auto-row select,
-.mag-auto-row input[type="number"] {
-  flex: 1;
-  min-width: 0;
-  background: #0e1114;
-  border: 1px solid #333c46;
-  border-radius: 6px;
-  color: #e8ecef;
-  padding: 4px 7px;
-  font: inherit;
-  font-size: 12px;
-}
-
-.mag-auto-row input[type="range"] {
-  flex: 1;
-  min-width: 0;
-  accent-color: var(--mag-red);
-}
-
-.mag-auto-row b {
-  font: 600 11px ui-monospace, Menlo, Consolas, monospace;
-  width: 30px;
-  text-align: right;
-}
-
-.mag-auto-check {
-  align-items: flex-start;
-  line-height: 1.35;
-}
-
-.mag-auto-hint {
-  margin: 10px 0 0;
-  font-size: 11px;
-  line-height: 1.45;
-  color: var(--ed-dim);
-}
-
-.mag-auto-err {
-  margin-top: 9px;
-  padding: 7px 9px;
-  border-radius: 7px;
-  font-size: 11.5px;
-  background: rgba(226, 26, 26, 0.12);
-  border: 1px solid rgba(226, 26, 26, 0.4);
-  color: #ff9d9d;
-}
-
 .mag-tool {
   position: relative;
   width: 28px;
@@ -1047,51 +952,6 @@
 .mag-tool:disabled { opacity: 0.35; cursor: default; }
 .mag-tool.on { background: var(--mag-red); border-color: var(--mag-red); color: #fff; }
 
-/* Залипший режим рамки: точка, чтобы не искать, почему он не выключается */
-.mag-tool-lock {
-  position: absolute;
-  right: 2px;
-  bottom: 2px;
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: #fff;
-}
-
-.mag-ed-hint-rail {
-  margin-top: auto;
-  font: 500 8.5px ui-monospace, Menlo, Consolas, monospace;
-  line-height: 1.7;
-  color: #55606c;
-  text-align: center;
-  writing-mode: vertical-rl;
-  transform: rotate(180deg);
-  max-height: 200px;
-  overflow: hidden;
-}
-
-/* ===== Редактор: панель справа ===== */
-.mag-ed-side {
-  width: 244px;
-  flex-shrink: 0;
-  background: var(--ed-panel);
-  border-left: 1px solid var(--ed-edge);
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.mag-ed-side h5 {
-  margin: 0;
-  font: 700 10px ui-monospace, Menlo, Consolas, monospace;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--ed-dim);
-}
-
 .mag-ed-search {
   width: 100%;
   box-sizing: border-box;
@@ -1105,14 +965,6 @@
 }
 
 .mag-ed-search:focus { outline: none; border-color: var(--mag-red); }
-
-.mag-ed-classes {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  max-height: 34vh;
-  overflow-y: auto;
-}
 
 .mag-ed-cls {
   display: flex;
@@ -1160,101 +1012,7 @@
 
 .mag-ed-newcls:hover { border-color: var(--mag-red); color: #ff8a80; }
 
-.mag-ed-objs {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  overflow-y: auto;
-}
-
-.mag-ed-obj {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 5px 7px;
-  border-radius: 6px;
-  font-size: 12px;
-  background: #1c222a;
-  border: 1px solid transparent;
-  cursor: pointer;
-}
-
-.mag-ed-obj.on { border-color: #55606c; background: #232b34; }
-.mag-ed-obj i { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
-.mag-ed-obj-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-.mag-ed-obj .sp {
-  margin-left: auto;
-  color: var(--ed-faint);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-.mag-ed-obj-x {
-  background: none;
-  border: 0;
-  padding: 0 0 0 3px;
-  font-size: 10px;
-  color: var(--ed-faint);
-  cursor: pointer;
-  opacity: 0;
-}
-
-.mag-ed-obj:hover .mag-ed-obj-x { opacity: 1; }
-.mag-ed-obj-x:hover { color: #ff8a80; }
-
 .mag-ed-hint { font-size: 11px; color: var(--ed-faint); margin: 0; }
-
-/* ===== Меню смены класса (правая кнопка на боксе) ===== */
-.mag-cmenu {
-  position: fixed;
-  z-index: 300;
-  width: 224px;
-  background: var(--ed-panel);
-  border: 1px solid #333c46;
-  border-radius: 9px;
-  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 7px;
-  color: var(--ed-ink);
-}
-
-.mag-cmenu-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  max-height: 232px;
-  overflow-y: auto;
-}
-
-/* Отделено чертой: это не выбор класса, а удаление */
-.mag-cmenu-del {
-  border: none;
-  border-top: 1px solid #333c46;
-  background: none;
-  color: #ff8b8b;
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  padding: 8px 8px 2px;
-  margin-top: 1px;
-  cursor: pointer;
-  border-radius: 0 0 6px 6px;
-}
-
-.mag-cmenu-del:hover {
-  background: rgba(226, 26, 26, 0.12);
-}
-
-@media (max-width: 1100px) {
-  .mag-ed-side { width: 200px; }
-}
-
-@media (max-width: 860px) {
-  .mag-ed-side { display: none; }
-}
 
 /* Узкий экран. Боковая панель рядом со сценой отнимала у кадра половину
    ширины: на 430 px сцене оставалось 160 px. Здесь панель уходит под кадр,
@@ -1268,13 +1026,4 @@
     overflow-y: auto;
   }
 
-  .mag-ed-body > .mag-ed-view { height: 100%; }
-
-  .mag-ed-body > .mag-ed-side {
-    flex: 1 1 100%;
-    width: auto;
-    overflow: visible;
-    border-left: 0;
-    border-top: 1px solid var(--ed-edge);
-  }
 }
