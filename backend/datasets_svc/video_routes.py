@@ -107,6 +107,10 @@ def _resolve_track(track_id, needed="editor"):
     if video.annotation_closed_at is not None:
         db.close()
         return None, None, None, (jsonify({"error": CLOSED_VIDEO}), 409)
+    busy = video_busy.refusal(video.id)
+    if busy:
+        db.close()
+        return None, None, None, busy
     return db, task, db.get(VideoTrack, tid), None
 
 
@@ -130,7 +134,8 @@ def _writable(task, user, role, video, edit=True):
         return jsonify({"error": "Это видео загружено для нарезки на кадры."}), 409
     if edit and video.annotation_closed_at is not None:
         return jsonify({"error": CLOSED_VIDEO}), 409
-    return None
+    # Идёт закрытие: план уже снят, правка пропала бы молча.
+    return video_busy.refusal(video.id)
 
 
 def _no_contour(geometry):
@@ -1286,6 +1291,7 @@ def move_key(track_id, frame_no):
 # --------------------------------------------------------------------------- #
 def _run_close_job(job_id, task_id, video_id, user_id):
     db = SessionLocal()
+    task = made_ids = None
     try:
         task = db.get(Task, task_id)
         video = db.get(TaskVideo, video_id)
@@ -1293,12 +1299,14 @@ def _run_close_job(job_id, task_id, video_id, user_id):
             db, task, video, user_id,
             progress=lambda done: jobs.update(job_id, processed=done),
         )
+        made_ids = made.pop("image_ids")
         video.annotation_closed_at = utcnow()
         user = db.get(User, user_id) if user_id else None
         _log(db, task, user, "video_annotation_closed",
              file=video.file_name, frames=made["created"], boxes=made["boxes"],
              empty=made["empty"])
         db.commit()
+        made_ids = None
         jobs.update(job_id, status="done", processed=made["created"], result=made)
     except (videolib.VideoError, tracklib.TrackError) as exc:
         db.rollback()
@@ -1308,6 +1316,9 @@ def _run_close_job(job_id, task_id, video_id, user_id):
         jobs.update(job_id, status="error",
                     error=public_error(exc, "Не удалось достать кадры из ролика."))
     finally:
+        # Упал коммит — строки откатились, а файлы кадров уже на томе.
+        if made_ids:
+            materialize.drop_frame_files(task, made_ids)
         db.close()
         video_busy.release(video_id)
 

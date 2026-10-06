@@ -24,6 +24,7 @@ from common import attribution, config, images, jobs, tags, task_frames
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
+    AgentRun,
     Annotation,
     AugGraph,
     AugGraphVersion,
@@ -587,6 +588,9 @@ def set_status(task_id):
         if target == "done":
             result = _accept(db, task, user)
         elif target == "closed":
+            blocked = _close_blockers(db, task)
+            if blocked:
+                return blocked
             result = _close(db, task, user)
         else:
             _log(db, task, user, "status", status=target)
@@ -688,6 +692,42 @@ def _drop_video_files(path):
             os.remove(name)
         except OSError:
             pass
+
+
+def _close_blockers(db, task):
+    """409, если закрытие уничтожило бы работу; иначе None.
+
+    Закрытие удаляет ролики вместе с их разметкой — треками, рамками, фоновыми
+    пометками. Незакрытая разметка ролика ещё не стала кадрами, и раньше она
+    пропадала молча. Выбросить её можно только явно — убрав ролик.
+    """
+    vids =db.execute(select(TaskVideo.id, TaskVideo.file_name).where(TaskVideo.task_id == task.id)).all()
+    busy = [name for vid, name in vids if video_busy.current(vid)]
+    if busy:
+        return jsonify({
+            "error": f"По ролику «{busy[0]}» идёт нарезка или закрытие разметки — дождитесь конца.",
+            "code": "video_busy",
+        }), 409
+    agent = db.execute(
+        select(AgentRun.id).where(AgentRun.task_id == task.id,
+                                  AgentRun.status.in_(("queued", "waiting_gpu", "running")))
+    ).first()
+    if agent:
+        return jsonify({"error": "По таске идёт агент — дождитесь его конца или остановите.",
+                        "code": "agent_running"}), 409
+    # Ролик, который уже дал кадры и открыт заново, не держит: его кадры в таске.
+    open_work = [p for p in materialize.pending_summary(db, task)
+                 if not p["frames_in_task"] and (p["frames"] or p.get("error"))]
+    if open_work:
+        return jsonify({
+            "error": "Разметка роликов не закрыта — при закрытии таски она пропадёт: "
+                     + ", ".join(f"«{p['file_name']}»" for p in open_work)
+                     + ". Закройте их разметку или уберите ролики.",
+            "code": "videos_open",
+            "videos": [{"video_id": p["video_id"], "file_name": p["file_name"],
+                        "frames": p["frames"]} for p in open_work],
+        }), 409
+    return None
 
 
 def _close(db, task, user):

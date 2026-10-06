@@ -194,6 +194,17 @@ def _file_name(video, frame_no):
     return f"{stem}_f{frame_no:06d}.jpg"
 
 
+def drop_frame_files(task, image_ids):
+    """Файлы кадров, чьи строки откатились: иначе они остались бы на томе ничьими."""
+    base = config.image_base_dir(task.project_id, task.id)
+    for image_id in image_ids:
+        for sub in ("images", "thumbs", "preview"):
+            try:
+                os.remove(os.path.join(base, sub, f"{image_id}.jpg"))
+            except OSError:
+                pass
+
+
 def run_video(db, task, video, user_id, progress=None):
     """Выполняет план одного ролика. Коммит остаётся за вызывающим.
 
@@ -201,12 +212,11 @@ def run_video(db, task, video, user_id, progress=None):
     датасета — в проект они уйдут обычной сдачей вместе со всеми остальными.
     Помеченные фоновыми уходят со статусом «empty» и без разметки — ровно тем
     же, каким разметчик изображений объявляет кадр фоновым примером.
-    """
-    by_frame, empty = collect(db, video)
-    empty_set = set(empty)
-    if not by_frame and not empty_set:
-        return {"created": 0, "boxes": 0, "empty": 0}
 
+    Всё или ничего: при ошибке файлы созданных кадров убираются здесь же, строки
+    откатывает вызывающий. ``image_ids`` в ответе — чтобы убрать файлы, если
+    упадёт уже его коммит.
+    """
     source = os.path.join(config.DATA_DIR, video.file_path)
     if not os.path.exists(source):
         raise videolib.VideoError(
@@ -215,7 +225,16 @@ def run_video(db, task, video, user_id, progress=None):
 
     # Номер кадра — позиция в таблице кадров ролика, как у `/frame` и перегонов.
     # Закрытие — фоновая работа, так что недостроенную таблицу строим здесь же.
+    # До замка: `store` коммитит и отпустил бы его.
     index = video_index.ensure(db, video, source)
+
+    # Замок на ролик до коммита: агент из training-worker, пишущий рамки, ждёт
+    # его и после видит закрытый ролик, а не дописывает мимо снятого плана.
+    db.execute(select(TaskVideo.id).where(TaskVideo.id == video.id).with_for_update())
+    by_frame, empty = collect(db, video)
+    empty_set = set(empty)
+    if not by_frame and not empty_set:
+        return {"created": 0, "boxes": 0, "empty": 0, "kept_accepted": 0, "image_ids": []}
 
     base = config.image_base_dir(task.project_id, task.id)
     created = {}
@@ -262,23 +281,34 @@ def run_video(db, task, video, user_id, progress=None):
     by_frame = {f: items for f, items in by_frame.items() if f not in kept}
     empty_set = empty_set - kept
     wanted = set(by_frame) | empty_set
-    videolib.extract_frames(source, sorted(wanted), on_frame, pts=index["pts"])
-    missing = sorted(wanted - set(created))
-    if missing:
-        # Кадр не дошёл — разметка на нём потерялась бы молча. Лучше не
-        # записать ничего: вызывающий откатит строки, файлы убираем сами.
-        for image_id in created.values():
-            for sub in ("images", "thumbs", "preview"):
-                try:
-                    os.remove(os.path.join(base, sub, f"{image_id}.jpg"))
-                except OSError:
-                    pass
-        raise videolib.VideoError(
-            f"Не достались кадры {', '.join(map(str, missing[:5]))}"
-            f"{' и ещё ' + str(len(missing) - 5) if len(missing) > 5 else ''} — "
-            "ничего не записано."
-        )
+    try:
+        videolib.extract_frames(source, sorted(wanted), on_frame, pts=index["pts"])
+        missing = sorted(wanted - set(created))
+        if missing:
+            # Кадр не дошёл — разметка на нём потерялась бы молча. Лучше не записать ничего.
+            raise videolib.VideoError(
+                f"Не достались кадры {', '.join(map(str, missing[:5]))}"
+                f"{' и ещё ' + str(len(missing) - 5) if len(missing) > 5 else ''} — "
+                "ничего не записано."
+            )
+        boxes = _annotate(db, by_frame, created, user_id)
+    except BaseException:
+        drop_frame_files(task, created.values())
+        raise
 
+    if progress:
+        progress(len(created))
+    return {
+        "created": len(created),
+        "boxes": boxes,
+        "empty": len([f for f in empty_set if f in created]),
+        "kept_accepted": len(kept),
+        "image_ids": list(created.values()),
+    }
+
+
+def _annotate(db, by_frame, created, user_id):
+    """Фигуры плана — аннотациями на созданные кадры. Возвращает их число."""
     boxes = 0
     for frame_no, planned in sorted(by_frame.items()):
         image_id = created[frame_no]
@@ -304,12 +334,6 @@ def run_video(db, task, video, user_id, progress=None):
                 created_by=item.get("created_by") or user_id,
             ))
             boxes += 1
-
-    if progress:
-        progress(len(created))
-    return {
-        "created": len(created),
-        "boxes": boxes,
-        "empty": len([f for f in empty_set if f in created]),
-        "kept_accepted": len(kept),
-    }
+    # Ошибка строки (класс удалён, кривая геометрия) — здесь, а не на коммите.
+    db.flush()
+    return boxes

@@ -29,7 +29,11 @@ def open_video(path):
     потоков и гигабайты памяти, которые glibc системе не возвращает.
     """
     import av
+    import av.logging
 
+    # torchvision включает журнал PyAV: потоки декодера ждут GIL в av_log, а close()
+    # держит GIL и ждёт их — агент висел на закрытии ролика. Журнал выключаем.
+    av.logging.set_level(None)
     container = av.open(path)
     try:
         yield container

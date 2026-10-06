@@ -87,7 +87,7 @@ def reap_orphans(db, fresh_start=False):
             log.warning("ран %s без исполнителя (%s) — %s", run.id, run.status, verdict)
             trainer.close_orphan(db, run, verdict, now)
             closed += 1
-    return closed
+    return closed + agent_runner.reap_orphans(db, me(), fresh_start)
 
 
 def reaper():

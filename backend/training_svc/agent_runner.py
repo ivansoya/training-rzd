@@ -22,7 +22,8 @@ import threading
 import time
 from contextlib import contextmanager
 
-from sqlalchemy import select
+from sqlalchemy import select, text
+from sqlalchemy.exc import OperationalError
 
 from common import agent_graph, config, gpu, live, shapes, task_frames, video_frames, video_tracks
 from common.db import SessionLocal
@@ -90,6 +91,31 @@ def claim(db, worker_id):
 def release(run_id):
     with _taken_lock:
         _taken.discard(run_id)
+
+
+ORPHAN_TEXT = "Прерван: воркер обучения перезапущен или не отвечал."
+
+
+def reap_orphans(db, worker_id, fresh_start=False):
+    """Закрыть прогоны «идёт», которые никто не ведёт.
+
+    Признак жизни — бронь карты: её продлевают и пульс загрузки моделей, и шаг
+    хода. Истекла — ведущего нет. На старте свои прогоны закрываются сразу."""
+    closed = 0
+    for run in db.execute(select(AgentRun).where(AgentRun.status == "running")).scalars().all():
+        with _taken_lock:
+            if run.id in _taken:
+                continue
+        lease = db.get(GpuLease, run.gpu_lease_id) if run.gpu_lease_id else None
+        alive = lease is not None and lease.status in gpu.ACTIVE
+        if alive and not (fresh_start and run.worker_id == worker_id):
+            continue
+        log.warning("прогон агента %s без исполнителя — ошибка", run.id)
+        _finish(db, run, "error", ORPHAN_TEXT)
+        if alive:
+            gpu.cancel(db, lease.id, ORPHAN_TEXT)
+        closed += 1
+    return closed
 
 
 def frames(db, run):
@@ -617,13 +643,19 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
                     stats["frames"] += 1
             tick(dict(stats))
 
-        if wanted:
-            # Номера — по таблице кадров ролика, как у разметки и закрытия.
-            video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted,
-                                        on_frame, pts=video_frames.unpack_pts(video.frame_index))
-        if mode == "annotate":
-            # Ролик пройден целиком: прежние рамки агента вне плана больше не нужны.
-            db.execute(_agent_rows(video).where(VideoAnnotation.frame_no.notin_(wanted or [-1])))
+        try:
+            if wanted:
+                # Номера — по таблице кадров ролика, как у разметки и закрытия.
+                video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted,
+                                            on_frame, pts=video_frames.unpack_pts(video.frame_index))
+            if mode == "annotate":
+                # Ролик пройден целиком: прежние рамки агента вне плана больше не нужны.
+                _lock_open(db, video)
+                db.execute(_agent_rows(video).where(VideoAnnotation.frame_no.notin_(wanted or [-1])))
+        except VideoClosed:
+            log.warning("прогон %s: разметку ролика %s закрыли — дальше без него", run.id, video.id)
+            stats["closed"] = stats.get("closed", 0) + 1
+            continue
         if mode == "scout":
             last = _last_frame(video)
             db.execute(VideoScout.__table__.delete().where(VideoScout.video_id == video.id))
@@ -645,8 +677,33 @@ def _agent_rows(video):
         VideoAnnotation.source == "model", VideoAnnotation.agent_version_id.isnot(None))
 
 
+class VideoClosed(Exception):
+    """Разметку ролика закрыли посреди прогона — писать в него больше нельзя."""
+
+
+def _lock_open(db, video):
+    """Замок на ролик; VideoClosed, если разметка закрыта, закрывается или ролика нет.
+
+    Закрытие держит этот же замок до коммита. Ждать его до конца нельзя — это
+    минуты, за них истечёт бронь карты; а дописать рамки мимо снятого плана —
+    потерять их. Короткие правки строки (пометки, таги) укладываются в 5 с."""
+    try:
+        db.execute(text("SET LOCAL lock_timeout = '5s'"))
+        row = db.execute(select(TaskVideo.annotation_closed_at)
+                         .where(TaskVideo.id == video.id).with_for_update()).first()
+    except OperationalError as exc:
+        db.rollback()
+        if getattr(exc.orig, "pgcode", None) == "55P03":  # lock_not_available — идёт закрытие
+            raise VideoClosed() from exc
+        raise
+    if row is None or row[0] is not None:
+        db.rollback()
+        raise VideoClosed()
+
+
 def _write_video(db, run, video, frame_no, found, mapping):
     # Замена по кадру в одной транзакции: остановка на середине не теряет прежние рамки.
+    _lock_open(db, video)
     db.execute(_agent_rows(video).where(VideoAnnotation.frame_no == frame_no))
     put = 0
     for det in found:

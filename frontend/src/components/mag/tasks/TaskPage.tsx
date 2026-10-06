@@ -217,6 +217,12 @@ export default function TaskPage() {
 
   async function closeTask() {
     if (!taskId || !task) return;
+    // Тот же отбор, что у сервера: незакрытая разметка ролика при закрытии таски пропала бы.
+    const open = task.pending_videos.filter((v) => !v.frames_in_task && (v.frames || v.error));
+    if (open.length) {
+      setError(`Разметка роликов не закрыта — при закрытии таски она пропадёт: ${open.map((v) => `«${v.file_name}»`).join(", ")}. Закройте их разметку или уберите ролики.`);
+      return;
+    }
     const plan = closePlan(task.counts, task.videos.length);
     const ok = await confirm({
       title: "Закрыть таску?", lines: closeText(plan, task.target_dataset?.name ?? null),
@@ -304,9 +310,13 @@ export default function TaskPage() {
     const forms: [string, string, string] = video.mode === "annotate"
       ? ["кадр разметки", "кадра разметки", "кадров разметки"]
       : ["нарезанный кадр", "нарезанных кадра", "нарезанных кадров"];
+    const open = task?.pending_videos.find((v) => v.video_id === video.id && !v.frames_in_task && v.frames);
     const ok = await confirm({
       title: `Убрать «${video.file_name}»?`,
-      desc: video.frames ? `Вместе с ним уйдут ${count(video.frames, ...forms)}. Принятые в проект останутся.` : undefined,
+      desc: [
+        video.frames ? `Вместе с ним уйдут ${count(video.frames, ...forms)}. Принятые в проект останутся.` : "",
+        open ? `Незакрытая разметка ролика (${count(open.frames, "кадр", "кадра", "кадров")}) пропадёт — в таску она не попадёт.` : "",
+      ].filter(Boolean).join(" ") || undefined,
       ok: "Убрать", icon: "trash", danger: true,
     });
     if (!ok) return;

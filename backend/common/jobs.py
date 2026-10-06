@@ -78,6 +78,23 @@ def get(job_id):
         return None
 
 
+def abandon_running(message):
+    """Джобы «идёт» от прежнего процесса: их потоки умерли вместе с ним, и клиент ждал бы вечно.
+
+    Звать только на старте единственного процесса, который ведёт джобы."""
+    if not _DIR or not os.path.isdir(_DIR):
+        return 0
+    n = 0
+    for f in os.listdir(_DIR):
+        if not f.endswith(".json"):
+            continue
+        data = get(f[:-5])
+        if data and data.get("status") == "running":
+            update(data["id"], status="error", error=message)
+            n += 1
+    return n
+
+
 def _cleanup_old(max_age=3600):
     """Drop finished job files older than `max_age` seconds."""
     now = time.time()

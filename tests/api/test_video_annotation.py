@@ -428,6 +428,31 @@ def test_незакрытые_ролики_видны_в_сводке(api, task,
 
 
 # --- границы --------------------------------------------------------------- #
+def test_закрытие_таски_не_уничтожает_незакрытую_разметку(api, task, video, label_class):
+    # Раньше закрытие таски удаляло ролик вместе с треками — работа пропадала молча.
+    track = make_track(api, task, video, label_class)
+    api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 30})
+
+    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "closed"})
+    assert res.status_code == 409, res.text
+    assert res.json()["code"] == "videos_open"
+    assert res.json()["videos"][0]["video_id"] == video["id"]
+    body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
+    assert body["status"] != "closed"
+    assert len(body["videos"]) == 1
+
+    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "closed"})
+    assert res.status_code == 200, res.text
+    assert res.json()["accepted"] == 1
+
+
+def test_ролик_без_разметки_закрытию_таски_не_мешает(api, task, video):
+    res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "closed"})
+    assert res.status_code == 200, res.text
+    assert res.json()["removed_videos"] == 1
+
+
 def test_закрытие_таски_уносит_видео_но_оставляет_принятые_кадры(
     api, task, video, label_class
 ):
