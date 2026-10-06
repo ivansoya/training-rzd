@@ -5,13 +5,14 @@
 // выйти, а сохранённое до пределов значение подсвечивает.
 
 import type { Node } from "@xyflow/react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import * as api from "../../api/agents";
 import { Badge, Button, Empty, Field, Icon, Input, Seg, Select, Switch } from "../../ui";
 import { NumInput } from "../NumInput";
 import {
-  LIMITS, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, YOLOE_MB, mergeInputs, offLimits, promptsOf, rowsOf,
-  switchTextModel, textConfDefault, textModel, type FilterRow,
+  LIMITS, MAX_PASSES, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, TILE_OVERLAP, YOLOE_MB, callsPerView, inputSide,
+  isExamples, mergeInputs, offLimits, promptsOf, rowTarget, rowsOf, switchTextModel, textConfDefault, textModel, tileSide,
+  viewCount, type FilterRow,
 } from "./agentDoc";
 import { agentTitle, type AgentNodeData } from "./AgentNodes";
 import { FilterClasses, NetClasses, PromptTable } from "./ClassTables";
@@ -19,6 +20,12 @@ import { decimal, iconOf, roleOf, toneOf } from "./look";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 const mb = (bytes: number) => `${(bytes / (1 << 20)).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} МБ`;
+const ru = (v: number, digits = 1) => v.toLocaleString("ru-RU", { maximumFractionDigits: digits });
+const took = (ms: number) => (ms < 1000 ? `${Math.round(ms)} мс` : `${ru(ms / 1000)} с`);
+const plural = (n: number, one: string, few: string, many: string) => {
+  const t = n % 10, h = n % 100;
+  return t === 1 && h !== 11 ? one : t >= 2 && t <= 4 && (h < 12 || h > 14) ? few : many;
+};
 
 const DETAIL = [
   { value: "auto", label: "Как решит модель" },
@@ -28,7 +35,7 @@ const DETAIL = [
 ];
 
 export default function AgentInspector({ node, readOnly, weights, sam3Ready, sets, onSet, colorOf, incoming, loose,
-  onChange, onPickWeights, onRemove, pinned, onPin }: {
+  onChange, onPickWeights, onRemove, pinned, onPin, frame, msPerCall }: {
   node: Node | null;
   readOnly: boolean;
   weights?: api.Weights;
@@ -44,7 +51,12 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   onRemove: () => void;
   pinned: boolean;
   onPin: () => void;
+  /** Кадры проекта превью: на них считаются тайлы. */
+  frame: api.FrameSummary | null;
+  /** Замер последнего превью: мс на один вызов модели этого узла. */
+  msPerCall?: number;
 }) {
+  const [fine, setFine] = useState(false);
   if (!node) {
     return (
       <section className="ge-sec ae-insp">
@@ -61,11 +73,11 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   const fixed = d.kind === "frame" || d.kind === "output";
 
   // Пустое необязательное поле — «без предела», поэтому null, а не умолчание.
-  const number = (key: string, label: string, value: number | undefined, step: number, empty?: boolean): ReactNode => {
+  const number = (key: string, label: string, value: number | undefined, step: number, empty?: boolean, aside?: ReactNode): ReactNode => {
     const lim = LIMITS[d.kind]?.[key];
     const bad = offLimits(lim, p[key]);
     return (
-      <Field key={key} label={label} error={bad && lim ? `от ${decimal(lim.lo)} до ${decimal(lim.hi)}` : undefined}>
+      <Field key={key} label={label} aside={aside} error={bad && lim ? `от ${decimal(lim.lo)} до ${decimal(lim.hi)}` : undefined}>
         {(id) => (
           <NumInput id={id} className="ui-input ui-ctl ui-mono" value={value} min={lim?.lo} max={lim?.hi} step={step} integer={lim?.int}
             allowEmpty={empty} placeholder={empty ? "без предела" : undefined} disabled={readOnly} aria-invalid={bad || undefined}
@@ -80,14 +92,75 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
       <Switch checked={on} label={label} disabled={readOnly} onChange={(v) => onChange({ [key]: v })} />
     </div>
   );
+  // Тайлинг: блок с итогом — сколько проходов на кадр проекта превью и сколько это времени.
+  const netIn = d.kind === "net" ? weights?.imgsz : null;
+  const side = tileSide(d.kind, p, netIn);
+  const zoom = inputSide(d.kind, p, netIn) / side;
+  const overlap = num(p.overlap, TILE_OVERLAP);
+  const calls = callsPerView(d.kind, p);
+  const examples = d.kind === "text" && model === "sam3"
+    ? promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.agent.trim() && isExamples(r)).length : 0;
+  const tiling = Boolean(p.tiles);
+  const views = frame ? viewCount(p, frame.w, frame.h, side) : null;
+  const total = views ? views.whole + views.tiles : 1;
+  const big = frame && (frame.largest[0] !== frame.w || frame.largest[1] !== frame.h)
+    ? viewCount(p, frame.largest[0], frame.largest[1], side) : null;
+  const worst = big ? big.whole + big.tiles : total;
+  const time = msPerCall !== undefined
+    ? tiling && total > 1 ? `≈ ${took(msPerCall * calls * total)} на кадр (было ${took(msPerCall * calls)})`
+      : `≈ ${took(msPerCall * calls)} на кадр` : null;
   const passes = (
-    <>
-      {flag("tiles", "Плитки и целый кадр", Boolean(p.tiles), "Кадр режется на плитки размером со вход сети, плюс проход целым кадром")}
-      {flag("tta_flip", "TTA: отражение", Boolean(p.tta_flip))}
-      {flag("tta_scales", "TTA: масштабы ×0,8 и ×1,25", Boolean(p.tta_scales))}
-      {Boolean(p.tiles) && number("overlap", "Перекрытие плиток", num(p.overlap, 0.2), 0.05)}
-      {Boolean(p.tiles) && number("glue", "Склейка от, IoS", num(p.glue, 0.5), 0.05)}
-    </>
+    <div className={tiling ? "ae-tile on" : "ae-tile"}>
+      <div className="ae-tile-h">
+        <b>Тайлинг</b>
+        <span className="grow" />
+        <Switch checked={tiling} label="Тайлинг" disabled={readOnly} onChange={(v) => onChange({ tiles: v })} />
+      </div>
+      {tiling && (
+        <div className="ae-tile-f">
+          {number("tile", "Тайл, px", side, 32, false,
+            Math.abs(zoom - 1) > 0.01 ? `${zoom > 1 ? "×" : "÷"}${ru(zoom > 1 ? zoom : 1 / zoom)} к объекту` : "1:1")}
+          {number("overlap", "Перекрытие", overlap, 0.05, false, `${Math.round(side * overlap)} px`)}
+          <div className="ae-wide">
+            {flag("whole", "+ целый кадр", p.whole !== false, "Отдельный проход целым кадром: крупный объект тайл режет на обрывки")}
+          </div>
+        </div>
+      )}
+      <div className="ae-tile-sum">
+        {!frame ? <span>Размер кадра появится, когда в проекте превью будут кадры</span> : (
+          <>
+            <span className="ui-mono">
+              {frame.w}×{frame.h}
+              {frame.share < 0.995 && <em> · у {Math.round((1 - frame.share) * 100)} % кадров другой размер</em>}
+            </span>
+            {tiling && views && (
+              <span>
+                {views.tiles === 0 ? `кадр не больше тайла — 1 проход`
+                  : `${views.whole ? "1 целый + " : ""}${views.tiles} ${plural(views.tiles, "тайл", "тайла", "тайлов")} = ${total} ${plural(total, "проход", "прохода", "проходов")}`}
+              </span>
+            )}
+            {examples > 0 && tiling && <span>образцы: × {examples} {plural(examples, "строка", "строки", "строк")} на каждый проход</span>}
+          </>
+        )}
+        <b>{time ?? (tiling ? "время — после превью" : "1 проход")}</b>
+        {worst > MAX_PASSES && big && (
+          <span className="bad">На самом большом кадре {frame!.largest[0]}×{frame!.largest[1]} — {worst} проходов, больше {MAX_PASSES} нельзя</span>
+        )}
+        {total > MAX_PASSES && <span className="bad">Больше {MAX_PASSES} проходов на кадр нельзя — увеличьте тайл</span>}
+      </div>
+      {tiling && (
+        <>
+          <button type="button" className="ae-fold" aria-expanded={fine} onClick={() => setFine((v) => !v)}>
+            <Icon name="chevD" size={14} />Тонкая настройка
+          </button>
+          {fine && (
+            <div className="ae-tile-f">
+              {number("glue", "Склейка от, IoS", num(p.glue, 0.5), 0.05)}
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 
   return (
@@ -164,12 +237,8 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
                   {number("min_area", "Кусок от, px²", num(p.min_area, SAM_DEFAULTS.min_area), 16)}
                   {flag("fill_holes", "Заливать дыры", p.fill_holes !== false)}
                 </>
-              ) : (
-                <>
-                  {number("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
-                  {passes}
-                </>
-              )}
+              ) : number("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
+              {passes}
               <div className="ae-wide">
                 <PromptTable rows={promptsOf({ params: p })} readOnly={readOnly} colorOf={colorOf} nodeConf={num(p.conf, textConfDefault(model))}
                   model={model} sets={sets} onSet={onSet} onRows={(rows) => onChange({ prompts: rows })} />

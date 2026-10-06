@@ -38,6 +38,7 @@
 """
 import math
 import statistics
+import time
 
 KINDS = ("frame", "net", "text", "merge", "nms", "filter", "sam", "output")
 # Узлы, которые сами находят объекты: номер класса переводят в имя агента.
@@ -48,8 +49,6 @@ MAX_INPUTS = 8
 # 0,5–0,7 дали на 151 кадре одинаковый итог; 0,6 оставляет запас настоящим
 # объектам, стоящим вплотную.
 NMS_IOU = 0.6
-# Одна ли это рамка у разных проходов TTA.
-FUSE_IOU = 0.55
 
 # Тот же список, что у полуавтомата (autolabel_svc/runners/sam2_runner.py).
 SAM_MODELS = ("sam2.1_hiera_tiny", "sam2.1_hiera_small",
@@ -78,11 +77,12 @@ TEXT_IMGSZ = 1280
 # Пределы числовых параметров узлов: поле → (подпись в форме, от, до, целое).
 # Одно место на сервер: `check` сверяет по нему версию и превью, форма
 # (agentDoc.ts, LIMITS) повторяет те же числа. Без пределов сохранялись «Сеть»
-# с уверенностью 7 и входом 0, а вход 1 с плитками давал 6,4 млн видов на кадр.
-# Вход от 320: на кадре РСМ 2688×1520 это 66 плиток — ещё прогон, а не зависание.
+# с уверенностью 7 и входом 0, а вход 1 с тайлами давал 6,4 млн видов на кадр.
+# Число тайлов на кадр сверх того держит `MAX_PASSES`.
 _CONF = ("Уверенность от", 0, 1, False)
 _IMGSZ = ("Размер входа", 320, 4096, True)
-_PASSES = {"overlap": ("Перекрытие плиток", 0, 0.9, False),
+_PASSES = {"tile": ("Тайл, px", 160, 4096, True),
+           "overlap": ("Перекрытие тайлов", 0, 0.9, False),
            "glue": ("Склейка от, IoS", 0.05, 1, False)}
 # Как у полуавтомата в редакторе таски: точек контура 8–200.
 _CONTOUR = {"polygon_points": ("Точек до", 8, 200, True),
@@ -226,13 +226,15 @@ def classes(doc):
     return [{"name": n, "sources": s} for n, s in found.items()]
 
 
-def check(doc, weights=None, sam3=None, examples=None, clamp=False):
+def check(doc, weights=None, sam3=None, examples=None, clamp=False, frame=None, inputs=None):
     """Проверить форму. `weights` — {id: число классов в весах} у владельца;
     без него файлы весов не сверяются (черновик, тесты). `sam3` — лежат ли
     веса SAM 3 на томе; None — не сверять. `examples` — {id набора: готов ли}
     у владельца; None — не сверять. `clamp` — числа вне `LIMITS` не отвергать,
     а зажимать в пределы (правит `doc` на месте): так запускаются версии,
-    сохранённые до появления пределов.
+    сохранённые до появления пределов. `frame` — (ширина, высота) самого
+    большого кадра, на нём сверяется потолок проходов; `inputs` — {id весов:
+    вход}, из него умолчание тайла у «Сети».
 
     Возвращает узлы в порядке прогона.
     """
@@ -299,6 +301,14 @@ def check(doc, weights=None, sam3=None, examples=None, clamp=False):
                 raise AgentGraphError(f"{title(node)}: не включён ни один класс.")
         if node["type"] == "text":
             _check_text(node, sam3, examples)
+        if node["type"] in FINDERS and frame:
+            w, h = frame
+            net_in = (inputs or {}).get((node.get("params") or {}).get("weights"))
+            n = passes(node, w, h, net_in)
+            if n > MAX_PASSES:
+                raise AgentGraphError(
+                    f"{title(node)}: тайл {tile_side(node, net_in)} на кадре {w}×{h} — {n} проходов, "
+                    f"больше {MAX_PASSES} нельзя.")
         if node["type"] == "sam":
             model = (node.get("params") or {}).get("model") or SAM_DEFAULTS["model"]
             if model not in SAM_MODELS:
@@ -507,28 +517,33 @@ def text_outline(box, mask, conf, params, k):
 
 
 # --------------------------------------------------------------------------- #
-# Плитки и TTA узла «Сеть»
+# Тайлинг узлов «Сеть» и «Сеть по тексту»
 #
-# Плитка — ровно вход сети в пикселях кадра, без масштаба: ради этого плитки и
-# режут — чтобы мелкий объект не ужимался вместе с кадром 2688×1520 до 1280.
-# Целый кадр идёт отдельным проходом всегда: крупный объект плитка режет, и
-# его половинки нашлись бы двумя обрывками.
+# Тайл — квадрат кадра со стороной `tile`, и сеть видит его на своём входе:
+# тайл меньше входа растягивается — лупа для мелочи, — больше ужимается.
+# Целый кадр — отдельный проход (выключается галочкой): крупный объект тайл
+# режет, и его половинки нашлись бы двумя обрывками.
 #
-# Сводятся проходы в два шага, и шаги разные нарочно. Проходы TTA смотрят на
-# один вид — их рамки на объекте почти совпадают, поэтому WBF: координаты
-# усредняются, уверенность делится на число проходов, и случайная находка
-# одного прохода из шести не выдаётся за уверенную. Виды (кадр и плитки)
-# видят объект по-разному — целиком и обрывками, у обрывка с целым IoU мал,
-# и NMS его не погасит; поэтому склейка по доле перекрытия меньшей рамки в
-# охватывающую, как GREEDYNMM у SAHI.
+# Виды (кадр и тайлы) видят объект по-разному — целиком и обрывками, у обрывка
+# с целым IoU мал, и NMS его не погасит; поэтому склейка по доле перекрытия
+# меньшей рамки в охватывающую, как GREEDYNMM у SAHI. Контур склеенного
+# объекта (SAM 3) берётся у вида, где объект не обрезан краем тайла, а нет
+# такого — куски масок объединяются.
 # --------------------------------------------------------------------------- #
 TILE_OVERLAP = 0.2
 GLUE_IOS = 0.5
-TTA_SCALES = (0.8, 1.25)
+# Вырезки идут в сеть пачками: пик памяти не зависит от числа тайлов.
+TILE_BATCH = 8
+# Потолок проходов на кадр: тайл 160 на кадре 2688×1520 — уже 228.
+MAX_PASSES = 100
+# Вход SAM 3 — по нему же умолчание тайла: слова видят тайл один к одному.
+SAM3_SIDE = 644
+# Рамка ближе этого к внутреннему краю тайла — объект обрезан.
+CUT_PX = 2
 
 
 def tiles(width, height, side, overlap=TILE_OVERLAP):
-    """Плитки (x0, y0, x1, y1). Кадр не больше плитки — плиток нет."""
+    """Тайлы (x0, y0, x1, y1). Кадр не больше тайла — тайлов нет."""
     if width <= side and height <= side:
         return []
 
@@ -542,20 +557,36 @@ def tiles(width, height, side, overlap=TILE_OVERLAP):
             for y in starts(height) for x in starts(width)]
 
 
-def variants(params):
-    """Проходы TTA на вид: [(отражение, масштаб входа)]; первый — как есть."""
-    scales = (1.0, *TTA_SCALES) if params.get("tta_scales") else (1.0,)
-    flips = (False, True) if params.get("tta_flip") else (False,)
-    return [(f, s) for s in scales for f in flips]
+def tile_side(node, net_imgsz=None):
+    """Сторона тайла узла. Пусто — вход сети: у «Сети» её размер входа или
+    вход весов, у YOLOE — свой вход, у SAM 3 — его неизменный 644."""
+    params = node.get("params") or {}
+    own = num(params.get("tile"))
+    if own:
+        return int(own)
+    if node.get("type") == "text":
+        if text_model(params) == "sam3":
+            return SAM3_SIDE
+        return int(num(params.get("imgsz"), TEXT_IMGSZ))
+    return int(num(params.get("imgsz"), net_imgsz or 640))
 
 
-def views(params, width, height, side):
-    """Виды кадра: целый первым, затем плитки, если они включены."""
+def views(params, width, height, tile):
+    """Виды кадра: целый первым (если не выключен), затем тайлы. Кадр влезает
+    в тайл — один целый, что бы ни стояло в галочке."""
     whole = [(0, 0, width, height)]
     if not params.get("tiles"):
         return whole
-    overlap = num(params.get("overlap"), TILE_OVERLAP)
-    return whole + tiles(width, height, side, max(0.0, min(0.9, overlap)))
+    overlap = max(0.0, min(0.9, num(params.get("overlap"), TILE_OVERLAP)))
+    cut = tiles(width, height, tile, overlap)
+    if not cut:
+        return whole
+    return (whole if params.get("whole") is not False else []) + cut
+
+
+def passes(node, width, height, net_imgsz=None):
+    """Сколько видов узел гонит через сеть на кадре такого размера."""
+    return len(views(node.get("params") or {}, width, height, tile_side(node, net_imgsz)))
 
 
 def ios(a, b):
@@ -568,66 +599,93 @@ def ios(a, b):
     return ix * iy / small if small > 0 else 0.0
 
 
-def wbf(dets, passes, threshold=FUSE_IOU):
-    """Взвешенное слияние проходов одного вида. `dets` — [(cls, conf, box)] всех
-    проходов вместе; уверенность итога — средняя по членам, умноженная на долю
-    проходов, что объект увидели."""
-    clusters = []   # [cls, [members], fused_box]
-    for cls, conf, box in sorted(dets, key=lambda d: -d[1]):
-        home = next((c for c in clusters if c[0] == cls and iou(c[2], box) >= threshold), None)
-        if home is None:
-            clusters.append([cls, [(conf, box)], box])
-            continue
-        home[1].append((conf, box))
-        total = sum(c for c, _ in home[1])
-        home[2] = tuple(sum(c * b[k] for c, b in home[1]) / total for k in range(4))
-    out = []
-    for cls, members, box in clusters:
-        mean = sum(c for c, _ in members) / len(members)
-        out.append((cls, mean * min(len(members), passes) / passes, box))
-    return out
+def is_cut(box, view, width, height):
+    """Упирается ли рамка во внутренний край тайла — край кадра не в счёт."""
+    x, y, w, h = box
+    x0, y0, x1, y1 = view
+    return ((x0 > 0 and x <= x0 + CUT_PX) or (y0 > 0 and y <= y0 + CUT_PX)
+            or (x1 < width and x + w >= x1 - CUT_PX) or (y1 < height and y + h >= y1 - CUT_PX))
 
 
-def glue(dets, threshold=GLUE_IOS):
+def _shift(shape, dx, dy):
+    """Контур вырезка {box, parts, sam} → в пиксели кадра."""
+    if not shape:
+        return None
+    x, y, w, h = shape["box"]
+    return {**shape, "box": (x + dx, y + dy, w, h),
+            "parts": [[[px + dx, py + dy] for px, py in ring] for ring in shape["parts"]]}
+
+
+def _union(shapes, points):
+    """Куски контура одного объекта из разных тайлов — одним контуром."""
+    import cv2
+    import numpy as np
+
+    from common import contours
+
+    rings = [np.array(ring, np.float64) for s in shapes for ring in s["parts"] if len(ring) >= 3]
+    if not rings:
+        return shapes[0]
+    lo = np.floor(np.min([r.min(axis=0) for r in rings], axis=0))
+    hi = np.ceil(np.max([r.max(axis=0) for r in rings], axis=0))
+    mask = np.zeros((int(hi[1] - lo[1]) + 1, int(hi[0] - lo[0]) + 1), np.uint8)
+    cv2.fillPoly(mask, [np.round(r - lo).astype(np.int32) for r in rings], 1)
+    parts = contours.polygons_from_mask(mask, points)
+    if not parts:
+        return shapes[0]
+    dx, dy = float(lo[0]), float(lo[1])
+    x, y, w, h = contours.mask_bounds(mask)
+    return {"box": (x + dx, y + dy, w, h), "sam": max(s.get("sam", 0) for s in shapes),
+            "parts": [[[px + dx, py + dy] for px, py in ring] for ring in parts]}
+
+
+def glue(dets, threshold=GLUE_IOS, points=SAM_DEFAULTS["polygon_points"]):
     """Склейка видов: рамки одного класса, где меньшая перекрыта на `threshold`,
-    заменяются охватывающей с наибольшей уверенностью."""
-    kept = []
-    for cls, conf, box in sorted(dets, key=lambda d: -d[1]):
+    заменяются охватывающей с наибольшей уверенностью. `dets` —
+    [(cls, conf, box, контур или None, обрезан ли)] → [(cls, conf, box, контур)]."""
+    kept = []   # [cls, conf, box, [члены]]
+    for det in sorted(dets, key=lambda d: -d[1]):
+        cls, conf, box = det[:3]
         home = next((k for k in kept if k[0] == cls and ios(k[2], box) >= threshold), None)
         if home is None:
-            kept.append([cls, conf, box])
+            kept.append([cls, conf, box, [det]])
             continue
         (ax, ay, aw, ah), (bx, by, bw, bh) = home[2], box
         x0, y0 = min(ax, bx), min(ay, by)
         home[2] = (x0, y0, max(ax + aw, bx + bw) - x0, max(ay + ah, by + bh) - y0)
-    return [tuple(k) for k in kept]
+        home[3].append(det)
+    out = []
+    for cls, conf, box, members in kept:
+        shaped = [m for m in members if m[3]]
+        whole = [m for m in shaped if not m[4]]
+        shape = (whole[0][3] if whole else _union([m[3] for m in shaped], points) if len(shaped) > 1
+                 else shaped[0][3] if shaped else None)
+        out.append((cls, conf, box, shape))
+    return out
 
 
-def detect(params, width, height, side, infer):
-    """Все проходы одной «Сети» по кадру → [(номер, уверенность, x, y, w, h)].
+def detect(params, width, height, tile, infer):
+    """Все проходы узла по кадру → [(номер, уверенность, x, y, w, h, контур)].
 
-    `infer(jobs, scale)` — сеть: `jobs` — [(вид, отражён ли)], ответ — по списку
-    рамок на каждый в координатах самого вырезка (отражённого, если отражён).
-    Масштаб один на вызов, чтобы воркер гнал вырезки одной пачкой.
+    `infer(views)` — сеть: на каждый вид (x0, y0, x1, y1) список рамок
+    (номер, уверенность, x, y, w, h[, контур]) в координатах вырезка. Видов
+    в одном вызове не больше `TILE_BATCH`.
     """
-    vs = views(params, width, height, side)
-    var = variants(params)
-    per_view = [[] for _ in vs]
-    for scale in dict.fromkeys(s for _, s in var):
-        jobs = [(i, flip) for i in range(len(vs)) for flip, s in var if s == scale]
-        answers = infer([(vs[i], flip) for i, flip in jobs], scale)
-        for (i, flip), found in zip(jobs, answers):
-            x0, y0, x1, _ = vs[i]
-            for cls, conf, x, y, w, h in found:
-                if flip:
-                    x = (x1 - x0) - x - w
-                per_view[i].append((int(cls), float(conf), (x + x0, y + y0, w, h)))
-    if len(var) > 1:
-        per_view = [wbf(dets, len(var)) for dets in per_view]
-    fused = [d for dets in per_view for d in dets]
+    vs = views(params, width, height, tile)
+    found = []
+    for at in range(0, len(vs), TILE_BATCH):
+        chunk = vs[at:at + TILE_BATCH]
+        for view, dets in zip(chunk, infer(chunk)):
+            x0, y0 = view[:2]
+            for cls, conf, x, y, w, h, *shape in dets:
+                box = (x + x0, y + y0, w, h)
+                found.append((int(cls), float(conf), box, _shift(shape[0] if shape else None, x0, y0),
+                              is_cut(box, view, width, height)))
     if len(vs) > 1:
-        fused = glue(fused, num(params.get("glue"), GLUE_IOS))
-    return [(cls, conf, *box) for cls, conf, box in fused]
+        points = int(num(params.get("polygon_points"), SAM_DEFAULTS["polygon_points"]))
+        return [(cls, conf, *box, shape) for cls, conf, box, shape in
+                glue(found, num(params.get("glue"), GLUE_IOS), points)]
+    return [(cls, conf, *box, shape) for cls, conf, box, shape, _ in found]
 
 
 def run(doc, predict, order=None, segment=None, trace=None):
@@ -636,7 +694,7 @@ def run(doc, predict, order=None, segment=None, trace=None):
     после SAM, ещё `parts` — обводка кольцами точек и `sam` — оценка маски.
 
     `id` — «узел сети.номер»: по нему превью видит, что узел отсеял. `trace`,
-    если передан, получает {узел: {"in": [...], "out": [...]}}."""
+    если передан, получает {узел: {"in": [...], "out": [...], "ms": время узла}}."""
     by_id = {n["id"]: n for n in doc["nodes"]}
     order = order or check(doc)
     feeds = {(e["to"], e["in"]): e["from"] for e in doc["edges"]}
@@ -644,6 +702,7 @@ def run(doc, predict, order=None, segment=None, trace=None):
     result = []
     for nid in order:
         node = by_id[nid]
+        started = time.monotonic()
         ins = [value[feeds[(nid, name)]] for name in ports(node)[0]]
         kind = node["type"]
         if kind == "frame":
@@ -680,7 +739,8 @@ def run(doc, predict, order=None, segment=None, trace=None):
         else:
             result = value[nid] = ins[0]
         if trace is not None:
-            trace[nid] = {"in": [d for branch in ins for d in branch], "out": value[nid]}
+            trace[nid] = {"in": [d for branch in ins for d in branch], "out": value[nid],
+                          "ms": round((time.monotonic() - started) * 1000, 1)}
     return result
 
 
@@ -735,7 +795,7 @@ def scout_stats(frames):
 
     По классу — рамки, кадры с ним, сколько одновременно, уверенность
     (медиана, разброс, гистограмма по десятым — по ней ставят порог
-    «Фильтра»), медианный размер (по нему решают про плитки) и счёт по
+    «Фильтра»), медианный размер (по нему решают про тайлинг) и счёт по
     каждому проверенному кадру для полосы «по времени». Классы — по числу
     рамок, при равенстве по имени.
     """

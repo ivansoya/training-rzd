@@ -217,53 +217,93 @@ def test_sam_в_графе_и_проверка_модели():
         ag.check(doc)
 
 
-def test_плитки_кадра_рсм_при_входе_1280():
+def test_тайлы_кадра_рсм_при_тайле_1280():
     got = ag.tiles(2688, 1520, 1280)
     assert [(x0, y0) for x0, y0, _, _ in got] == [(0, 0), (704, 0), (1408, 0), (0, 240), (704, 240), (1408, 240)]
     assert all(x1 - x0 == 1280 and y1 - y0 == 1280 for x0, y0, x1, y1 in got)
-    assert ag.tiles(1280, 720, 1280) == []           # кадр влезает во вход — плиток нет
+    assert ag.tiles(1280, 720, 1280) == []           # кадр влезает в тайл — тайлов нет
     assert ag.views({"tiles": True}, 2688, 1520, 1280)[0] == (0, 0, 2688, 1520)   # целый кадр первым
     assert len(ag.views({}, 2688, 1520, 1280)) == 1
 
 
-def test_tta_проходы():
-    assert ag.variants({}) == [(False, 1.0)]
-    assert len(ag.variants({"tta_flip": True, "tta_scales": True})) == 6
+def test_без_целого_кадра_только_тайлы_но_малый_кадр_остаётся():
+    assert len(ag.views({"tiles": True, "whole": False}, 2688, 1520, 1280)) == 6
+    assert ag.views({"tiles": True, "whole": False}, 1280, 720, 1280) == [(0, 0, 1280, 720)]
 
 
-def test_wbf_усредняет_и_штрафует_случайную_находку():
-    dets = [(0, 0.9, (100, 100, 50, 50)), (0, 0.6, (104, 100, 50, 50)),   # два прохода видят одно
-            (0, 0.9, (400, 400, 20, 20))]                                  # один проход из двух
-    out = sorted(ag.wbf(dets, passes=2), key=lambda d: d[2][0])
-    cls, conf, box = out[0]
-    assert conf == pytest.approx(0.75) and box[0] == pytest.approx(101.6)
-    assert out[1][1] == pytest.approx(0.45)
+def test_тайл_по_умолчанию_вход_сети():
+    net = {"type": "net", "params": {"tiles": True}}
+    assert ag.tile_side(net, 960) == 960                            # вход весов
+    assert ag.tile_side({"type": "net", "params": {"imgsz": 1280}}, 960) == 1280
+    assert ag.tile_side({"type": "net", "params": {"tile": 640, "imgsz": 1280}}) == 640
+    assert ag.tile_side({"type": "text", "params": {}}) == ag.TEXT_IMGSZ
+    assert ag.tile_side({"type": "text", "params": {"model": "sam3"}}) == ag.SAM3_SIDE
+    # 1 целый + 5×3 тайлов по 640 при перекрытии 0,2
+    assert ag.passes({"type": "net", "params": {"tiles": True, "tile": 640}}, 2688, 1520) == 16
+
+
+def test_потолок_проходов_на_самом_большом_кадре():
+    doc = _doc()
+    doc["nodes"][1]["params"].update(tiles=True, tile=160)
+    ag.check(doc)                                    # кадр неизвестен — не сверяем
+    with pytest.raises(ag.AgentGraphError, match="тайл 160 на кадре 2688×1520 — 2[0-9]{2} проходов"):
+        ag.check(doc, frame=(2688, 1520))
+    doc["nodes"][1]["params"]["tile"] = 640
+    ag.check(doc, frame=(2688, 1520))
 
 
 def test_склейка_сращивает_обрывки_и_гасит_дубль_целого():
-    whole = (0, 0.8, (100, 100, 200, 100))
-    left, right = (0, 0.9, (100, 100, 110, 100)), (0, 0.7, (190, 100, 110, 100))
-    other = (1, 0.9, (100, 100, 110, 100))                                   # другой класс не трогаем
+    whole = (0, 0.8, (100, 100, 200, 100), None, False)
+    left, right = (0, 0.9, (100, 100, 110, 100), None, True), (0, 0.7, (190, 100, 110, 100), None, True)
+    other = (1, 0.9, (100, 100, 110, 100), None, True)                     # другой класс не трогаем
     out = ag.glue([whole, left, right, other])
-    assert sorted(out) == [(0, 0.9, (100, 100, 200, 100)), (1, 0.9, (100, 100, 110, 100))]
+    assert sorted(out) == [(0, 0.9, (100, 100, 200, 100), None), (1, 0.9, (100, 100, 110, 100), None)]
 
 
-def test_detect_снимает_отражение_и_сдвиг_плитки():
+def _square(x, y, w, h):
+    return {"box": (x, y, w, h), "sam": 0.8, "parts": [[[x, y], [x + w, y], [x + w, y + h], [x, y + h]]]}
+
+
+def test_склейка_берёт_контур_целого_вида_а_обрывки_объединяет():
+    whole = (0, 0.6, (100, 100, 200, 100), _square(100, 100, 200, 100), False)
+    cut = (0, 0.9, (100, 100, 110, 100), _square(100, 100, 110, 100), True)
+    [(_, conf, _, shape)] = ag.glue([whole, cut])
+    assert conf == 0.9 and shape["box"] == (100, 100, 200, 100)     # уверенность лучшая, контур — целого
+    right = (0, 0.7, (150, 100, 150, 100), _square(150, 100, 150, 100), True)   # IoS 0,55
+    [(_, _, _, shape)] = ag.glue([cut, right])
+    x, y, w, h = shape["box"]
+    assert (x, y) == (100, 100) and abs(w - 201) <= 1 and abs(h - 101) <= 1
+
+
+def test_detect_сдвигает_тайл_и_гонит_пачками():
     asked = []
 
-    def infer(jobs, scale):
-        asked.append((len(jobs), scale))
-        # в каждом вырезке объект у левого края; в отражённом — у правого
-        return [[(0, 0.9, (x1 - x0) - 60 if flip else 10, 20, 50, 40)] for (x0, _, x1, _), flip in jobs]
+    def infer(views):
+        asked.append(len(views))
+        # в каждом вырезке объект у левого края
+        return [[(0, 0.9, 10, 20, 50, 40)] for _ in views]
 
-    params = {"tiles": True, "tta_flip": True}
-    out = ag.detect(params, 2688, 1520, 1280, infer)
-    assert asked == [(14, 1.0)]                       # 7 видов × 2 отражения одной пачкой
-    got = sorted((round(x), round(y)) for _, _, x, y, _, _ in out)
-    # после снятия отражения оба прохода совпали (x = 10 внутри вырезка) и
-    # слились; целый кадр и первая плитка видят одно место — склеились в одну
-    assert got == [(10, 20), (10, 260), (714, 20), (714, 260), (1418, 20), (1418, 260)]
-    assert all(conf == pytest.approx(0.9) for _, conf, *_ in out)
+    out = ag.detect({"tiles": True, "tile": 640}, 2688, 1520, 640, infer)
+    assert asked == [8, 8]                          # 16 видов пачками по 8
+    got = sorted({(round(x), round(y)) for _, _, x, y, *_ in out})
+    # целый кадр и первый тайл видят одно место — склеились в одну
+    assert (10, 20) in got and len(out) == 15
+    assert all(len(d) == 7 for d in out)            # седьмым — контур (здесь None)
+
+
+def test_detect_сдвигает_контур_тайла():
+    def infer(views):
+        return [[(0, 0.9, 10, 20, 50, 40, _square(10, 20, 50, 40))] if v[0] > 0 else [] for v in views]
+
+    out = ag.detect({"tiles": True, "tile": 1280, "whole": False}, 2688, 1520, 1280, infer)
+    xs = sorted(d[6]["parts"][0][0][0] for d in out)
+    assert xs == [714, 714, 1418, 1418]
+
+
+def test_трасса_меряет_время_узла():
+    trace = {}
+    ag.run(_doc(), lambda node: ANSWERS[node["id"]], trace=trace)
+    assert all(isinstance(t["ms"], float) for t in trace.values())
 
 
 def test_таблица_классов_сверяется_с_весами():
@@ -440,7 +480,7 @@ def test_текст_образцы_и_порог_строки():
     ("a", "conf", -0.1, "Уверенность от"),
     ("a", "conf", "много", "Уверенность от"),
     ("a", "imgsz", 0, "«Размер входа» — целое от 320 до 4096, сейчас 0"),
-    ("a", "imgsz", 1, "Размер входа"),        # вход 1 с плитками — миллионы видов на кадр
+    ("a", "imgsz", 1, "Размер входа"),        # вход 1 с тайлами — миллионы видов на кадр
     ("a", "imgsz", 640.5, "целое"),
     ("a", "overlap", 0.95, "Перекрытие"),
     ("m", "inputs", 9, "Входов"),

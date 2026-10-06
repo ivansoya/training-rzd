@@ -24,7 +24,8 @@ import { WireDraft, edgeTypes, type WireData } from "../aug/GraphNodes";
 import { keep, load } from "../aug/NodePreview";
 import { DRAWER_DEFAULT, clampDrawer } from "../aug/look";
 import {
-  agentClasses, carryClasses, isExamples, keepWired, promptsOf, rowTarget, rowsOf, textModel, unfinished, upstream,
+  agentClasses, callsPerView, carryClasses, isExamples, keepWired, promptsOf, rowTarget, rowsOf, textModel, tileSide, unfinished,
+  upstream, viewCount,
 } from "./agentDoc";
 import AgentFound from "./AgentFound";
 import AgentInspector from "./AgentInspector";
@@ -259,6 +260,32 @@ function Editor() {
   const preview = useAgentPreview(graphId ?? "", draft, Boolean(graph?.mine), six);
   const trace = preview.result?.nodes ?? null;
   const flaw = unfinished(draft);
+  const frame = preview.project?.frame ?? null;
+  // Мс на вызов модели у каждого узла-находчика: время узла в превью, делённое на его
+  // вызовы на том кадре. Из него итог тайлинга пересчитывается сразу. Берётся лучший
+  // замер при тех же модели и входе: первый вызов греет модель и бывает в 30 раз дольше.
+  const [speeds, setSpeeds] = useState<Map<string, { key: string; ms: number }>>(() => new Map());
+  const result = preview.result;
+  useEffect(() => {
+    if (!result) return;
+    setSpeeds((was) => {
+      const next = new Map(was);
+      for (const n of draft.nodes) {
+        const kind: string = n.type;
+        const ms = result.nodes[n.id]?.ms;
+        if ((kind !== "net" && kind !== "text") || ms === undefined) continue;
+        const p = n.params ?? {};
+        const v = viewCount(p, result.image.width, result.image.height, tileSide(kind, p, weightsOf(p)?.imgsz));
+        const per = ms / ((v.whole + v.tiles) * callsPerView(kind, p));
+        const key = JSON.stringify([p.weights, p.model, p.imgsz]);
+        const old = next.get(n.id);
+        next.set(n.id, { key, ms: old?.key === key ? Math.min(old.ms, per) : per });
+      }
+      return next;
+    });
+    // Только на новый ответ: граф к нему уже пришёл, а правка до ответа даст свой.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [result]);
 
   const killWire = useCallback((id: string) => setEdges((old) => old.filter((e) => e.id !== id)), [setEdges]);
   const wires = useMemo(
@@ -288,12 +315,12 @@ function Editor() {
       let extra: Partial<AgentNodeData> = {};
       if (d.kind === "net") {
         const w = weightsOf(p);
-        extra = { caption: w?.name.replace(/\.pt$/i, ""), why: netLine(p, w), badge: w ? netBadge(p, w.names.length) : undefined, bad: !p.weights };
+        extra = { caption: w?.name.replace(/\.pt$/i, ""), why: netLine(p, w, frame), badge: w ? netBadge(p, w.names.length) : undefined, bad: !p.weights };
       } else if (d.kind === "text") {
         const lack = textModel(p) === "sam3" && sam3Ready === false;
         const rows = promptsOf({ params: p });
         const on = rows.filter((r) => r.on && rowTarget(r) && r.agent.trim()).length;
-        extra = { why: textLine(p, lack), badge: `${on}/${rows.length}`, bad: lack || on === 0 };
+        extra = { why: textLine(p, lack, frame), badge: `${on}/${rows.length}`, bad: lack || on === 0 };
       } else if (d.kind === "filter") {
         extra = { why: filterLine(p, incomingOf(n.id)) };
       } else {
@@ -301,7 +328,7 @@ function Editor() {
       }
       return { ...n, data: { ...d, ...extra, loose: !linked.has(n.id), eye: n.id === eyeOn, onEye: togglePin } };
     });
-  }, [nodes, edges, weightsOf, sam3Ready, incomingOf, eyeOn, togglePin]);
+  }, [nodes, edges, weightsOf, sam3Ready, incomingOf, eyeOn, togglePin, frame]);
 
   const canConnect = useCallback((conn: Connection | Edge) => {
     if (!conn.source || !conn.target || conn.source === conn.target) return false;
@@ -719,6 +746,8 @@ function Editor() {
               onRemove={() => current && removeNode(current.id)}
               pinned={Boolean(current) && current?.id === eyeOn}
               onPin={() => current && togglePin(current.id)}
+              frame={frame}
+              msPerCall={current ? speeds.get(current.id)?.ms : undefined}
             />
             <AgentPreviewPane state={preview} nodes={shown} watch={watch} pinned={Boolean(pinned)} onPin={setEyeOn}
               colorOf={colorOf} enabled={Boolean(graph?.mine)} />

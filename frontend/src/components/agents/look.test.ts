@@ -31,10 +31,14 @@ describe("вид узлов агента", () => {
     expect(onePort("output")).toBeNull();
   });
 
-  it("строка сети: паспорт весов, плитки и TTA", () => {
+  it("строка сети: паспорт весов и тайлы на кадре проекта", () => {
     const w = { name: "rzd.pt", task: "detect", imgsz: 960 };
+    const rsm = { w: 2688, h: 1520 };
     expect(netLine({ conf: 0.3 }, w)).toBe("detect, 960, conf 0,3");
-    expect(netLine({ label: "вагоны", tiles: true, tta_flip: true, tta_scales: true }, w)).toBe("rzd, detect, 960, conf 0,25, плитки, TTA ×6");
+    expect(netLine({ label: "вагоны", tiles: true, tta_flip: true }, w)).toBe("rzd, detect, 960, conf 0,25, тайл 960");
+    // 1 целый + 5×3 тайлов по 640 — как agent_graph.passes
+    expect(netLine({ tiles: true, tile: 640 }, w, rsm)).toBe("detect, 960, conf 0,25, тайл 640 ×16");
+    expect(netLine({ tiles: true, tile: 640, whole: false }, w, rsm)).toBe("detect, 960, conf 0,25, тайл 640 ×15, без целого");
     expect(netLine({}, undefined)).toBe("веса не выбраны");
   });
 

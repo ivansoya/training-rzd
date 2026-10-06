@@ -46,7 +46,7 @@ YOLOE_DIR = os.environ.get("YOLOE_DIR", "/opt/yoloe")
 # сохранения пропорций (рамки уезжали до 20 px). Ужимаем длинную сторону до 644
 # и добиваем до квадрата сами: растягивать становится нечего. Заодно маски — по
 # размеру поданного кадра, а не 2688×1520 (десятки гигабайт на сотню масок).
-SAM3_SIDE = 644
+SAM3_SIDE = agent_graph.SAM3_SIDE
 NOTIFY_EVERY = 1.0
 
 # Файл и конфиг — как у полуавтомата (autolabel_svc/runners/sam2_runner.py);
@@ -153,10 +153,9 @@ def execute(db, run):
 
     sams = sorted({(n.get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
                    for n in doc["nodes"] if n["type"] == "sam"})
-    # Плитки и TTA гонят вырезки пачкой — памяти нужно больше, и замер
-    # диспетчера не должен смешиваться с замером одиночного прохода.
-    batch = max((len(agent_graph.variants(n.get("params") or {}))
-                 * (8 if (n.get("params") or {}).get("tiles") else 1)
+    # Тайлы идут в сеть пачкой — памяти нужно больше, и замер диспетчера
+    # не должен смешиваться с замером одиночного прохода.
+    batch = max((agent_graph.TILE_BATCH if (n.get("params") or {}).get("tiles") else 1
                  for n in nets + texts), default=1)
     # Число промтов и наборов — в подписи: SAM 3 на 40 промтов и на 1 — разные задачи.
     prompts = sorted(f"{len(agent_graph.text_prompts(n))}p{len(agent_graph.text_sets(n))}s"
@@ -283,10 +282,20 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
         pixels = frame[0]
         params = node.get("params") or {}
         text = node["type"] == "text"
+        h, w = pixels.shape[:2]
+
+        def crop(view):
+            x0, y0, x1, y1 = view
+            return np.ascontiguousarray(pixels[y0:y1, x0:x1])
+
         if text:
             rows = agent_graph.text_rows(node)
             if agent_graph.text_model(params) == "sam3":
-                return _sam3(models[node["id"]], pixels, rows, node, contour)
+                whole = (0, 0, w, h)
+                return agent_graph.detect(
+                    params, w, h, agent_graph.tile_side(node),
+                    lambda views: [_sam3(models[node["id"]], crop(v), rows, node, contour, grow=v != whole)
+                                   for v in views])
             side = int(agent_graph.num(params.get("imgsz"), agent_graph.TEXT_IMGSZ))
             # Модель идёт с самым низким порогом строк, каждую дорезает `run`.
             conf = agent_graph.min_conf(node)
@@ -296,18 +305,14 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
             # превращал её в умолчание (замер: 0 давал те же 15 рамок, что 0,25).
             conf = agent_graph.num(params.get("conf"), 0.25)
 
-        def infer(jobs, scale):
-            crops = []
-            for (x0, y0, x1, y1), flip in jobs:
-                crop = pixels[y0:y1, x0:x1]
-                # Отрицательный шаг отражения cv2 внутри ultralytics не примет.
-                crops.append(np.ascontiguousarray(crop[:, ::-1] if flip else crop))
+        def infer(views):
             # IoU не передаём: встроенный NMS у yolo11 и v8 работает со своим
             # мягким 0,7, у yolo26 его нет вовсе. Строже — узел «NMS» в графе.
+            # Тайл другого размера ultralytics сам растянет или ужмёт до входа.
             results = models[node["id"]].predict(
-                crops, verbose=False, device=device, conf=conf,
+                [crop(v) for v in views], verbose=False, device=device, conf=conf,
                 # ultralytics требует кратность шагу сети — 32.
-                imgsz=max(32, round(side * scale / 32) * 32),
+                imgsz=max(32, round(side / 32) * 32),
             )
             return [
                 [(c, p, x1, y1, x2 - x1, y2 - y1) for c, p, (x1, y1, x2, y2) in zip(
@@ -315,8 +320,7 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
                 for r in results
             ]
 
-        h, w = pixels.shape[:2]
-        found = agent_graph.detect(params, w, h, side, infer)
+        found = agent_graph.detect(params, w, h, agent_graph.tile_side(node, side), infer)
         # У YOLOE номер класса — место промта среди включённых, а таблица узла
         # считает строки вместе с выключенными.
         return [(rows[c][0], *rest) for c, *rest in found] if text else found
@@ -354,13 +358,14 @@ class Sam3Text:
         self.crops = crops   # {id набора: [(вырезка BGR, рамка в вырезке)]}
 
 
-def _sam3(model, pixels, rows, node, contour):
+def _sam3(model, pixels, rows, node, contour, grow=False):
     """«Сеть по тексту» на SAM 3: [(строка, уверенность, x, y, w, h, контур)].
 
     Слова — одним вызовом. Каждая строка-образцы — свой вызов с коллажем:
     SAM 3 берёт рамки-образцы только на том же кадре, поэтому над кадром
     кладётся полоса вырезок, образцы обводятся рамками в ней, а находки
-    ниже полосы — это находки в кадре (FSS-SAM3, замер 25.09.2026)."""
+    ниже полосы — это находки в кадре (FSS-SAM3, замер 25.09.2026).
+    `pixels` — кадр или тайл; `grow` — тайл меньше входа растянуть до него."""
     import cv2
     import numpy as np
 
@@ -389,8 +394,10 @@ def _sam3(model, pixels, rows, node, contour):
             out.append((row_of(c), p, *box, shape))
 
     def shrink(image):
-        k = min(1.0, SAM3_SIDE / max(image.shape[:2]))
-        if k < 1:
+        k = SAM3_SIDE / max(image.shape[:2])
+        if not grow:
+            k = min(1.0, k)
+        if k != 1:
             image = cv2.resize(image, (round(image.shape[1] * k), round(image.shape[0] * k)),
                                interpolation=cv2.INTER_AREA)
         # Поля справа и снизу: координаты рамок от них не меняются.

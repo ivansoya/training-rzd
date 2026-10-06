@@ -5,6 +5,7 @@ import type { IconName } from "../../ui";
 import type { PreviewDet } from "../../api/agents";
 import {
   SAM_DEFAULTS, TEXT_IMGSZ, TEXT_MODEL, isExamples, mergeInputs, promptsOf, rowTarget, rowsOf, textConfDefault, textModel,
+  tileSide, viewCount,
 } from "./agentDoc";
 
 export type AgentKind = "frame" | "net" | "text" | "merge" | "nms" | "filter" | "sam" | "output";
@@ -65,23 +66,32 @@ export const onePort = (kind: AgentKind): [string, string] | null =>
 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
 export const decimal = (v: number) => String(v).replace(".", ",");
-/** Проходов TTA на вид — как agent_graph.variants на сервере. */
-export const tta = (p: Record<string, unknown>) => (p.tta_flip ? 2 : 1) * (p.tta_scales ? 3 : 1);
+/** Кадр, на котором считаются тайлы: самый частый в проекте превью. */
+export type FrameSize = { w: number; h: number };
+
+/** «тайл 640 ×16»: сторона и проходов на кадр; без кадра — только сторона. */
+export function tileText(kind: string, p: Record<string, unknown>, netImgsz: number | null | undefined, frame?: FrameSize | null) {
+  if (!p.tiles) return null;
+  const side = tileSide(kind, p, netImgsz);
+  if (!frame) return `тайл ${side}`;
+  const v = viewCount(p, frame.w, frame.h, side);
+  return `тайл ${side} ×${v.whole + v.tiles}${v.tiles && !v.whole ? ", без целого" : ""}`;
+}
 
 /** Строка под именем «Сети». */
-export function netLine(p: Record<string, unknown>, w: { name: string; task: string; imgsz: number | null } | undefined): string {
+export function netLine(p: Record<string, unknown>, w: { name: string; task: string; imgsz: number | null } | undefined,
+  frame?: FrameSize | null): string {
   if (!w) return "веса не выбраны";
   return [
     // С подписью имя весов уходит из заголовка сюда: две сети на одних весах иначе не отличить.
     p.label ? w.name.replace(/\.pt$/i, "") : null,
     `${w.task}, ${num(p.imgsz, w.imgsz ?? 640)}, conf ${decimal(num(p.conf, 0.25))}`,
-    p.tiles ? "плитки" : null,
-    tta(p) > 1 ? `TTA ×${tta(p)}` : null,
+    tileText("net", p, w.imgsz, frame),
   ].filter(Boolean).join(", ");
 }
 
 /** Строка под именем «Сети по тексту»; `sam3Missing` — весов SAM 3 нет на сервере. */
-export function textLine(p: Record<string, unknown>, sam3Missing: boolean): string {
+export function textLine(p: Record<string, unknown>, sam3Missing: boolean, frame?: FrameSize | null): string {
   if (sam3Missing) return "нет весов SAM 3";
   const model = textModel(p);
   const rows = promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.agent.trim());
@@ -91,8 +101,7 @@ export function textLine(p: Record<string, unknown>, sam3Missing: boolean): stri
     yolo ? `YOLOE-26 ${model}` : "SAM 3",
     ex ? `${rows.length - ex ? `${rows.length - ex} сл. + ` : ""}${ex} обр.` : rows.length ? `${rows.length} сл.` : null,
     `conf ${decimal(num(p.conf, textConfDefault(model)))}`,
-    yolo && p.tiles ? "плитки" : null,
-    yolo && tta(p) > 1 ? `TTA ×${tta(p)}` : null,
+    tileText("text", p, null, frame),
   ].filter(Boolean).join(", ");
 }
 

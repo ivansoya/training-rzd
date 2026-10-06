@@ -181,16 +181,30 @@ export interface HumanShape {
 export interface AgentPreview {
   image: { id: string; file_name: string; width: number; height: number };
   human: HumanShape[];
-  /** Вход и выход каждого узла. */
-  nodes: Record<string, { in: PreviewDet[]; out: PreviewDet[] }>;
+  /** Вход и выход каждого узла; `ms` — сколько узел считал. */
+  nodes: Record<string, { in: PreviewDet[]; out: PreviewDet[]; ms?: number }>;
   device: "cuda" | "cpu";
   /** Почему на процессоре: чем занята карта. */
   note: string | null;
   ms: number;
 }
 
-export const previewProjects = () =>
-  get<{ projects: { code: string; name: string; images: number }[] }>("agents/preview/projects");
+/** Кадры проекта для итога тайлинга: самый частый размер, его доля и самый большой. */
+export interface FrameSummary {
+  w: number;
+  h: number;
+  share: number;
+  largest: [number, number];
+}
+
+export interface PreviewProject {
+  code: string;
+  name: string;
+  images: number;
+  frame: FrameSummary | null;
+}
+
+export const previewProjects = () => get<{ projects: PreviewProject[] }>("agents/preview/projects");
 
 export const runPreview = (
   body: {

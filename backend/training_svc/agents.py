@@ -8,6 +8,7 @@
 запускает только владелец. Запуск — в тех тасках, где он и так может
 размечать: исполнитель или администратор проекта.
 """
+import copy
 import hashlib
 import os
 import random
@@ -20,7 +21,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
 
-from common import agent_graph, config, live, task_frames
+from common import agent_graph, config, frame_sizes, live, task_frames
 from common.auth import current_user, has_role, role_in
 from common.db import SessionLocal
 from common.models import (
@@ -523,6 +524,15 @@ def start_agent_run(task_id):
         if mode != "scout" and not any(mapping.values()):
             return jsonify({"error": "Ни один класс агента не сопоставлен с классом проекта."}), 400
 
+        # Потолок тайлов сверяется на кадрах этого проекта: при сохранении
+        # версии их могло ещё не быть.
+        shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars().all()
+        try:
+            agent_graph.check(copy.deepcopy(version.doc), clamp=True, frame=frame_sizes.largest(db, [project.id]),
+                              inputs={str(w.id): w.imgsz for w in shelf})
+        except agent_graph.AgentGraphError as exc:
+            return jsonify({"error": str(exc)}), 400
+
         total = None
         if mode == "frames":
             total = sum(
@@ -607,13 +617,16 @@ def preview_projects():
         return err
     try:
         rows = db.execute(
-            select(Project.code, Project.name, func.count(Image.id))
+            select(Project.id, Project.code, Project.name, func.count(Image.id))
             .join(ProjectMember, ProjectMember.project_id == Project.id)
             .join(Image, Image.project_id == Project.id)
             .where(ProjectMember.user_id == user.id)
             .group_by(Project.id).order_by(Project.name)
         ).all()
-        return jsonify({"projects": [{"code": c, "name": n, "images": k} for c, n, k in rows]})
+        # Размер кадра — для итога тайлинга: сколько тайлов выйдет на кадр.
+        frames = frame_sizes.of_projects(db, [r[0] for r in rows])
+        return jsonify({"projects": [{"code": c, "name": n, "images": k, "frame": frames.get(pid)}
+                                     for pid, c, n, k in rows]})
     finally:
         db.close()
 
@@ -641,16 +654,16 @@ def _preview_input(db, user, data):
     if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
         return None, None, (jsonify({"error": "Агент не найден."}), 404)
     doc = data.get("doc")
-    shelf = {str(w.id): len(w.names or []) for w in db.execute(
-        select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars()}
-    try:
-        agent_graph.check(doc, weights=shelf, sam3=config.sam3_ready(),
-                          examples=examples_lib.readiness(db, user.id, doc))
-    except agent_graph.AgentGraphError as exc:
-        return None, None, (jsonify({"error": str(exc)}), 400)
     project = db.execute(select(Project).where(Project.code == data.get("project"))).scalar_one_or_none()
     if project is None or not has_role(role_in(db, user, project), "viewer"):
         return None, None, (jsonify({"error": "Проект не найден."}), 404)
+    shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars().all()
+    try:
+        agent_graph.check(doc, weights={str(w.id): len(w.names or []) for w in shelf}, sam3=config.sam3_ready(),
+                          examples=examples_lib.readiness(db, user.id, doc),
+                          frame=frame_sizes.largest(db, [project.id]), inputs={str(w.id): w.imgsz for w in shelf})
+    except agent_graph.AgentGraphError as exc:
+        return None, None, (jsonify({"error": str(exc)}), 400)
     return doc, project, None
 
 

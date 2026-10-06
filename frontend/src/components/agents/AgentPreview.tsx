@@ -25,7 +25,7 @@ export type AgentPreviewState = ReturnType<typeof useAgentPreview>;
 /** Живое превью черновика: кадр проекта помнится на агента. `paused` — не звать сервер (идёт пакет на 6 кадров). */
 export function useAgentPreview(graphId: string, doc: GraphDoc, enabled: boolean, paused: boolean) {
   const store = `agent-preview:${graphId}`;
-  const [projects, setProjects] = useState<{ code: string; name: string; images: number }[] | null>(null);
+  const [projects, setProjects] = useState<api.PreviewProject[] | null>(null);
   const [pick, setPick] = useState(() => load<{ project?: string; image?: string | null }>(store, {}));
   const [result, setResult] = useState<Result | null>(null);
   const [problem, setProblem] = useState<string | null>(null);

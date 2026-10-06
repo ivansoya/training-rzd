@@ -16,7 +16,7 @@ from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
 
-from common import agent_graph
+from common import agent_graph, frame_sizes
 from common import selection as sel_lib
 from common.auth import current_user, has_role, may_manage, project_by_code, role_in
 from common.db import SessionLocal
@@ -318,16 +318,13 @@ def _loader(db):
 
 def _agent_stats(db, graph, doc):
     """Проверить агента и снять его паспорт. Бросает AgentGraphError."""
-    weights = {
-        str(w.id): len(w.names or [])
-        for w in db.execute(
-            select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)
-        ).scalars()
-    }
+    shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)).scalars().all()
     # Наборы образцов — запросом: модулей обучения в образе dataprep нет.
     sets = {str(r.id): r.status == "ready" for r in db.execute(
         select(AgentExamples).where(AgentExamples.owner_id == graph.owner_id)).scalars()}
-    agent_graph.check(doc, weights=weights, sam3=config.sam3_ready(), examples=sets)
+    agent_graph.check(doc, weights={str(w.id): len(w.names or []) for w in shelf}, sam3=config.sam3_ready(),
+                      examples=sets, frame=frame_sizes.largest_for_user(db, graph.owner_id),
+                      inputs={str(w.id): w.imgsz for w in shelf})
     return {
         # Классы агента — в паспорт версии: окно запуска сопоставляет их с
         # классами проекта, не разбирая документ.

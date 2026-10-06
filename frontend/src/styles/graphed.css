@@ -313,6 +313,29 @@
 .ae-w.bad { border-color: color-mix(in srgb, var(--destructive) 50%, var(--border)); }
 .ae-w.bad > b { color: var(--destructive); }
 
+/* тайлинг: блок с переключателем в заголовке и итогом внизу */
+.ae-tile {
+  grid-column: 1 / -1; display: flex; flex-direction: column; gap: 10px; padding: 10px 12px; min-width: 0;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--card);
+}
+.ae-tile-h { display: flex; align-items: center; gap: 8px; min-height: 24px; font-size: 12.5px; }
+.ae-tile-f { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px 16px; align-items: start; }
+.ae-tile-sum {
+  display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted-fg);
+  border-top: 1px solid var(--border); padding-top: 8px;
+}
+.ae-tile:not(.on) .ae-tile-sum { border-top: 0; padding-top: 0; }
+.ae-tile-sum em { font-style: normal; color: var(--faint); font-family: var(--font); }
+.ae-tile-sum > b { color: var(--fg); font-weight: 600; font-size: 12.5px; }
+.ae-tile-sum > .bad { color: var(--destructive); }
+.ae-fold {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 0; border: 0; background: none;
+  font: 500 12px var(--font); color: var(--muted-fg); cursor: pointer;
+}
+.ae-fold:hover { color: var(--fg); }
+.ae-fold > .ui-ic { transition: transform .15s; transform: rotate(-90deg); }
+.ae-fold[aria-expanded="true"] > .ui-ic { transform: none; }
+
 /* таблицы классов и строк */
 .ae-ct { display: flex; flex-direction: column; gap: 2px; border: 1px solid var(--border); border-radius: var(--r-md); background: var(--card); padding: 10px 12px; min-width: 0; }
 .ae-ct-h { display: flex; flex-direction: column; gap: 8px; padding-bottom: 6px; }

@@ -210,7 +210,7 @@ export interface Limit {
 }
 const CONF: Limit = { lo: 0, hi: 1 };
 const IMGSZ: Limit = { lo: 320, hi: 4096, int: true };
-const PASSES = { overlap: { lo: 0, hi: 0.9 }, glue: { lo: 0.05, hi: 1 } };
+const PASSES = { tile: { lo: 160, hi: 4096, int: true }, overlap: { lo: 0, hi: 0.9 }, glue: { lo: 0.05, hi: 1 } };
 const CONTOUR = { polygon_points: { lo: 8, hi: 200, int: true }, min_area: { lo: 0, hi: 1_000_000, int: true } };
 export const LIMITS: Record<string, Record<string, Limit>> = {
   net: { conf: CONF, imgsz: IMGSZ, ...PASSES },
@@ -220,6 +220,47 @@ export const LIMITS: Record<string, Record<string, Limit>> = {
   filter: { min_side: { lo: 0, hi: 100_000, int: true }, max_side: { lo: 1, hi: 100_000, int: true } },
   sam: { score_min: CONF, ...CONTOUR },
 };
+
+// --- тайлинг: те же числа и счёт, что в common/agent_graph.py ------------------
+
+export const TILE_OVERLAP = 0.2;
+export const MAX_PASSES = 100;
+export const SAM3_SIDE = 644;
+
+const fin = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+
+/** Сторона тайла — как tile_side: пусто — вход сети (у SAM 3 его 644). */
+export function tileSide(kind: string, p: Record<string, unknown>, netImgsz?: number | null): number {
+  const own = fin(p.tile);
+  if (own) return own;
+  if (kind === "text") return textModel(p) === "sam3" ? SAM3_SIDE : fin(p.imgsz) ?? TEXT_IMGSZ;
+  return fin(p.imgsz) ?? netImgsz ?? 640;
+}
+
+/** Входная сторона сети: во сколько раз тайл растянут к ней. */
+export function inputSide(kind: string, p: Record<string, unknown>, netImgsz?: number | null): number {
+  if (kind === "text") return textModel(p) === "sam3" ? SAM3_SIDE : fin(p.imgsz) ?? TEXT_IMGSZ;
+  return fin(p.imgsz) ?? netImgsz ?? 640;
+}
+
+const starts = (length: number, side: number, overlap: number) =>
+  length <= side ? 1 : Math.ceil((length - side) / (side * (1 - overlap))) + 1;
+
+/** Виды кадра — как views: целый (если не выключен) и тайлы. */
+export function viewCount(p: Record<string, unknown>, w: number, h: number, side: number) {
+  const whole = { whole: 1, tiles: 0 };
+  if (!p.tiles || (w <= side && h <= side)) return whole;
+  const overlap = Math.max(0, Math.min(0.9, fin(p.overlap) ?? TILE_OVERLAP));
+  return { whole: p.whole === false ? 0 : 1, tiles: starts(w, side, overlap) * starts(h, side, overlap) };
+}
+
+/** Вызовов модели на вид: у SAM 3 слова — один, каждая строка-образцы — свой. */
+export function callsPerView(kind: string, p: Record<string, unknown>): number {
+  if (kind !== "text" || textModel(p) !== "sam3") return 1;
+  const rows = promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.agent.trim());
+  const ex = rows.filter(isExamples).length;
+  return (rows.length > ex ? 1 : 0) + ex || 1;
+}
 
 /** Значение вне пределов (пустое — умолчание, это не ошибка). */
 export function offLimits(limit: Limit | undefined, v: unknown) {
