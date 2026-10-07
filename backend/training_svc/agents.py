@@ -16,7 +16,7 @@ import uuid
 from datetime import timedelta
 from types import SimpleNamespace
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, Response, jsonify, request, send_file
 from sqlalchemy import func, select, text
 from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
@@ -1144,6 +1144,8 @@ def create_examples():
         cls = db.get(LabelClass, _uuid(data.get("class_id")))
         if cls is None or cls.project_id != project.id:
             return jsonify({"error": "Класса нет в проекте."}), 404
+        if data.get("items") is not None:
+            return _examples_by_hand(db, user, project, cls, data)
         try:
             # Не `or`: ноль — это ошибка человека, а не просьба об умолчании.
             n = int(data.get("n", 32))
@@ -1168,6 +1170,99 @@ def create_examples():
         db.close()
 
 
+def _examples_by_hand(db, user, project, cls, data):
+    """Набор из выбранных рамок в заданном порядке; `from` — набор, чьи векторы не пересчитывать."""
+    raw = data.get("items")
+    if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_EXAMPLES:
+        return jsonify({"error": f"Образцов от 1 до {MAX_EXAMPLES}."}), 400
+    items = []
+    for it in raw:
+        try:
+            image_id, box = _uuid(it["image_id"]), [round(float(v), 1) for v in it["box"]]
+        except (KeyError, TypeError, ValueError):
+            image_id, box = None, []
+        if image_id is None or len(box) != 4:
+            return jsonify({"error": "Образец — это кадр и рамка на нём."}), 400
+        items.append({"image_id": str(image_id), "box": box})
+    parent = None
+    if data.get("from"):
+        parent = _examples_row(db, user, data["from"])
+        if parent is None or parent.status != "ready" or parent.class_id != cls.id:
+            return jsonify({"error": "Набора-основы нет."}), 404
+    row = AgentExamples(
+        owner_id=user.id, parent_id=parent.id if parent else None, project_id=project.id,
+        project_name=project.name, class_id=cls.id, class_name=cls.name, items=[], dir="", status="queued",
+        params={"items": items, "n": len(items), "datasets": None, "seed": random.randrange(1 << 31)},
+        created_by=user.id)
+    db.add(row)
+    db.flush()
+    return _wait_examples(db, row)
+
+
+@bp.get("/api/agents/examples/boxes")
+def example_boxes():
+    """Ручные рамки класса проекта для окна «Образцы класса»."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project = db.execute(
+            select(Project).where(Project.code == request.args.get("project"))).scalar_one_or_none()
+        if project is None or not has_role(role_in(db, user, project), "viewer"):
+            return jsonify({"error": "Проект не найден."}), 404
+        cls = db.get(LabelClass, _uuid(request.args.get("class_id")))
+        if cls is None or cls.project_id != project.id:
+            return jsonify({"error": "Класса нет в проекте."}), 404
+        boxes = examples_lib.class_boxes(db, project.id, cls.id)
+        return jsonify({"boxes": boxes, "frames": len({b["image_id"] for b in boxes}),
+                        "objects": len({b["group"] for b in boxes})})
+    finally:
+        db.close()
+
+
+THUMB = 160
+
+
+@bp.get("/api/agents/examples/boxes/crop")
+def example_box_crop():
+    """Миниатюра рамки для окна выбора: вырезка «авто» по ширине кадра и тонкая обводка."""
+    import cv2
+
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        image = db.get(Image, _uuid(request.args.get("image")))
+        project = db.get(Project, image.project_id) if image is not None else None
+        if project is None or not has_role(role_in(db, user, project), "viewer"):
+            return jsonify({"error": "Кадр не найден."}), 404
+        try:
+            box = [float(v) for v in (request.args.get("box") or "").split(",")]
+        except ValueError:
+            box = []
+        if len(box) != 4 or min(box[2:]) <= 0:
+            return jsonify({"error": "Рамка — четыре числа x,y,w,h."}), 400
+        pic = cv2.imread(os.path.join(config.DATA_DIR, image.file_path))
+        if pic is None:
+            return jsonify({"error": "Файла кадра нет."}), 404
+        height, width = pic.shape[:2]
+        x0, y0, x1, y1 = ax.auto_rect(box, width, width, height)
+        crop = pic[y0:y1, x0:x1]
+        s = THUMB / max(crop.shape[:2])
+        small = cv2.resize(crop, (max(1, round(crop.shape[1] * s)), max(1, round(crop.shape[0] * s))),
+                           interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+        x, y, w, h = box
+        cv2.rectangle(small, (round((x - x0) * s), round((y - y0) * s)),
+                      (round((x + w - x0) * s) - 1, round((y + h - y0) * s) - 1), (255, 176, 90), 1)
+        _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        resp = Response(buf.tobytes(), mimetype="image/jpeg")
+        # Кадр по uuid не меняется — миниатюру можно держать в кеше браузера.
+        resp.headers["Cache-Control"] = "private, max-age=2592000, immutable"
+        return resp
+    finally:
+        db.close()
+
+
 @bp.post("/api/agents/examples/<set_id>/derive")
 def derive_examples(set_id):
     """Новый набор из старого: `order` — uid в новом порядке (убрать и
@@ -1185,10 +1280,12 @@ def derive_examples(set_id):
         if add:
             if not 1 <= add <= MAX_EXAMPLES - len(parent.items):
                 return jsonify({"error": f"В наборе не больше {MAX_EXAMPLES} образцов."}), 400
+            # Ручной список родителя не наследуем: добор — случайный, от его же зерна.
+            base = {k: v for k, v in parent.params.items() if k != "items"}
             row = AgentExamples(
                 owner_id=user.id, parent_id=parent.id, project_id=parent.project_id,
                 project_name=parent.project_name, class_id=parent.class_id, class_name=parent.class_name,
-                params={**parent.params, "add": add}, items=[], dir="", status="queued", created_by=user.id)
+                params={**base, "add": add}, items=[], dir="", status="queued", created_by=user.id)
             db.add(row)
             db.flush()
             return _wait_examples(db, row)

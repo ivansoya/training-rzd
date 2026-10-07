@@ -323,8 +323,9 @@ def _agent_stats(db, graph, doc):
     """Проверить агента и снять его паспорт. Бросает AgentGraphError."""
     doc = agent_graph.prepare(doc)
     shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)).scalars().all()
-    # Наборы образцов — запросом: модулей обучения в образе dataprep нет.
-    sets = {str(r.id): r.status == "ready" for r in db.execute(
+    # Наборы образцов — запросом: модулей обучения в образе dataprep нет. Число образцов
+    # нужно потолку вызовов на кадр; 0 — набор не готов.
+    sets = {str(r.id): len(r.items) if r.status == "ready" else 0 for r in db.execute(
         select(AgentExamples).where(AgentExamples.owner_id == graph.owner_id)).scalars()}
     agent_graph.check(doc, weights={str(w.id): len(w.names or []) for w in shelf}, sam3=config.sam3_ready(),
                       examples=sets, frame=frame_sizes.largest_for_user(db, graph.owner_id),

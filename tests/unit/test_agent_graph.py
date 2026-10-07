@@ -238,6 +238,7 @@ def test_тайл_по_умолчанию_вход_сети():
     assert ag.tile_side({"type": "net", "params": {"tile": 640, "imgsz": 1280}}) == 640
     assert ag.tile_side({"type": "text", "params": {}}) == ag.TEXT_IMGSZ
     assert ag.tile_side({"type": "text", "params": {"model": "sam3"}}) == ag.SAM3_SIDE
+    assert ag.tile_side({"type": "text", "params": {"model": "sam3", "side": 1008}}) == 1008
     # 1 целый + 5×3 тайлов по 640 при перекрытии 0,2
     assert ag.passes({"type": "net", "params": {"tiles": True, "tile": 640}}, 2688, 1520) == 16
 
@@ -582,9 +583,73 @@ def test_sam3_не_больше_16_строк_и_бронь_растёт_с_пр
     assert ag.text_vram_mb(_text("t", many[:2])) == ag.YOLOE_MB
 
 
-def test_длинный_промт_отвергается_словами():
-    with pytest.raises(ag.AgentGraphError, match="длиннее 64"):
-        ag.check(_text_doc(_text("t", [("слово " * 20, "Класс", True)])))
+def test_sam3_на_1008_слова_порциями_и_бронь_по_порции():
+    many = [(f"w{i}", f"Класс {i}", True) for i in range(10)]
+    two = _text("t", many[:2], model="sam3", side=1008)
+    assert ag.text_vram_mb(two) == ag.SAM3_1008_BASE_MB + 2 * ag.SAM3_1008_PER_PROMPT_MB
+    # больше порции бронь не растёт: слова идут в модель по SAM3_1008_WORDS
+    ten = _text("t", many, model="sam3", side=1008)
+    assert ag.text_vram_mb(ten) == ag.SAM3_1008_BASE_MB + ag.SAM3_1008_WORDS * ag.SAM3_1008_PER_PROMPT_MB
+    assert ag.sam3_words_per_call({"side": 1008}) == ag.SAM3_1008_WORDS
+    assert ag.calls(ten, 1000, 600) == 3              # 10 слов порциями по 4
+
+
+def test_вход_sam3_только_644_или_1008():
+    rows = [("person", "Человек", True)]
+    ag.check(_text_doc(_text("t", rows, model="sam3", side=1008)))
+    with pytest.raises(ag.AgentGraphError, match="644 или 1008"):
+        ag.check(_text_doc(_text("t", rows, model="sam3", side=800)))
+    # у YOLOE поле не читается: осталось от смены модели — не ошибка
+    ag.check(_text_doc(_text("t", rows, side=800)))
+    assert ag.sam3_side({}) == 644 and ag.sam3_side({"side": 1008}) == 1008
+
+
+def test_длинное_описание_отвергается_по_пределу_модели():
+    long = "small rusty metal hex nut lying on the concrete floor near the rail " * 2   # 135 знаков
+    ag.check(_text_doc(_text("t", [(long, "Класс", True)])))                         # YOLOE — до 200
+    with pytest.raises(ag.AgentGraphError, match="длиннее 100"):
+        ag.check(_text_doc(_text("t", [(long, "Класс", True)], model="sam3")))
+    with pytest.raises(ag.AgentGraphError, match="длиннее 200"):
+        ag.check(_text_doc(_text("t", [(long * 2, "Класс", True)])))
+
+
+def test_находка_знает_свою_строку():
+    doc = _text_doc(_text("t", ROWS))
+    out = ag.run(doc, lambda node: [(2, 0.7, 1, 1, 5, 5), (4, 0.6, 9, 9, 5, 5)])
+    assert [d["row"] for d in out] == [2, 4]
+
+
+def test_порог_куска_маски_sam3_в_пикселях_кадра():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("cv2")
+    k = 0.25                                  # кадр ужат вчетверо: гайка 28 px → 7 px входа
+    mask = np.zeros((100, 100), dtype=bool)
+    mask[40:47, 40:47] = True                 # 49 px² во входе
+    box = (160, 160, 28, 28)                  # та же гайка в пикселях кадра
+    assert ag.text_outline(box, mask, 0.9, {"min_area": 64}, k) is not None
+    # 2000 px² кадра — 125 во входе: кусок меньше, контура нет
+    assert ag.text_outline(box, mask, 0.9, {"min_area": 2000}, k) is None
+
+
+def test_потолок_вызовов_считает_проходы_образцов():
+    node = {"id": "t", "type": "text", "params": {"model": "sam3", "side": 1008, "prompts": [
+        {"kind": "examples", "set": "s1", "agent": "Металл", "on": True}]}}
+    # целый кадр РСМ: второй ряд влезает — 13 образцов = 2 прохода
+    assert ag.calls(node, 2688, 1520, counts={"s1": 13}) == 2
+    # тайлы 1008: на каждом второй ряд ужал бы кадр — по 6, то есть 3 прохода
+    node["params"].update(tiles=True)
+    assert ag.calls(node, 2688, 1520, counts={"s1": 13}) == 2 + 8 * 3
+    doc = _text_doc(node)
+    with pytest.raises(ag.AgentGraphError, match="с проходами образцов"):
+        ag.check(doc, examples={"s1": 80}, frame=(2688, 1520))
+    ag.check(doc, examples={"s1": 13}, frame=(2688, 1520))
+
+
+def test_наборы_выключенных_строк_тоже_держатся():
+    node = {"type": "text", "params": {"prompts": [
+        {"kind": "examples", "set": "a", "on": False}, {"kind": "examples", "set": "b", "on": True},
+        {"kind": "examples", "set": "", "on": True}, {"prompt": "nut", "on": True}]}}
+    assert ag.all_sets(node) == ["a", "b"]
 
 
 def test_старый_документ_получает_список_классов_в_прежних_цветах():

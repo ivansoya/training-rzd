@@ -165,12 +165,32 @@ SAM3_BASE_MB = 3000
 SAM3_PER_PROMPT_MB = 150
 SAM3_MAX_ROWS = 16
 YOLOE_MB = 1500
+# Вход SAM 3: 644 — как было, 1008 — родной (замер 07.10: F1 0,63 → 0,70, вызов вдвое дольше).
+SAM3_SIDES = (644, 1008)
+# На 1008 промт стоит ~850 МБ (маски в размере входа): слова идут в модель порциями.
+SAM3_1008_BASE_MB = 3600
+SAM3_1008_PER_PROMPT_MB = 850
+SAM3_1008_WORDS = 4
+
+
+def sam3_side(params):
+    """Вход SAM 3 узла; без поля — 644: сохранённые версии считают как раньше."""
+    side = num((params or {}).get("side"))
+    return int(side) if side in SAM3_SIDES else SAM3_SIDE
+
+
+def sam3_words_per_call(params):
+    return SAM3_1008_WORDS if sam3_side(params) == 1008 else SAM3_MAX_ROWS
 
 
 def text_vram_mb(node) -> int:
     """Сколько видеопамяти просить под узел «Сети по тексту»."""
-    if text_model(node.get("params")) != "sam3":
+    params = node.get("params")
+    if text_model(params) != "sam3":
         return YOLOE_MB
+    if sam3_side(params) == 1008:
+        words = min(SAM3_1008_WORDS, max(1, len(text_prompts(node))))
+        return SAM3_1008_BASE_MB + SAM3_1008_PER_PROMPT_MB * words
     return SAM3_BASE_MB + SAM3_PER_PROMPT_MB * len(text_rows(node))
 
 
@@ -189,6 +209,11 @@ def text_prompts(node):
 def text_sets(node):
     """[(номер строки, id набора)] только строк-образцов."""
     return [(i, str(r.get("set")).strip()) for i, r in text_rows(node) if is_examples(r)]
+
+
+def all_sets(node):
+    """Наборы всех строк-образцов, и выключенных тоже: на них ссылается черновик."""
+    return [str(r.get("set")).strip() for r in _rows(node) if is_examples(r) and str(r.get("set") or "").strip()]
 
 
 def row_conf(node, row):
@@ -417,10 +442,11 @@ def check(doc, weights=None, sam3=None, examples=None, clamp=False, frame=None, 
         if node["type"] in FINDERS and frame:
             w, h = frame
             net_in = (inputs or {}).get((node.get("params") or {}).get("weights"))
-            n = passes(node, w, h, net_in)
+            n = calls(node, w, h, net_in, examples)
             if n > MAX_PASSES:
+                extra = " с проходами образцов" if n > passes(node, w, h, net_in) else ""
                 raise AgentGraphError(
-                    f"{title(node)}: тайл {tile_side(node, net_in)} на кадре {w}×{h} — {n} проходов, "
+                    f"{title(node)}: тайл {tile_side(node, net_in)} на кадре {w}×{h} — {n} проходов{extra}, "
                     f"больше {MAX_PASSES} нельзя.")
         if node["type"] == "sam":
             model = (node.get("params") or {}).get("model") or SAM_DEFAULTS["model"]
@@ -477,7 +503,12 @@ def _check_numbers(node, clamp=False):
                     row["conf"] = min(max(conf or 0, 0), 1)
 
 
-PROMPT_MAX = 64
+# Предел описания в знаках: SAM 3 читает 32 токена, YOLOE — 77; длиннее кодировщик режет молча.
+PROMPT_MAX = {"sam3": 100, "yoloe": 200}
+
+
+def prompt_max(params):
+    return PROMPT_MAX["sam3" if text_model(params) == "sam3" else "yoloe"]
 
 
 def _check_text(node, sam3, examples):
@@ -486,6 +517,9 @@ def _check_text(node, sam3, examples):
         raise AgentGraphError(f"{title(node)}: неизвестная модель {params.get('model')!r}.")
     if text_model(params) == "sam3" and sam3 is False:
         raise AgentGraphError(f"{title(node)}: нет весов SAM 3 на сервере.")
+    side = params.get("side")
+    if text_model(params) == "sam3" and side not in (None, "") and num(side) not in SAM3_SIDES:
+        raise AgentGraphError(f"{title(node)}: вход SAM 3 — 644 или 1008, сейчас {side!r}.")
     if not text_rows(node):
         raise AgentGraphError(f"{title(node)}: не включена ни одна строка.")
     if text_model(params) == "sam3" and len(text_rows(node)) > SAM3_MAX_ROWS:
@@ -498,10 +532,11 @@ def _check_text(node, sam3, examples):
     if twice:
         raise AgentGraphError(f"{title(node)}: промт «{twice}» повторяется.")
     # Кодировщик текста молча обрезает длинное — лучше сказать сразу.
-    long = next((p for p in prompts if len(p) > PROMPT_MAX), None)
+    limit = prompt_max(params)
+    long = next((p for p in prompts if len(p) > limit), None)
     if long:
         raise AgentGraphError(
-            f"{title(node)}: промт длиннее {PROMPT_MAX} символов — «{long[:24]}…».")
+            f"{title(node)}: описание длиннее {limit} знаков — «{long[:24]}…».")
     sets = [s for _, s in text_sets(node)]
     if any(sets.count(s) > 1 for s in sets):
         raise AgentGraphError(f"{title(node)}: один набор образцов стоит в двух строках.")
@@ -665,8 +700,10 @@ def text_outline(box, mask, conf, params, k):
     (замер 07.10.2026: 22 находки из 22, маска сходится с ручным SAM2), поэтому
     маска по рамке не режется, а рамкой становятся её границы."""
     small = {"box": tuple(v * k for v in box)}
-    got = outline(small, [mask], [conf], {**(params or {}), "score_min": 0, "detail": "auto"},
-                  whole=True)
+    # «Кусок от, px²» задан в пикселях кадра, а маска — во входе модели: переводим.
+    area = num((params or {}).get("min_area"), SAM_DEFAULTS["min_area"]) * k * k
+    got = outline(small, [mask], [conf], {**(params or {}), "score_min": 0, "detail": "auto",
+                                          "min_area": int(round(area))}, whole=True)
     if "parts" not in got:
         return None
     x, y, w, h = got["box"]
@@ -717,14 +754,14 @@ def tiles(width, height, side, overlap=TILE_OVERLAP):
 
 def tile_side(node, net_imgsz=None):
     """Сторона тайла узла. Пусто — вход сети: у «Сети» её размер входа или
-    вход весов, у YOLOE — свой вход, у SAM 3 — его неизменный 644."""
+    вход весов, у YOLOE — свой вход, у SAM 3 — его вход (644 или 1008)."""
     params = node.get("params") or {}
     own = num(params.get("tile"))
     if own:
         return int(own)
     if node.get("type") == "text":
         if text_model(params) == "sam3":
-            return SAM3_SIDE
+            return sam3_side(params)
         return int(num(params.get("imgsz"), TEXT_IMGSZ))
     return int(num(params.get("imgsz"), net_imgsz or 640))
 
@@ -745,6 +782,27 @@ def views(params, width, height, tile):
 def passes(node, width, height, net_imgsz=None):
     """Сколько видов узел гонит через сеть на кадре такого размера."""
     return len(views(node.get("params") or {}, width, height, tile_side(node, net_imgsz)))
+
+
+def calls(node, width, height, net_imgsz=None, counts=None):
+    """Вызовов модели на кадр: у SAM 3 на каждый вид — слова порциями и проходы
+    каждого набора образцов. `counts` — {id набора: образцов}; нет числа — один проход."""
+    from common import agent_examples as ax
+
+    params = node.get("params") or {}
+    vs = views(params, width, height, tile_side(node, net_imgsz))
+    if node.get("type") != "text" or text_model(params) != "sam3":
+        return len(vs)
+    words = len(text_prompts(node))
+    per_view = -(-words // sam3_words_per_call(params))
+    total = 0
+    for x0, y0, x1, y1 in vs:
+        total += per_view
+        for _, s in text_sets(node):
+            n = (counts or {}).get(s)
+            n = n if isinstance(n, int) and not isinstance(n, bool) and n > 0 else 1
+            total += len(ax.collage_passes(n, x1 - x0, y1 - y0))
+    return total
 
 
 def ios(a, b):
@@ -876,6 +934,8 @@ def run(doc, predict, order=None, segment=None, trace=None):
                 if kind == "text" and conf < row_conf(node, rows[int(c)]):
                     continue
                 det = {"id": f"{nid}.{k}", "cls": table[int(c)], "conf": float(conf), "box": (x, y, w, h)}
+                if kind == "text":
+                    det["row"] = int(c)   # строка узла: счёт «N на кадре» у каждого описания
                 # Контур SAM 3 — {box, parts, sam}; разведке он не нужен.
                 if shape and shape[0] and segment:
                     det.update(shape[0])

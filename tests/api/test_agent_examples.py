@@ -119,6 +119,68 @@ def test_убрать_переставить_добрать_дают_новый_
     assert {s["id"] for s in listed["sets"]} == {people["id"], grown["id"]}
 
 
+def _boxes(owner, source):
+    cls = next(c for c in source["classes"] if c["name"] == PERSON)
+    got = owner.get(f"{BASE_URL}/api/agents/examples/boxes",
+                    params={"project": source["project"]["code"], "class_id": cls["id"]})
+    assert got.status_code == 200, got.text
+    return cls, got.json()
+
+
+def test_рамки_класса_для_окна_выбора(owner, source):
+    _, got = _boxes(owner, source)
+    boxes = got["boxes"]
+    assert len(boxes) > 16 and got["frames"] == len({b["image_id"] for b in boxes})
+    assert 1 <= got["objects"] <= len(boxes) and {"uid", "image_id", "box", "group", "frame"} <= set(boxes[0])
+    b = boxes[0]
+    crop = owner.get(f"{BASE_URL}/api/agents/examples/boxes/crop",
+                     params={"image": b["image_id"], "box": ",".join(str(v) for v in b["box"])})
+    assert crop.status_code == 200 and crop.headers["Content-Type"] == "image/jpeg", crop.text
+    assert owner.get(f"{BASE_URL}/api/agents/examples/boxes/crop",
+                     params={"image": b["image_id"], "box": "1,2"}).status_code == 400
+    assert owner.get(f"{BASE_URL}/api/agents/examples/boxes/crop",
+                     params={"image": "00000000-0000-0000-0000-000000000000", "box": "1,2,3,4"}).status_code == 404
+
+
+def test_набор_вручную_в_заданном_порядке(owner, source, people):
+    cls, got = _boxes(owner, source)
+    taken = {it["uid"] for it in people["items"]}
+    fresh = [b for b in got["boxes"] if b["uid"] not in taken][:2]
+    picked = [fresh[1], fresh[0]]
+    res = owner.post(f"{BASE_URL}/api/agents/examples", json={
+        "project": source["project"]["code"], "class_id": cls["id"],
+        "items": [{"image_id": b["image_id"], "box": b["box"]} for b in picked]})
+    assert res.status_code == 201, res.text
+    assert [it["uid"] for it in res.json()["set"]["items"]] == [b["uid"] for b in picked]
+    # от набора-основы: его образцы не пересчитываются, порядок — заданный
+    keep = people["items"][:3]
+    items = [{"image_id": it["image_id"], "box": it["box"]} for it in [keep[2], keep[0]]] + \
+            [{"image_id": fresh[0]["image_id"], "box": fresh[0]["box"]}, {"image_id": keep[1]["image_id"], "box": keep[1]["box"]}]
+    res = owner.post(f"{BASE_URL}/api/agents/examples", json={
+        "project": source["project"]["code"], "class_id": cls["id"], "items": items, "from": people["id"]})
+    assert res.status_code == 201, res.text
+    made = res.json()["set"]
+    assert made["parent_id"] == people["id"]
+    assert [it["uid"] for it in made["items"]] == [keep[2]["uid"], keep[0]["uid"], fresh[0]["uid"], keep[1]["uid"]]
+    # случайный добор ручного набора не повторяет ручной список, а добирает
+    res = owner.post(f"{BASE_URL}/api/agents/examples/{made['id']}/derive", json={"add": 2})
+    assert res.status_code == 201, res.text
+    grown = [it["uid"] for it in res.json()["set"]["items"]]
+    assert grown[:4] == [it["uid"] for it in made["items"]] and len(grown) == 6
+
+
+def test_набор_вручную_отказ_на_чужую_рамку(owner, source):
+    cls, got = _boxes(owner, source)
+    b = got["boxes"][0]
+    res = owner.post(f"{BASE_URL}/api/agents/examples", json={
+        "project": source["project"]["code"], "class_id": cls["id"],
+        "items": [{"image_id": b["image_id"], "box": [1, 1, 30, 30]}]})
+    assert res.status_code == 422 and "больше нет в ручной разметке" in res.json()["error"], res.text
+    res = owner.post(f"{BASE_URL}/api/agents/examples", json={
+        "project": source["project"]["code"], "class_id": cls["id"], "items": [{"image_id": "x"}]})
+    assert res.status_code == 400, res.text
+
+
 def test_версия_с_чужим_набором_не_сохраняется(owner, setup):
     graph = owner.post(f"{BASE_URL}/api/aug/graphs", json={"name": tag(), "kind": "agent"}).json()
     setup["graphs"]["examples-bad"] = graph

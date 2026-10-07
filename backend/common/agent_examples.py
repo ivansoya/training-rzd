@@ -11,7 +11,9 @@
   векторы проваливались (инструмент 0,57 → 0,02): модель помнит масштаб;
 * SAM 3 образцы с другого кадра не принимает ни в ultralytics, ни в коде
   Meta — поэтому коллаж (FSS-SAM3): полоса вырезок над кадром, рамки-образцы
-  в вызов, находки ниже полосы — в кадре.
+  в вызов, находки ниже полосы — в кадре;
+* замер 07.10 (РСМ-2000, Варан КЗТ): отступ «авто» лучше постоянного ×2,5,
+  12 образцов вторым рядом — как два прохода за время одного.
 
 Чистый модуль: numpy и cv2 только внутри функций, базы нет.
 """
@@ -19,9 +21,15 @@ import hashlib
 import random
 
 MIN_SIDE = 8
-# Полоса коллажа: столько вырезок по стороне T в ширину — как в замере (6 × 448).
+# Старое поле «В коллаже SAM 3» (до 8): API его ещё принимает, но коллаж теперь берёт все образцы.
 COLLAGE_MAX = 8
-STRIP_SIDE = 448
+# Ряд коллажа — 6 клеток во всю ширину вида; 7–12 — второй ряд, если под кадром есть место.
+ROW = 6
+# Отступ «авто»: предмет в клетке — примерно своего размера в кадре, в пределах ×2…×5
+# (замер 1008: при ×1,5 крупным не хватало окружения, узкий грейфер −0,19).
+AUTO_MIN, AUTO_MAX = 2.0, 5.0
+# Один предмет на соседних кадрах ролика: рамки того же ролика с таким перекрытием.
+SAME_IOU = 0.5
 YOLOE_SIZES = ("s", "m", "l", "x")
 
 
@@ -67,15 +75,64 @@ def pick(frames, n, seed):
     return out
 
 
-def crop_rect(box, ctx, width, height):
-    """Квадрат вырезки вокруг рамки: сторона `ctx` × большая сторона, не
-    меньше 64 px, обрезан краями кадра. → (x0, y0, x1, y1) целыми."""
+def square(box, side, width, height):
+    """Квадрат стороной `side` вокруг рамки, у края сдвинут внутрь кадра.
+    Больше кадра — режется по кадру. → (x0, y0, x1, y1) целыми."""
     x, y, w, h = box
-    side = max(64.0, float(ctx) * max(w, h))
-    cx, cy = x + w / 2, y + h / 2
-    x0, y0 = int(max(0, cx - side / 2)), int(max(0, cy - side / 2))
-    x1, y1 = int(min(width, round(cx + side / 2))), int(min(height, round(cy + side / 2)))
-    return x0, y0, x1, y1
+    sw, sh = int(round(min(float(side), width))), int(round(min(float(side), height)))
+    x0 = int(round(min(max(0.0, x + w / 2 - sw / 2), width - sw)))
+    y0 = int(round(min(max(0.0, y + h / 2 - sh / 2), height - sh)))
+    return x0, y0, x0 + sw, y0 + sh
+
+
+def crop_rect(box, ctx, width, height):
+    """Вырезка со стороной `ctx` × большая сторона рамки."""
+    return square(box, float(ctx) * max(box[2], box[3]), width, height)
+
+
+def auto_ctx(long_side, view_w):
+    """Отступ «авто»: вырезка ≈ клетке ряда, тогда предмет в коллаже — как в кадре."""
+    return min(AUTO_MAX, max(AUTO_MIN, view_w / (ROW * max(1.0, float(long_side)))))
+
+
+def auto_rect(box, view_w, width, height):
+    """Вырезка «авто» для вида шириной `view_w` (кадр или тайл)."""
+    long = max(box[2], box[3])
+    return square(box, auto_ctx(long, view_w) * long, width, height)
+
+
+def collage_passes(n, view_w, view_h):
+    """Номера образцов по проходам: по 6 в ряд, второй ряд — в тот же проход,
+    если с ним коллаж не выше ширины вида (кадр не ужимается)."""
+    per = ROW * (2 if view_h + 2 * view_w / ROW <= view_w else 1)
+    return [list(range(at, min(n, at + per))) for at in range(0, n, per)]
+
+
+def in_rows(y1, y2):
+    """Находка в рядах образцов: середина рамки выше кадра (y — от верха кадра).
+    Образец у нижнего края клетки SAM 3 находит с хвостом в кадр — это не находка."""
+    return y1 + y2 <= 0
+
+
+def same_object_groups(items, threshold=SAME_IOU):
+    """Похожие рамки: тот же ролик и перекрытие ≥ `threshold` — один предмет на
+    соседних кадрах. `items` — [(ролик или None, (x, y, w, h))] → номер группы каждой."""
+    reps, out = [], []
+    for video, box in items:
+        hit = next((g for g, (v, b) in enumerate(reps) if video is not None and v == video
+                    and _iou(b, box) >= threshold), None)
+        if hit is None:
+            reps.append((video, box))
+            hit = len(reps) - 1
+        out.append(hit)
+    return out
+
+
+def _iou(a, b):
+    ix = max(0.0, min(a[0] + a[2], b[0] + b[2]) - max(a[0], b[0]))
+    iy = max(0.0, min(a[1] + a[3], b[1] + b[3]) - max(a[1], b[1]))
+    union = a[2] * a[3] + b[2] * b[3] - ix * iy
+    return ix * iy / union if union > 0 else 0.0
 
 
 def mean_vector(vectors):
@@ -85,18 +142,3 @@ def mean_vector(vectors):
     v = np.asarray(vectors, dtype=np.float32).mean(axis=0)
     norm = float(np.linalg.norm(v))
     return v / norm if norm > 0 else v
-
-
-def strip_layout(sizes, width, count=None):
-    """Раскладка полосы коллажа над кадром ширины `width`.
-
-    `sizes` — [(w, h)] вырезок по порядку, берутся первые `count` (не больше
-    COLLAGE_MAX). Каждая вписывается в клетку T×T, полоса T·k растягивается
-    на ширину кадра. → (высота полосы, [(x, y, масштаб)] для каждой вырезки)."""
-    k = max(1, min(COLLAGE_MAX, count or len(sizes), len(sizes)))
-    scale = width / (STRIP_SIDE * k)
-    places = []
-    for j, (w, h) in enumerate(sizes[:k]):
-        fit = STRIP_SIDE / max(w, h)
-        places.append((j * STRIP_SIDE * scale, 0.0, fit * scale))
-    return round(STRIP_SIDE * scale), places

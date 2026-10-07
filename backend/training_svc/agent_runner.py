@@ -44,11 +44,8 @@ SAM_VRAM_MB = 1500
 # «Сеть по тексту» считается по числу промтов — agent_graph.text_vram_mb.
 # Веса YOLOE-26 и кодировщик промтов лежат в образе (training_svc/fetch_yoloe.py).
 YOLOE_DIR = os.environ.get("YOLOE_DIR", "/opt/yoloe")
-# SAM 3 в ultralytics считает на квадрате 644 и растягивает в него кадр без
-# сохранения пропорций (рамки уезжали до 20 px). Ужимаем длинную сторону до 644
-# и добиваем до квадрата сами: растягивать становится нечего. Заодно маски — по
-# размеру поданного кадра, а не 2688×1520 (десятки гигабайт на сотню масок).
-SAM3_SIDE = agent_graph.SAM3_SIDE
+# SAM 3 в ultralytics растягивает кадр в квадрат входа (644 или 1008) без сохранения
+# пропорций, поэтому `_sam3` ужимает длинную сторону и добивает до квадрата сам.
 NOTIFY_EVERY = 1.0
 
 # Файл и конфиг — как у полуавтомата (autolabel_svc/runners/sam2_runner.py);
@@ -168,8 +165,9 @@ def execute(db, run):
 
     nets = [n for n in doc["nodes"] if n["type"] == "net"]
     texts = [n for n in doc["nodes"] if n["type"] == "text"]
-    families = sorted("sam3" if agent_graph.text_model(n.get("params")) == "sam3" else "yoloe"
-                      for n in texts)
+    # Вход SAM 3 — в подписи: замер памяти на 644 не годится для 1008.
+    families = sorted(f"sam3@{agent_graph.sam3_side(n.get('params'))}"
+                      if agent_graph.text_model(n.get("params")) == "sam3" else "yoloe" for n in texts)
     weights = {}
     for node in nets:
         row = db.get(AgentWeights, _uuid(node["params"].get("weights")))
@@ -378,20 +376,20 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
 
 
 class Sam3Text:
-    """SAM 3 узла: предиктор и вырезки коллажа для каждой строки-образцов."""
+    """SAM 3 узла: предиктор и образцы коллажа для каждой строки-образцов."""
 
     def __init__(self, predictor, crops):
         self.predictor = predictor
-        self.crops = crops   # {id набора: [(вырезка BGR, рамка в вырезке)]}
+        self.crops = crops   # {id набора: examples.Crops}
 
 
 def _sam3(model, pixels, rows, node, contour, grow=False):
     """«Сеть по тексту» на SAM 3: [(строка, уверенность, x, y, w, h, контур)].
 
-    Слова — одним вызовом. Каждая строка-образцы — свой вызов с коллажем:
-    SAM 3 берёт рамки-образцы только на том же кадре, поэтому над кадром
-    кладётся полоса вырезок, образцы обводятся рамками в ней, а находки
-    ниже полосы — это находки в кадре (FSS-SAM3, замер 25.09.2026).
+    Слова — порциями (на 1008 по 4: память растёт с каждым). Каждая строка-образцы —
+    свои вызовы с коллажем: SAM 3 берёт рамки-образцы только на том же кадре, поэтому
+    над кадром кладутся ряды вырезок по 6, а находки ниже рядов — это находки в кадре
+    (FSS-SAM3). Второй ряд — в тот же проход, если влезает; дальше — ещё проходы.
     `pixels` — кадр или тайл; `grow` — тайл меньше входа растянуть до него."""
     import cv2
     import numpy as np
@@ -399,14 +397,16 @@ def _sam3(model, pixels, rows, node, contour, grow=False):
     from common import agent_examples as ax
 
     params = node.get("params") or {}
+    side = agent_graph.sam3_side(params)
     predictor = model.predictor
     predictor.args.conf = agent_graph.min_conf(node)
     h, w = pixels.shape[:2]
     out = []
 
     def collect(r, k, top, row_of):
+        found = []
         if r.boxes is None or not len(r.boxes):
-            return
+            return found
         # Маска нужна и разведке: рамка SAM 3 короче его маски, и рамку
         # находки даёт маска (см. `agent_graph.text_outline`).
         masks = r.masks.data.cpu().numpy() if r.masks is not None else None
@@ -414,52 +414,72 @@ def _sam3(model, pixels, rows, node, contour, grow=False):
         for j, (c, p, (x1, y1, x2, y2)) in enumerate(zip(
                 r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist())):
             y1, y2 = y1 / k - top, y2 / k - top
-            if y2 <= 0:
-                continue          # находка в полосе образцов
+            if ax.in_rows(y1, y2):
+                continue
             y1 = max(0.0, y1)
             box = (x1 / k, y1, (x2 - x1) / k, y2 - y1)
             shape = (agent_graph.text_outline(box, masks[j][cut:], p, params, k)
                      if masks is not None else None)
             if shape:
                 box = shape["box"]
-            out.append((row_of(c), p, *box, shape if contour else None))
+            found.append((row_of(c), p, *box, shape if contour else None))
+        return found
 
     def shrink(image):
-        k = SAM3_SIDE / max(image.shape[:2])
+        k = side / max(image.shape[:2])
         if not grow:
             k = min(1.0, k)
         if k != 1:
             image = cv2.resize(image, (round(image.shape[1] * k), round(image.shape[0] * k)),
                                interpolation=cv2.INTER_AREA)
         # Поля справа и снизу: координаты рамок от них не меняются.
-        square = np.zeros((SAM3_SIDE, SAM3_SIDE, 3), np.uint8)
-        square[:image.shape[0], :image.shape[1]] = image[:SAM3_SIDE, :SAM3_SIDE]
+        square = np.zeros((side, side, 3), np.uint8)
+        square[:image.shape[0], :image.shape[1]] = image[:side, :side]
         return square, k
 
     words = [(i, r) for i, r in rows if not agent_graph.is_examples(r)]
     if words:
         small, k = shrink(pixels)
         predictor.set_image(small)
-        collect(predictor(text=[str(r["prompt"]).strip() for _, r in words])[0], k, 0,
-                lambda c: words[int(c)][0])
+        per = agent_graph.sam3_words_per_call(params)
+        for at in range(0, len(words), per):
+            part = words[at:at + per]
+            out += collect(predictor(text=[str(r["prompt"]).strip() for _, r in part])[0], k, 0,
+                           lambda c, part=part: part[int(c)][0])
+    cell = w / ax.ROW
     for i, r in rows:
         if not agent_graph.is_examples(r):
             continue
-        crops = model.crops[str(r["set"])]
-        top, places = ax.strip_layout([(c.shape[1], c.shape[0]) for c, _ in crops], w, len(crops))
-        strip = np.zeros((top, w, 3), np.uint8)
-        boxes = []
-        for (img, (bx, by, bw, bh)), (px, py, sc) in zip(crops, places):
-            fit = cv2.resize(img, (max(1, round(img.shape[1] * sc)), max(1, round(img.shape[0] * sc))))
-            x0, y0 = int(px), int(py)
-            part = fit[:top - y0, :w - x0]
-            strip[y0:y0 + part.shape[0], x0:x0 + part.shape[1]] = part
-            boxes.append([px + bx * sc, py + by * sc, px + (bx + bw) * sc, py + (by + bh) * sc])
-        small, k = shrink(np.vstack([strip, pixels]))
-        predictor.set_image(small)
-        found = predictor(bboxes=np.array(boxes, np.float32) * k, labels=np.ones(len(boxes)))[0]
-        collect(found, k, top, lambda _c, row=i: row)
+        crops = [c for c in model.crops[str(r["set"])].for_view(w) if c[0] is not None]
+        plan = ax.collage_passes(len(crops), w, h)
+        found = []
+        for chunk in plan:
+            top = round(cell * -(-len(chunk) // ax.ROW))
+            strip = np.zeros((top, w, 3), np.uint8)
+            boxes = []
+            for j, at in enumerate(chunk):
+                img, (bx, by, bw, bh) = crops[at]
+                sc = cell / max(img.shape[:2])
+                fit = cv2.resize(img, (max(1, round(img.shape[1] * sc)), max(1, round(img.shape[0] * sc))))
+                x0, y0 = round(j % ax.ROW * cell), round(j // ax.ROW * cell)
+                part = fit[:top - y0, :w - x0]
+                strip[y0:y0 + part.shape[0], x0:x0 + part.shape[1]] = part
+                boxes.append([x0 + bx * sc, y0 + by * sc, x0 + (bx + bw) * sc, y0 + (by + bh) * sc])
+            small, k = shrink(np.vstack([strip, pixels]))
+            predictor.set_image(small)
+            found += collect(predictor(bboxes=np.array(boxes, np.float32) * k, labels=np.ones(len(boxes)))[0],
+                             k, top, lambda _c, row=i: row)
+        # Проходы смотрят на один кадр: дубль одного предмета гасим, остаётся уверенный.
+        out += _merge_passes(found) if len(plan) > 1 else found
     return out
+
+
+def _merge_passes(found, threshold=agent_graph.NMS_IOU):
+    kept = []
+    for det in sorted(found, key=lambda d: -d[1]):
+        if all(agent_graph.iou(det[2:6], k[2:6]) < threshold for k in kept):
+            kept.append(det)
+    return kept
 
 
 def load_text(node, device, sets=None):
@@ -481,9 +501,9 @@ def load_text(node, device, sets=None):
 
         return Sam3Text(SAM3SemanticPredictor(overrides=dict(
             task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
-            imgsz=SAM3_SIDE, quantize=16 if device != "cpu" else None,
+            imgsz=agent_graph.sam3_side(params), quantize=16 if device != "cpu" else None,
             device="cpu" if device == "cpu" else 0)),
-            {s: examples.collage_crops(sets[s]) for _, s in agent_graph.text_sets(node)})
+            {s: examples.Crops(sets[s]) for _, s in agent_graph.text_sets(node)})
 
     import torch
     from ultralytics import YOLOE
@@ -521,7 +541,7 @@ def text_key(node):
     model = agent_graph.text_model(params)
     sets = tuple(s for _, s in agent_graph.text_sets(node))
     if model == "sam3":
-        return (model, *sets)
+        return (model, agent_graph.sam3_side(params), *sets)
     return (model, *(p for _, p in agent_graph.text_prompts(node)), *sets)
 
 
