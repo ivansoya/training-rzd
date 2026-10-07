@@ -108,6 +108,43 @@ def collage_passes(n, view_w, view_h):
     return [list(range(at, min(n, at + per))) for at in range(0, n, per)]
 
 
+def collage_strip(crops, chunk, view_w):
+    """Ряды вырезок над кадром шириной `view_w` для одного прохода: `crops` — [(вырезка BGR,
+    рамка в вырезке)], `chunk` — их номера. → (полоса, рамки образцов в ней [x1, y1, x2, y2])."""
+    import cv2
+    import numpy as np
+
+    cell = view_w / ROW
+    top = round(cell * -(-len(chunk) // ROW))
+    strip = np.zeros((top, view_w, 3), np.uint8)
+    boxes = []
+    for j, at in enumerate(chunk):
+        img, (bx, by, bw, bh) = crops[at]
+        sc = cell / max(img.shape[:2])
+        fit = cv2.resize(img, (max(1, round(img.shape[1] * sc)), max(1, round(img.shape[0] * sc))))
+        x0, y0 = round(j % ROW * cell), round(j // ROW * cell)
+        part = fit[:top - y0, :view_w - x0]
+        strip[y0:y0 + part.shape[0], x0:x0 + part.shape[1]] = part
+        boxes.append([x0 + bx * sc, y0 + by * sc, x0 + (bx + bw) * sc, y0 + (by + bh) * sc])
+    return strip, boxes
+
+
+def model_square(image, side, grow=False):
+    """Квадрат входа SAM 3: картинка ужата до `side` по большей стороне (`grow` — и растянута),
+    поля справа и снизу чёрные, координаты от них не меняются. → (квадрат, масштаб)."""
+    import cv2
+    import numpy as np
+
+    k = side / max(image.shape[:2])
+    if not grow:
+        k = min(1.0, k)
+    if k != 1:
+        image = cv2.resize(image, (round(image.shape[1] * k), round(image.shape[0] * k)), interpolation=cv2.INTER_AREA)
+    square = np.zeros((side, side, 3), np.uint8)
+    square[:image.shape[0], :image.shape[1]] = image[:side, :side]
+    return square, k
+
+
 def in_rows(y1, y2):
     """Находка в рядах образцов: середина рамки выше кадра (y — от верха кадра).
     Образец у нижнего края клетки SAM 3 находит с хвостом в кадр — это не находка."""

@@ -52,6 +52,8 @@ def view(row):
         "status": row.status,
         "error": row.error,
         "project": row.project_name,
+        "project_id": str(row.project_id) if row.project_id else None,
+        "class_id": str(row.class_id) if row.class_id else None,
         "class_name": row.class_name,
         "params": {k: v for k, v in row.params.items() if k != "items"},
         "parent_id": str(row.parent_id) if row.parent_id else None,

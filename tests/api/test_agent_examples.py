@@ -142,6 +142,27 @@ def test_рамки_класса_для_окна_выбора(owner, source):
                      params={"image": "00000000-0000-0000-0000-000000000000", "box": "1,2,3,4"}).status_code == 404
 
 
+def test_коллаж_как_видит_sam3(owner, source, people):
+    _, got = _boxes(owner, source)
+    boxes = got["boxes"][:13]
+    items = [{"image_id": b["image_id"], "box": b["box"]} for b in boxes]
+    frame = people["items"][0]["image_id"]
+    url = f"{BASE_URL}/api/agents/examples/collage"
+    res = owner.post(url, json={"image_id": frame, "items": items, "side": 1008, "pass": 0})
+    assert res.status_code == 200 and res.headers["Content-Type"] == "image/jpeg", res.text
+    # 13 образцов — минимум два прохода (по 12 на широком кадре, по 6 на высоком)
+    assert int(res.headers["X-Passes"]) >= 2
+    import cv2
+    import numpy as np
+    pic = cv2.imdecode(np.frombuffer(res.content, np.uint8), cv2.IMREAD_COLOR)
+    assert pic.shape[:2] == (1008, 1008)
+    small = owner.post(url, json={"image_id": frame, "items": items[:2], "side": 644, "tile": 640})
+    assert small.status_code == 200 and small.headers["X-Passes"] == "1"
+    assert owner.post(url, json={"image_id": frame, "items": items, "side": 900}).status_code == 400
+    assert owner.post(url, json={"image_id": frame, "items": []}).status_code == 400
+    assert owner.post(url, json={"image_id": "00000000-0000-0000-0000-000000000000", "items": items[:1]}).status_code == 404
+
+
 def test_набор_вручную_в_заданном_порядке(owner, source, people):
     cls, got = _boxes(owner, source)
     taken = {it["uid"] for it in people["items"]}

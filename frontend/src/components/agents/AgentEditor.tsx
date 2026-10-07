@@ -25,12 +25,17 @@ import { WireDraft, edgeTypes, type WireData } from "../aug/GraphNodes";
 import { keep, load } from "../aug/NodePreview";
 import { DRAWER_DEFAULT, clampDrawer } from "../aug/look";
 import {
-  agentClasses, bindRows, carryClasses, findOrCreate, foldName, frameCalls, isExamples, keepWired, promptsOf, rowTarget, rowsOf,
-  sam3Side, textModel, tileSide, unfinished, upgradeDoc, upstream, type ClassDef, type FilterRow, type NetRow, type PromptRow,
+  agentClasses, bindRows, carryClasses, exampleConfDefault, findOrCreate, foldName, frameCalls, isExamples, keepWired, promptsOf,
+  rowTarget, rowsOf, sam3Side, textModel, tileSide, unfinished, upgradeDoc, upstream, withConf, type ClassDef, type FilterRow,
+  type NetRow, type PromptRow,
 } from "./agentDoc";
+import { sameName, shapeBox } from "./examplePick";
 import AgentClasses from "./AgentClasses";
 import AgentFound from "./AgentFound";
 import AgentInspector from "./AgentInspector";
+import AgentSummary from "./AgentSummary";
+import { classStats, nodeStats, type SummaryNode } from "./summary";
+import { judge, reachable } from "./verdict";
 import { agentNodeTypes, agentTitle, type AgentNodeData } from "./AgentNodes";
 import AgentPalette, { AGENT_MIME } from "./AgentPalette";
 import AgentPreviewPane, { useAgentPreview } from "./AgentPreview";
@@ -198,6 +203,21 @@ function Editor() {
   const [eyeOn, setEyeOn] = useState<string | null>(null);
   const togglePin = useCallback((id: string) => setEyeOn((cur) => (cur === id ? null : id)), []);
   const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null);
+  // Меню ручной рамки на кадре превью: «В образцы класса».
+  const [humanMenu, setHumanMenu] = useState<{ x: number; y: number; shape: api.HumanShape } | null>(null);
+  useEffect(() => {
+    if (!humanMenu) return;
+    const close = () => setHumanMenu(null);
+    const key = (e: KeyboardEvent) => e.key === "Escape" && close();
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", key);
+    window.addEventListener("wheel", close, { passive: true });
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("keydown", key);
+      window.removeEventListener("wheel", close);
+    };
+  }, [humanMenu]);
   const [aim, setAim] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
   const [six, setSix] = useState(false);
@@ -749,6 +769,92 @@ function Editor() {
   const watchNode = nodes.find((n) => n.id === watch);
   const watchKind = kindOfNode(watchNode) ?? null;
   const nextVersion = Math.max(0, ...versions.map((v) => v.version)) + 1;
+
+  // Сверка выхода узла превью с ручной разметкой кадра — только по классам, что узел может выдать.
+  const verdict = (() => {
+    const t = watch && trace ? trace[watch] : undefined;
+    // Непроверенный кадр (новый, отложенный, брак) — сверять не с чем: всё ушло бы в «ложные».
+    if (!watch || !t || !preview.result || preview.result.image.truth === false) return null;
+    const own = (id: string) => classes.filter((c) => c.sources.some((s) => s.node === id)).map((c) => c.id);
+    const ids = reachable(watch, draft.nodes, draft.edges, own);
+    const names = new Set(classes.filter((c) => ids.has(c.id)).map((c) => c.name));
+    const proj = projects?.find((p) => p.code === preview.project?.code);
+    // Класс проекта → класс агента: по ссылке, иначе по имени.
+    const agentOf = (name: string) => {
+      const pc = proj?.classes.find((c) => sameName(c.name, name));
+      return (pc && classes.find((c) => c.ref?.cls === pc.id) || classes.find((c) => sameName(c.name, name)))?.name ?? null;
+    };
+    return judge(watchKind === "frame" ? [] : t.out, preview.result.human, agentOf, names);
+  })();
+
+  // Сводка агента для узла «Выход»: узлы по порядку на холсте (слева направо), время и вызовы, классы.
+  const summary = (() => {
+    if (kindOfNode(current ?? undefined) !== "output") return null;
+    const list: SummaryNode[] = [...nodes].sort((a, b) => a.position.x - b.position.x || a.position.y - b.position.y).map((n) => {
+      const d = n.data as AgentNodeData;
+      const w = d.kind === "net" ? weightsOf(d.params) : undefined;
+      // Подпись узла короче полного имени — как в цепочке узлов развёрнутого вида.
+      const title = String(d.params.label ?? "").trim() || agentTitle(d);
+      return { id: n.id, kind: d.kind, title, params: d.params, weights: w ? { name: w.name, imgsz: w.imgsz } : undefined };
+    });
+    const img = preview.result?.image;
+    const size = (s: string) => sets.get(s)?.items.length;
+    const stats = nodeStats(list, img ? { w: img.width, h: img.height } : null, trace, size);
+    const big = frame?.largest;
+    const worst = big && img && big[0] * big[1] > img.width * img.height
+      ? { w: big[0], h: big[1], calls: nodeStats(list, { w: big[0], h: big[1] }, null, size).reduce((s, n) => s + (n.calls ?? 0), 0) } : null;
+    const titleOf = (id: string) => list.find((n) => n.id === id)?.title ?? id;
+    return (
+      <AgentSummary nodes={stats} classes={classStats(used, output && trace ? trace[output.id]?.out ?? null : null, titleOf)}
+        frame={img ? { w: img.width, h: img.height, name: img.file_name } : null} worst={worst}
+        device={preview.result?.device ?? null} onClasses={() => setClassesOpen(true)} onNode={(id) => setSelected(id)} />
+    );
+  })();
+
+  // Куда ляжет ручная рамка с кадра превью: набор класса выделенного узла по ссылке или имени — или почему некуда.
+  const humanTarget = (shape: api.HumanShape) => {
+    const d = current?.data as AgentNodeData | undefined;
+    if (readOnly) return { why: "Чужой агент — только просмотр" } as const;
+    if (!current || d?.kind !== "text") return { why: "Выделите узел «Сеть по тексту»" } as const;
+    const proj = projects?.find((p) => p.code === preview.project?.code);
+    const pc = proj?.classes.find((c) => sameName(c.name, shape.cls));
+    const box = shapeBox(shape.geometry);
+    if (!proj || !pc || !box) return { why: "Класс рамки не найден в проекте превью" } as const;
+    const cls = classes.find((c) => c.ref?.cls === pc.id) ?? classes.find((c) => sameName(c.name, pc.name));
+    const rows = promptsOf({ params: d.params });
+    if (!cls || !rows.some((r) => r.cls === cls.id)) return { why: `В узле нет класса «${pc.name}»` } as const;
+    const row = rows.findIndex((r) => isExamples(r) && r.cls === cls.id);
+    const set = row >= 0 ? sets.get(rows[row].set ?? "") : undefined;
+    const near = (a: number[], b: number[]) => a.every((v, k) => Math.abs(v - b[k]) < 0.5);
+    if (set?.items.some((it) => it.image_id === preview.result?.image.id && near(it.box, box)))
+      return { why: "Эта рамка уже в образцах класса" } as const;
+    return { node: current.id, proj, pc, cls, box, set, model: textModel(d.params) } as const;
+  };
+  const addHuman = async (shape: api.HumanShape) => {
+    const t = humanTarget(shape);
+    const image = preview.result?.image;
+    if ("why" in t || !image) return;
+    try {
+      const { set: made } = await api.examplesByHand({
+        project: t.proj.code, class_id: t.pc.id,
+        items: [...(t.set?.items ?? []).map((it) => ({ image_id: it.image_id, box: it.box })), { image_id: image.id, box: t.box }],
+        from: t.set?.status === "ready" && t.set.class_id === t.pc.id ? t.set.id : undefined,
+      });
+      keepSet(made);
+      // Строки — с последней правки узла: пока набор собирался, узел могли поменять.
+      const node = live.current.nodes.find((n) => n.id === t.node);
+      if (!node) return;
+      const rows = promptsOf({ params: (node.data as AgentNodeData).params });
+      const at = rows.findIndex((r) => isExamples(r) && r.cls === t.cls.id);
+      patchParams(t.node, {
+        prompts: at >= 0 ? rows.map((r, k) => (k === at ? { ...r, set: made.id } : r))
+          : [...rows, withConf({ kind: "examples", set: made.id, cls: t.cls.id, on: true }, exampleConfDefault(t.model))],
+      });
+      setNote(`Рамка добавлена в образцы «${t.cls.name}»: теперь их ${made.items.length}.`);
+    } catch (e) {
+      setProblem((e as Error).message);
+    }
+  };
   const pickedFor = picking ? nodes.find((n) => n.id === picking) : null;
 
   const saveText = readOnly ? null
@@ -924,20 +1030,38 @@ function Editor() {
               pinned={Boolean(current) && current?.id === eyeOn}
               onPin={() => current && togglePin(current.id)}
               frame={frame}
+              previewImage={preview.result?.image ?? null}
               msPerCall={current ? speeds.get(current.id)?.ms : undefined}
               hits={hits}
               expanded={expanded}
+              summary={summary}
               onExpand={() => setExpanded((v) => !v)}
             />
             <div className="ae-col">
               <AgentPreviewPane state={preview} nodes={shown} watch={watch} pinned={Boolean(pinned)} onPin={setEyeOn}
-                colorOf={colorOf} enabled={Boolean(graph?.mine)} />
+                colorOf={colorOf} enabled={Boolean(graph?.mine)} onHumanMenu={(shape, at) => setHumanMenu({ shape, ...at })}
+                verdict={verdict} />
               <AgentFound kind={watchKind} title={watchNode ? agentTitle(watchNode.data as AgentNodeData) : null}
-                trace={watch && trace ? trace[watch] : undefined} colorOf={colorOf} />
+                verdict={verdict} colorOf={colorOf}
+                unchecked={preview.result?.image.truth === false ? preview.result.image.status ?? "new" : null} />
             </div>
           </div>
         </div>
       </div>
+
+      {humanMenu && (() => {
+        const t = humanTarget(humanMenu.shape);
+        return (
+          <div className="ui-pop ge-menu ae-hmenu" role="menu" style={{ left: humanMenu.x, top: humanMenu.y }}
+            onPointerDown={(e) => e.stopPropagation()}>
+            <div className="ui-pop-h">{humanMenu.shape.cls} · ручная рамка</div>
+            <MenuItem icon="images" disabled={"why" in t} hint={"why" in t ? t.why : undefined}
+              onSelect={() => { setHumanMenu(null); void addHuman(humanMenu.shape); }}>
+              {"why" in t ? "В образцы класса" : `В образцы «${t.cls.name}»`}
+            </MenuItem>
+          </div>
+        );
+      })()}
 
       {pickedFor && (
         <WeightsPicker

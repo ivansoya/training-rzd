@@ -391,7 +391,6 @@ def _sam3(model, pixels, rows, node, contour, grow=False):
     над кадром кладутся ряды вырезок по 6, а находки ниже рядов — это находки в кадре
     (FSS-SAM3). Второй ряд — в тот же проход, если влезает; дальше — ещё проходы.
     `pixels` — кадр или тайл; `grow` — тайл меньше входа растянуть до него."""
-    import cv2
     import numpy as np
 
     from common import agent_examples as ax
@@ -426,16 +425,7 @@ def _sam3(model, pixels, rows, node, contour, grow=False):
         return found
 
     def shrink(image):
-        k = side / max(image.shape[:2])
-        if not grow:
-            k = min(1.0, k)
-        if k != 1:
-            image = cv2.resize(image, (round(image.shape[1] * k), round(image.shape[0] * k)),
-                               interpolation=cv2.INTER_AREA)
-        # Поля справа и снизу: координаты рамок от них не меняются.
-        square = np.zeros((side, side, 3), np.uint8)
-        square[:image.shape[0], :image.shape[1]] = image[:side, :side]
-        return square, k
+        return ax.model_square(image, side, grow)
 
     words = [(i, r) for i, r in rows if not agent_graph.is_examples(r)]
     if words:
@@ -446,7 +436,6 @@ def _sam3(model, pixels, rows, node, contour, grow=False):
             part = words[at:at + per]
             out += collect(predictor(text=[str(r["prompt"]).strip() for _, r in part])[0], k, 0,
                            lambda c, part=part: part[int(c)][0])
-    cell = w / ax.ROW
     for i, r in rows:
         if not agent_graph.is_examples(r):
             continue
@@ -454,17 +443,8 @@ def _sam3(model, pixels, rows, node, contour, grow=False):
         plan = ax.collage_passes(len(crops), w, h)
         found = []
         for chunk in plan:
-            top = round(cell * -(-len(chunk) // ax.ROW))
-            strip = np.zeros((top, w, 3), np.uint8)
-            boxes = []
-            for j, at in enumerate(chunk):
-                img, (bx, by, bw, bh) = crops[at]
-                sc = cell / max(img.shape[:2])
-                fit = cv2.resize(img, (max(1, round(img.shape[1] * sc)), max(1, round(img.shape[0] * sc))))
-                x0, y0 = round(j % ax.ROW * cell), round(j // ax.ROW * cell)
-                part = fit[:top - y0, :w - x0]
-                strip[y0:y0 + part.shape[0], x0:x0 + part.shape[1]] = part
-                boxes.append([x0 + bx * sc, y0 + by * sc, x0 + (bx + bw) * sc, y0 + (by + bh) * sc])
+            strip, boxes = ax.collage_strip(crops, chunk, w)
+            top = strip.shape[0]
             small, k = shrink(np.vstack([strip, pixels]))
             predictor.set_image(small)
             found += collect(predictor(bboxes=np.array(boxes, np.float32) * k, labels=np.ones(len(boxes)))[0],

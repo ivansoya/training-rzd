@@ -8,10 +8,11 @@ import { Button, Icon, Input, MenuItem, Notice, Popover, Swatch, Switch, cx } fr
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
 import {
-  CYRILLIC, EX_ROW, collagePasses, exampleConfDefault, isExamples, offLimits, promptMax, withConf,
+  CYRILLIC, EX_ROW, collagePasses, exampleConfDefault, isExamples, offLimits, perPass, promptMax, withConf,
   type AgentClass, type PromptRow, type TextModel,
 } from "./agentDoc";
-import { ExamplesDialog } from "./ExamplesDialog";
+import ExamplePicker, { type PickerPreview } from "./ExamplePicker";
+import { MAX_SET, randomDistinct, sameName, stepFor } from "./examplePick";
 
 /** Класс агента по имени: найденный или заведённый редактором; пустое имя — null. */
 type Ensure = (name: string) => string | null;
@@ -46,7 +47,7 @@ function Hits({ n, title }: { n: number; title: string }) {
 }
 
 export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef, projects, nodeConf, model, sets, gone, onSet, onRows,
-  hits, view, views, msPerCall, onClasses }: {
+  hits, view, views, msPerCall, preview, onClasses }: {
   rows: PromptRow[];
   readOnly: boolean;
   classes: AgentClass[];
@@ -68,6 +69,8 @@ export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef,
   /** Видов на кадр: целый и тайлы. */
   views: number;
   msPerCall?: number;
+  /** Кадр превью, вход и тайл узла — для коллажа в окне «Образцы класса». */
+  preview: PickerPreview;
   /** Окно «Классы агента»: переименовать, сменить цвет. */
   onClasses: () => void;
 }) {
@@ -75,7 +78,7 @@ export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef,
   const [flipped, setFlipped] = useState<Set<string>>(new Set());
   const [editing, setEditing] = useState<number | null>(null);
   const [focusNew, setFocusNew] = useState<number | null>(null);
-  // `row` — строка, чей набор собирается заново; без неё новый набор встаёт новой строкой.
+  // `row` — строка образцов, чей набор правится; без неё новый набор встаёт новой строкой.
   const [dialog, setDialog] = useState<{ card?: Card; row?: number } | null>(null);
   const [naming, setNaming] = useState<string | null>(null);
   const cards = useMemo(() => cardsOf(rows, classes), [rows, classes]);
@@ -182,7 +185,7 @@ export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef,
                     {(close) => (
                       <>
                         <MenuItem icon="plus" disabled={!c.def} onSelect={() => { close(); addText(c.def?.id); }}>Описание</MenuItem>
-                        <MenuItem icon="images" onSelect={() => { close(); setDialog({ card: c }); }}>Образцы из разметки…</MenuItem>
+                        <MenuItem icon="images" onSelect={() => { close(); setDialog({ card: c, row: exs[0]?.i }); }}>Выбрать образцы…</MenuItem>
                         <MenuItem icon="tags" onSelect={() => { close(); onClasses(); }}>Переименовать, цвет…</MenuItem>
                         <div className="ui-pop-sep" />
                         <MenuItem icon="trash" danger onSelect={() => { close(); drop(c.rows.map((x) => x.i)); }}>Убрать класс из узла</MenuItem>
@@ -240,16 +243,16 @@ export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef,
                   <div className="ae-sub">
                     {exs.length ? exs.map(({ r, i }) => (
                       <ExampleBlock key={i} row={r} set={sets.get(r.set ?? "")} gone={gone.has(r.set ?? "")} sam3={sam3} view={view}
-                        views={views} msPerCall={msPerCall} readOnly={readOnly} nodeConf={nodeConf}
+                        views={views} msPerCall={msPerCall} readOnly={readOnly} nodeConf={nodeConf} projects={projects}
                         hits={hits ? <Hits n={hits.get(i) ?? 0} title="Рамок по образцам на кадре превью" /> : null} onSet={onSet}
-                        onRow={(patch) => set(i, patch)} onRemove={() => drop([i])} onRebuild={() => setDialog({ card: c, row: i })} />
+                        onRow={(patch) => set(i, patch)} onRemove={() => drop([i])} onPick={() => setDialog({ card: c, row: i })} />
                     )) : (
-                      <div className="ae-sub-h">
-                        <b>Образцы</b>
-                        <span>{sam3 ? "нет" : "у YOLOE набор сводится в один средний вектор"}</span>
-                        <span className="grow" />
-                        {!readOnly && <Button size="sm" variant="ghost" icon="plus" onClick={() => setDialog({ card: c })}>Образцы…</Button>}
-                      </div>
+                      <NoExamples card={c} sam3={sam3} readOnly={readOnly} projects={projects} onPick={() => setDialog({ card: c })}
+                        onMade={(made) => {
+                          onSet(made);
+                          const cls = c.def?.id ?? ensure(c.name) ?? undefined;
+                          onRows([...rows, withConf({ kind: "examples", set: made.id, cls, on: true }, exampleConfDefault(model))]);
+                        }} />
                     )}
                   </div>
                 </div>
@@ -280,16 +283,17 @@ export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef,
         </div>
       )}
 
-      {dialog && (
-        <ExamplesDialog model={model} onClose={() => setDialog(null)}
-          preset={dialog.card?.def?.ref ? { project: projects?.find((p) => p.id === dialog.card!.def!.ref!.project)?.code,
+      {dialog?.card && (
+        <ExamplePicker model={model} projects={projects} preview={preview} onClose={() => setDialog(null)}
+          agentClass={{ name: dialog.card.def?.name ?? dialog.card.name, color: dialog.card.def?.color }}
+          set={dialog.row !== undefined ? sets.get(rows[dialog.row]?.set ?? "") : undefined}
+          preset={dialog.card.def?.ref ? { project: projects?.find((p) => p.id === dialog.card!.def!.ref!.project)?.code,
             classId: dialog.card.def.ref.cls } : undefined}
-          agentName={dialog.card?.def?.name}
-          onDone={(made, agentName) => {
+          onDone={(made) => {
             onSet(made);
             if (dialog.row !== undefined) set(dialog.row, { set: made.id });
             else {
-              const cls = dialog.card?.def?.id ?? ensure(agentName) ?? undefined;
+              const cls = dialog.card?.def?.id ?? ensure(dialog.card!.name) ?? undefined;
               onRows([...rows, withConf({ kind: "examples", set: made.id, cls, on: true }, exampleConfDefault(model))]);
             }
             setDialog(null);
@@ -299,12 +303,80 @@ export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef,
   );
 }
 
+/** Добрать `n` случайных рамок разных предметов класса к образцам `items` — новым набором (от `from`, если он есть). */
+async function addRandom(project: string, classId: string, items: { uid: string; image_id: string; box: number[] }[], n: number,
+  from?: string): Promise<api.ExampleSet> {
+  const { boxes } = await api.exampleBoxes(project, classId);
+  const groups = new Map(boxes.map((b) => [b.uid, b.group]));
+  const more = randomDistinct(boxes, items.map((it) => ({
+    uid: it.uid, image_id: it.image_id, box: it.box as [number, number, number, number], file_name: "", group: groups.get(it.uid),
+  })), n);
+  if (!more.length) throw new Error(items.length ? "Разных рамок класса больше нет: все предметы уже в наборе."
+    : "У класса проекта нет ручной разметки от 8 px.");
+  return (await api.examplesByHand({
+    project, class_id: classId, from, items: [...items, ...more].map((it) => ({ image_id: it.image_id, box: it.box })),
+  })).set;
+}
+
+/** Пустые образцы класса: «Выбрать…» и та же плитка случайного добора. Источник — класс-ссылка или класс проекта с тем же именем. */
+function NoExamples({ card, sam3, readOnly, projects, onMade, onPick }: {
+  card: Card; sam3: boolean; readOnly: boolean; projects: api.ClassSource[] | null;
+  onMade: (set: api.ExampleSet) => void; onPick: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const ref = card.def?.ref;
+  const src = ref ? { project: projects?.find((p) => p.id === ref.project)?.code, cls: ref.cls }
+    : (() => {
+      for (const p of projects ?? []) {
+        const k = p.classes.find((c) => sameName(c.name, card.name));
+        if (k) return { project: p.code, cls: k.id };
+      }
+      return null;
+    })();
+  const add = async () => {
+    if (!src?.project) return;
+    setBusy(true);
+    setError(null);
+    try {
+      onMade(await addRandom(src.project, src.cls, [], sam3 ? 1 : MAX_SET));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <div className="ae-sub-h">
+        <b>Образцы</b>
+        <span>{sam3 ? "нет" : "нет · у YOLOE набор сводится в один средний вектор"}</span>
+        <span className="grow" />
+        {!readOnly && <Button size="sm" variant="ghost" icon="images" onClick={onPick}>Выбрать…</Button>}
+      </div>
+      {!readOnly && (
+        <div className="ae-thumbs">
+          <button type="button" className="ep-add sm" disabled={busy || !src?.project} onClick={() => void add()}
+            title={!src?.project ? "Класса проекта с таким именем нет — выберите образцы вручную"
+              : sam3 ? "Случайная рамка класса" : "Все разные предметы класса: YOLOE сводит их в один средний вектор"}>
+            <Icon name="plus" size={14} /><span>{busy ? "…" : sam3 ? "+1" : "все"}</span>
+          </button>
+        </div>
+      )}
+      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+    </>
+  );
+}
+
 /** Образцы одной строки: миниатюры по проходам и рядам коллажа SAM 3. Набор неизменяем —
  *  убрать и переставить рождают новый набор, строка переходит на него. */
-function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, nodeConf, hits, onSet, onRow, onRemove, onRebuild }: {
+function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, nodeConf, projects, hits, onSet, onRow, onRemove, onPick }: {
   row: PromptRow; set?: api.ExampleSet; gone: boolean; sam3: boolean; view: [number, number] | null; views: number; msPerCall?: number;
+  projects: api.ClassSource[] | null;
   readOnly: boolean; nodeConf: number; hits: ReactNode; onSet: (set: api.ExampleSet) => void;
-  onRow: (patch: Partial<PromptRow>) => void; onRemove: () => void; onRebuild: () => void;
+  onRow: (patch: Partial<PromptRow>) => void; onRemove: () => void;
+  /** Окно «Образцы класса» с этим набором. */
+  onPick: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -318,7 +390,7 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
         <span className="grow" />
         {gone && !readOnly && (
           <>
-            <Button size="sm" variant="ghost" icon="images" onClick={onRebuild}>Собрать заново…</Button>
+            <Button size="sm" variant="ghost" icon="images" onClick={onPick}>Собрать заново…</Button>
             <Button size="sm" variant="ghost" icon="trash" aria-label="Убрать строку образцов" onClick={onRemove} />
           </>
         )}
@@ -330,7 +402,6 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
   const plan = sam3 && view ? collagePasses(n, view[0], view[1]) : [set.items.map((_, k) => k)];
   const rowsIn = (pass: number[]) => Array.from({ length: Math.ceil(pass.length / EX_ROW) }, (_, k) => pass.slice(k * EX_ROW, (k + 1) * EX_ROW));
   // Подписи «ряд» и «проход» — только когда их больше одного; YOLOE просто ставит миниатюры подряд.
-  const labelled = sam3 && (plan.length > 1 || plan.some((pass) => pass.length > EX_ROW));
   const chip = !sam3 ? null : plan.length > 1 ? count(plan.length, "проход", "прохода", "проходов")
     : `1 проход${rowsIn(plan[0] ?? []).length > 1 ? " · 2 ряда" : ""}`;
 
@@ -347,6 +418,30 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
       setBusy(false);
     }
   };
+  // «+1» и «+ проход»: случайная рамка другого предмета (как в окне «Образцы класса»), новым набором от этого.
+  const proj = projects?.find((p) => p.id === set.project_id);
+  const step = stepFor(sam3 ? "sam3" : "l", n);
+  const addOne = async () => {
+    if (!proj || !set.class_id) return derive({ add: step });
+    setBusy(true);
+    setError(null);
+    try {
+      const next = await addRandom(proj.code, set.class_id, set.items, step, set.status === "ready" ? set.id : undefined);
+      onSet(next);
+      onRow({ set: next.id });
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const cap = sam3 && view ? perPass(view[0], view[1]) : null;
+  const full = cap !== null && (plan[plan.length - 1]?.length ?? 0) >= cap;
+  const plus = (label: string, title: string) => readOnly ? null : (
+    <button key="plus" type="button" className="ep-add sm" disabled={busy} title={title} onClick={() => void addOne()}>
+      <Icon name="plus" size={14} /><span>{busy ? "…" : label}</span>
+    </button>
+  );
   const dropOn = (to: number) => (e: DragEvent) => {
     e.preventDefault();
     const from = drag;
@@ -378,6 +473,23 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
     );
   };
   const extra = sam3 && plan.length > 1 && msPerCall !== undefined ? msPerCall * (plan.length - 1) * views : null;
+  // Ряды SAM 3 с плиткой-кнопкой: «+1» после последней миниатюры, у полного прохода — ряд «проход N+1».
+  // У первого ряда прохода — подпись и «×»: убрать проход целиком; последний проход — все образцы, как корзина.
+  const dropPass = (p: number) => {
+    const gone = new Set(plan[p].map((k) => uids[k]));
+    const order = uids.filter((u) => !gone.has(u));
+    if (order.length) void derive({ order });
+    else onRemove();
+  };
+  const lines: { label: string; pass?: number; cells: ReactNode[] }[] = [];
+  plan.forEach((pass, p) => rowsIn(pass).forEach((line, k) => lines.push({
+    label: k === 0 ? `проход ${p + 1}` : "", pass: k === 0 ? p : undefined, cells: line.map(thumb),
+  })));
+  if (!readOnly && sam3) {
+    if (full) lines.push({ label: `проход ${plan.length + 1}`, cells: [plus("проход", "Следующий проход: случайная рамка другого предмета")] });
+    else if (lines.length && lines[lines.length - 1].cells.length < EX_ROW) lines[lines.length - 1].cells.push(plus("+1", "Случайная рамка другого предмета"));
+    else lines.push({ label: "", cells: [plus("+1", "Случайная рамка другого предмета")] });
+  }
 
   return (
     <div className={cx("ae-exb", !row.on && "off")}>
@@ -390,14 +502,29 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
       {set.status === "error" && <Notice tone="error">{set.error ?? "Набор не собрался"}</Notice>}
       {sam3 ? (
         <div className="ae-rows">
-          {plan.map((pass, p) => rowsIn(pass).map((line, k) => (
-            <div key={`${p}.${k}`} className="ae-exr">
-              {labelled && <span className="ui-mono">{plan.length > 1 ? (k === 0 ? `проход ${p + 1}` : "") : `ряд ${k + 1}`}</span>}
-              <div className="ae-thumbs">{line.map(thumb)}</div>
+          {lines.map((line, k) => (
+            <div key={k} className="ae-exr">
+              <span className="ae-exr-l">
+                <span className="ui-mono">{line.label}</span>
+                {line.pass !== undefined && !readOnly && (
+                  <button type="button" className="ae-exr-x" disabled={busy}
+                    title={plan.length > 1 ? `Убрать проход ${line.pass + 1}: ${count(plan[line.pass].length, "образец", "образца", "образцов")}`
+                      : "Убрать единственный проход — все образцы класса"}
+                    aria-label={`Убрать проход ${line.pass + 1}`} onClick={() => dropPass(line.pass!)}>
+                    <Icon name="x" size={12} />
+                  </button>
+                )}
+              </span>
+              <div className="ae-thumbs">{line.cells}</div>
             </div>
-          )))}
+          ))}
         </div>
-      ) : <div className="ae-thumbs">{set.items.map((_, k) => thumb(k))}</div>}
+      ) : (
+        <div className="ae-thumbs">
+          {set.items.map((_, k) => thumb(k))}
+          {step > 0 && plus("все", "Добрать все разные предметы класса: YOLOE сводит их в один средний вектор")}
+        </div>
+      )}
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
       <div className="ae-exf">
         <span>Порог</span>
@@ -410,7 +537,8 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
         <span className="grow" />
         {!readOnly && (
           <>
-            <Button size="sm" variant="ghost" icon="plus" disabled={busy} onClick={() => derive({ add: ADD })}>{busy ? "…" : `Добрать ${ADD}`}</Button>
+            <Button size="sm" variant="ghost" icon="images" disabled={busy} onClick={onPick}>Выбрать…</Button>
+            {sam3 && <Button size="sm" variant="ghost" icon="plus" disabled={busy} onClick={() => derive({ add: ADD })}>{busy ? "…" : `Добрать ${ADD}`}</Button>}
             <Button size="sm" variant="ghost" icon="trash" disabled={busy} aria-label="Убрать образцы из класса" onClick={onRemove} />
           </>
         )}

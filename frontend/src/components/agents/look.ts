@@ -143,22 +143,6 @@ export function wireText(sourceKind: AgentKind | undefined, trace: Trace | null,
   return out ? { text: String(out.length), amount: out.length } : { text: "—", amount: 0 };
 }
 
-export interface ClassTally {
-  cls: string;
-  into: number;
-  out: number;
-}
-
-/** Рамки узла по классам: сколько пришло и сколько ушло. У сети пришедшие — от узлов выше. */
-export function tally(node: { in: PreviewDet[]; out: PreviewDet[] } | undefined): ClassTally[] {
-  if (!node) return [];
-  const rows = new Map<string, ClassTally>();
-  const row = (cls: string) => rows.get(cls) ?? rows.set(cls, { cls, into: 0, out: 0 }).get(cls)!;
-  node.in.forEach((d) => row(d.cls).into++);
-  node.out.forEach((d) => row(d.cls).out++);
-  return [...rows.values()].sort((a, b) => b.out - a.out || b.into - a.into || a.cls.localeCompare(b.cls));
-}
-
 /** Рамки, что узел отсеял: были на входе, на выходе их нет. */
 export function droppedOf(node: { in: PreviewDet[]; out: PreviewDet[] } | undefined): PreviewDet[] {
   if (!node) return [];

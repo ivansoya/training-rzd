@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Node } from "@xyflow/react";
 import * as api from "../../api/agents";
-import type { AgentPreview as Result } from "../../api/agents";
+import type { HumanShape, AgentPreview as Result } from "../../api/agents";
 import type { GraphDoc } from "../../api/aug";
 import { Button, Dialog, Icon, Popover, Select, Switch } from "../../ui";
 import { keep, load } from "../aug/NodePreview";
@@ -16,6 +16,7 @@ import { unfinished } from "./agentDoc";
 import AgentFrame from "./AgentFrame";
 import { agentTitle, type AgentNodeData } from "./AgentNodes";
 import { droppedOf } from "./look";
+import type { Verdict } from "./verdict";
 
 const WAIT_MS = 300;
 type Step = "same" | "next" | "prev" | "random";
@@ -92,7 +93,7 @@ export function useAgentPreview(graphId: string, doc: GraphDoc, enabled: boolean
   return { projects, project, setProject, result, problem: missing ? null : problem, busy, missing, go };
 }
 
-export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, colorOf, enabled }: {
+export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, colorOf, enabled, onHumanMenu, verdict }: {
   state: AgentPreviewState;
   nodes: Node[];
   /** Узел в превью: закреплённый, выделенный или «Выход». */
@@ -102,6 +103,10 @@ export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, c
   colorOf: (cls: string) => string;
   /** Чужой агент: превью считает только владелец. */
   enabled: boolean;
+  /** Сверка выхода узла с ручной разметкой кадра. */
+  verdict: Verdict | null;
+  /** Правая кнопка по ручной рамке кадра — «В образцы класса». */
+  onHumanMenu?: (shape: HumanShape, at: { x: number; y: number }) => void;
 }) {
   const { projects, project, setProject, result, problem, busy, missing, go } = state;
   const [human, setHuman] = useState(() => load("agent-preview-human", true));
@@ -114,7 +119,9 @@ export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, c
     dropped: droppedOf(trace),
     samIn: d?.kind === "sam" ? trace.in : undefined,
     sam: d?.kind === "sam",
-    human: human ? result!.human : [],
+    // Переключатель «Сверка с разметкой»: включён — рамки по итогу сверки, выключен — цвета классов без разметки.
+    human: [],
+    verdict: human && verdict ? verdict : undefined,
   };
   const setHumanKept = (v: boolean) => { setHuman(v); keep("agent-preview-human", v); };
   const frameText = result ? `${result.image.file_name} · ${result.image.width} × ${result.image.height}` : "";
@@ -133,7 +140,7 @@ export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, c
   else if (problem) stage = <Empty icon="alert" bad>{problem}</Empty>;
   else if (projects && !projects.length) stage = <Empty icon="images">Нет проектов с кадрами — превью не на чем показать</Empty>;
   else if (!result || !layers) stage = <Empty>{busy ? "Считаю кадр…" : "Готовлю превью…"}</Empty>;
-  else stage = <AgentFrame image={result.image} layers={layers} colorOf={colorOf} busy={busy} onOpen={() => setFull(true)} />;
+  else stage = <AgentFrame image={result.image} layers={layers} colorOf={colorOf} busy={busy} onOpen={() => setFull(true)} onHumanMenu={onHumanMenu} />;
 
   return (
     <section className="ge-sec ge-pv ae-pv">
@@ -159,8 +166,8 @@ export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, c
               </div>
             )}
             <div className="ge-flag">
-              <span>Разметка человека</span>
-              <Switch checked={human} label="Разметка человека" onChange={setHumanKept} />
+              <span>Сверка с разметкой</span>
+              <Switch checked={human} label="Сверка с разметкой" onChange={setHumanKept} />
             </div>
           </div>
         </Popover>
@@ -183,13 +190,13 @@ export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, c
         {result && layers && (
           <div className="ge-full-b">
             <div className="ge-full-stage">
-              <AgentFrame image={result.image} layers={layers} colorOf={colorOf} busy={busy} />
+              <AgentFrame image={result.image} layers={layers} colorOf={colorOf} busy={busy} onHumanMenu={onHumanMenu} />
             </div>
             <div className="ge-full-bar">
               {nav(true)}
               <label className="ge-six-flag" htmlFor="ae-full-human">
                 <Switch id="ae-full-human" checked={human} onChange={setHumanKept} />
-                <span>Разметка человека</span>
+                <span>Сверка с разметкой</span>
               </label>
               <span className="grow" />
               {trace && <span className="t-sm t-muted">пришло <b className="ui-mono">{trace.in.length}</b> → ушло <b className="ui-mono">{trace.out.length}</b></span>}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PreviewDet } from "../../api/agents";
 import {
-  NEUTRAL_TONE, PALETTE, droppedOf, filterLine, freeName, netBadge, netLine, onePort, plainLine, tally, textLine, toneOf, wireText,
+  NEUTRAL_TONE, PALETTE, droppedOf, filterLine, freeName, netBadge, netLine, onePort, plainLine, textLine, toneOf, wireText,
 } from "./look";
 
 const det = (id: string, cls: string): PreviewDet => ({ id, cls, conf: 0.5, box: [0, 0, 10, 10] });
@@ -80,11 +80,9 @@ describe("счёт рамок", () => {
     expect(wireText("nms", null, "n1")).toEqual({ text: "—", amount: 0 });
   });
 
-  it("пришло и ушло по классам, отсеянное — по номерам рамок", () => {
+  it("отсеянное — по номерам рамок", () => {
     const node = { in: [det("1", "a"), det("2", "a"), det("3", "b")], out: [det("1", "a")] };
-    expect(tally(node)).toEqual([{ cls: "a", into: 2, out: 1 }, { cls: "b", into: 1, out: 0 }]);
     expect(droppedOf(node).map((d) => d.id)).toEqual(["2", "3"]);
-    expect(tally(undefined)).toEqual([]);
   });
 
   it("свободное имя агента", () => {

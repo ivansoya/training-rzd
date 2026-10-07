@@ -41,7 +41,8 @@ const SIDES = [
 ];
 
 export default function AgentInspector({ node, readOnly, weights, sam3Ready, sets, goneSets, onSet, classes, ensure, ensureRef, projects,
-  onClasses, incoming, loose, onChange, onPickWeights, onRemove, pinned, onPin, frame, msPerCall, hits, expanded, onExpand }: {
+  onClasses, incoming, loose, onChange, onPickWeights, onRemove, pinned, onPin, frame, previewImage, msPerCall, hits, expanded, onExpand,
+  summary }: {
   node: Node | null;
   readOnly: boolean;
   weights?: api.Weights;
@@ -69,10 +70,14 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   onPin: () => void;
   /** Кадры проекта превью: на них считаются тайлы. */
   frame: api.FrameSummary | null;
+  /** Кадр, что сейчас в превью: на нём коллаж в окне «Образцы класса». */
+  previewImage: { id: string; width: number; height: number } | null;
   /** Замер последнего превью: мс на один вызов модели этого узла. */
   msPerCall?: number;
   /** Своих рамок узла на кадре превью по номеру строки; null — превью нет. */
   hits: Map<number, number> | null;
+  /** Сводка агента — показывает узел «Выход». */
+  summary?: ReactNode;
   /** Узел развёрнут на всё окно. */
   expanded: boolean;
   onExpand: () => void;
@@ -216,7 +221,12 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
       )}
 
       {d.kind === "frame" && <p className="t-xs t-muted">Кадр таски — с него начинается каждый проход агента. Параметров нет.</p>}
-      {d.kind === "output" && <p className="t-xs t-muted">Что придёт сюда, ляжет в разметку кадра рамками агента. Параметров нет.</p>}
+      {d.kind === "output" && (
+        <>
+          <p className="t-xs t-muted">Что придёт сюда, ляжет в разметку кадра рамками агента. Ниже — сводка агента целиком.</p>
+          {summary}
+        </>
+      )}
 
       {d.kind === "text" && (
         <>
@@ -278,7 +288,8 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
             projects={projects} nodeConf={num(p.conf, textConfDefault(model))} model={model} sets={sets} gone={goneSets} onSet={onSet}
             onRows={(rows) => onChange({ prompts: rows })} hits={hits}
             view={frame ? (tiling ? [Math.min(frame.w, side), Math.min(frame.h, side)] : [frame.w, frame.h]) : null}
-            views={total} msPerCall={msPerCall} onClasses={onClasses} />
+            views={total} msPerCall={msPerCall} onClasses={onClasses}
+            preview={{ image: previewImage, side: sam3Side(p), tile: tiling ? side : null }} />
         </>
       )}
 

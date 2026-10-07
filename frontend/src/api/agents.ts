@@ -213,8 +213,19 @@ export interface HumanShape {
   geometry: { x?: number; y?: number; w?: number; h?: number; parts?: [number, number][][] };
 }
 
+export interface PreviewImage {
+  id: string;
+  file_name: string;
+  width: number;
+  height: number;
+  /** Состояние кадра в таске: new, skipped, annotated, empty, deleted. */
+  status?: string;
+  /** Разметка кадра проверена: он в данных проекта или «размечен»/«пусто» в таске — есть с чем сверять. */
+  truth?: boolean;
+}
+
 export interface AgentPreview {
-  image: { id: string; file_name: string; width: number; height: number };
+  image: PreviewImage;
   human: HumanShape[];
   /** Вход и выход каждого узла; `ms` — сколько узел считал. */
   nodes: Record<string, { in: PreviewDet[]; out: PreviewDet[]; ms?: number }>;
@@ -282,6 +293,8 @@ export interface ExampleItem {
   file_name: string;
   /** Меньшая сторона рамки, px. */
   side: number;
+  image_id: string;
+  box: [number, number, number, number];
 }
 
 /** Набор неизменяем: убрать, переставить, добрать — это новый набор. */
@@ -290,6 +303,9 @@ export interface ExampleSet {
   status: "queued" | "ready" | "error";
   error: string | null;
   project: string;
+  /** Проект и класс, из которых собран набор: с них открывается окно «Образцы класса». */
+  project_id: string | null;
+  class_id: string | null;
   class_name: string;
   // collage и ctx — у наборов до шага «авто»: SAM 3 их больше не читает.
   params: { datasets: string[] | null; n: number; seed: number; collage?: number; ctx?: number };
@@ -314,12 +330,48 @@ export interface ExampleSources {
 export const exampleSources = (project: string) =>
   get<ExampleSources>(`agents/examples/sources?project=${encodeURIComponent(project)}`);
 
-export const createExamples = (body: {
+/** Ручная рамка класса для окна «Образцы класса»; `group` — тот же предмет на соседних кадрах ролика. */
+export interface ClassBox {
+  uid: string;
+  image_id: string;
+  file_name: string;
+  dataset: string;
+  frame: [number, number];
+  box: [number, number, number, number];
+  video: string | null;
+  t: number | null;
+  group: number;
+}
+
+export const exampleBoxes = (project: string, classId: string) =>
+  get<{ boxes: ClassBox[]; frames: number; objects: number }>(
+    `agents/examples/boxes?project=${encodeURIComponent(project)}&class_id=${encodeURIComponent(classId)}`);
+
+export const boxCrop = (image: string, box: number[]) =>
+  `/api/agents/examples/boxes/crop?image=${image}&box=${box.map((v) => Math.round(v * 10) / 10).join(",")}`;
+
+/** Набор из выбранных рамок по порядку; `from` — прежний набор того же класса, его векторы не пересчитываются. */
+export const examplesByHand = (body: {
   project: string;
   class_id: string;
-  datasets: string[] | null;
-  n: number;
+  items: { image_id: string; box: number[] }[];
+  from?: string;
 }) => post<{ set: ExampleSet }>("agents/examples", body);
+
+/** «Как видит SAM 3»: проход коллажа над кадром превью картинкой и число проходов. */
+export async function exampleCollage(body: {
+  image_id: string;
+  items: { image_id: string; box: number[] }[];
+  side: number;
+  tile?: number | null;
+  pass: number;
+}, signal?: AbortSignal): Promise<{ blob: Blob; passes: number }> {
+  const res = await fetch("/api/agents/examples/collage", {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal,
+  });
+  if (!res.ok) await asJson(res);
+  return { blob: await res.blob(), passes: Number(res.headers.get("X-Passes") || 1) };
+}
 
 export const deriveExamples = (id: string, body: { order?: string[]; add?: number }) =>
   post<{ set: ExampleSet }>(`agents/examples/${id}/derive`, body);

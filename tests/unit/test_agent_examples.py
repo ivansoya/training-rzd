@@ -68,3 +68,19 @@ def test_средний_вектор_нормирован():
     np = pytest.importorskip("numpy")
     v = ax.mean_vector([[3, 0], [0, 4]])
     assert np.isclose(np.linalg.norm(v), 1.0) and v[1] > v[0]
+
+
+def test_коллаж_ряды_над_кадром_и_квадрат_входа():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("cv2")
+    crops = [(np.full((100, 100, 3), k, np.uint8), [25, 25, 50, 50]) for k in range(8)]
+    # 8 образцов на виде 600: клетка 100, два ряда — полоса 200, рамки в клетках
+    strip, boxes = ax.collage_strip(crops, list(range(8)), 600)
+    assert strip.shape == (200, 600, 3) and len(boxes) == 8
+    assert boxes[0] == [25, 25, 75, 75] and boxes[6] == [25, 125, 75, 175]
+    assert strip[150, 150, 0] == 7
+    # вход 1008: широкая картинка ужата по большей стороне, поля снизу чёрные
+    sq, k = ax.model_square(np.ones((500, 2016, 3), np.uint8), 1008)
+    assert sq.shape == (1008, 1008, 3) and k == 0.5 and sq[300, 10, 0] == 0
+    # мелкий тайл без `grow` не растягивается
+    assert ax.model_square(np.ones((300, 300, 3), np.uint8), 644)[1] == 1.0

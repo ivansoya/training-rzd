@@ -744,7 +744,11 @@ def _human(db, project, image):
 
 
 def _frame(image):
-    return {"id": str(image.id), "file_name": image.file_name, "width": image.width, "height": image.height}
+    # Эталон для сверки — проверенная разметка: кадр в данных проекта (импорт тоже) или «размечен»/«пусто» в таске.
+    # Новый, отложенный и брак не проверены: находки агента там не сравнить ни с чем.
+    return {"id": str(image.id), "file_name": image.file_name, "width": image.width, "height": image.height,
+            "status": image.task_status,
+            "truth": image.dataset_id is not None or image.task_status in ("annotated", "empty")}
 
 
 def _ask_worker(db, user, image, doc):
@@ -1258,6 +1262,79 @@ def example_box_crop():
         resp = Response(buf.tobytes(), mimetype="image/jpeg")
         # Кадр по uuid не меняется — миниатюру можно держать в кеше браузера.
         resp.headers["Cache-Control"] = "private, max-age=2592000, immutable"
+        return resp
+    finally:
+        db.close()
+
+
+@bp.post("/api/agents/examples/collage")
+def example_collage():
+    """«Как видит SAM 3»: проход коллажа над кадром превью — тот квадрат, что уходит в модель.
+
+    `items` — выбранные рамки по порядку, `side` — вход 644 или 1008, `tile` — сторона тайла
+    (вид — первый тайл кадра), `pass` — номер прохода. Число проходов — в заголовке X-Passes."""
+    import cv2
+    import numpy as np
+
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        data = request.get_json(silent=True) or {}
+        raw = data.get("items")
+        if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_EXAMPLES:
+            return jsonify({"error": f"Образцов от 1 до {MAX_EXAMPLES}."}), 400
+        try:
+            items = [(_uuid(it["image_id"]), [float(v) for v in it["box"]]) for it in raw]
+            side = int(data.get("side") or 1008)
+            tile = int(data["tile"]) if data.get("tile") else None
+            at = int(data.get("pass") or 0)
+        except (KeyError, TypeError, ValueError):
+            return jsonify({"error": "Образец — это кадр и рамка на нём."}), 400
+        if side not in agent_graph.SAM3_SIDES or any(i is None or len(b) != 4 for i, b in items):
+            return jsonify({"error": "Вход SAM 3 — 644 или 1008, образец — кадр и рамка."}), 400
+        ids = {i for i, _ in items} | {_uuid(data.get("image_id"))}
+        images = {i.id: i for i in db.execute(select(Image).where(Image.id.in_(ids - {None}))).scalars()}
+        frame = images.get(_uuid(data.get("image_id")))
+        if frame is None or len(images) != len(ids - {None}):
+            return jsonify({"error": "Кадр не найден."}), 404
+        for project_id in {i.project_id for i in images.values()}:
+            if not has_role(role_in(db, user, db.get(Project, project_id)), "viewer"):
+                return jsonify({"error": "Кадр не найден."}), 404
+
+        pics = {}
+
+        def pic(image):
+            if image.id not in pics:
+                pics[image.id] = cv2.imread(os.path.join(config.DATA_DIR, image.file_path))
+            return pics[image.id]
+
+        view = pic(frame)
+        if view is None:
+            return jsonify({"error": "Файла кадра нет."}), 404
+        grow = False
+        if tile and tile < max(view.shape[:2]):
+            view, grow = view[:tile, :tile], tile < side
+        vh, vw = view.shape[:2]
+        crops = []
+        for image_id, box in items:
+            img = pic(images[image_id])
+            if img is None:
+                continue
+            x0, y0, x1, y1 = ax.auto_rect(box, vw, img.shape[1], img.shape[0])
+            crops.append((img[y0:y1, x0:x1], [box[0] - x0, box[1] - y0, box[2], box[3]]))
+        plan = ax.collage_passes(len(crops), vw, vh)
+        if not plan:
+            return jsonify({"error": "Файлов образцов нет."}), 404
+        strip, boxes = ax.collage_strip(crops, plan[min(max(0, at), len(plan) - 1)], vw)
+        square, k = ax.model_square(np.vstack([strip, view]), side, grow)
+        # Рамки-образцы, что уходят в модель подсказкой, — тонкой обводкой.
+        for x1, y1, x2, y2 in boxes:
+            cv2.rectangle(square, (round(x1 * k), round(y1 * k)), (round(x2 * k) - 1, round(y2 * k) - 1), (255, 176, 90), 1)
+        _, buf = cv2.imencode(".jpg", square, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        resp = Response(buf.tobytes(), mimetype="image/jpeg")
+        resp.headers["X-Passes"] = str(len(plan))
+        resp.headers["Access-Control-Expose-Headers"] = "X-Passes"
         return resp
     finally:
         db.close()

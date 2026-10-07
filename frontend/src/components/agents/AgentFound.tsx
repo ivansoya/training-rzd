@@ -1,76 +1,82 @@
-// Шторка, под превью: что узел, на который смотрит превью, сделал с рамками этого кадра.
-// Уравнение «пришло ± своё = ушло» и полосы по классам, как «Чем размечено» на странице таски.
-// Классы агента целиком — в окне «Классы агента» из шапки, не здесь: они не про узел и не про кадр.
+// Шторка, под превью: сверка выхода узла, на который смотрит превью, с ручной разметкой кадра.
+// Честная: сверяются только классы, которые узел может выдать (verdict.ts). Ручная разметка
+// прочих классов не считается пропуском — она перечислена отдельно как «не ищет».
 
 import type { CSSProperties } from "react";
-import type { PreviewDet } from "../../api/agents";
 import { Swatch, cx } from "../../ui";
-import { ru } from "../ru";
-import { tally, type AgentKind } from "./look";
+import { count, ru } from "../ru";
+import type { AgentKind } from "./look";
+import { MATCH_IOU, type Verdict } from "./verdict";
 
-const SEARCH: AgentKind[] = ["net", "text"];
+const pct = (a: number, b: number) => (b ? `${Math.round((a / b) * 100)} %` : "—");
+const STATUS: Record<string, string> = { new: "новый — до него не дошли руки", skipped: "отложен", deleted: "в браке" };
 
-export default function AgentFound({ kind, title, trace, colorOf }: {
+export default function AgentFound({ kind, title, verdict, colorOf, unchecked }: {
   kind: AgentKind | null;
   /** Подпись узла, на который смотрит превью: он не всегда выделенный. */
   title: string | null;
-  trace: { in: PreviewDet[]; out: PreviewDet[] } | undefined;
+  verdict: Verdict | null;
   colorOf: (cls: string) => string;
+  /** Состояние кадра, если его разметка не проверена: тогда сверки нет. */
+  unchecked: string | null;
 }) {
-  const search = kind !== null && SEARCH.includes(kind);
-  const head = kind === "output" ? "Что уйдёт в разметку" : search ? "Что нашёл узел" : "Что прошло через узел";
-  const rows = tally(trace);
-  const top = Math.max(1, ...rows.map((r) => Math.max(r.out, r.into)));
+  const v = verdict;
+  const hit = v?.hit.length ?? 0, wrong = v?.wrong.length ?? 0, missed = v?.missed.length ?? 0;
+  const top = Math.max(1, ...(v?.byClass ?? []).map((r) => r.hit + r.wrong + r.missed));
 
   let body;
-  if (!trace) body = <p className="ae-f-none">Появится, когда превью посчитает кадр.</p>;
-  else if (kind === "frame") body = <p className="ae-f-none">Кадр рамок не несёт — с него начинается поиск.</p>;
+  if (unchecked) {
+    body = (
+      <div className="ae-vd-off">
+        <b>Кадр не проверен — сверять не с чем</b>
+        <span>
+          Кадр {STATUS[unchecked] ?? unchecked}: его разметку человек не подтвердил, и находки узла здесь не отличить
+          от ошибок. Сверка считается на кадрах из данных проекта и на кадрах тасок «размечен» или «пусто» — листайте к ним.
+        </span>
+      </div>
+    );
+  } else if (!v) body = <p className="ae-f-none">Появится, когда превью посчитает кадр.</p>;
+  else if (kind === "frame") body = <p className="ae-f-none">«Кадр» ничего не ищет — сверять нечего.</p>;
   else {
-    const into = trace.in.length, out = trace.out.length;
-    // Поиск пропускает пришедшее и добавляет своё; прочие узлы только отсеивают.
-    const terms = kind === "output"
-      ? [{ n: out, l: "рамок агента на кадре", main: true }]
-      : search
-        ? [{ n: into, l: "пришло сверху" }, { op: "+", n: out - into, l: "нашёл сам", main: true }, { op: "=", n: out, l: "ушло дальше" }]
-        : [{ n: into, l: "пришло" }, { op: "−", n: into - out, l: "отсеял", warn: into > out }, { op: "=", n: out, l: "ушло дальше", main: true }];
     body = (
       <>
-        <div className="ae-eq">
-          {terms.map((t, k) => (
-            <div key={k} className="ae-eq-t">
-              {"op" in t && t.op && <span className="ae-eq-op">{t.op}</span>}
-              <span className={cx("ae-eq-c", "main" in t && t.main && "main", "warn" in t && t.warn && "warn")}>
-                <b className="ui-mono">{ru(t.n)}</b><small>{t.l}</small>
-              </span>
-            </div>
-          ))}
+        <div className="ae-vd">
+          <div className="ae-vd-c ok"><b className="ui-mono">{ru(hit)}</b><small><i />верно</small></div>
+          <div className="ae-vd-c bad"><b className="ui-mono">{ru(wrong)}</b><small><i />ложных</small></div>
+          <div className="ae-vd-c miss"><b className="ui-mono">{ru(missed)}</b><small><i />не нашёл</small></div>
         </div>
-        {rows.length > 0 && (
+        <p className="ae-vd-sum">
+          Точность <b className="ui-mono">{pct(hit, hit + wrong)}</b> · полнота <b className="ui-mono">{pct(hit, hit + missed)}</b>
+          <span> · совпадение рамок от IoU {String(MATCH_IOU).replace(".", ",")}</span>
+        </p>
+        {v.byClass.length > 0 ? (
           <div className="ae-f-cls">
-            <div className="ae-f-h">
-              <h5>По классам</h5>
-              {rows.some((r) => r.into > r.out) && !search && <span className="ae-f-key"><i />отсеяно</span>}
-            </div>
-            {rows.map((r) => {
-              const own = r.out - r.into;
+            <div className="ae-f-h"><h5>По классам</h5><span className="ae-f-key">верно · ложных · не нашёл</span></div>
+            {v.byClass.map((r) => {
+              const all = r.hit + r.wrong + r.missed;
               return (
-                <div key={r.cls} className="ae-fbar" title={r.cls} style={{ "--cc": colorOf(r.cls) } as CSSProperties}>
+                <div key={r.cls} className="ae-vbar" title={r.cls} style={{ "--cc": colorOf(r.cls) } as CSSProperties}>
                   <Swatch color={colorOf(r.cls)} />
                   <span className="t-ell">{r.cls}</span>
-                  <span className="ae-fbar-t">
-                    <i style={{ width: `${(r.out / top) * 100}%` }} />
-                    {r.into > r.out && <s style={{ width: `${((r.into - r.out) / top) * 100}%` }} />}
+                  <span className="ae-vbar-t" style={{ width: `${(all / top) * 100}%` }}>
+                    {r.hit > 0 && <i className="ok" style={{ flexGrow: r.hit }} />}
+                    {r.wrong > 0 && <i className="bad" style={{ flexGrow: r.wrong }} />}
+                    {r.missed > 0 && <i className="miss" style={{ flexGrow: r.missed }} />}
                   </span>
-                  <b className="ui-mono">{ru(r.out)}</b>
-                  <small className="ui-mono">
-                    {search ? (r.into > 0 && own > 0 ? `+${ru(own)}` : "") : r.into !== r.out ? `из ${ru(r.into)}` : ""}
-                  </small>
+                  <span className="ui-mono ae-vbar-n">
+                    <b className={cx(!r.hit && "z")}>{r.hit}</b><b className={cx(!r.wrong && "z")}>{r.wrong}</b><b className={cx(!r.missed && "z")}>{r.missed}</b>
+                  </span>
                 </div>
               );
             })}
           </div>
+        ) : <p className="ae-f-none">На этом кадре нет ни находок, ни ручной разметки классов, которые ищет узел.</p>}
+        {v.skipped.length > 0 && (
+          <p className="ae-vd-skip">
+            Не сверяется — узел эти классы не ищет, их разметка на кадре скрыта:{" "}
+            {v.skipped.map((s) => `${s.cls} · ${count(s.count, "рамка", "рамки", "рамок")}`).join(", ")}
+          </p>
         )}
-        {rows.length === 0 && kind !== "output" && <p className="ae-f-none">На этом кадре рамок нет.</p>}
       </>
     );
   }
@@ -78,8 +84,8 @@ export default function AgentFound({ kind, title, trace, colorOf }: {
   return (
     <section className="ge-sec ae-found">
       <div className="ae-f-title">
-        <b>{head}</b>
-        {title && <span className="t-ell" title={title}>{title}</span>}
+        <b>Сверка с разметкой</b>
+        {title && <span className="t-ell" title={title}>{title} · на этом кадре</span>}
       </div>
       {body}
     </section>

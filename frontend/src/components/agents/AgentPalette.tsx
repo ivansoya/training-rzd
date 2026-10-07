@@ -1,5 +1,6 @@
-// Палитра узлов агента: полоса значков справа от холста — щелчок добавляет, перетаскивание
-// ставит в нужное место. Лупа открывает список с именами и поиском.
+// Палитра узлов агента справа от холста — щелчок добавляет, перетаскивание ставит в нужное место.
+// Окно от 1600 px — полный список с группами и поиском, как у графа; уже — полоса значков,
+// лупа открывает тот же список всплывашкой. Какую показать, решает CSS (graphed.css, .ae-top).
 
 import { Fragment, useMemo, useState, type CSSProperties } from "react";
 import { Button, Icon, Input, Popover, cx } from "../../ui";
@@ -10,6 +11,17 @@ export const AGENT_MIME = "application/mag-agent-node";
 const HOW = "Щелчок — добавить, перетаскивание — поставить в нужное место";
 
 export default function AgentPalette({ onPick, disabled }: { onPick: (kind: Addable) => void; disabled?: boolean }) {
+  return (
+    <>
+      <aside className="ge-pal ae-pal-full" aria-label="Узлы">
+        <PaletteList inline disabled={disabled} onPick={onPick} />
+      </aside>
+      <Rail onPick={onPick} disabled={disabled} />
+    </>
+  );
+}
+
+function Rail({ onPick, disabled }: { onPick: (kind: Addable) => void; disabled?: boolean }) {
   return (
     <aside className="ae-rail" aria-label="Узлы">
       <Popover align="end" width={260} trigger={<Button variant="ghost" icon="search" aria-label="Найти узел" title="Найти узел" />}>
@@ -35,7 +47,8 @@ export default function AgentPalette({ onPick, disabled }: { onPick: (kind: Adda
   );
 }
 
-function PaletteList({ onPick, disabled }: { onPick: (kind: Addable) => void; disabled?: boolean }) {
+/** Список узлов; `inline` — колонкой у холста, без фокуса в поиске при открытии. */
+function PaletteList({ onPick, disabled, inline }: { onPick: (kind: Addable) => void; disabled?: boolean; inline?: boolean }) {
   const [query, setQuery] = useState("");
   const shown = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -44,8 +57,14 @@ function PaletteList({ onPick, disabled }: { onPick: (kind: Addable) => void; di
   }, [query]);
 
   return (
-    <div className="ge-pal ae-pal-pop">
-      <Input icon="search" autoFocus value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Найти узел" aria-label="Найти узел" />
+    <div className={inline ? "ae-pal-in" : "ge-pal ae-pal-pop"}>
+      {inline && (
+        <div className="ge-pal-h">
+          <span>Узлы</span>
+          <span className="t-xs t-faint">щелчок или перетаскивание</span>
+        </div>
+      )}
+      <Input icon="search" autoFocus={!inline} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Найти узел" aria-label="Найти узел" />
       {shown.length === 0 && <p className="t-xs t-faint ge-pal-none">Такого узла нет</p>}
       {shown.map((group) => (
         <div key={group.key} className="ge-pal-g" style={{ "--gc": group.tone } as CSSProperties}>
