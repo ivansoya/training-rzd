@@ -16,6 +16,8 @@ export interface Mark {
   color: string;
   label?: ReactNode;
   dashed?: boolean;
+  /** Находка разведки: тонкая полупрозрачная линия без подложки. */
+  ghost?: boolean;
 }
 
 // Ярлык виден всегда, если меньшая сторона на экране не меньше этого — как на холсте
@@ -45,7 +47,7 @@ export default function Marks({ width, height, items }: { width: number; height:
         {items.map((m) => {
           const d = m.parts?.length ? ringPath(m.parts) : `M${m.x} ${m.y}h${m.w}v${m.h}h${-m.w}Z`;
           return (
-            <g key={m.key} className={cx("mag-cv-sh", m.dashed && "occluded", hot === m.key && "hot")}
+            <g key={m.key} className={cx("mag-cv-sh", m.dashed && "occluded", m.ghost && "mk-ghost", hot === m.key && "hot")}
               style={{ ["--bc" as string]: m.color }}
               onPointerEnter={() => setHot(m.key)} onPointerLeave={() => setHot((h) => (h === m.key ? null : h))}>
               <path className="mag-cv-hit" d={d} />
@@ -60,7 +62,7 @@ export default function Marks({ width, height, items }: { width: number; height:
           if (m.label == null) return null;
           const off = Math.min(m.w, m.h) * k < LABEL_AT && hot !== m.key;
           return (
-            <span key={m.key} aria-hidden={off || undefined} className={cx("mag-cv-lb", off && "off", hot === m.key && "hot")}
+            <span key={m.key} aria-hidden={off || undefined} className={cx("mag-cv-lb", off && "off", m.ghost && "ghost", hot === m.key && "hot")}
               style={{ left: ox + m.x * k, top: oy + m.y * k, ["--bc" as string]: m.color }}
               onPointerEnter={() => setHot(m.key)} onPointerLeave={() => setHot((h) => (h === m.key ? null : h))}>
               {m.label}

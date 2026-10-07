@@ -5,9 +5,6 @@
 
 /* «Разведка» у ролика и «Статистика разведки» в шапке таски — явные кнопки в
    фиолетовом агентов (как подпись «агент X v1» у рамок). */
-.ag-scout-btn { display: inline-flex; align-items: center; gap: 6px; margin-top: 6px; padding: 4px 11px; border: 1px solid #8b73ff66; border-radius: 7px; background: #1d1733; color: #b9a4ff; font: inherit; font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
-.ag-scout-btn::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #8b73ff; }
-.ag-scout-btn:hover { border-color: #8b73ff; background: #2a2150; color: #d9ceff; }
 
 /* --- окно статистики разведки --- */
 .mag-modal.ag-stats { width: 1060px; display: grid; gap: 16px; }
@@ -127,3 +124,18 @@
   .ag-tl-hint { display: none; }
   .ag-tl-win { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
+
+/* Точки проверенных кадров с находками: ближайшая к курсору растёт, щелчок — кадр с призраками */
+.ag-band-dots { position: absolute; left: 0; right: 0; bottom: 2px; height: 10px; pointer-events: none; }
+.ag-band-dots i {
+  position: absolute; top: 2px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%;
+  background: var(--fg); opacity: .7; transition: width .12s var(--ease), height .12s var(--ease), margin .12s var(--ease), top .12s, opacity .12s;
+}
+.ag-band-dots i.near { top: -1px; width: 12px; height: 12px; margin-left: -6px; opacity: 1; box-shadow: 0 0 0 2px var(--stage); }
+.ag-band-bar { cursor: pointer; }
+button.ag-band-title {
+  display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--r);
+  background: transparent; color: var(--muted-fg); font: inherit; font-size: 12px; cursor: pointer;
+}
+button.ag-band-title[aria-pressed="true"] { color: var(--fg); border-color: var(--input); }
+.ag-band-eye { font-size: 11px; }

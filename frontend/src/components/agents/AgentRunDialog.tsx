@@ -11,29 +11,14 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../../api/agents";
-import { Badge, Button, Check, Dialog, Empty, Field, Icon, LinkButton, Notice, Progress, Radio, Select, Table } from "../../ui";
+import { Badge, Button, Check, Dialog, Empty, Field, LinkButton, Notice, Progress, Radio, Select } from "../../ui";
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
+import ClassMap, { guess, useAutoMapped } from "./ClassMap";
 import ScoutOverview from "./ScoutOverview";
 import { sampledCount } from "./scoutMath";
 
 const SOURCE_TITLE: Record<"files" | "videos", string> = { files: "Загружено файлами", videos: "Нарезано из роликов" };
-const NONE = "none";
-
-/** Запомненное по id класса агента; у сопоставлений до списка классов ключ — имя. */
-const remembered = (c: api.VersionClass, saved: Record<string, string | null> | undefined) => saved?.[c.id] ?? saved?.[c.name];
-
-const guess = (list: api.VersionClass[], classes: api.RunContext["classes"], saved: Record<string, string | null> | undefined) => {
-  const byName = new Map(classes.map((c) => [c.name.trim().toLowerCase(), c.id]));
-  const ids = new Set(classes.map((c) => c.id));
-  const out: Record<string, string | null> = {};
-  for (const c of list) {
-    const kept = remembered(c, saved);
-    out[c.id] = c.lock ?? (kept !== undefined && (kept === null || ids.has(kept)) ? kept : byName.get(c.name.trim().toLowerCase()) ?? null);
-  }
-  return out;
-};
-
 const toggled = <T,>(set: Set<T>, v: T, on: boolean) => {
   const next = new Set(set);
   if (on) next.add(v); else next.delete(v);
@@ -42,15 +27,16 @@ const toggled = <T,>(set: Set<T>, v: T, on: boolean) => {
 
 export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: {
   taskId: string;
-  /** Открыть сразу на режиме и роликах — из редактора ролика. */
-  initial?: { mode: api.RunMode; videos: string[] };
+  /** Открыть настроенным: из блока таски или редактора ролика. `modes` — какие режимы
+   *  показать, `sources` — блоки кадров, `videos` — ролики. */
+  initial?: { mode: api.RunMode; videos?: string[]; sources?: string[]; modes?: api.RunMode[]; within?: string[] };
   onClose: () => void;
   onStarted: (run: api.RunView) => void;
 }) {
   const [ctx, setCtx] = useState<api.RunContext | null>(null);
   const [agentId, setAgentId] = useState("");
   const [versionId, setVersionId] = useState("");
-  const [sources, setSources] = useState<Set<"files" | "videos">>(new Set());
+  const [sources, setSources] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<api.RunMode>(initial?.mode ?? "frames");
   const [videos, setVideos] = useState<Set<string>>(() => new Set(initial?.videos));
   const [step, setStep] = useState(25);
@@ -67,34 +53,36 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
         setAgentId(first.id);
         setVersionId(first.head);
       }
-      setSources(new Set((["files", "videos"] as const).filter((s) => got.sources[s].new > 0)));
+      setSources(new Set(initial?.sources ?? ["files", "videos"].filter((s) => (got.sources[s]?.new ?? 0) > 0)));
     }).catch((e) => setError(e.message));
   }, [taskId]);
 
   const agent = ctx?.agents.find((a) => a.id === agentId);
   const version = agent?.versions.find((v) => v.id === versionId) ?? agent?.versions[0];
   const list = useMemo(() => version?.classes ?? [], [version]);
-  const locked = list.filter((c) => c.lock);
 
   // Новая версия или новый агент — сопоставление пересчитывается от запомненного.
   useEffect(() => {
     if (ctx && agent) setMapping(guess(list, ctx.classes, ctx.mappings[agent.id]));
   }, [ctx, agent, list]);
 
-  const auto = useMemo(() => {
-    if (!ctx) return new Set<string>();
-    const saved = agent ? ctx.mappings[agent.id] : undefined;
-    return new Set(list.filter((c) => !c.lock && remembered(c, saved) === undefined && mapping[c.id]).map((c) => c.id));
-  }, [ctx, agent, list, mapping]);
+  const auto = useAutoMapped(list, ctx && agent ? ctx.mappings[agent.id] : undefined, mapping);
 
-  const eligible = (ctx?.videos ?? []).filter((v) => mode === "scout" || (v.mode === "annotate" && !v.closed));
+  // Из блока — только его ролики: разведка блока «Ролики на разметку» не берёт ролики нарезки
+  const eligible = (ctx?.videos ?? []).filter((v) => (!initial?.within || initial.within.includes(v.id))
+    && (mode === "scout" || (v.mode === "annotate" && !v.closed)));
   const chosen = eligible.filter((v) => videos.has(v.id));
   const total = mode === "frames"
-    ? ctx ? [...sources].reduce((sum, s) => sum + ctx.sources[s].new, 0) : 0
+    ? ctx ? [...sources].reduce((sum, s) => sum + (ctx.sources[s]?.new ?? 0), 0) : 0
     : chosen.reduce((sum, v) => sum + sampledCount(v.frames ?? 0, step), 0);
   const mapped = Object.values(mapping).filter(Boolean).length;
-  const replacing = ctx ? [...sources].reduce((sum, s) => sum + ctx.sources[s].agent, 0) : 0;
-  const pickMode = (m: api.RunMode) => { setMode(m); setVideos(new Set()); };
+  const replacing = ctx ? [...sources].reduce((sum, s) => sum + (ctx.sources[s]?.agent ?? 0), 0) : 0;
+  // Из блока ролики блока остаются выбранными и после смены режима
+  const pickMode = (m: api.RunMode) => { setMode(m); setVideos(new Set(initial?.videos)); };
+  const shows = (m: api.RunMode) => !initial?.modes || initial.modes.includes(m);
+  const sourceKeys = ctx ? Object.keys(ctx.sources) : [];
+  const sourceTitle = (s: string) => SOURCE_TITLE[s as "files" | "videos"]
+    ?? `Из разметки «${ctx?.videos.find((v) => v.id === s)?.file_name ?? "ролика"}»`;
 
   const start = async () => {
     if (!agent || !version) return;
@@ -171,13 +159,13 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
             </div>
 
             <div className="ar-modes" role="radiogroup" aria-label="Режим">
-              <Radio name="ar-mode" checked={mode === "frames"} onChange={() => pickMode("frames")} title="Новые кадры таски"
+              {shows("frames") && <Radio name="ar-mode" checked={mode === "frames"} onChange={() => pickMode("frames")} title="Новые кадры таски"
                 hint="Кадры, до которых ещё не дошли руки">
                 <div className="ar-list">
-                  {(["files", "videos"] as const).map((s) => (
+                  {sourceKeys.filter((s) => !initial?.sources || initial.sources.includes(s)).map((s) => (
                     <Check key={s} checked={sources.has(s)} disabled={ctx.sources[s].new === 0}
                       onChange={(on) => setSources((old) => toggled(old, s, on))}>
-                      <span>{SOURCE_TITLE[s]}</span>
+                      <span className="t-ell">{sourceTitle(s)}</span>
                       <span className="t-xs t-faint">{ru(ctx.sources[s].new)} {plural(ctx.sources[s].new, "новый кадр", "новых кадра", "новых кадров")}</span>
                     </Check>
                   ))}
@@ -185,59 +173,24 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
                     <p className="t-xs ge-warn">На {ru(replacing)} {plural(replacing, "кадре", "кадрах", "кадрах")} уже есть непроверенная разметка агента — она будет заменена.</p>
                   )}
                 </div>
-              </Radio>
-              <Radio name="ar-mode" checked={mode === "annotate"} onChange={() => pickMode("annotate")} title="Разметка ролика"
+              </Radio>}
+              {shows("annotate") && <Radio name="ar-mode" checked={mode === "annotate"} onChange={() => pickMode("annotate")} title="Разметка ролика"
                 hint="Каждый N-й кадр размечаемых роликов; кадры, где работал человек, пропускаются">
                 {videoList}
                 <div className="ar-2">{numField("Каждый N-й кадр", step, setStep, { min: 1, max: 10000, integer: true })}</div>
-              </Radio>
-              <Radio name="ar-mode" checked={mode === "scout"} onChange={() => pickMode("scout")} title="Разведка"
+              </Radio>}
+              {shows("scout") && <Radio name="ar-mode" checked={mode === "scout"} onChange={() => pickMode("scout")} title="Разведка"
                 hint="Где в роликах что нашлось — в разметку ничего не пишет">
                 {videoList}
                 <div className="ar-2">
                   {numField("Каждый N-й кадр", step, setStep, { min: 1, max: 10000, integer: true })}
                   {numField("Склеивать разрывы до, с", gap, setGap, { min: 0, max: 60, step: 0.5 })}
                 </div>
-              </Radio>
+              </Radio>}
             </div>
 
-            {mode !== "scout" && locked.length === list.length && list.length > 0 && (
-              <p className="ar-lock"><Icon name="link" size={14} />Все классы агента взяты из этого проекта — сопоставлять нечего.</p>
-            )}
-            {mode !== "scout" && locked.length < list.length && (
-              <div className="ar-map">
-                <div className="ar-map-h">
-                  <b>Классы агента → классы проекта</b>
-                  {auto.size > 0 && <span className="t-xs t-muted">{auto.size} подставлено по имени</span>}
-                </div>
-                <Table>
-                  <tbody>
-                    {list.map((c) => {
-                      const target = ctx.classes.find((k) => k.id === mapping[c.id]);
-                      return (
-                        <tr key={c.id}>
-                          <td className="t-ell">{c.name}</td>
-                          <td>
-                            {c.lock ? (
-                              <span className="ar-locked" title="Класс агента взят из этого проекта — сопоставлен сам">
-                                <Icon name="lock" size={13} />{target ? `${target.class_index} — ${target.name}` : "класс проекта"}
-                              </span>
-                            ) : (
-                              <Select full size="sm" label={`Класс проекта для «${c.name}»`} value={mapping[c.id] ?? NONE}
-                                onChange={(v) => setMapping({ ...mapping, [c.id]: v === NONE ? null : v })}
-                                options={[{ value: NONE, label: "Не размечать" },
-                                  ...ctx.classes.map((k) => ({ value: k.id, label: `${k.class_index} — ${k.name}` }))]} />
-                            )}
-                          </td>
-                          <td className="r">
-                            {c.lock ? <Badge variant="secondary">по ссылке</Badge> : auto.has(c.id) && <Badge variant="secondary">по имени</Badge>}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </Table>
-              </div>
+            {mode !== "scout" && list.length > 0 && (
+              <ClassMap list={list} classes={ctx.classes} mapping={mapping} auto={auto} onMapping={setMapping} />
             )}
           </>
         )}

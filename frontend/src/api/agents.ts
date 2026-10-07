@@ -1,7 +1,7 @@
 // Агенты разметки: полка весов, окно запуска в таске и прогоны.
 // Сам граф агента ходит через aug.ts — он лежит там же, где графы аугментаций.
 
-import { asJson, get, post, del } from "./http";
+import { asJson, get, post, put, del } from "./http";
 
 export interface Weights {
   id: string;
@@ -96,7 +96,8 @@ export interface RunContext {
   classes: { id: string; class_index: number; name: string; color: string }[];
   /** Сопоставление, запомненное на пару «агент + проект». */
   mappings: Record<string, Record<string, string | null>>;
-  sources: Record<"files" | "videos", { new: number; agent: number }>;
+  /** Блоки кадров: «files», «videos» (нарезка) и id закрытых размечаемых роликов. */
+  sources: Record<string, { new: number; agent: number }>;
   runs: RunView[];
   can_run: boolean;
 }
@@ -116,6 +117,24 @@ export const startRun = (
     mapping: Record<string, string | null>;
   }
 ) => post<RunView>(`agents/tasks/${taskId}/runs`, body);
+
+/** Окно «Агент таски»: сопоставление классов без запуска — помнится на пару «агент + проект». */
+export const saveMapping = (taskId: string, body: { graph_id: string; mapping: Record<string, string | null> }) =>
+  put<{ mapping: Record<string, string | null> }>(`agents/tasks/${taskId}/mapping`, body);
+
+/** Агент на одном кадре из редактора: изображение таски или кадр ролика.
+ *  Рамки встают на проверку; для изображения ответ несёт разметку кадра целиком. */
+export const applyAgent = (
+  taskId: string,
+  body: { graph_id: string; version_id: string } & ({ image_id: string } | { video_id: string; frame_no: number })
+) => post<{
+  put: number;
+  found: number;
+  boxes?: import("../auth/api").TaskBox[];
+  rev?: number;
+  task_status?: string;
+  ms?: number;
+}>(`agents/tasks/${taskId}/apply`, body);
 
 /** Разведка ролика: участки по классам агента, кадры включительно. */
 export interface Scout {
@@ -160,6 +179,10 @@ export interface ScoutStats {
   max_at: number | null;
   per_frame: number[];
   classes: ScoutClassStats[];
+  /** Находки по кадрам: {кадр: [[класс агента, уверенность, x, y, w, h], ...]}. */
+  frames: Record<string, [string, number, number, number, number, number][]>;
+  /** Класс агента → класс проекта, если сопоставлен. */
+  mapped: Record<string, { class_index: number; name: string; color: string } | null>;
 }
 
 export const scoutStats = (taskId: string, videoId: string) =>

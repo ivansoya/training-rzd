@@ -13,7 +13,12 @@ import { Button, Dialog, Icon, Input, MenuItem, Meta, Notice, Popover, cx, layer
 import { plural, ru } from "../ru";
 import VideoStrip from "./VideoStrip";
 import { NumInput } from "../NumInput";
-import { ScoutBand, taskColors, useScouts } from "../agents/scout";
+import { ScoutBand, scoutHits, taskColors, useScouts } from "../agents/scout";
+import { scoutStats } from "../../api/agents";
+import type { ScoutStats } from "../../api/agents";
+import { scoutFrameAt } from "../editor/review";
+import Marks from "../editor/Marks";
+import { fmtConf } from "./BoxCanvas";
 import { useConfirm } from "./tasks/Confirm";
 
 // Цвета участков — ряды палитры; брендовый красный значит действие или брак.
@@ -243,6 +248,24 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   const minStep = Math.max(100, Math.ceil(frameMs));
   const scouts = useScouts(taskId);
   const scout = scouts[video.id];
+  // Разведку показывают и прячут (R) — тот же выбор, что в редакторе ролика
+  const [scoutShown, setScoutShown] = useState(() => {
+    try { return window.localStorage.getItem("mag.video.scout") !== "0"; } catch { return true; }
+  });
+  const showScout = useCallback((v: boolean) => {
+    setScoutShown(v);
+    try { window.localStorage.setItem("mag.video.scout", v ? "1" : "0"); } catch { /* не запомнится */ }
+  }, []);
+  // Покадровые находки разведки — точкам полосы и призракам поверх плеера
+  const [found, setFound] = useState<ScoutStats | null>(null);
+  const [scoutOff, setScoutOff] = useState<Set<string>>(new Set());
+  const scoutAt = scout?.created_at;
+  useEffect(() => {
+    if (!scoutAt) { setFound(null); return; }
+    let alive = true;
+    scoutStats(taskId, video.id).then((s) => alive && setFound(s)).catch(() => {});
+    return () => { alive = false; };
+  }, [taskId, video.id, scoutAt]);
   const minSpan = Math.max(500, frameMs * 20);
   const src = videoFileUrl(taskId, video.id);
 
@@ -278,6 +301,8 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   const [gesture, setGesture] = useState<Gesture | null>(null);
   const [drag, setDrag] = useState<{ id: number; edge: "l" | "r" | "body"; grab: number } | null>(null);
   const [hover, setHover] = useState<{ ms: number; x: number; bottom: number; thumb: string | null } | null>(null);
+  // Скрытый плеер под превью узнал ролик — можно перематывать
+  const [peekReady, setPeekReady] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const peekRef = useRef<HTMLVideoElement>(null);
@@ -437,6 +462,17 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     setSelected(id);
   }
 
+  // Какой проверенный кадр сейчас на экране: при проигрывании находка держится полшага
+  // до и после своего кадра (не дольше секунды), на паузе — только ровно свой кадр
+  const scoutHere = found && scoutShown
+    ? scoutFrameAt(found.checked, Math.floor(at / frameMs + 1e-6), playing,
+      Math.min(Math.ceil((found.step || 1) / 2), Math.round(1000 / frameMs)))
+    : null;
+  const ghostHits = scoutHere === null ? [] : scoutHits(found, scoutHere, taskColors(scouts), scoutOff);
+  const scoutRef = useRef(!!scout);
+  scoutRef.current = !!scout;
+  const scoutShownRef = useRef(scoutShown);
+  scoutShownRef.current = scoutShown;
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (layerDepth() > depth.current || busy || done) return;
@@ -457,6 +493,9 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
       } else if (editable && (e.code === "KeyC" || e.code === "KeyH")) {
         e.preventDefault();
         setTool(e.code === "KeyC" ? "cut" : "hand");
+      } else if (e.code === "KeyR" && scoutRef.current) {
+        e.preventDefault();
+        showScout(!scoutShownRef.current);
       }
     }
     window.addEventListener("keydown", onKey);
@@ -577,6 +616,11 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     const pv = peekRef.current;
     const want = peekWant.current;
     if (!pv || want === null) return;
+    // Кадр после перемотки ещё не разжат — снимем, когда будет: иначе превью вышло бы пустым навсегда
+    if (pv.readyState < 2) {
+      pv.addEventListener("loadeddata", onPeekSeeked, { once: true });
+      return;
+    }
     const url = drawThumb(pv, 168);
     if (url) peekCache.current.set(want, url);
     setHover((h) => (h && h.ms === want ? { ...h, thumb: url } : h));
@@ -586,8 +630,9 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   }
 
   // Миниатюры одиночных кадров из сохранённого плана доснимаются по одной и уступают подсказке.
+  // Ждут, пока скрытый плеер узнает ролик: перемотка до метаданных просто теряется.
   useEffect(() => {
-    if (hover) return;
+    if (hover || !peekReady) return;
     const next = singles.find((s) => s.thumb === null);
     const pv = peekRef.current;
     if (!next || !pv) return;
@@ -600,7 +645,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     if (Math.abs(pv.currentTime * 1000 - next.ms) < 1) onPeekSeeked();
     else pv.currentTime = next.ms / 1000;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [singles, hover]);
+  }, [singles, hover, peekReady]);
 
   /** Нарезать по плану. Окно после нарезки не закрывается: нарезают подходами. */
   async function run() {
@@ -689,8 +734,18 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
                 Браузер не воспроизводит этот формат — плеер останется чёрным. Участки можно отметить по киноленте ниже: кадры нарежет сервер.
               </div>
             )}
+            {/* Находки разведки: на паузе — ровно этого кадра, при проигрывании держатся вокруг своего кадра */}
+            {ghostHits.length > 0 && video.width && video.height && (
+              <div className="vc-ghosts" onClick={togglePlay}>
+                <Marks width={video.width} height={video.height} items={ghostHits.map((h, k) => ({
+                  key: String(k), x: h.x, y: h.y, w: h.w, h: h.h, color: h.color, ghost: true,
+                  label: <><i className="mag-cv-mark">◎</i>{h.name}<b className="mag-cv-conf">{fmtConf(h.conf)}</b></>,
+                }))} />
+              </div>
+            )}
             {/* Скрытый плеер под подсказки: перематывать основной нельзя. */}
-            <video ref={peekRef} className="vc-hidden" src={src} preload="metadata" muted onSeeked={onPeekSeeked} />
+            <video ref={peekRef} className="vc-hidden" src={src} preload="auto" muted onSeeked={onPeekSeeked}
+              onLoadedData={() => setPeekReady(true)} />
           </div>
 
           {/* Свои контролы: без шага в один кадр выбрать кадр — угадайка; перемотку играет лента ниже. */}
@@ -811,8 +866,15 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
               </div>
             );
             return scout ? (
-              <ScoutBand taskId={taskId} videoId={video.id} scout={scout} colors={taskColors(scouts)}
+              <ScoutBand scout={scout} colors={taskColors(scouts)}
                 view={view} at={at} editable={editable} onSeek={seek}
+                shown={scoutShown} onShown={showScout}
+                stats={found} onOff={setScoutOff}
+                onPick={(frame) => {
+                  // Середина периода кадра: на его границе плеер показал бы соседний
+                  videoRef.current?.pause();
+                  seek(Math.min(duration, (frame + 0.5) * frameMs));
+                }}
                 onPlan={(ranges) => ranges.forEach(([a, b]) => addSeg(a, Math.min(b, duration)))}
                 onWheel={(ratio, deltaY, shift) => zoomAt(ratio, deltaY, shift, trackRef.current?.getBoundingClientRect().width ?? 1)}>
                 {ticks}

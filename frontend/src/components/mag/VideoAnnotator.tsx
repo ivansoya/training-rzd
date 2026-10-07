@@ -15,6 +15,7 @@ import {
   putTrackKey,
   reopenVideoAnnotation,
   saveFrameBoxes,
+  takeScout,
   unmarkEmptyFrame,
   updateTrack,
   videoFrameUrl,
@@ -29,12 +30,13 @@ import type {
   VideoSingleBox,
   VideoTrack,
 } from "../../auth/api";
-import type { RunView } from "../../api/agents";
+import { scoutStats } from "../../api/agents";
+import type { RunView, ScoutStats } from "../../api/agents";
 import { pollJob } from "../../api/jobs";
 import { Badge, Button, Notice, hasLayer } from "../../ui";
 import BoxCanvas from "./BoxCanvas";
 import { useLive } from "../../live/LiveProvider";
-import type { CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
+import type { CanvasGhost, CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
 import * as poly from "./polygon";
 import type { Ring } from "./polygon";
 import ClassMenu from "./ClassMenu";
@@ -48,6 +50,7 @@ import { fmtTime } from "./VideoCutModal";
 import { count, plural, ru } from "../ru";
 import { scoutLanes, taskColors, useScouts } from "../agents/scout";
 import AgentRunDialog, { AgentRunBar } from "../agents/AgentRunDialog";
+import AgentSetupDialog from "../agents/AgentSetupDialog";
 import { useConfirm } from "./tasks/Confirm";
 import { EditorHead, Float, Grip, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip } from "../editor/Chrome";
 import ClassPicker from "../editor/ClassPicker";
@@ -58,6 +61,9 @@ import type { KeyGroup } from "../editor/look";
 import { LaneMenu, Lanes } from "../editor/Lanes";
 import type { LaneAction } from "../editor/Lanes";
 import { HereSide, Transport } from "../editor/VideoPanels";
+import { ReviewBar, ScoutBar } from "../editor/ReviewBars";
+import { AgentTool, useAgentTool } from "../editor/AgentTool";
+import { isTaken, nextFrame, scoutFrameAt, settlePending } from "../editor/review";
 import {
   DOCK_DEFAULT, clampDock, coveredSpans, itemKey, seekToTrack, singleTicks, trackNumbers,
 } from "../editor/video";
@@ -86,7 +92,14 @@ const KEYS: KeyGroup[] = [
     ["Ручки ‹ ›", "Продлить выбранный трек новым ключом"],
     ["Двойной щелчок", "Ключ на дорожке в этом месте"],
     ["Alt+протяжка", "Заслонить участок трека"],
-    ["R", "Разведка по классам вместо треков"],
+    ["R", "Разведка: находки на кадре и дорожки по классам вместо треков"],
+    ["Щелчок у риски", "К кадру ближайшей риски — агента, разведки, одиночных"],
+  ] },
+  { title: "Агент и разведка", keys: [
+    ["G", "Агент на этом кадре: рамки встанут на проверку"],
+    ["Enter", "Подтвердить кадр; при выбранной находке разведки — взять её в разметку"],
+    ["[ / ]", "Предыдущий и следующий кадр на проверке"],
+    ["Правка рамки", "Поправленная рамка агента считается проверенной"],
   ] },
   { title: "Вид", keys: [
     ["Колесо", "Зум"],
@@ -155,6 +168,7 @@ export default function VideoAnnotator({
   taskName,
   video,
   readOnly,
+  review = false,
   onClose,
   onChanged,
 }: {
@@ -163,6 +177,8 @@ export default function VideoAnnotator({
   taskName: string;
   video: TaskVideoItem;
   readOnly: boolean;
+  /** Открыт ради проверки агента: встать на первый кадр с непроверенным. */
+  review?: boolean;
   onClose: () => void;
   /** Разметка ролика закрыта или открыта заново — таске пора перечитаться. */
   onChanged?: () => void;
@@ -174,6 +190,16 @@ export default function VideoAnnotator({
   const scouts = useScouts(taskId);
   const scout = scoutLanes(scouts[video.id], taskColors(scouts));
   const [scoutOn, setScoutOn] = useState(() => stored(SCOUT_KEY) === "1");
+  // Покадровые находки разведки — призракам на кадре и точкам на дорожках
+  const [found, setFound] = useState<ScoutStats | null>(null);
+  const [ghostOn, setGhostOn] = useState<number | null>(null);
+  const scoutAt = scouts[video.id]?.created_at;
+  useEffect(() => {
+    if (!scoutAt) { setFound(null); return; }
+    let alive = true;
+    scoutStats(taskId, video.id).then((s) => alive && setFound(s)).catch(() => {});
+    return () => { alive = false; };
+  }, [taskId, video.id, scoutAt]);
   const toggleScout = useCallback(() => {
     setScoutOn((on) => { keep(SCOUT_KEY, on ? "0" : "1"); return !on; });
   }, []);
@@ -207,6 +233,9 @@ export default function VideoAnnotator({
   const [closing, setClosing] = useState<number | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentRun, setAgentRun] = useState<RunView | null>(null);
+  const agentTool = useAgentTool(taskId);
+  const [setupOpen, setSetupOpen] = useState(false);
+  const [agentNote, setAgentNote] = useState<string | null>(null);
   const [dockH, setDockH] = useState(() => Number(stored(DOCK_KEY)) || DOCK_DEFAULT);
   const dockLive = useRef(dockH);
   const [confirm, confirmNode] = useConfirm();
@@ -318,7 +347,8 @@ export default function VideoAnnotator({
       its.push({ kind: "single", box: single });
       // У одиночной фигура приходит готовой: рамка или контур. Трек — всегда рамка.
       const shape = (single.shape ?? single.geometry) as Omit<CanvasShape, "class_index">;
-      bs.push({ ...shape, class_index: single.class_index });
+      bs.push({ ...shape, class_index: single.class_index,
+        ...(single.pending ? { pending: true, conf: single.conf ?? null } : {}) });
     }
     return { items: its, boxes: bs, dashed: dim };
   }, [data, frame]);
@@ -620,13 +650,15 @@ export default function VideoAnnotator({
 
   /** Пока тянут рамку, холст сообщает каждое положение; отправляем осевшее. */
   const onBoxes = useCallback(
-    (next: CanvasShape[]) => {
+    (raw: CanvasShape[]) => {
+      // Правленая рамка агента — проверенная: пунктир уходит под рукой, сервер решит так же.
+      const next = settlePending(sentOf(frame)?.shapes ?? raw, raw);
       setDraft(next);
       window.clearTimeout(draftTimer.current);
       pendingCommit.current = () => commit(next);
       draftTimer.current = window.setTimeout(flushDraft, 350);
     },
-    [commit, flushDraft]
+    [commit, flushDraft, sentOf, frame]
   );
 
   useEffect(() => {
@@ -706,6 +738,145 @@ export default function VideoAnnotator({
     if (frozen || !currentTrack || !stateAt(currentTrack, frame)) return;
     guard(async () => { await putTrackKey(currentTrack.id, frame, {}); await load(); });
   }, [frozen, currentTrack, frame, guard, load]);
+
+  // --- проверка агента и разведка ----------------------------------------- #
+  /** Кадры с непроверенной разметкой агента, по порядку. */
+  const agentFrames = useMemo(
+    () => [...new Set((data?.singles || []).filter((b) => b.pending).map((b) => b.frame_no))].sort((a, b) => a - b),
+    [data]
+  );
+  const pendingHere = (draft ?? boxes).filter((b) => b.pending).length;
+
+  /** Список одиночных кадра для записи: как его видит холст, с поправкой `change`. */
+  const singlesOf = useCallback((was: Sent, keepIt: (s: CanvasShape) => CanvasShape | null) => {
+    const list: SingleWire[] = [];
+    was.shapes.forEach((box, i) => {
+      const item = was.items[i];
+      if (item.kind !== "single" && item.kind !== "new-single") return;
+      const got = keepIt(box);
+      if (got) list.push(wireOf(got, item.kind === "single" ? item.box.id : undefined));
+    });
+    return list;
+  }, []);
+
+  /** Записать одиночные кадра целиком и перечитать — подтверждение и отклонение. */
+  const rewrite = useCallback((keepIt: (s: CanvasShape) => CanvasShape | null) => {
+    flushDraft();
+    const was = sentOf(frame);
+    if (!was || frozen) return false;
+    const list = singlesOf(was, keepIt);
+    const at = frame;
+    sent.current = null;
+    setDraft(was.shapes.flatMap((s) => { const g = keepIt(s); return g ? [g] : []; }));
+    guard(async () => {
+      await saveFrameBoxes(taskId, video.id, at, list);
+      await load();
+    });
+    return true;
+  }, [flushDraft, sentOf, frame, frozen, singlesOf, guard, taskId, video.id, load]);
+
+  /** «Подтвердить кадр»: оставшиеся рамки агента верны. Дальше — к следующему на проверке. */
+  const confirmFrame = useCallback(() => {
+    if (!pendingHere) return;
+    if (!rewrite((s) => (s.pending ? { ...s, pending: false } : s))) return;
+    pick(null);
+    const to = nextFrame(agentFrames.filter((f) => f !== frame), frame, 1);
+    if (to !== null) { stop(); setFrame(to); }
+  }, [pendingHere, rewrite, pick, agentFrames, frame, stop]);
+
+  /** «Отклонить все»: непроверенное агента уходит с кадра. */
+  const rejectFrame = useCallback(() => {
+    if (!pendingHere) return;
+    if (rewrite((s) => (s.pending ? null : s))) pick(null);
+  }, [pendingHere, rewrite, pick]);
+
+  const goReview = useCallback((dir: 1 | -1) => {
+    const to = nextFrame(agentFrames, frame, dir);
+    if (to !== null) { stop(); setFrame(to); }
+  }, [agentFrames, frame, stop]);
+
+  // Открыли «на проверку» — встаём на первый кадр с непроверенным, один раз
+  const reviewed = useRef(!review);
+  useEffect(() => {
+    if (reviewed.current || !data) return;
+    reviewed.current = true;
+    if (agentFrames.length) setFrame(agentFrames[0]);
+  }, [data, agentFrames]);
+
+  /** Цвет и имя класса агента: сопоставленный — как в проекте, иначе цвет разведки. */
+  const scoutColor = useMemo(() => taskColors(scouts), [scouts]);
+  const ghostsAll = useMemo((): (CanvasGhost & { i: number; class_index: number | null })[] => {
+    if (!found || !scoutOn) return [];
+    // На паузе — находки ровно этого кадра; при проигрывании держатся полшага вокруг своего, не дольше секунды
+    const at = scoutFrameAt(found.checked, frame, playing, Math.min(Math.ceil((found.step || 1) / 2), Math.round(fps)));
+    if (at === null) return [];
+    return (found.frames[String(at)] || []).map(([cls, conf, x, y, w, h], i) => {
+      const m = found.mapped[cls];
+      return { i, x, y, w, h, conf, class_index: m?.class_index ?? null,
+        name: m?.name ?? cls, color: m?.color ?? scoutColor.get(cls) ?? GREY.color };
+    });
+  }, [found, scoutOn, frame, scoutColor, playing, fps]);
+  // Взятая в разметку находка призраком больше не рисуется
+  const ghosts = useMemo(
+    () => ghostsAll.filter((g) => !isTaken(g, draft ?? boxes)),
+    [ghostsAll, draft, boxes]
+  );
+  useEffect(() => { setGhostOn(null); }, [frame, scoutOn]);
+  const scoutDots = useMemo(() => {
+    const by = new Map<string, number[]>();
+    const all: number[] = [];
+    for (const [f, list] of Object.entries(found?.frames || {})) {
+      if (!list.length) continue;
+      all.push(Number(f));
+      for (const name of new Set(list.map((d) => d[0]))) by.set(name, [...(by.get(name) || []), Number(f)]);
+    }
+    const asc = (a: number, b: number) => a - b;
+    by.forEach((v) => v.sort(asc));
+    return { all: all.sort(asc), by };
+  }, [found]);
+
+  /** «В разметку»: выбранная находка или все на кадре — проверенными одиночными рамками. */
+  const take = useCallback((which: "one" | "all") => {
+    if (frozen) return;
+    const list = which === "one" ? ghosts.filter((_, k) => k === ghostOn) : ghosts;
+    if (!list.length) return;
+    if (list.some((g) => g.class_index === null) && active === null) {
+      setError("У находки класс агента не сопоставлен с проектом — выберите класс в панели, он и встанет.");
+      return;
+    }
+    flushDraft();
+    const at = frame;
+    setGhostOn(null);
+    guard(async () => {
+      await takeScout(taskId, video.id, at, list.map((g) => ({
+        i: g.i, ...(g.class_index === null ? { class_index: active as number } : {}),
+      })));
+      await load();
+    });
+  }, [frozen, ghosts, ghostOn, active, flushDraft, frame, guard, taskId, video.id, load]);
+
+  /** Агент на этом кадре: правки сначала доходят, потом ролик перечитывается с новыми рамками на проверке. */
+  const runAgent = useCallback(async () => {
+    if (frozen || !agentTool.ready || agentTool.busy) return;
+    if (!(await settle())) return;
+    stop();
+    setAgentNote(null);
+    try {
+      const res = await agentTool.apply({ video_id: video.id, frame_no: frame });
+      await load();
+      setAgentNote(res.put
+        ? `Агент: ${res.put} ${plural(res.put, "рамка", "рамки", "рамок")} на проверке`
+        : res.found ? "Агент нашёл только то, что на кадре уже есть" : "Агент ничего не нашёл на этом кадре");
+    } catch (e) {
+      setError(errorText(e));
+    }
+  }, [frozen, agentTool, settle, stop, video.id, frame, load]);
+
+  useEffect(() => {
+    if (!agentNote) return;
+    const t = window.setTimeout(() => setAgentNote(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [agentNote]);
 
   // --- навигация ----------------------------------------------------------- #
   const seek = useCallback((f: number) => {
@@ -963,6 +1134,7 @@ export default function VideoAnnotator({
         `${count(p.frames, "кадр", "кадра", "кадров")} ${plural(p.frames, "уйдёт", "уйдут", "уйдут")} в таску${p.empty ? `, из них ${p.empty} ${plural(p.empty, "фоновый", "фоновых", "фоновых")}` : ""}`,
         `${count(p.boxes, "объект", "объекта", "объектов")} на них`,
         ...(p.updated_frames ? [`${count(p.updated_frames, "кадр", "кадра", "кадров")} уже в таске — ${plural(p.updated_frames, "обновится", "обновятся", "обновятся")}`] : []),
+        ...(p.unchecked ? [`${count(p.unchecked, "кадр уйдёт", "кадра уйдут", "кадров уйдут")} с непроверенной разметкой агента — проверить можно и в редакторе кадров`] : []),
       ],
       ok: "Закрыть разметку", icon: "lock",
     });
@@ -1009,6 +1181,7 @@ export default function VideoAnnotator({
       switch (e.code) {
         case "Escape":
           if (autoPrev || autoPts.length) clearAuto();
+          else if (ghostOn !== null) setGhostOn(null);
           else if (tool !== "select") setTool("select");
           else if (selected !== null || pickedTrack) pick(null);
           else void closeEditor();
@@ -1017,10 +1190,17 @@ export default function VideoAnnotator({
           if (autoPrev) commitAuto();
           else togglePlay();
           break;
-        // Enter нативно нажал бы кнопку в фокусе
+        // Enter нативно нажал бы кнопку в фокусе; свой смысл — взять находку или подтвердить кадр.
+        // Рисуемый контур Enter замыкает на холсте раньше, сюда он не доходит.
         case "Enter":
         case "NumpadEnter":
+          if (autoPrev || frozen) break;
+          if (ghostOn !== null) take("one");
+          else confirmFrame();
           break;
+        case "BracketLeft": goReview(-1); break;
+        case "BracketRight": goReview(1); break;
+        case "KeyG": void runAgent(); break;
         case "ArrowRight": go(step); break;
         case "ArrowLeft": go(-step); break;
         case "KeyV": setTool("select"); break;
@@ -1057,7 +1237,7 @@ export default function VideoAnnotator({
     };
   }, [tool, frozen, autoPrev, autoPts, clearAuto, closeEditor, togglePlay, go, auto.state, pickAuto,
       selected, pickedTrack, pick, apply, items, classes, pickClass, commitAuto, toggleEmpty, putKey,
-      scout.length, toggleScout]);
+      scout.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent]);
 
   // --- док ----------------------------------------------------------------- #
   const room = () => body.current?.clientHeight ?? 900;
@@ -1068,7 +1248,8 @@ export default function VideoAnnotator({
   };
 
   const covered = useMemo(() => coveredSpans(data?.tracks || [], data?.singles || []), [data]);
-  const ticks = useMemo(() => singleTicks(data?.singles || []), [data]);
+  // Непроверенное агента — своей дорожкой «Агент», в «Одиночные» оно попадает после проверки
+  const ticks = useMemo(() => singleTicks((data?.singles || []).filter((b) => !b.pending)), [data]);
   const closed = closedAt !== null;
   const editable = !readOnly && !unplayable;
   const autoTitle = auto.state === "ready" ? undefined
@@ -1134,7 +1315,7 @@ export default function VideoAnnotator({
         <div
           className={autoLive && auto.busy ? "ed-main auto-wait" : "ed-main"}
           style={{ ["--pt" as string]: "64px", ["--pr" as string]: `${SIDE_W + 28}px`,
-            ["--pb" as string]: autoPrev ? "66px" : "16px", ["--pl" as string]: "16px" }}
+            ["--pb" as string]: autoPrev || (!frozen && (pendingHere > 0 || ghosts.length > 0)) ? "66px" : "16px", ["--pl" as string]: "16px" }}
         >
           {/* Кадр готовится: гасим картинку и показываем кружок */}
           {shown.pending && (
@@ -1171,6 +1352,9 @@ export default function VideoAnnotator({
             onAutoPoint={onAutoPoint}
             onAutoBox={onAutoBox}
             onAutoCommit={commitAuto}
+            ghosts={ghosts}
+            ghostOn={ghostOn}
+            onGhost={frozen ? undefined : setGhostOn}
           />
 
           {/* Пока кадр догоняет, панель гаснет: рисовать нельзя, и это видно сразу */}
@@ -1189,6 +1373,8 @@ export default function VideoAnnotator({
             <ToolMenu label="Настройки полуавтомата" width={300}>
               <AutoSettings refine={refine} onRefine={setRefine} polygon={tool === "polygon"} error={auto.error} />
             </ToolMenu>
+            <AgentTool tool={agentTool} disabled={frozen || shown.lagging} onRun={() => void runAgent()}
+              onMap={() => setSetupOpen(true)} />
             <i className="ed-vsep" />
             <ClassPicker classes={classes} active={active} disabled={frozen && !classes.length}
               onPick={(ci) => pickClass(ci)}
@@ -1206,6 +1392,9 @@ export default function VideoAnnotator({
           <div className="ed-plates">
             <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn}
               quiet={frozen} onRetry={auto.retry} onDismiss={() => auto.setError(null)} />
+            {(agentTool.busy || agentNote) && (
+              <div className="mag-auto-plate ed-agent-plate" role="status">{agentTool.busy ? "Агент смотрит кадр…" : agentNote}</div>
+            )}
           </div>
 
           <Float className="fe-side ve-side" label="На этом кадре">
@@ -1221,6 +1410,13 @@ export default function VideoAnnotator({
             <Float className="ed-bot" role="toolbar" label="Показанное моделью">
               <AutoBar onCommit={commitAuto} onCancel={clearAuto} />
             </Float>
+          )}
+          {!autoPrev && !frozen && pendingHere > 0 && (
+            <ReviewBar count={pendingHere} onConfirm={confirmFrame} onReject={rejectFrame} />
+          )}
+          {!autoPrev && !frozen && !pendingHere && ghosts.length > 0 && (
+            <ScoutBar count={ghosts.length} picked={ghostOn !== null}
+              onTake={() => take("one")} onTakeAll={() => take("all")} />
           )}
 
           <ZoomChip scale={scale} onZoom={(k) => canvas.current?.zoomBy(k)} onFit={() => canvas.current?.fit()} />
@@ -1238,8 +1434,8 @@ export default function VideoAnnotator({
             onEmpty={toggleEmpty} onKey={putKey} />
           <Lanes tracks={data?.tracks || []} numbers={numbers} frame={frame} lastFrame={lastFrame} fps={fps}
             labelOf={labelOf} selected={pickedTrack} editable={!frozen} hidden={hiddenTracks}
-            covered={covered} marks={marks} plan={plan ? plan.frames : null} singles={ticks}
-            scout={scout} scoutOpen={scoutOn && scout.length > 0} onScout={toggleScout}
+            covered={covered} marks={marks} plan={plan ? plan.frames : null} singles={ticks} agent={agentFrames}
+            scout={scout} scoutDots={scoutDots} scoutOpen={scoutOn && scout.length > 0} onScout={toggleScout}
             onSelect={selectTrack} onHide={(id) => toggleHidden(`t:${id}`)} onAction={onLane} onSeek={seek} />
         </div>
       </div>
@@ -1247,10 +1443,11 @@ export default function VideoAnnotator({
       <KeysDialog open={keysOpen} onOpenChange={setKeysOpen} groups={KEYS} />
       {confirmNode}
 
+      {setupOpen && <AgentSetupDialog taskId={taskId} tool={agentTool} onClose={() => setSetupOpen(false)} />}
       {agentOpen && (
-        <AgentRunDialog taskId={taskId} initial={{ mode: "annotate", videos: [video.id] }}
-          onClose={() => setAgentOpen(false)}
-          onStarted={(run) => { setAgentOpen(false); setAgentRun(run); }} />
+        <AgentRunDialog taskId={taskId} initial={{ mode: "annotate", videos: [video.id], within: [video.id], modes: ["annotate", "scout"] }}
+          onClose={() => { setAgentOpen(false); agentTool.reload(); }}
+          onStarted={(run) => { setAgentOpen(false); setAgentRun(run); agentTool.reload(); }} />
       )}
 
       {menu && (

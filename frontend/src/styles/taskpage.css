@@ -182,3 +182,19 @@
 /* Вкладки таски на узком экране переносятся: в прокрутке «История» пряталась
    за краем, и о ней было не узнать. Общее правило workspace.css прокручивает
    вкладки всех страниц — здесь их всего четыре, и перенос честнее. */
+
+/* Ход агента по блоку — строка в карточке блока */
+.tp-agent { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--agent-fg); }
+.tp-agent .t-xs { color: var(--muted-fg); }
+.tp-agent-bar { flex: 1 1 120px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--agent) 22%, transparent); overflow: hidden; }
+.tp-agent-bar u { display: block; height: 100%; background: var(--agent); transition: width .4s var(--ease); }
+.tp-agent-w { padding: 10px 16px 12px; border-bottom: 1px solid var(--border); }
+
+/* Меню «⋯» блока: агент таски с шестерёнкой, режимы, шаг кадров, удаление */
+.am-h { display: flex; align-items: center; gap: 8px; padding: 4px 4px 6px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--muted-fg); }
+.am-h > .ui-ic { color: var(--agent-fg); flex: none; }
+.am-who { flex: 1; min-width: 0; }
+.am-who b { color: var(--fg); font-weight: 500; }
+.am-step { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 4px 0 2px; padding: 6px 10px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted-fg); }
+.am-step .ui-input { width: 76px; height: 28px; text-align: right; }
+.tp-agent-v { margin-left: 6px; opacity: .75; font-size: 11.5px; }

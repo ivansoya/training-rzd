@@ -1,6 +1,6 @@
 import type { ImageTaskStatus } from "../../auth/api";
 
-export type FrameAction = "accept" | "empty" | "skip" | "trash" | "restore" | "next";
+export type FrameAction = "empty" | "skip" | "trash" | "restore" | "next";
 
 /** Что можно сделать с кадром прямо сейчас — только это и стоит на плашке.
  *
@@ -14,14 +14,11 @@ export function frameActions(frame: {
   status: ImageTaskStatus;
   /** Объектов на кадре сейчас, с неспасёнными правками. */
   objects: number;
-  /** Новый кадр с нетронутыми рамками агента. */
-  agentFrame: boolean;
   readOnly: boolean;
 }): FrameAction[] {
   if (frame.readOnly) return ["next"];
   if (frame.status === "deleted") return ["restore", "next"];
   const out: FrameAction[] = [];
-  if (frame.agentFrame) out.push("accept");
   if (frame.objects === 0 || frame.status === "empty") out.push("empty");
   out.push("skip", "trash", "next");
   return out;

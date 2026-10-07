@@ -6,8 +6,10 @@ import type { PendingObject, PendingVideo, TaskDetail, TaskVideoItem, VideoPrepa
 import type { Tag } from "../../../api/tags";
 import { Badge, Button, Card, Icon, Legend, MenuItem, Popover, StackBar, Swatch, cx } from "../../../ui";
 import { count, plural, ru } from "../../ru";
-import { ScoutButton, useScouts } from "../../agents/scout";
-import ScoutStats from "../../agents/ScoutStats";
+import type { RunMode, RunView } from "../../../api/agents";
+import type { AgentToolState } from "../../editor/AgentTool";
+import AgentMenu from "./AgentMenu";
+import type { AgentAction } from "./AgentMenu";
 import TagPicker from "../TagPicker";
 import VideoStrip from "../VideoStrip";
 import { fmtBytes, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
@@ -83,22 +85,86 @@ function Progress({ c }: { c: SourceCounts }) {
   );
 }
 
-function AcceptAgent({ n, onAccept }: { n?: number; onAccept?: () => void }) {
-  if (!n || !onAccept) return null;
+/** Кадры с непроверенной разметкой агента: открыть их в редакторе по одному. */
+function ReviewAgent({ n, onReview }: { n?: number; onReview?: () => void }) {
+  if (!n || !onReview) return null;
   return (
-    <Button variant="ghost" size="sm" icon="bot" className="is-agent" onClick={onAccept}
-      title="Кадры с непроверенной разметкой агента станут размеченными">
-      Принять агента <span className="ui-mono">{ru(n)}</span>
+    <Button variant="ghost" size="sm" icon="bot" className="is-agent" onClick={onReview}
+      title="Кадры с непроверенной разметкой агента — пройти их в редакторе">
+      Проверить <span className="ui-mono">{ru(n)}</span>
     </Button>
   );
 }
 
+/** Агент из меню блока: агент таски, запуск сразу и окно «Агент таски». */
+export interface AgentHooks {
+  tool: AgentToolState;
+  /** Агент уже идёт по таске или страница занята. */
+  busy: boolean;
+  onSetup: () => void;
+  start: (body: { mode: RunMode; sources?: string[]; videos?: string[]; step: number }) => void;
+  /** Полное окно запуска, настроенное на блок. */
+  dialog: (ask: { mode: RunMode; videos?: string[]; sources?: string[]; modes: RunMode[]; within?: string[] }) => void;
+}
+
+/** Кнопка «Агент» в шапке блока: окно запуска со всеми режимами этого блока. */
+function AgentButton({ agent, ask }: { agent: AgentHooks; ask: Parameters<AgentHooks["dialog"]>[0] }) {
+  return (
+    <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled={agent.busy} onClick={() => agent.dialog(ask)}
+      title={agent.busy ? "Агент уже идёт по этой таске" : "Разметить или разведать этот блок агентом — с выбором режима"}>
+      Агент
+    </Button>
+  );
+}
+
+/** Разметке нужны сопоставленные классы, разведке — нет. */
+const unmapped = (agent: AgentHooks) => agent.tool.agent && agent.tool.mapped === 0 && "классы не сопоставлены ⚙";
+
+const framesAction = (agent: AgentHooks, source: string, fresh: number, label = "Разметить новые кадры"): AgentAction => ({
+  label, icon: "bot", hint: `${ru(fresh)} ${plural(fresh, "новый", "новых", "новых")}`,
+  off: unmapped(agent) || (fresh === 0 && "новых кадров нет"),
+  run: (step) => agent.start({ mode: "frames", sources: [source], step }),
+});
+
+const scoutAction = (agent: AgentHooks, videos: TaskVideoItem[], label: string): AgentAction => ({
+  label, icon: "scan", hint: "где что есть — в разметку не пишет",
+  off: videos.length === 0 && "роликов нет",
+  run: (step) => agent.start({ mode: "scout", videos: videos.map((v) => v.id), step }),
+});
+
+const annotateAction = (agent: AgentHooks, videos: TaskVideoItem[], label: string): AgentAction => ({
+  label, icon: "bot", hint: "каждый N-й кадр, кроме работы человека",
+  off: unmapped(agent) || (videos.length === 0 && "открытых роликов нет"),
+  run: (step) => agent.start({ mode: "annotate", videos: videos.map((v) => v.id), step }),
+});
+
+/** Ход агента по блоку — прямо в карточке, а не только полосой под шапкой. */
+export function AgentLine({ run }: { run?: RunView | null }) {
+  if (!run) return null;
+  const pct = run.total ? Math.min(100, Math.round((run.processed / run.total) * 100)) : null;
+  const what = run.mode === "scout" ? "разведывает" : "размечает";
+  return (
+    <div className="tp-agent" role="status">
+      <Icon name="bot" size={13} />
+      <span className="t-xs">
+        Агент «{run.agent ?? "агент"}» {run.status === "running" ? what : run.status === "queued" ? "в очереди" : "ждёт карту"}
+        {pct !== null && <> · <span className="ui-mono">{pct} %</span></>}
+        {" · "}<span className="ui-mono">{ru(run.processed)}{run.total ? ` из ${ru(run.total)}` : ""}</span>
+      </span>
+      {pct !== null && <i className="tp-agent-bar"><u style={{ width: `${pct}%` }} /></i>}
+    </div>
+  );
+}
+
 /** Изображения или кадры из закрытой разметки ролика. */
-export function FramesCard({ block, editable, onAnnotate, onAcceptAgent }: {
+export function FramesCard({ block, editable, run, agent, onAnnotate, onReview }: {
   block: SourceBlock;
   editable: boolean;
+  /** Идущий по этому блоку агент. */
+  run?: RunView | null;
+  agent: AgentHooks;
   onAnnotate: () => void;
-  onAcceptAgent?: () => void;
+  onReview?: () => void;
 }) {
   const files = block.kind === "files";
   return (
@@ -106,13 +172,19 @@ export function FramesCard({ block, editable, onAnnotate, onAcceptAgent }: {
       title={<><Icon name={files ? "images" : "eye"} />{block.title}<Badge variant="secondary">{ru(block.total)}</Badge></>}
       desc={block.counts.first_at ? `с ${dayOf(block.counts.first_at)}` : undefined}
       actions={<>
-        {editable && <AcceptAgent n={block.counts.agent} onAccept={onAcceptAgent} />}
+        {editable && <ReviewAgent n={block.counts.agent} onReview={onReview} />}
+        {editable && <AgentButton agent={agent} ask={{ mode: "frames", sources: [block.key], modes: ["frames"] }} />}
         {block.total > 0 && (
           <Button size="sm" icon={editable ? "edit" : "eye"} onClick={onAnnotate}>
             {!editable ? "Смотреть" : files ? "Размечать" : "Проверить"}
           </Button>
         )}
+        {editable && (
+          <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Агент: ${block.title}`}
+            actions={[framesAction(agent, block.key, block.counts.new || 0)]} />
+        )}
       </>}>
+      <AgentLine run={run} />
       <Progress c={block.counts} />
     </Card>
   );
@@ -135,22 +207,23 @@ export function Rail({ parts, tone }: { parts: [number, number][]; tone?: "track
 }
 
 /** Ролики на нарезку: общий счёт кадров и строка на каждый ролик со своим планом. */
-export function CutCard({ block, taskId, code, tags, editable, onAnnotate, onAcceptAgent, onCut, onDelete, onVideoTags, onTagCreated }: {
+export function CutCard({ block, taskId, code, tags, editable, run, agent, onAnnotate, onReview,
+  onCut, onDelete, onVideoTags, onTagCreated }: {
   block: SourceBlock;
   taskId: string;
   code: string;
   tags: Tag[];
   editable: boolean;
+  run?: RunView | null;
+  agent: AgentHooks;
   onAnnotate: () => void;
-  onAcceptAgent: () => void;
+  onReview: () => void;
   onCut: (v: TaskVideoItem) => void;
   onDelete: (v: TaskVideoItem) => void;
   onVideoTags: (v: TaskVideoItem, ids: string[]) => void;
   onTagCreated: (t: Tag) => void;
 }) {
   const videos = block.videos || [];
-  const scouts = useScouts(taskId);
-  const [stats, setStats] = useState<string | null>(null);
   // Пересечение: чип «на все» обещает, что таг стоит у каждого ролика
   const common = videos.reduce<string[]>((acc, v) => acc.filter((id) => (v.tag_ids || []).includes(id)),
     [...(videos[0]?.tag_ids || [])]);
@@ -168,11 +241,19 @@ export function CutCard({ block, taskId, code, tags, editable, onAnnotate, onAcc
       title={<><Icon name="cut" />Ролики на нарезку<Badge variant="secondary">{videos.length}</Badge></>}
       desc={block.total ? `${count(block.total, "кадр нарезан", "кадра нарезано", "кадров нарезано")}` : "ещё ничего не нарезано"}
       actions={<>
-        {editable && <AcceptAgent n={block.counts.agent} onAccept={onAcceptAgent} />}
+        {editable && <ReviewAgent n={block.counts.agent} onReview={onReview} />}
+        {editable && <AgentButton agent={agent} ask={{ mode: block.total ? "frames" : "scout", sources: [block.key],
+          videos: videos.map((v) => v.id), within: videos.map((v) => v.id), modes: ["frames", "scout"] }} />}
         {block.total > 0 && (
           <Button size="sm" icon={editable ? "edit" : "eye"} onClick={onAnnotate}>{editable ? "Размечать нарезанное" : "Смотреть"}</Button>
         )}
+        {editable && (
+          <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label="Агент: ролики на нарезку" step
+            actions={[framesAction(agent, block.key, block.counts.new || 0, "Разметить нарезанные кадры"),
+              scoutAction(agent, videos, "Разведать все ролики")]} />
+        )}
       </>}>
+      <AgentLine run={run} />
       {block.total > 0 && <Progress c={block.counts} />}
       {editable && videos.length > 1 && (
         <div className="tp-tagall">
@@ -184,25 +265,28 @@ export function CutCard({ block, taskId, code, tags, editable, onAnnotate, onAcc
       <div className="tp-reels">
         {videos.map((v) => (
           <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={editable}
-            scout={<ScoutButton scout={scouts[v.id]} onOpen={() => setStats(v.id)} />}
-            onCut={() => onCut(v)} onDelete={() => onDelete(v)}
+            menu={editable && (
+              <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
+                actions={[scoutAction(agent, [v], "Разведать ролик")]}
+                deleteLabel="Удалить ролик и его кадры" onDelete={() => onDelete(v)} />
+            )}
+            onCut={() => onCut(v)}
             onTags={(ids) => onVideoTags(v, ids)} onTagCreated={onTagCreated} />
         ))}
       </div>
-      {stats && <ScoutStats taskId={taskId} videoId={stats} onClose={() => setStats(null)} />}
     </Card>
   );
 }
 
-function ReelRow({ v, taskId, code, tags, editable, scout, onCut, onDelete, onTags, onTagCreated }: {
+function ReelRow({ v, taskId, code, tags, editable, menu, onCut, onTags, onTagCreated }: {
   v: TaskVideoItem;
   taskId: string;
   code: string;
   tags: Tag[];
   editable: boolean;
-  scout: ReactNode;
+  /** Меню «⋯»: агент на ролик и удаление. */
+  menu: ReactNode;
   onCut: () => void;
-  onDelete: () => void;
   onTags: (ids: string[]) => void;
   onTagCreated: (t: Tag) => void;
 }) {
@@ -215,7 +299,7 @@ function ReelRow({ v, taskId, code, tags, editable, scout, onCut, onDelete, onTa
         <b className="t-ell" title={v.file_name}>{v.file_name}</b>
         <span className="t-xs t-muted">{fmtTime(v.duration_ms || 0)} · {v.width}×{v.height} · {fmtBytes(v.size_bytes)}</span>
         <Rail parts={coverage(v)} />
-        <span className="tp-reel-s">{scout}<PrepareLine prepare={v.prepare} /></span>
+        <span className="tp-reel-s"><PrepareLine prepare={v.prepare} /></span>
       </div>
       <div className="tp-reel-c">
         <b className="ui-mono">{v.frames ? ru(v.frames) : "—"}</b>
@@ -227,7 +311,7 @@ function ReelRow({ v, taskId, code, tags, editable, scout, onCut, onDelete, onTa
       </div>
       <div className="tp-reel-a">
         <Button size="sm" icon={editable ? "cut" : "eye"} onClick={onCut}>{!editable ? "Смотреть" : segs ? "Нарезать ещё" : "Нарезать"}</Button>
-        {editable && <Button variant="ghost" size="sm" icon="trash" onClick={onDelete} aria-label={`Убрать ${v.file_name} и нарезанные из него кадры`} />}
+        {menu}
       </div>
       <div className="tp-reel-t">
         <TagPicker code={code} all={tags} value={v.tag_ids || []} disabled={!editable} compact placeholder="таг ролика"
@@ -265,7 +349,8 @@ function classOf(classes: TaskClass[], o: PendingObject): { name: string; color:
 }
 
 /** Ролики на разметку: каждый со своей шкалой, объектами и закрытием. */
-export function AnnotateCard({ videos, pending, classes, taskId, code, tags, editable, busy, onAdd, onOpen, onClose, onReopen, onDropFrames, onDelete, onVideoTags, onTagCreated }: {
+export function AnnotateCard({ videos, pending, classes, taskId, code, tags, editable, busy, run, agent, onAdd, onOpen, onReview,
+  onClose, onReopen, onDropFrames, onDelete, onVideoTags, onTagCreated }: {
   videos: TaskVideoItem[];
   pending: PendingVideo[];
   classes: TaskClass[];
@@ -274,8 +359,12 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
   tags: Tag[];
   editable: boolean;
   busy: boolean;
+  run?: RunView | null;
+  agent: AgentHooks;
   onAdd: () => void;
   onOpen: (v: TaskVideoItem) => void;
+  /** Открыть ролик на первом кадре с непроверенным агента. */
+  onReview: (v: TaskVideoItem) => void;
   onClose: (v: TaskVideoItem) => void;
   onReopen: (v: TaskVideoItem) => void;
   onDropFrames: (v: TaskVideoItem) => void;
@@ -283,13 +372,19 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
   onVideoTags: (v: TaskVideoItem, ids: string[]) => void;
   onTagCreated: (t: Tag) => void;
 }) {
-  const scouts = useScouts(taskId);
-  const [stats, setStats] = useState<string | null>(null);
   return (
     <Card className="tp-src" flush
       title={<><Icon name="film" />Ролики на разметку<Badge variant="secondary">{videos.length}</Badge></>}
       desc="размечаются треками, кадрами становятся при закрытии разметки"
-      actions={editable && <Button size="sm" icon="plus" onClick={onAdd}>Видео на разметку</Button>}>
+      actions={editable && <>
+        <AgentButton agent={agent} ask={{ mode: "annotate", videos: videos.filter((v) => !v.annotation_closed_at).map((v) => v.id),
+          within: videos.map((v) => v.id), modes: ["annotate", "scout"] }} />
+        <Button size="sm" icon="plus" onClick={onAdd}>Видео на разметку</Button>
+        <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label="Агент: ролики на разметку" step
+          actions={[annotateAction(agent, videos.filter((v) => !v.annotation_closed_at), "Разметить все ролики"),
+            scoutAction(agent, videos, "Разведать все ролики")]} />
+      </>}>
+      {run && <div className="tp-agent-w"><AgentLine run={run} /></div>}
       {videos.map((v) => {
         const p = pending.find((x) => x.video_id === v.id);
         const closed = v.annotation_closed_at !== null;
@@ -302,8 +397,13 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
                 <b className="t-ell" title={v.file_name}>{v.file_name}</b>
                 {closed ? <Badge tone="var(--st-done)" icon="lock">разметка закрыта</Badge>
                   : <Badge tone="var(--c1)" live>размечается</Badge>}
-                <ScoutButton scout={scouts[v.id]} onOpen={() => setStats(v.id)} />
                 <span className="grow" />
+                {editable && !closed && !!p?.unchecked && (
+                  <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled={!v.prepare?.ready}
+                    onClick={() => onReview(v)} title="Кадры ролика с непроверенной разметкой агента">
+                    Проверить <span className="ui-mono">{ru(p.unchecked)}</span>
+                  </Button>
+                )}
                 {editable && !closed && (
                   <Button variant="primary" size="sm" icon="lock" disabled={busy || !p || !!p.error} onClick={() => onClose(v)}
                     title={!p ? "Размечать нечего — на ролике нет ни боксов, ни фоновых кадров" : p.error || "Превратить разметку в кадры таски"}>
@@ -315,8 +415,12 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
                   title={v.prepare?.ready ? undefined : "Ролик ещё готовится"} onClick={() => onOpen(v)}>
                   {editable && !closed ? "Размечать ролик" : "Смотреть"}
                 </Button>
-                {editable && <Button variant="ghost" size="sm" icon="trash" onClick={() => onDelete(v)}
-                  aria-label={`Убрать ${v.file_name} и всё, что из него вышло и ещё не в датасете`} />}
+                {editable && (
+                  <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
+                    actions={[{ ...annotateAction(agent, closed ? [] : [v], "Разметить ролик"), off: closed ? "разметка ролика закрыта" : annotateAction(agent, [v], "").off },
+                      scoutAction(agent, [v], "Разведать ролик")]}
+                    deleteLabel="Удалить ролик и всё, что из него вышло" onDelete={() => onDelete(v)} />
+                )}
               </div>
               <span className="t-xs t-muted">
                 {fmtTime(v.duration_ms || 0)} · {v.width}×{v.height} · {v.fps} к/с · {fmtBytes(v.size_bytes)}
@@ -373,7 +477,6 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
           </div>
         );
       })}
-      {stats && <ScoutStats taskId={taskId} videoId={stats} onClose={() => setStats(null)} />}
     </Card>
   );
 }

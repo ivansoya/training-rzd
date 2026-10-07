@@ -653,12 +653,13 @@ test("одиночные видны рисками на своей дорожк�
   }
 
   const editor = await openEditor(page, project, task);
-  const ticks = editor.locator(".ve-tick-s");
+  const ticks = editor.locator(".ve-t.single");
   await expect(ticks).toHaveCount(2);
-  await expect(ticks.nth(0)).toHaveAttribute("aria-label", /кадр 3$/);
+  await expect(ticks.nth(0)).toHaveAttribute("title", /кадр 3$/);
 
-  // Риска — кнопка: по ней и переходят.
-  await ticks.nth(1).dispatchEvent("pointerdown", { button: 0 });
+  // Щелчок рядом с риской ведёт к её кадру: целиться в 3 px не нужно.
+  const at = (await ticks.nth(1).boundingBox())!;
+  await page.mouse.click(at.x + at.width / 2 + 4, at.y + at.height / 2);
   await expect.poll(() => uiFrame(editor)).toBe(11);
   await expect(editor.locator(".ve-pos")).toContainText(/кадр\s+11\s+из/);
   await expect(editor.locator(".ve-side .fe-obj")).toHaveCount(1);

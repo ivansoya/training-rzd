@@ -256,11 +256,17 @@
 .ve-empty { position: absolute; top: 6px; width: 3px; height: 18px; margin-left: -1.5px; border-radius: 1px; background: var(--st-empty); }
 .ve-empty.off { opacity: .4; }
 .ve-heat { position: absolute; top: 9px; height: 12px; border-radius: 2px; background: var(--c3); pointer-events: none; }
-.ve-tick-s {
-  position: absolute; top: 6px; width: 3px; height: 18px; margin-left: -1.5px; padding: 0;
-  border: 0; border-radius: 1px; background: currentColor; cursor: pointer; transition: width .1s, margin .1s;
+/* Риски дорожек: ближайшая к курсору растёт — в неё попадают, не целясь в 3 px */
+.ve-t {
+  position: absolute; top: 6px; width: 3px; height: 18px; margin-left: -1.5px; border-radius: 1px;
+  background: currentColor; pointer-events: none; transition: width .12s var(--ease), margin .12s var(--ease), top .12s, height .12s;
 }
-.ve-tick-s:hover { width: 5px; margin-left: -2.5px; }
+.ve-t.near { width: 7px; margin-left: -3.5px; top: 3px; height: 24px; border-radius: 2px; z-index: 2; }
+.ve-t.agent { color: var(--agent-hi); }
+.ve-t.agent.now { box-shadow: 0 0 0 1px var(--fg); }
+.ve-t.dot { top: 12px; width: 6px; height: 6px; margin-left: -3px; border-radius: 50%; color: var(--fg); }
+.ve-t.dot.near { top: 9px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; box-shadow: 0 0 0 2px var(--sidebar); }
+.ve-agent-ic { color: var(--agent-fg) !important; }
 .ve-span {
   position: absolute; top: 8px; height: 14px; border-radius: 4px; pointer-events: none;
   background: color-mix(in srgb, var(--cc) 30%, transparent); border: 1px solid color-mix(in srgb, var(--cc) 70%, transparent);
@@ -293,3 +299,58 @@
 .ve-ghost { position: absolute; top: 4px; bottom: 4px; width: 2px; margin-left: -1px; background: var(--fg); pointer-events: none; z-index: 2; }
 .ve-none { display: flex; align-items: center; gap: 8px; margin: 0; padding: 14px 12px; font-size: 12.5px; color: var(--muted-fg); }
 .ve-menu { width: 250px; }
+
+/* ---------- агент на кадре: «на проверке» и находки разведки ---------- */
+/* Непроверенная рамка агента — частый пунктир цвета класса: класс уже выбран, сомнение в самой рамке.
+   Подложку рвём тем же шагом, иначе штрих читается двухцветным. Заслонённый объект видео — реже (7 5). */
+.mag-cv-sh.pending .mag-cv-line,
+.mag-cv-sh.pending .mag-cv-hull { stroke-dasharray: 4 3; }
+.mag-cv-mark { font-style: normal; font-size: 9px; color: var(--agent-fg); margin-right: 5px; line-height: 1; }
+.mag-cv-lb.on .mag-cv-mark { color: inherit; }
+.mag-cv-conf { font: 500 10.5px var(--mono); margin-left: 6px; opacity: .75; }
+
+/* Призрак разведки: тонкая линия без подложки, полупрозрачная — это сведения, а не разметка */
+.mag-cv-ghost {
+  fill: transparent; stroke: var(--bc); stroke-width: 1; opacity: .55; cursor: pointer;
+  transition: opacity .12s, fill .12s;
+}
+.mag-cv-ghost:hover { opacity: 1; stroke-width: 1.5; fill: color-mix(in srgb, var(--bc) 8%, transparent); }
+.mag-cv-ghost.on { opacity: 1; stroke-width: 1.5; fill: color-mix(in srgb, var(--bc) 12%, transparent); }
+.mag-cv-lb.ghost { opacity: .45; background: color-mix(in srgb, var(--stage) 80%, transparent); border-style: dashed; }
+.mag-cv-lb.ghost .mag-cv-mark { color: color-mix(in srgb, var(--bc) 60%, var(--on-frame)); }
+.mag-cv-lb.ghost:hover { opacity: 1; border-style: solid; }
+.mag-cv-lb.ghost.on { opacity: 1; border-style: solid; background: var(--bc); }
+.mag-cv-lb.ghost.on .mag-cv-mark { color: inherit; }
+
+/* Плашка проверки над нижней панелью: «Агент: 4 рамки на проверке · Подтвердить кадр · Отклонить все» */
+.ed-review { bottom: 64px; padding: 4px 4px 4px 12px; gap: 8px; border-color: color-mix(in srgb, var(--agent) 55%, var(--border)); }
+.ed-review-t { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg); }
+.ed-review-t .ui-ic, .ed-review-t > i { color: var(--agent-fg); }
+.ed-review-t b { font-family: var(--mono); font-weight: 600; }
+.ed-review.scout { border-color: var(--border); }
+.ed-review.scout .ed-review-t > i { color: var(--muted-fg); font-style: normal; }
+
+/* Лента: кадр на проверке обведён цветом агента — он поверх состояния, потому что ждёт действия */
+.mag-fs-cell.agent { border-color: var(--agent-hi); }
+.mag-fs-cell.agent .mag-fs-n { color: var(--agent-fg); }
+
+/* Группа «Агент · на проверке» в панели объектов */
+.fe-agent .fe-sec-t .ui-ic { color: var(--agent-fg); }
+.fe-obj.pending .ui-swatch { outline: 1px dashed color-mix(in srgb, var(--agent-fg) 70%, transparent); outline-offset: 2px; }
+.fe-conf { color: var(--agent-fg); }
+
+/* Призрак разведки поверх картинки (Marks): без подложки, тонко и полупрозрачно */
+.mk-ghost .mag-cv-hull { display: none; }
+.mk-ghost .mag-cv-line { stroke-width: 1; opacity: .7; }
+/* Под курсором призрак перестаёт быть прозрачным — его разглядывают */
+.mk-ghost.hot .mag-cv-hull { display: inline; }
+.mk-ghost.hot .mag-cv-line { stroke-width: 1.5; opacity: 1; }
+.mk-labels .mag-cv-lb.ghost.hot { opacity: 1; border-style: solid; }
+.vc-ghosts { position: absolute; inset: 0; pointer-events: none; }
+
+/* Агент на кадре (G): плашка итога и предупреждение о несопоставленных классах */
+.ed-agent-plate { border-color: color-mix(in srgb, var(--agent) 55%, var(--border)); color: var(--fg); }
+.ed-agent-warn { color: color-mix(in srgb, var(--st-skip) 85%, var(--fg)); }
+.ed-agent-map { cursor: default; }
+/* В редакторе ролика нижней панели решений нет — транспорт в доке, плашка стоит у низа кадра */
+.ve .ed-review { bottom: 14px; }

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import type { LabelClass, TaskBox } from "../../auth/api";
 import { Button, Dot, Icon, Select, Swatch, cx } from "../../ui";
+import { fmtConf } from "../mag/BoxCanvas";
 import type { CanvasShape } from "../mag/BoxCanvas";
 import type { FrameAction } from "../mag/frameActions";
 import { statusLook } from "./look";
@@ -44,68 +45,86 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
     value: String(c.class_index),
     label: <span className="row"><Swatch color={c.color} />{c.name}</span>,
   }));
+  // Непроверенное агента — своей группой сверху: его надо пройти глазами первым.
+  const agent = boxes.map((_, i) => i).filter((i) => boxes[i].pending);
+  const own = boxes.map((_, i) => i).filter((i) => !boxes[i].pending);
+  const row = (i: number) => {
+    const b = boxes[i];
+    const c = labelOf(b.class_index);
+    const on = i === selected;
+    const off = hidden.has(i);
+    return (
+      <div key={b.id ?? `n${i}`} className={cx("fe-obj", on && "on", off && "off", b.pending && "pending")}>
+        <div className="fe-obj-r" role="button" tabIndex={0} aria-pressed={on}
+          onClick={() => onSelect(on ? null : i)}
+          onKeyDown={(e) => { if (e.key === "Enter") onSelect(on ? null : i); }}>
+          <Swatch color={c.color} />
+          <span className="t-ell grow">{c.name || `класс ${b.class_index}`}</span>
+          {b.parts && b.parts.length > 1 && <span className="t-xs t-faint">×{b.parts.length}</span>}
+          {b.pending && b.conf != null
+            ? <span className="ui-mono t-xs fe-conf">{fmtConf(b.conf)}</span>
+            : <span className="ui-mono t-xs t-faint">{Math.round(b.w)}×{Math.round(b.h)}</span>}
+          <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
+            aria-label={off ? "Показать на кадре" : "Скрыть на кадре"}
+            onClick={(e) => { e.stopPropagation(); onHide(i); }} />
+        </div>
+        {on && (
+          <div className="fe-obj-b">
+            <Select full size="sm" label="Класс объекта" value={String(b.class_index)} options={options}
+              disabled={frozen} onChange={(v) => onClass(i, Number(v))} />
+            <dl className="fe-xywh">
+              {([["x", b.x], ["y", b.y], ["w", b.w], ["h", b.h]] as const).map(([k, v]) => (
+                <div key={k}><dt>{k}</dt><dd>{Math.round(v)}</dd></div>
+              ))}
+            </dl>
+            <Who box={meta.get(b.id ?? "")} />
+            {b.pending && <p className="t-xs t-faint">Правка рамки — тоже проверка: поправленная уйдёт в объекты.</p>}
+            {!frozen && (
+              <div className="row wrap">
+                <Button size="sm" variant="ghost" icon="poly" kbd="⇧P" onClick={() => onAddContour(i)}>
+                  Добавить контур
+                </Button>
+                <span className="grow" />
+                <Button size="sm" variant="danger" icon="trash" kbd="Del" onClick={() => onDelete(i)}>Удалить</Button>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
   return (
     <>
       <section className="fe-sec">
         <div className="fe-sec-t">Кадр <span className="row t-xs"><Dot color={st.color} />{st.label}</span></div>
         {tags}
       </section>
-      <section className="fe-sec fe-objs">
-        <div className="fe-sec-t">Объекты <span className="ui-mono">{boxes.length}</span></div>
-        {boxes.length === 0 && (
-          <p className="fe-none">
-            {status === "empty" ? "Кадр объявлен фоновым — объектов на нём нет." : "На кадре пока ничего не обведено."}
-          </p>
-        )}
-        <div className="fe-list">
-          {boxes.map((b, i) => {
-            const c = labelOf(b.class_index);
-            const on = i === selected;
-            const off = hidden.has(i);
-            return (
-              <div key={b.id ?? `n${i}`} className={cx("fe-obj", on && "on", off && "off")}>
-                <div className="fe-obj-r" role="button" tabIndex={0} aria-pressed={on}
-                  onClick={() => onSelect(on ? null : i)}
-                  onKeyDown={(e) => { if (e.key === "Enter") onSelect(on ? null : i); }}>
-                  <Swatch color={c.color} />
-                  <span className="t-ell grow">{c.name || `класс ${b.class_index}`}</span>
-                  {b.parts && b.parts.length > 1 && <span className="t-xs t-faint">×{b.parts.length}</span>}
-                  <span className="ui-mono t-xs t-faint">{Math.round(b.w)}×{Math.round(b.h)}</span>
-                  <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
-                    aria-label={off ? "Показать на кадре" : "Скрыть на кадре"}
-                    onClick={(e) => { e.stopPropagation(); onHide(i); }} />
-                </div>
-                {on && (
-                  <div className="fe-obj-b">
-                    <Select full size="sm" label="Класс объекта" value={String(b.class_index)} options={options}
-                      disabled={frozen} onChange={(v) => onClass(i, Number(v))} />
-                    <dl className="fe-xywh">
-                      {([["x", b.x], ["y", b.y], ["w", b.w], ["h", b.h]] as const).map(([k, v]) => (
-                        <div key={k}><dt>{k}</dt><dd>{Math.round(v)}</dd></div>
-                      ))}
-                    </dl>
-                    <Who box={meta.get(b.id ?? "")} />
-                    {!frozen && (
-                      <div className="row wrap">
-                        <Button size="sm" variant="ghost" icon="poly" kbd="⇧P" onClick={() => onAddContour(i)}>
-                          Добавить контур
-                        </Button>
-                        <span className="grow" />
-                        <Button size="sm" variant="danger" icon="trash" kbd="Del" onClick={() => onDelete(i)}>Удалить</Button>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      {agent.length > 0 && (
+        <section className="fe-sec fe-objs fe-agent">
+          <div className="fe-sec-t">
+            <span className="row"><Icon name="bot" size={13} />Агент · на проверке</span>
+            <span className="ui-mono">{agent.length}</span>
+          </div>
+          <div className="fe-list">{agent.map(row)}</div>
+        </section>
+      )}
+      {/* Пустая секция под группой агента — лишняя строка «0» */}
+      {(own.length > 0 || agent.length === 0) && (
+        <section className="fe-sec fe-objs">
+          <div className="fe-sec-t">Объекты <span className="ui-mono">{own.length}</span></div>
+          {boxes.length === 0 && (
+            <p className="fe-none">
+              {status === "empty" ? "Кадр объявлен фоновым — объектов на нём нет." : "На кадре пока ничего не обведено."}
+            </p>
+          )}
+          <div className="fe-list">{own.map(row)}</div>
+        </section>
+      )}
     </>
   );
 }
 
-export function FrameBar({ index, total, canPrev, canNext, actions, status, onPrev, onNext, onAccept,
+export function FrameBar({ index, total, canPrev, canNext, actions, status, onPrev, onNext,
   onToggle, onTrash, onGo }: {
   index: number;
   total: number;
@@ -115,7 +134,6 @@ export function FrameBar({ index, total, canPrev, canNext, actions, status, onPr
   status: string;
   onPrev: () => void;
   onNext: () => void;
-  onAccept: () => void;
   onToggle: (s: "empty" | "skipped") => void;
   onTrash: () => void;
   onGo: () => void;
@@ -126,11 +144,6 @@ export function FrameBar({ index, total, canPrev, canNext, actions, status, onPr
       <span className="ui-mono t-sm fe-pos">{index + 1} / {total}</span>
       <Button variant="ghost" size="sm" icon="chevR" aria-label="Следующий кадр (→)" disabled={!canNext} onClick={onNext} />
       <i className="ed-vsep" />
-      {actions.includes("accept") && (
-        <Button variant="agent" size="sm" icon="bot" title="Разметка агента верна — кадр размечен" onClick={onAccept}>
-          Принять
-        </Button>
-      )}
       {actions.includes("empty") && (
         <Button variant="ghost" size="sm" kbd="E" className="fe-v empty" aria-pressed={status === "empty"}
           onClick={() => onToggle("empty")}>Пусто</Button>

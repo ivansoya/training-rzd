@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  acceptAgentFrames, assignTask, closeVideoAnnotation, deleteTaskVideo, dropVideoFrames, getProject, getTask,
+  assignTask, closeVideoAnnotation, deleteTaskVideo, dropVideoFrames, getProject, getTask,
   getTaskEvents, getTaskImages, reopenVideoAnnotation, setTaskStatus, uploadTaskImages, uploadTaskVideo,
 } from "../../../auth/api";
 import type { ProjectMemberInfo, TaskDetail, TaskEventItem, TaskImage, TaskStatus, TaskVideoItem } from "../../../auth/api";
@@ -11,10 +11,12 @@ import { pollJob } from "../../../api/jobs";
 import { setImageTags, setVideoTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
 import { runContext } from "../../../api/agents";
-import type { RunView } from "../../../api/agents";
+import type { RunMode, RunView } from "../../../api/agents";
 import { Button, Notice, Progress, Sheet, hasLayer } from "../../../ui";
 import { count, plural } from "../../ru";
 import AgentRunDialog, { AgentRunBar } from "../../agents/AgentRunDialog";
+import AgentSetupDialog from "../../agents/AgentSetupDialog";
+import { useAgentTool } from "../../editor/AgentTool";
 import ScoutOverview from "../../agents/ScoutOverview";
 import { useScouts } from "../../agents/scout";
 import AnnotationEditor, { saveSettled } from "../AnnotationEditor";
@@ -23,11 +25,14 @@ import VideoAnnotator from "../VideoAnnotator";
 import VideoCutModal from "../VideoCutModal";
 import { useConfirm } from "./Confirm";
 import { AddMenu, AnnotateCard, CutCard, FramesCard, TaskEmpty } from "./Sources";
+import type { AgentHooks } from "./Sources";
 import { EventList, TaskPassport } from "./TaskPassport";
 import type { FrameState } from "./tasks";
 import { buildSources, closePlan, closeText } from "./tasks";
 
 const ACTIVE_RUN = ["queued", "waiting_gpu", "running"];
+
+
 
 /** Все кадры выборки: сервер отдаёт по 200, добираем до `matched`. */
 async function allImages(taskId: string, params: { status?: string; source?: string }): Promise<TaskImage[]> {
@@ -84,7 +89,15 @@ export default function TaskPage() {
 
   const [cutting, setCutting] = useState<TaskVideoItem | null>(null);
   const [annotating, setAnnotating] = useState<TaskVideoItem | null>(null);
+  // Ролик открыт ради проверки агента — редактор встаёт на первый непроверенный кадр
+  const [reviewing, setReviewing] = useState(false);
+  // Полное окно запуска — «по всей таске сразу», из окна «Агент таски»
   const [agentOpen, setAgentOpen] = useState(false);
+  // С чем открыто окно запуска: из блока — настроенным на блок, из «Агента таски» — пустым
+  const [agentAsk, setAgentAsk] = useState<Parameters<AgentHooks["dialog"]>[0] | undefined>(undefined);
+  // «Агент таски»: агент по умолчанию и сопоставление классов
+  const [setupOpen, setSetupOpen] = useState(false);
+  const agentTool = useAgentTool(taskId || "");
   const [agentRun, setAgentRun] = useState<RunView | null>(null);
   const scouted = Object.keys(useScouts(taskId || "")).length > 0;
   const [overviewOpen, setOverviewOpen] = useState(false);
@@ -190,7 +203,7 @@ export default function TaskPage() {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || editing || annotating || cutting || hasLayer() || isTyping(e.target)) return;
       if (e.key === "Enter" && task && task.counts.total > 0) { e.preventDefault(); void annotateAll(); }
-      if ((e.key === "g" || e.key === "п") && editable && !agentBusy) { e.preventDefault(); setAgentOpen(true); }
+      if ((e.key === "g" || e.key === "п") && editable) { e.preventDefault(); setSetupOpen(true); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -246,12 +259,9 @@ export default function TaskPage() {
     await load();
   });
 
-  const acceptAgent = (source: string) => guard(async () => {
-    if (!taskId) return;
-    const got = await acceptAgentFrames(taskId, { source });
-    setNotice(`Принято кадров: ${got.accepted}.`);
-    await load();
-  });
+  /** Кадры блока на проверке агента — в редактор по одному. */
+  const review = (source: string) => openFiltered({ status: "agent", source });
+  const openVideo = (v: TaskVideoItem, forReview = false) => { setReviewing(forReview); setAnnotating(v); };
 
   async function sendFiles(files: File[], perFile: string[][]) {
     if (!taskId) return;
@@ -368,28 +378,45 @@ export default function TaskPage() {
 
   const sources = buildSources(task);
   const annotateVideos = task.videos.filter((v) => v.mode === "annotate");
+  // Ход агента — в блоке, по которому он идёт
+  const live = agentBusy ? agentRun : null;
+  const runOn = (frames: string | null, videos: string[], modes: RunMode[]) =>
+    live && modes.includes(live.mode) &&
+    (live.mode === "frames" ? !!frames && live.sources.includes(frames) : live.videos.some((v) => videos.includes(v)))
+      ? live : null;
   const empty = sources.length === 0 && annotateVideos.length === 0;
+  // Меню «⋯» блоков: агент таски сразу, без окна
+  const agent: AgentHooks = {
+    tool: agentTool, busy: busy || agentBusy, onSetup: () => setSetupOpen(true),
+    start: (body) => void guard(async () => {
+      const run = await agentTool.start(body);
+      setAgentRun(run);
+    }),
+    dialog: (ask) => { setAgentAsk(ask); setAgentOpen(true); },
+  };
   const cards = [
     ...sources.filter((b) => b.kind !== "annotate").map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (
       <CutCard key={b.key} block={b} taskId={task.id} code={task.project.code} tags={tags} editable={editable}
-        onAnnotate={() => openFiltered({ source: b.key })} onAcceptAgent={() => acceptAgent(b.key)}
+        run={runOn(b.key, (b.videos || []).map((v) => v.id), ["frames", "scout"])} agent={agent}
+        onAnnotate={() => openFiltered({ source: b.key })} onReview={() => review(b.key)}
         onCut={setCutting} onDelete={removeVideo} onVideoTags={saveVideoTags}
         onTagCreated={(t) => setTags((p) => [...p, t])} />
     ) : (
       <FramesCard key={b.key} block={b} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
-        onAcceptAgent={() => acceptAgent(b.key)} />
+        run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)} />
     ) })),
     ...(annotateVideos.length ? [{ key: "annotate", born: Math.min(...annotateVideos.map((v) => Date.parse(v.created_at))), node: (
       <AnnotateCard key="annotate" videos={annotateVideos} pending={task.pending_videos} classes={task.classes}
         taskId={task.id} code={task.project.code} tags={tags} editable={editable} busy={busy}
-        onAdd={() => onAdd("annotate")} onOpen={setAnnotating} onClose={closeVideo}
+        run={runOn(null, annotateVideos.map((v) => v.id), ["annotate", "scout"])} agent={agent}
+        onAdd={() => onAdd("annotate")} onOpen={(v) => openVideo(v)} onReview={(v) => openVideo(v, true)} onClose={closeVideo}
         onReopen={(v) => guard(async () => { await reopenVideoAnnotation(task.id, v.id); await load(); })}
         onDropFrames={dropFrames} onDelete={removeVideo} onVideoTags={saveVideoTags}
         onTagCreated={(t) => setTags((p) => [...p, t])} />
     ) }] : []),
     ...sources.filter((b) => b.kind === "annotate").map((b) => ({ key: b.key, born: Infinity, node: (
       <FramesCard key={b.key} block={b} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
-        onAcceptAgent={() => acceptAgent(b.key)} />
+        run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)} />
     ) })),
   ].sort((a, b) => a.born - b.born);
 
@@ -400,9 +427,9 @@ export default function TaskPage() {
         <div className="ui-ph-a">
           {scouted && <Button variant="ghost" icon="scan" onClick={() => setOverviewOpen(true)}>Разведка</Button>}
           {editable && (
-            <Button variant="agent" icon="bot" kbd="G" disabled={busy || agentBusy} onClick={() => setAgentOpen(true)}
-              title={agentBusy ? "Агент уже идёт по этой таске" : "Запустить агента разметки на кадрах таски"}>
-              Запустить агента
+            <Button variant="agent" icon="bot" kbd="G" onClick={() => setSetupOpen(true)}
+              title="Агент таски: кого звать из меню блоков и кнопкой G, сопоставление классов">
+              {agentTool.agent ? <>Агент: {agentTool.agent.name}{agentTool.version && <span className="ui-mono tp-agent-v">v{agentTool.version.version}</span>}</> : "Агент таски"}
             </Button>
           )}
           <Button variant="primary" icon={editable ? "edit" : "eye"} kbd="Enter" disabled={busy || task.counts.total === 0}
@@ -443,9 +470,13 @@ export default function TaskPage() {
       </Sheet>
       {confirmNode}
       {overviewOpen && <ScoutOverview taskId={task.id} onClose={() => setOverviewOpen(false)} />}
+      {setupOpen && (
+        <AgentSetupDialog taskId={task.id} tool={agentTool} onClose={() => setSetupOpen(false)}
+          onRunAll={editable ? () => { setSetupOpen(false); setAgentAsk(undefined); setAgentOpen(true); } : undefined} />
+      )}
       {agentOpen && (
-        <AgentRunDialog taskId={task.id} onClose={() => setAgentOpen(false)}
-          onStarted={(run) => { setAgentOpen(false); setAgentRun(run); }} />
+        <AgentRunDialog taskId={task.id} initial={agentAsk} onClose={() => { setAgentOpen(false); agentTool.reload(); }}
+          onStarted={(run) => { setAgentOpen(false); setAgentRun(run); agentTool.reload(); }} />
       )}
       {picked && (
         <UploadImagesModal code={task.project.code} tags={tags} files={picked}
@@ -456,11 +487,11 @@ export default function TaskPage() {
         <VideoCutModal taskId={task.id} video={cutting} editable={editable} onClose={() => setCutting(null)} onDone={load} />
       )}
       {annotating && (
-        <VideoAnnotator code={code!} taskId={task.id} taskName={task.name} video={annotating} readOnly={!editable}
+        <VideoAnnotator code={code!} taskId={task.id} taskName={task.name} video={annotating} readOnly={!editable} review={reviewing}
           onClose={() => { setAnnotating(null); void load(); }} onChanged={() => void load()} />
       )}
       {editing && editing.list[editing.index] && (
-        <AnnotationEditor code={code!} taskName={task.name} images={editing.list} index={editing.index}
+        <AnnotationEditor code={code!} taskId={task.id} taskName={task.name} images={editing.list} index={editing.index}
           readOnly={!editable} canTag={task.can_work} tags={tags}
           onTags={(imageId, ids) => void saveImageTags(imageId, ids)}
           onTagCreated={(tag) => setTags((prev) => [...prev, tag])}

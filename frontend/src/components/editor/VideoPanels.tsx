@@ -1,8 +1,9 @@
 // Панели редактора видео: справа — что на этом кадре, снизу — транспорт.
 
 import type { ClipQuality, LabelClass, VideoTrack } from "../../auth/api";
-import { Button, Select, Seg, Swatch, Switch, cx } from "../../ui";
+import { Button, Icon, Select, Seg, Swatch, Switch, cx } from "../../ui";
 import type { SelectOption } from "../../ui";
+import { fmtConf } from "../mag/BoxCanvas";
 import type { CanvasShape } from "../mag/BoxCanvas";
 import { exportCount, fmtFrameTime, frameToMs, trackEnd } from "../mag/trackMath";
 import { NumInput } from "../NumInput";
@@ -34,71 +35,90 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
     value: String(c.class_index),
     label: <span className="row"><Swatch color={c.color} />{c.name}</span>,
   }));
-  return (
-    <section className="fe-sec fe-objs">
-      <div className="fe-sec-t">На этом кадре <span className="ui-mono">{items.length}</span></div>
-      {items.length === 0 && <p className="fe-none">На кадре никого нет. T — трек, B или P — разметка только этого кадра.</p>}
-      <div className="fe-list">
-        {items.map((it, i) => {
-          const ci = it.kind === "track" ? it.track.class_index ?? -1 : it.box.class_index ?? -1;
-          const c = labelOf(ci);
-          const on = i === selected;
-          const key = itemKey(it);
-          const off = hidden.has(key);
-          const sh = shapes[i];
-          const name = it.kind === "track" ? it.track.label || c.name || "Объект" : c.name || "Объект";
-          return (
-            <div key={key} className={cx("fe-obj", on && "on", off && "off")}>
-              <div className="fe-obj-r" role="button" tabIndex={0} aria-pressed={on}
-                onClick={() => onSelect(on ? null : i)}
-                onKeyDown={(e) => { if (e.key === "Enter") onSelect(on ? null : i); }}>
-                <Swatch color={c.color} />
-                <span className="t-ell grow">{name}</span>
-                {it.kind === "track" ? (
-                  <>
-                    <span className="ui-mono t-xs t-faint">#{numbers.get(it.track.id)}</span>
-                    <TrackState track={it.track} frame={frame} />
-                  </>
-                ) : (
-                  sh && <span className="ui-mono t-xs t-faint">{Math.round(sh.w)}×{Math.round(sh.h)}</span>
+  // Непроверенное агента — своей группой сверху, как в редакторе кадров
+  const agent = items.map((_, i) => i).filter((i) => shapes[i]?.pending);
+  const own = items.map((_, i) => i).filter((i) => !shapes[i]?.pending);
+  const row = (i: number) => {
+    const it = items[i];
+    const ci = it.kind === "track" ? it.track.class_index ?? -1 : it.box.class_index ?? -1;
+    const c = labelOf(ci);
+    const on = i === selected;
+    const key = itemKey(it);
+    const off = hidden.has(key);
+    const sh = shapes[i];
+    const name = it.kind === "track" ? it.track.label || c.name || "Объект" : c.name || "Объект";
+    return (
+      <div key={key} className={cx("fe-obj", on && "on", off && "off", sh?.pending && "pending")}>
+        <div className="fe-obj-r" role="button" tabIndex={0} aria-pressed={on}
+          onClick={() => onSelect(on ? null : i)}
+          onKeyDown={(e) => { if (e.key === "Enter") onSelect(on ? null : i); }}>
+          <Swatch color={c.color} />
+          <span className="t-ell grow">{name}</span>
+          {it.kind === "track" ? (
+            <>
+              <span className="ui-mono t-xs t-faint">#{numbers.get(it.track.id)}</span>
+              <TrackState track={it.track} frame={frame} />
+            </>
+          ) : sh?.pending && sh.conf != null ? (
+            <span className="ui-mono t-xs fe-conf">{fmtConf(sh.conf)}</span>
+          ) : (
+            sh && <span className="ui-mono t-xs t-faint">{Math.round(sh.w)}×{Math.round(sh.h)}</span>
+          )}
+          <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
+            aria-label={off ? "Показать на кадре" : "Скрыть на кадре"}
+            onClick={(e) => { e.stopPropagation(); onHide(key); }} />
+        </div>
+        {on && (
+          <div className="fe-obj-b">
+            <Select full size="sm" label={it.kind === "track" ? "Класс трека" : "Класс объекта"} value={String(ci)}
+              options={options} disabled={frozen} onChange={(v) => onClass(i, Number(v))} />
+            {it.kind === "track" ? (
+              <TrackBody track={it.track} frozen={frozen} onPatch={onPatch} onDelete={() => onDelete(i)} />
+            ) : (
+              <>
+                {sh && (
+                  <dl className="fe-xywh">
+                    {([["x", sh.x], ["y", sh.y], ["w", sh.w], ["h", sh.h]] as const).map(([k, v]) => (
+                      <div key={k}><dt>{k}</dt><dd>{Math.round(v)}</dd></div>
+                    ))}
+                  </dl>
                 )}
-                <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
-                  aria-label={off ? "Показать на кадре" : "Скрыть на кадре"}
-                  onClick={(e) => { e.stopPropagation(); onHide(key); }} />
-              </div>
-              {on && (
-                <div className="fe-obj-b">
-                  <Select full size="sm" label={it.kind === "track" ? "Класс трека" : "Класс объекта"} value={String(ci)}
-                    options={options} disabled={frozen} onChange={(v) => onClass(i, Number(v))} />
-                  {it.kind === "track" ? (
-                    <TrackBody track={it.track} frozen={frozen} onPatch={onPatch} onDelete={() => onDelete(i)} />
-                  ) : (
-                    <>
-                      {sh && (
-                        <dl className="fe-xywh">
-                          {([["x", sh.x], ["y", sh.y], ["w", sh.w], ["h", sh.h]] as const).map(([k, v]) => (
-                            <div key={k}><dt>{k}</dt><dd>{Math.round(v)}</dd></div>
-                          ))}
-                        </dl>
-                      )}
-                      {!frozen && (
-                        <div className="row wrap">
-                          <Button size="sm" variant="ghost" icon="route" disabled={it.box.shape?.kind === "polygon"}
-                            title={it.box.shape?.kind === "polygon" ? "Контуром нельзя: трек ведут рамкой" : "Объект начнёт жить во времени"}
-                            onClick={() => onToTrack(i)}>Сделать треком</Button>
-                          <span className="grow" />
-                          <Button size="sm" variant="danger" icon="trash" kbd="Del" onClick={() => onDelete(i)}>Удалить</Button>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+                {!frozen && (
+                  <div className="row wrap">
+                    <Button size="sm" variant="ghost" icon="route" disabled={it.box.shape?.kind === "polygon"}
+                      title={it.box.shape?.kind === "polygon" ? "Контуром нельзя: трек ведут рамкой" : "Объект начнёт жить во времени"}
+                      onClick={() => onToTrack(i)}>Сделать треком</Button>
+                    <span className="grow" />
+                    <Button size="sm" variant="danger" icon="trash" kbd="Del" onClick={() => onDelete(i)}>Удалить</Button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        )}
       </div>
-    </section>
+    );
+  };
+  return (
+    <>
+      {agent.length > 0 && (
+        <section className="fe-sec fe-objs fe-agent">
+          <div className="fe-sec-t">
+            <span className="row"><Icon name="bot" size={13} />Агент · на проверке</span>
+            <span className="ui-mono">{agent.length}</span>
+          </div>
+          <div className="fe-list">{agent.map(row)}</div>
+        </section>
+      )}
+      {/* Пустая секция под группой агента — лишняя строка «0» */}
+      {(own.length > 0 || agent.length === 0) && (
+        <section className="fe-sec fe-objs">
+          <div className="fe-sec-t">На этом кадре <span className="ui-mono">{own.length}</span></div>
+          {items.length === 0 && <p className="fe-none">На кадре никого нет. T — трек, B или P — разметка только этого кадра.</p>}
+          <div className="fe-list">{own.map(row)}</div>
+        </section>
+      )}
+    </>
   );
 }
 

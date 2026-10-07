@@ -1,18 +1,20 @@
 // Разведка ролика на шкалах: полоса в нарезке, строки в редакторе ролика,
 // кнопка у ролика.
 //
-// Решения владельца (24.09.2026): разведка — информация, а не разметка. В
-// нарезке — одна полоса ровно под лентой, у каждого класса в ней своя
-// дорожка; чипы под ней гасят классы, «Участки в план» добавляет участки
-// горящих классов в план, дальше их правят как обычные. В редакторе
-// размечаемого ролика — строки дорожек (editor/Lanes), только для чтения.
+// Решения владельца: разведка — информация, а не разметка. В нарезке — одна
+// полоса ровно под лентой, у каждого класса своя дорожка; её показывают и
+// прячут, чипы гасят классы, «Участки в план» добавляет участки горящих
+// классов в план. Посмотреть найденное — щелчок по точке проверенного кадра:
+// плеер встаёт на кадр, находки — призраками поверх (2026-10-07, вместо
+// карточки при наведении). В редакторе ролика — строки дорожек (editor/Lanes).
 
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import * as api from "../../api/agents";
 import { useLive } from "../../live/LiveProvider";
-import FramePeek from "./FramePeek";
-import { nearest, scoutColors } from "./scoutMath";
+import { cx } from "../../ui";
+import { nearestTick } from "../editor/review";
+import { scoutColors } from "./scoutMath";
 
 export interface ScoutLane {
   name: string;
@@ -59,17 +61,37 @@ const msOf = (frame: number, fps: number) => Math.round((frame * 1000) / fps);
 const LANE = 4;
 const GAP = 1;
 
+/** Находки кадра для показа поверх плеера: имя и цвет — класса проекта, если сопоставлен. */
+export type ScoutHit = { name: string; color: string; conf: number; x: number; y: number; w: number; h: number };
+
+/** Находки кадра — имя и цвет класса проекта, если сопоставлен; погашенные классы мимо. */
+export function scoutHits(stats: api.ScoutStats | null, frame: number, colors: Map<string, string>,
+  off: Set<string> = new Set()): ScoutHit[] {
+  return (stats?.frames[String(frame)] || []).filter((d) => !off.has(d[0])).map(([cls, conf, x, y, w, h]) => {
+    const m = stats?.mapped[cls];
+    return { name: m?.name ?? cls, color: m?.color ?? colors.get(cls) ?? "#9aa4ae", conf, x, y, w, h };
+  });
+}
+
 /** Полоса разведки ровно под лентой нарезки, в её же окне `view` (мс). */
-export function ScoutBand({ taskId, videoId, scout, colors, view, at, editable, onSeek, onPlan, onWheel, children }: {
-  taskId: string;
-  videoId: string;
+export function ScoutBand({ scout, stats, colors, view, at, editable, shown: visible, onShown, onSeek, onPick,
+  onOff, onPlan, onWheel, children }: {
   scout: api.Scout;
+  /** Покадровые находки — точкам полосы и призракам; грузит хозяин, полоса их не ждёт. */
+  stats: api.ScoutStats | null;
   colors: Map<string, string>;
   view: { start: number; span: number };
   /** Где сейчас плеер, мс. */
   at: number;
   editable: boolean;
+  /** Показана ли полоса: разведку прячут, когда она мешает. */
+  shown: boolean;
+  onShown: (v: boolean) => void;
   onSeek: (ms: number) => void;
+  /** Щелчок по точке проверенного кадра: плеер — на кадр, находки — призраками. */
+  onPick: (frame: number) => void;
+  /** Погашенные чипами классы — их не показывают и призраками. */
+  onOff?: (off: Set<string>) => void;
   onPlan: (ranges: [number, number][]) => void;
   /** Колесо над полосой — то же приближение, что над лентой. */
   onWheel: (ratio: number, deltaY: number, shift: boolean) => void;
@@ -79,19 +101,10 @@ export function ScoutBand({ taskId, videoId, scout, colors, view, at, editable, 
   const fps = scout.fps || 25;
   const lanes = scoutLanes(scout, colors);
   const [off, setOff] = useState<Set<string>>(new Set());
-  const [stats, setStats] = useState<api.ScoutStats | null>(null);
-  const [hover, setHover] = useState<{ frame: number; x: number; y: number } | null>(null);
+  const [near, setNear] = useState<number | null>(null);
   const bar = useRef<HTMLDivElement>(null);
   const wheel = useRef(onWheel);
   wheel.current = onWheel;
-
-  // Счёт по кадрам нужен только карточке при наведении — полоса рисуется по
-  // участкам и ждать его не должна.
-  useEffect(() => {
-    let alive = true;
-    api.scoutStats(taskId, videoId).then((s) => alive && setStats(s)).catch(() => {});
-    return () => { alive = false; };
-  }, [taskId, videoId, scout.created_at]);
 
   useEffect(() => {
     const el = bar.current;
@@ -103,7 +116,7 @@ export function ScoutBand({ taskId, videoId, scout, colors, view, at, editable, 
     };
     el.addEventListener("wheel", listen, { passive: false });
     return () => el.removeEventListener("wheel", listen);
-  }, []);
+  }, [visible]);
 
   const shown = lanes.filter((l) => !off.has(l.name));
   if (!lanes.length) return <>{children}</>;
@@ -111,42 +124,65 @@ export function ScoutBand({ taskId, videoId, scout, colors, view, at, editable, 
   const a = (view.start / 1000) * fps;
   const span = Math.max(1, (view.span / 1000) * fps);
   const height = Math.max(1, shown.length) * (LANE + GAP) + 3;
-  const frameAt = (e: ReactPointerEvent<HTMLElement>) => {
+  // Проверенные кадры, где нашлись горящие классы, — точки в окне ленты
+  const hitsOf = (f: number) => (stats?.frames[String(f)] || []).filter((d) => !off.has(d[0]));
+  const dots = Object.keys(stats?.frames || {}).map(Number)
+    .filter((f) => f >= a && f <= a + span && hitsOf(f).length > 0).sort((x, y) => x - y);
+  const xs = (w: number) => dots.map((f) => ((f - a) / span) * w);
+  const nearAt = (e: ReactPointerEvent<HTMLElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    return a + ((e.clientX - r.left) / Math.max(1, r.width)) * span;
+    return nearestTick(xs(r.width), e.clientX - r.left);
   };
-  const i = stats && hover ? nearest(stats.checked, hover.frame) : null;
+  const pick = (f: number) => onPick(f);
 
   return (
     <div className="ag-band">
-      <div className="ag-band-bar" ref={bar} style={{ height }}
-        onPointerDown={(e) => { if (e.button === 0) onSeek(msOf(frameAt(e), fps)); }}
-        onPointerMove={(e) => setHover({ frame: frameAt(e), x: e.clientX, y: e.clientY })}
-        onPointerLeave={() => setHover(null)}>
-        <svg viewBox={`${a} 0 ${span} ${height}`} preserveAspectRatio="none" style={{ height }} aria-hidden="true">
-          {shown.map((l, k) => l.spans.map(([s, e]) => (
-            <rect key={`${l.name}:${s}`} x={s} y={2 + k * (LANE + GAP)} width={e - s + 1} height={LANE} style={{ fill: l.color }} />
-          )))}
-        </svg>
-        <i className="ag-band-head" style={{ left: `${((at - view.start) / Math.max(1, view.span)) * 100}%` }} />
-      </div>
+      {visible && (
+        <div className="ag-band-bar" ref={bar} style={{ height: height + 10 }}
+          onPointerMove={(e) => setNear(nearAt(e))}
+          onPointerLeave={() => setNear(null)}
+          onPointerDown={(e) => {
+            if (e.button !== 0) return;
+            const k = nearAt(e);
+            if (k !== null) { pick(dots[k]); return; }
+            const r = e.currentTarget.getBoundingClientRect();
+            onSeek(msOf(a + ((e.clientX - r.left) / Math.max(1, r.width)) * span, fps));
+          }}>
+          <svg viewBox={`${a} 0 ${span} ${height}`} preserveAspectRatio="none" style={{ height }} aria-hidden="true">
+            {shown.map((l, k) => l.spans.map(([s, e]) => (
+              <rect key={`${l.name}:${s}`} x={s} y={2 + k * (LANE + GAP)} width={e - s + 1} height={LANE} style={{ fill: l.color }} />
+            )))}
+          </svg>
+          <div className="ag-band-dots" aria-hidden="true">
+            {dots.map((f, k) => (
+              <i key={f} className={cx(k === near && "near")} style={{ left: `${((f - a) / span) * 100}%` }}
+                title={`Кадр ${f}: ${hitsOf(f).length} находок`} />
+            ))}
+          </div>
+          <i className="ag-band-head" style={{ left: `${((at - view.start) / Math.max(1, view.span)) * 100}%` }} />
+        </div>
+      )}
       {children}
       <div className="ag-band-legend">
-        <span className="ag-band-title" title={`«${scout.agent ?? "агент"}», каждый ${scout.step}-й кадр`}>Разведка</span>
-        {lanes.map((l) => (
+        <button type="button" className="ag-band-title" aria-pressed={visible} onClick={() => onShown(!visible)}
+          title={visible ? "Спрятать разведку (R)" : "Показать разведку (R)"}>
+          <span className="ag-band-eye" aria-hidden="true">◎</span>Разведка
+        </button>
+        {visible && lanes.map((l) => (
           <button key={l.name} type="button" className="ag-band-chip" aria-pressed={!off.has(l.name)}
             title={`${l.spans.length} уч. — нажмите, чтобы ${off.has(l.name) ? "показать" : "скрыть"}`}
             onClick={() => setOff((prev) => {
               const next = new Set(prev);
               if (next.has(l.name)) next.delete(l.name);
               else next.add(l.name);
+              onOff?.(next);
               return next;
             })}>
-            <i style={{ background: l.color }} />{l.name}<small>{l.spans.length}</small>
+            <i style={{ background: l.color }} />{stats?.mapped[l.name]?.name ?? l.name}<small>{l.spans.length}</small>
           </button>
         ))}
         <span className="ag-band-sp" />
-        {editable && (
+        {editable && visible && (
           <button type="button" className="mag-ghost mag-ghost-inline" disabled={!shown.length}
             onClick={() => onPlan(shown.flatMap((l) =>
               l.spans.map(([s, e]) => [msOf(s, fps), msOf(e + 1, fps)] as [number, number])))}>
@@ -154,24 +190,6 @@ export function ScoutBand({ taskId, videoId, scout, colors, view, at, editable, 
           </button>
         )}
       </div>
-      {hover && stats && i !== null && (
-        <FramePeek taskId={taskId} videoId={videoId} frame={stats.checked[i]} fps={fps} x={hover.x} y={hover.y}
-          rows={stats.classes.filter((c) => c.counts[i] && !off.has(c.name)).map((c) => ({
-            name: c.name, color: colors.get(c.name) ?? "#9aa4ae", count: c.counts[i],
-          }))} />
-      )}
     </div>
-  );
-}
-
-/** Кнопка «Разведка» у ролика — окно его статистики. Что нашлось, здесь не
- *  перечисляется: строка сводки читалась как подпись, а не как вход. */
-export function ScoutButton({ scout, onOpen }: { scout?: api.Scout; onOpen: () => void }) {
-  if (!scout) return null;
-  return (
-    <button className="ag-scout-btn" type="button" onClick={onOpen}
-      title={`Разведка «${scout.agent ?? "агент"}», каждый ${scout.step}-й кадр — статистика`}>
-      Разведка
-    </button>
   );
 }

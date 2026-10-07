@@ -9,7 +9,12 @@
 .vc-left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); background: var(--bg); }
 .vc-left.full { background: var(--stage); }
 .vc-stage { position: relative; flex: 1; min-height: 160px; display: grid; place-items: center; background: var(--stage); overflow: hidden; }
-.vc-stage > video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; display: block; cursor: pointer; }
+/* Кадр вписан ровно в окно: в потоке сетки высота 100% не держалась, и видео вылезало вниз
+   под обрезку — низ кадра пропадал, а призраки разведки (вписанные в окно) съезжали. */
+.vc-stage > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; cursor: pointer; }
+/* Скрытый плеер под превью отдельных кадров — во весь размер, но невидимый: сжатый в 1 px
+   браузер не разжимает, и снимок кадра выходил пустым. */
+.vc-stage > video.vc-hidden { opacity: 0; pointer-events: none; }
 .vc-unplayable {
   position: absolute; inset: auto 16px 16px; padding: 10px 14px; border-radius: var(--r-md); font-size: 13px;
   background: var(--on-frame-bg); color: var(--on-frame);

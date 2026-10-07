@@ -937,6 +937,8 @@ export interface PendingVideo {
   /** Ролик открыт заново, а его прежние кадры ещё в таске: закрыть нельзя,
    *  пока их не уберут. Тот же счёт, что у отказа в закрытии. */
   frames_in_task?: number;
+  /** Кадров уйдёт с непроверенной разметкой агента. */
+  unchecked?: number;
 }
 
 export interface TaskDetail extends TaskSummary {
@@ -1011,6 +1013,10 @@ export interface TaskImage {
 export type TaskBox = Box & {
   id: string;
   source: string;
+  /** Рамка агента ждёт проверки человеком. */
+  pending?: boolean;
+  /** Уверенность агента — у рамок агента. */
+  conf?: number | null;
   author?: string | null;
   agent?: { name: string; version: number } | null;
 };
@@ -1313,6 +1319,10 @@ export interface VideoSingleBox {
     parts?: [number, number][][];
   };
   source: string;
+  /** Рамка агента ждёт проверки. */
+  pending?: boolean;
+  conf?: number | null;
+  agent?: { name: string; version: number } | null;
 }
 
 export interface VideoAnnotations {
@@ -1436,6 +1446,8 @@ export interface SingleWire {
   parts?: [number, number][][];
   /** Новая фигура полуавтомата — «model»; у прежних авторство сверяет сервер по id. */
   source?: "human" | "model";
+  /** false снимает проверку с рамки агента; поставить её клиент не может. */
+  pending?: boolean;
 }
 
 export async function saveFrameBoxes(
@@ -1449,7 +1461,20 @@ export async function saveFrameBoxes(
   );
 }
 
+/** «В разметку»: находки разведки на кадре — проверенными одиночными рамками.
+ *  `i` — номер находки на кадре; `class_index` — для класса агента без сопоставления. */
+export async function takeScout(
+  taskId: string,
+  videoId: string,
+  frameNo: number,
+  items: { i: number; class_index?: number }[]
+): Promise<{ singles: VideoSingleBox[] }> {
+  return asJson(await post(`tasks/${taskId}/videos/${videoId}/scout/take`, { frame_no: frameNo, items }));
+}
+
 export interface MaterializePreview {
+  /** Кадров уйдёт с непроверенной разметкой агента. */
+  unchecked?: number;
   frames: number;
   boxes: number;
   /** Сколько из `frames` уйдёт фоновыми примерами. */
@@ -1608,6 +1633,8 @@ export async function saveAnnotations(
     kind?: "bbox" | "polygon";
     parts?: [number, number][][];
     source?: "human" | "model";
+    /** false снимает проверку с рамки агента («Подтвердить кадр»); поставить её клиент не может. */
+    pending?: boolean;
   }[],
   /** Версия, которую видел клиент; без неё сервер не сверяет. */
   rev?: number
@@ -1636,14 +1663,6 @@ export async function setImageTaskStatus(
       body: JSON.stringify({ status }),
     })
   );
-}
-
-/** «Принять разметку агента» пачкой: по блоку или по списку кадров. */
-export async function acceptAgentFrames(
-  taskId: string,
-  body: { source?: string; image_ids?: string[] }
-): Promise<{ accepted: number; counts: TaskCounts }> {
-  return asJson(await post(`tasks/${taskId}/accept-agent`, body));
 }
 
 // В живой таске удаление мягкое: ответ говорит, кадр помечен или стёрт совсем.

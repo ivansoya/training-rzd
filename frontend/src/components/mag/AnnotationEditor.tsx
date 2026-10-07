@@ -29,11 +29,15 @@ import { useLive } from "../../live/LiveProvider";
 import type { AutoRefine } from "../../auth/api";
 import type { TaskBox } from "../../auth/api";
 import { Button, Notice, StackBar, Switch } from "../../ui";
-import { ru } from "../ru";
+import { plural, ru } from "../ru";
 import AutoSettings from "../editor/AutoSettings";
 import ClassPicker from "../editor/ClassPicker";
 import { EditorHead, Float, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip } from "../editor/Chrome";
 import { AutoBar, FrameBar, FrameSide } from "../editor/FramePanels";
+import { ReviewBar } from "../editor/ReviewBars";
+import { AgentTool, useAgentTool } from "../editor/AgentTool";
+import AgentSetupDialog from "../agents/AgentSetupDialog";
+import { confirmAll, nextFlagged, pendingCount, rejectAll, settlePending } from "../editor/review";
 import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad } from "../editor/look";
 import type { KeyGroup } from "../editor/look";
 
@@ -60,6 +64,12 @@ const KEYS: KeyGroup[] = [
     ["X", "Брак; у забракованного — вернуть"],
     ["Пробел", "Далее; при показанном полуавтоматом — закрепить"],
     ["← / →", "Предыдущий и следующий кадр"],
+  ] },
+  { title: "Агент", keys: [
+    ["G", "Агент на этом кадре: рамки встанут на проверку"],
+    ["Enter", "Подтвердить кадр: оставшиеся рамки агента верны"],
+    ["[ / ]", "Предыдущий и следующий кадр на проверке"],
+    ["Правка рамки", "Поправленная рамка агента считается проверенной"],
   ] },
   { title: "Вид", keys: [
     ["Колесо", "Зум"],
@@ -104,6 +114,7 @@ function boxRing(b: { x: number; y: number; w: number; h: number }): Ring {
 
 export default function AnnotationEditor({
   code,
+  taskId,
   taskName,
   images,
   index,
@@ -117,6 +128,8 @@ export default function AnnotationEditor({
   canTag,
 }: {
   code: string;
+  /** Таска — для агента на кадре (G). */
+  taskId: string;
   taskName: string;
   images: TaskImage[];
   index: number;
@@ -211,6 +224,10 @@ export default function AnnotationEditor({
   // Объекты, скрытые глазом в списке: только вид, в разметке они остаются
   const [hidden, setHidden] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
+  // Итог агента на кадре — плашкой на несколько секунд
+  const [agentNote, setAgentNote] = useState<string | null>(null);
+  const [mapOpen, setMapOpen] = useState(false);
+  const agentTool = useAgentTool(taskId);
 
   const canvas = useRef<CanvasHandle>(null);
   // Разметка «как сейчас» — синхронно, мимо отрисовки: запись, отмена и уход
@@ -246,6 +263,7 @@ export default function AnnotationEditor({
   useEffect(() => {
     const next = (image?.boxes || []).map((b) => ({
       id: b.id, class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
+      ...(b.pending ? { pending: true, conf: b.conf ?? null } : {}),
       ...(b.kind === "polygon" && b.parts?.length
         ? { kind: "polygon" as const, parts: b.parts }
         : {}),
@@ -278,12 +296,10 @@ export default function AnnotationEditor({
     () => new Map((image?.boxes || []).map((b) => [b.id, b])),
     [image?.boxes]
   );
-  const agentFrame =
-    image?.task_status === "new" &&
-    (image?.boxes || []).some((b) => b.source === "model" && b.agent);
   const actions = image
-    ? frameActions({ status: image.task_status, objects: boxes.length, agentFrame, readOnly })
+    ? frameActions({ status: image.task_status, objects: boxes.length, readOnly })
     : [];
+  const unchecked = pendingCount(boxes);
   const canEmpty = actions.includes("empty");
 
   const progress = useMemo(() => progressOf(images), [images]);
@@ -367,7 +383,9 @@ export default function AnnotationEditor({
 
   /** Правка разметки. Снимок «до» уходит в историю — один на жест мыши и по
    *  одному на каждую правку с клавиатуры или из меню. */
-  const edit = useCallback((next: CanvasShape[]) => {
+  const edit = useCallback((raw: CanvasShape[]) => {
+    // Правка рамки агента — её проверка: пунктир уходит сразу, как и на сервере.
+    const next = settlePending(boxesRef.current, raw);
     if (gesture.current !== "recorded") {
       hist.current = history.record(hist.current, boxesRef.current);
       if (gesture.current === "down") gesture.current = "recorded";
@@ -513,6 +531,66 @@ export default function AnnotationEditor({
       setError((e as Error).message);
     }
   }, [image, readOnly, flush, onChanged, go, verdict]);
+
+  /** Кадры на проверке в открытом списке — у текущего по живой разметке. */
+  const flagged = useCallback(
+    () => images.map((im, i) => (i === index ? pendingCount(boxesRef.current) > 0
+      : im.task_status !== "deleted" && (im.boxes || []).some((b) => b.pending))),
+    [images, index]
+  );
+
+  /** К предыдущему или следующему кадру на проверке. */
+  const goReview = useCallback((dir: 1 | -1) => {
+    const i = nextFlagged(flagged(), index, dir);
+    if (i !== null && i !== index) void jump(i);
+  }, [flagged, index, jump]);
+
+  /** «Подтвердить кадр»: оставшееся агента верно. Дальше — следующий на проверке, иначе просто следующий. */
+  const confirmFrame = useCallback(async () => {
+    if (frozen || !pendingCount(boxesRef.current)) return;
+    edit(confirmAll(boxesRef.current));
+    if (!(await flush())) return;
+    const i = nextFlagged(flagged(), index, 1);
+    if (i !== null && i !== index) void jump(i);
+    else void go(1);
+  }, [frozen, edit, flush, flagged, index, jump, go]);
+
+  /** «Отклонить все»: непроверенное агента уходит с кадра, кадр остаётся. */
+  const rejectFrame = useCallback(() => {
+    if (frozen || !pendingCount(boxesRef.current)) return;
+    edit(rejectAll(boxesRef.current));
+    pick(null);
+  }, [frozen, edit, pick]);
+
+  /** Агент на этом кадре: правки сначала записываются, ответ — разметка кадра с новыми рамками на проверке. */
+  const runAgent = useCallback(async () => {
+    const img = live.current.image;
+    if (!img || frozen || !agentTool.ready || agentTool.busy) return;
+    if (!(await flush())) return;
+    setAgentNote(null);
+    try {
+      const res = await agentTool.apply({ image_id: img.id });
+      if (res.boxes && res.rev !== undefined) {
+        live.current.onChanged(img.id, {
+          boxes: res.boxes, rev: res.rev, annotations: res.boxes.length,
+          ...(res.task_status ? { task_status: res.task_status as ImageTaskStatus } : {}),
+        });
+        settle(res.rev);
+        setReloadKey((k) => k + 1);
+      }
+      setAgentNote(res.put
+        ? `Агент: ${res.put} ${plural(res.put, "рамка", "рамки", "рамок")} на проверке`
+        : res.found ? "Агент нашёл только то, что на кадре уже есть" : "Агент ничего не нашёл на этом кадре");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [frozen, agentTool, flush, settle]);
+
+  useEffect(() => {
+    if (!agentNote) return;
+    const t = window.setTimeout(() => setAgentNote(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [agentNote]);
 
   /** Нажатие на инструмент: повторное нажатие включает залипание — им рисуют
    *  подряд, не возвращаясь в выбор после каждого объекта. */
@@ -820,9 +898,14 @@ export default function AnnotationEditor({
           else go(1);
           break;
         // Enter нативно нажал бы кнопку в фокусе — «Удалить» забраковала бы следующий кадр.
+        // Свой смысл у него один: подтвердить кадр агента; рисуемый контур он замыкает на холсте.
         case "Enter":
         case "NumpadEnter":
+          if (!canvas.current?.drawing() && !autoPrev) void confirmFrame();
           break;
+        case "BracketLeft": goReview(-1); break;
+        case "BracketRight": goReview(1); break;
+        case "KeyG": void runAgent(); break;
         case "ArrowRight": go(1); break;
         case "ArrowLeft": go(-1); break;
         case "KeyV":
@@ -879,7 +962,8 @@ export default function AnnotationEditor({
     };
   }, [go, close, step, selected, selPart, splitParts, classes, tool, autoOn,
       addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
-      pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty]);
+      pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty,
+      confirmFrame, goReview, runAgent]);
 
   /** Что можно сделать с объектом под правой кнопкой, кроме смены класса.
    *
@@ -1062,6 +1146,7 @@ export default function AnnotationEditor({
                 afterSelect={afterCommit === "select"} onAfterSelect={(v) => setAfterCommit(v ? "select" : "new")}
                 error={auto.error} />
             </ToolMenu>
+            <AgentTool tool={agentTool} disabled={frozen} onRun={() => void runAgent()} onMap={() => setMapOpen(true)} />
             <i className="ed-vsep" />
             <ClassPicker classes={classes} active={active}
               onPick={(ci) => pickClass(ci)}
@@ -1083,18 +1168,21 @@ export default function AnnotationEditor({
           {addTo !== null && (
             <div className="mag-auto-plate" role="status">Следующий контур ляжет в выбранный объект · Esc — отменить</div>
           )}
+          {(agentTool.busy || agentNote) && (
+            <div className="mag-auto-plate ed-agent-plate" role="status">{agentTool.busy ? "Агент смотрит кадр…" : agentNote}</div>
+          )}
         </div>
 
         {panels && (
           <Float className="fe-film" label="Кадры таски">
             <FilmStrip
               vertical
-              items={images.map((im) => ({
+              items={images.map((im, i) => ({
                 id: im.id,
                 width: im.width,
                 height: im.height,
                 boxes: im.boxes,
-                ring: im.task_status,
+                ring: im.task_status + ((i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending)) ? " agent" : ""),
                 title: `${im.file_name} — ${im.annotations} разметок`,
               }))}
               index={index}
@@ -1140,10 +1228,13 @@ export default function AnnotationEditor({
               <FrameBar index={index} total={images.length} canPrev={canPrev} canNext={canNext}
                 actions={actions} status={image.task_status}
                 onPrev={() => void go(-1)} onNext={() => void go(1)}
-                onAccept={() => void verdict("annotated", true)}
                 onToggle={(s) => void toggle(s)} onTrash={() => void trash()} onGo={() => void go(1)} />
             )}
           </Float>
+        )}
+
+        {panels && unchecked > 0 && !frozen && !autoPrev && (
+          <ReviewBar count={unchecked} onConfirm={() => void confirmFrame()} onReject={rejectFrame} />
         )}
 
         <ZoomChip scale={scale} onZoom={(k) => canvas.current?.zoomBy(k)} onFit={() => canvas.current?.fit()}
@@ -1151,6 +1242,7 @@ export default function AnnotationEditor({
       </div>
 
       <KeysDialog open={keysOpen} onOpenChange={setKeysOpen} groups={KEYS} />
+      {mapOpen && <AgentSetupDialog taskId={taskId} tool={agentTool} onClose={() => setMapOpen(false)} />}
 
       {menu && (
         <ClassMenu

@@ -104,7 +104,9 @@ try {
   const task = (await call("POST", `/api/projects/${temp}/tasks`, { name: "Проба агента" })).json;
   await call("POST", `/api/tasks/${task.id}/status`, { status: "in_progress" });
   await page.goto(`${BASE}/projects/${temp}/tasks/${task.id}`);
-  await page.getByRole("button", { name: "Запустить агента" }).click();
+  // Окно запуска теперь внутри «Агента таски»
+  await page.locator(".ui-ph-a").getByRole("button", { name: /Агент/ }).click();
+  await page.getByRole("button", { name: "Разметить агентом…" }).click();
   await page.waitForSelector(".ar", { timeout: 20000 });
   await page.waitForTimeout(1200);
   await shot("run");

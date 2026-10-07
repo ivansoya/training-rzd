@@ -8,6 +8,7 @@ import type { ScoutLane } from "../agents/scout";
 import { hiddenRanges, keyAt, trackEnd } from "../mag/trackMath";
 import { extensionFrame, timelineFrame, visibleSpans } from "../mag/timelineMath";
 import { ru } from "../ru";
+import { nearestTick } from "./review";
 import { clockText, scoutHeat, timeTicks } from "./video";
 
 export interface LaneAction {
@@ -24,7 +25,7 @@ type Drag = { kind: "key" | "start" | "end" | "hide" | "seek"; trackId: string; 
 type Label = (ci: number) => { name: string; color: string };
 
 export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selected, editable, hidden,
-  covered, marks, plan, singles, scout, scoutOpen, onScout, onSelect, onHide, onAction, onSeek }: {
+  covered, marks, plan, singles, agent, scout, scoutDots, scoutOpen, onScout, onSelect, onHide, onAction, onSeek }: {
   tracks: VideoTrack[];
   numbers: Map<string, number>;
   frame: number;
@@ -41,7 +42,11 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   /** Сколько кадров уйдёт в таску — по плану сервера. */
   plan: number | null;
   singles: { frame: number; ci: number }[];
+  /** Кадры с непроверенной разметкой агента. */
+  agent: number[];
   scout: ScoutLane[];
+  /** Проверенные разведкой кадры с находками: все классы и по классу агента. */
+  scoutDots?: { all: number[]; by: Map<string, number[]> };
   /** R: разведка по классам вместо треков. */
   scoutOpen: boolean;
   onScout: () => void;
@@ -108,6 +113,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   const head = <i className="ve-ph" style={{ left: pct(frame) }} aria-hidden="true" />;
   const ticks = timeTicks(lastFrame, fps, width);
   const heat = scoutHeat(scout);
+  const tickLane = { frame, lastFrame, head, onSeek, fallback: seekHere, pointer };
 
   return (
     <div className="ve-tl" aria-label="Дорожки">
@@ -141,40 +147,41 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
           </div>
         </Row>
 
+        {agent.length > 0 && (
+          <Row name={<><Icon name="bot" size={14} className="ve-agent-ic" />Агент<span className="ui-mono t-faint">{agent.length}</span></>}
+            title="Кадры с непроверенной разметкой агента; щелчок — к кадру, [ и ] — к соседнему">
+            <TickLane {...tickLane} frames={agent} kind="agent" label={(f) => `Кадр ${f}: разметка агента на проверке`} />
+          </Row>
+        )}
+
         {scout.length > 0 && (
           <Row on={scoutOpen} title={scoutOpen ? "Разведка по классам — R вернёт треки" : "Где агент что-то нашёл; R — по классам"}
             name={<button type="button" className="ve-n-b" aria-pressed={scoutOpen} onClick={onScout}>
               <Icon name="scan" size={14} />Разведка<span className="ve-k">R</span>
             </button>}>
-            <div className="ve-l" onPointerDown={seekHere} {...pointer}>
+            <TickLane {...tickLane} frames={scoutDots?.all ?? []} kind="dot" label={(f) => `Кадр ${f}: находки разведки`}>
               {heat.map(([a, b, o], i) => <i key={i} className="ve-heat" style={{ ...span(a, b + 1), opacity: o }} />)}
-              {head}
-            </div>
+            </TickLane>
           </Row>
         )}
 
         <Row name={<><Icon name="bbox" size={14} />Одиночные<span className="ui-mono t-faint">{singles.length}</span></>}
           title="Рамки и контуры одного кадра; щелчок по риске — к кадру">
-          <div className="ve-l" onPointerDown={seekHere} {...pointer}>
-            {singles.map((s) => (
-              <button key={`${s.frame}:${s.ci}`} type="button" className="ve-tick-s" style={{ left: pct(s.frame), color: labelOf(s.ci).color }}
-                aria-label={`${labelOf(s.ci).name || "объект"}, кадр ${s.frame}`} title={`${labelOf(s.ci).name || "объект"} · кадр ${s.frame}`}
-                onPointerDown={(e) => { e.stopPropagation(); onSeek(s.frame); }} />
-            ))}
-            {head}
-          </div>
+          <TickLane {...tickLane} frames={singles.map((x) => x.frame)} kind="single"
+            color={(k) => labelOf(singles[k].ci).color}
+            label={(f, k) => `${labelOf(singles[k].ci).name || "объект"} · кадр ${f}`} />
         </Row>
       </div>
 
       {scoutOpen && scout.map((l) => (
         <Row key={`s:${l.name}`} name={<><Swatch color={l.color} /><span className="t-ell">{l.name}</span></>} title={`Разведка агента: ${l.name}`}>
-          <div className="ve-l" onPointerDown={seekHere} {...pointer}>
+          <TickLane {...tickLane} frames={scoutDots?.by.get(l.name) ?? []} kind="dot" color={() => l.color}
+            label={(f) => `${l.name}: кадр ${f}`}>
             {l.spans.map(([a, b, n]) => (
-              <i key={a} className="ve-span ro" style={{ ...span(a, b + 1), ["--cc" as string]: l.color }}
+              <i key={a} className="ve-span" style={{ ...span(a, b + 1), ["--cc" as string]: l.color }}
                 title={`${l.name}: кадры ${a}–${b}, попаданий ${n}`} />
             ))}
-            {head}
-          </div>
+          </TickLane>
         </Row>
       ))}
 
@@ -256,6 +263,48 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
       {!scoutOpen && !tracks.length && (
         <p className="ve-none"><Icon name="route" size={14} />Нажмите T и обведите объект — он поедет по ролику дорожкой здесь.</p>
       )}
+    </div>
+  );
+}
+
+/** Дорожка рисок: ближайшая к курсору растёт, щелчок рядом с ней (12 px) ведёт к её кадру —
+ *  целиться в риску в 3 px не нужно. Мимо рисок — обычная перемотка протяжкой. */
+function TickLane({ frames, frame, lastFrame, kind, color, label, head, children, onSeek, fallback, pointer }: {
+  frames: number[];
+  frame: number;
+  lastFrame: number;
+  kind: "agent" | "single" | "dot";
+  color?: (k: number) => string;
+  label: (f: number, k: number) => string;
+  head: ReactNode;
+  children?: ReactNode;
+  onSeek: (f: number) => void;
+  fallback: (e: ReactPointerEvent<HTMLElement>) => void;
+  pointer: Record<string, (e: ReactPointerEvent<HTMLElement>) => void>;
+}) {
+  const [near, setNear] = useState<number | null>(null);
+  const find = (e: ReactPointerEvent<HTMLElement>) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return nearestTick(frames.map((f) => (f / Math.max(1, lastFrame)) * r.width), e.clientX - r.left);
+  };
+  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / Math.max(1, lastFrame)) * 100))}%`;
+  return (
+    <div className="ve-l" {...pointer}
+      onPointerMove={(e) => { setNear(find(e)); pointer.onPointerMove?.(e); }}
+      onPointerLeave={() => setNear(null)}
+      onPointerDown={(e) => {
+        const k = e.button === 0 ? find(e) : null;
+        if (k === null) { fallback(e); return; }
+        e.preventDefault();
+        e.stopPropagation();
+        onSeek(frames[k]);
+      }}>
+      {children}
+      {frames.map((f, k) => (
+        <i key={`${f}:${k}`} className={cx("ve-t", kind, k === near && "near", f === frame && "now")}
+          style={{ left: pct(f), ...(color ? { color: color(k) } : {}) }} title={label(f, k)} />
+      ))}
+      {head}
     </div>
   );
 }

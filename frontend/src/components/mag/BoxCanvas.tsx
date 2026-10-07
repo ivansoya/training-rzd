@@ -62,6 +62,21 @@ export interface CanvasShape extends CanvasBox {
   id?: string;
   /** model — фигура от полуавтомата или агента, пока её не правили руками. */
   source?: "human" | "model";
+  /** Рамка агента ждёт проверки: пунктир и знак агента в ярлыке. */
+  pending?: boolean;
+  /** Уверенность агента — в ярлык непроверенной рамки. */
+  conf?: number | null;
+}
+
+/** Находка разведки поверх кадра: информация, не разметка. */
+export interface CanvasGhost {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  name: string;
+  color: string;
+  conf: number;
 }
 
 type Drag =
@@ -110,8 +125,13 @@ export interface CanvasPreview {
   color: string;
 }
 
+/** Уверенность в ярлыке: «0,93». */
+export const fmtConf = (c: number) => c.toFixed(2).replace(".", ",");
+
 const MIN_BOX = 3;
 const MAX_ZOOM = 12;
+// Меньше вписанного — чтобы ужать кадр и увидеть его с полями, например под плавающими панелями
+const MIN_ZOOM = 0.2;
 // Превью — 1280 px; примерно с двукратного оно мылится, тогда тянем оригинал.
 const HIRES_AT = 2;
 const HANDLES = ["tl", "tc", "tr", "lc", "rc", "bl", "bc", "br"];
@@ -278,6 +298,10 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     p: { x: number; y: number },
     opts: { shift: boolean; negative: boolean; onBox: number | null }
   ) => void;
+  /** Находки разведки: щелчок выбирает, правки нет. */
+  ghosts?: CanvasGhost[];
+  ghostOn?: number | null;
+  onGhost?: (i: number | null) => void;
   /** Область, выделенная в полуавтомате: подсказка-бокс для модели. */
   onAutoBox?: (b: { x: number; y: number; w: number; h: number }) => void;
   /** Клик без протяжки в режиме области — «закрепить показанное». */
@@ -290,6 +314,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     selected = null, selectedPart = null, splitParts = false, canMovePoly = false,
     grid = true, reserve = 210, onSelect, onBoxes, onDrawn,
     onScale, onContext, onPolygon, onAutoPoint, onAutoBox, onAutoCommit,
+    ghosts, ghostOn = null, onGhost,
   },
   ref
 ) {
@@ -394,7 +419,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     const px = clientX - (box.left + box.width / 2);
     const py = clientY - (box.top + box.height / 2);
     setView((v) => {
-      const s = Math.max(1, Math.min(v.s * factor, MAX_ZOOM));
+      const s = Math.max(MIN_ZOOM, Math.min(v.s * factor, MAX_ZOOM));
       const k = s / v.s;
       if (s >= HIRES_AT) setHires(true);
       return { s, x: px - k * (px - v.x), y: py - k * (py - v.y) };
@@ -827,7 +852,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           const contour = isPoly(s);
           const cls =
             "mag-cv-sh" + (contour ? " poly" : "") + (on ? " on" : "") +
-            (dashed?.has(i) ? " occluded" : "");
+            (dashed?.has(i) ? " occluded" : "") + (s.pending ? " pending" : "");
           // Рамка одна и та же в покое и в выборе: объект не должен менять
           // форму от того, что на него нажали. Отличают его заливка и вес
           // линии, а не силуэт.
@@ -1023,6 +1048,25 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           );
         })}
 
+        {/* Находки разведки — призраки поверх разметки. Ловят щелчок только в
+            выборе: в рисовании кадр под ними должен оставаться доступным. */}
+        {ghosts?.map((g, k) => {
+          const [gx, gy] = sx(g.x, g.y);
+          const [gx2, gy2] = sx(g.x + g.w, g.y + g.h);
+          return (
+            <rect key={`g${k}`} className={"mag-cv-ghost" + (ghostOn === k ? " on" : "")}
+              style={{ ["--bc" as string]: g.color, pointerEvents: tool === "select" && !auto && onGhost ? "auto" : "none" }}
+              x={gx} y={gy} width={Math.max(gx2 - gx, 0)} height={Math.max(gy2 - gy, 0)}
+              onPointerDown={(e) => {
+                if (e.button !== 0 || e.shiftKey) return;
+                e.preventDefault();
+                e.stopPropagation();
+                onSelect?.(null);
+                onGhost?.(ghostOn === k ? null : k);
+              }} />
+          );
+        })}
+
         {/* Контур, который рисуют. Начальная точка выделена: в неё и целятся,
             чтобы замкнуть. */}
         {draft.length > 0 && (() => {
@@ -1137,7 +1181,27 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   onSelect?.(i, null);
                 }}
               >
+                {s.pending && <i className="mag-cv-mark" aria-label="агент, на проверке">◆</i>}
                 {meta.name || s.class_index}
+                {s.pending && s.conf != null && <b className="mag-cv-conf">{fmtConf(s.conf)}</b>}
+              </span>
+            );
+          })}
+          {ghosts?.map((g, k) => {
+            const [lx, py] = sx(g.x, g.y);
+            return (
+              <span key={`g${k}`} aria-hidden
+                className={"mag-cv-lb ghost" + (ghostOn === k ? " on" : "") + (inkOn(g.color) === "dark" ? " ink-dark" : "")}
+                style={{ left: lx, top: py, ["--bc" as string]: g.color,
+                  pointerEvents: tool === "select" && !auto && onGhost ? "auto" : "none" }}
+                onPointerDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onSelect?.(null);
+                  onGhost?.(ghostOn === k ? null : k);
+                }}>
+                <i className="mag-cv-mark">◎</i>{g.name}<b className="mag-cv-conf">{fmtConf(g.conf)}</b>
               </span>
             );
           })}
