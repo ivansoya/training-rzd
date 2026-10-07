@@ -78,6 +78,15 @@
 /* Меню правой кнопки: в точке курсора, классы с поиском и действия */
 .ed-cmenu { position: fixed; width: 280px; display: flex; flex-direction: column; gap: 4px; max-height: min(480px, calc(100dvh - 16px)); }
 .ed-cmenu-list { overflow: auto; max-height: 240px; display: flex; flex-direction: column; }
+/* Меню объекта: класс кнопкой с подменю сбоку, ниже действия группами */
+.ed-omenu { width: 248px; gap: 0; }
+.ed-omenu .ui-pop-sep { margin: 4px -6px; }
+.ed-omenu-g { display: flex; flex-direction: column; }
+.ed-omenu-cls { font-weight: 500; }
+.ed-omenu-cls > .ui-ic:last-child { margin-left: auto; }
+.ed-omenu-cls[aria-expanded="true"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 55%, transparent); }
+.ui-opt.is-agent, .ui-opt.is-agent > .ui-ic { color: var(--agent-fg); }
+.ed-omenu-fly { width: 260px; }
 
 .ed-zoom {
   position: absolute; right: 14px; bottom: 14px; z-index: 5; display: flex; align-items: center; gap: 2px; padding: 2px;
@@ -255,7 +264,7 @@
 .ve-cov { position: absolute; top: 11px; height: 8px; border-radius: 2px; background: var(--st-done); pointer-events: none; }
 .ve-empty { position: absolute; top: 6px; width: 3px; height: 18px; margin-left: -1.5px; border-radius: 1px; background: var(--st-empty); }
 .ve-empty.off { opacity: .4; }
-.ve-heat { position: absolute; top: 9px; height: 12px; border-radius: 2px; background: var(--c3); pointer-events: none; }
+.ve-heat { position: absolute; top: 9px; height: 12px; border-radius: 2px; background: var(--scout); pointer-events: none; }
 /* Риски дорожек: ближайшая к курсору растёт — в неё попадают, не целясь в 3 px */
 .ve-t {
   position: absolute; top: 6px; width: 3px; height: 18px; margin-left: -1.5px; border-radius: 1px;
@@ -301,24 +310,36 @@
 .ve-menu { width: 250px; }
 
 /* ---------- агент на кадре: «на проверке» и находки разведки ---------- */
-/* Непроверенная рамка агента — частый пунктир цвета класса: класс уже выбран, сомнение в самой рамке.
-   Подложку рвём тем же шагом, иначе штрих читается двухцветным. Заслонённый объект видео — реже (7 5). */
-.mag-cv-sh.pending .mag-cv-line,
-.mag-cv-sh.pending .mag-cv-hull { stroke-dasharray: 4 3; }
-.mag-cv-mark { font-style: normal; font-size: 9px; color: var(--agent-fg); margin-right: 5px; line-height: 1; }
+/* Рамка агента — сплошная, плотная и светлым цветом агента на тёмной подложке: её для того и видно,
+   чтобы проверить. Пунктира нет — «на проверке» говорит цвет. Контур и заливка — цвета класса;
+   у контура рамкой служит габарит, ему вместо подложки — тень */
+.mag-cv-sh.pending:not(.poly) .mag-cv-line { stroke: var(--agent-fg); stroke-width: 2; }
+.mag-cv-sh.pending:not(.poly) .mag-cv-hull { stroke-width: 4; }
+.mag-cv-sh.pending.on:not(.poly) .mag-cv-line { stroke-width: 2.5; }
+.mag-cv-sh.pending.on:not(.poly) .mag-cv-hull { stroke-width: 4.5; }
+.mag-cv-sh.pending.poly .mag-cv-cage {
+  stroke: var(--agent-fg); stroke-width: 2; stroke-dasharray: none; opacity: 1;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, .9));
+}
+.mag-cv-mark { font-style: normal; font-size: 9px; color: var(--agent-fg); margin-right: 5px; line-height: 1; flex: none; }
 .mag-cv-lb.on .mag-cv-mark { color: inherit; }
 .mag-cv-conf { font: 500 10.5px var(--mono); margin-left: 6px; opacity: .75; }
 
-/* Призрак разведки: тонкая линия без подложки, полупрозрачная — это сведения, а не разметка */
+/* Призрак разведки: плотная жёлтая рамка разведки, непрозрачная — её для того и показывают, чтобы
+   увидеть и решить; заливка под курсором — цвета класса. Тень вместо подложки: читается на светлом кадре */
 .mag-cv-ghost {
-  fill: transparent; stroke: var(--bc); stroke-width: 1; opacity: .55; cursor: pointer;
-  transition: opacity .12s, fill .12s;
+  fill: transparent; stroke: var(--scout); stroke-width: 2; pointer-events: none;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, .9));
+  transition: fill .12s, stroke-width .12s;
 }
-.mag-cv-ghost:hover { opacity: 1; stroke-width: 1.5; fill: color-mix(in srgb, var(--bc) 8%, transparent); }
-.mag-cv-ghost.on { opacity: 1; stroke-width: 1.5; fill: color-mix(in srgb, var(--bc) 12%, transparent); }
+/* Видимая рамка — слоем над объектами и без событий; нажимается призрак невидимой копией под
+   объектами — всей площадью и полосой шире линии, так что объекты и вершины над ним нажатие не теряют */
+.mag-cv-ghost-hit { fill: none; stroke: transparent; stroke-width: 12; cursor: pointer; }
+.mag-cv-ghost.hot { stroke-width: 2.5; fill: color-mix(in srgb, var(--bc) 10%, transparent); }
+.mag-cv-ghost.on { stroke-width: 2.5; fill: color-mix(in srgb, var(--bc) 16%, transparent); }
 .mag-cv-lb.ghost { opacity: .45; background: color-mix(in srgb, var(--stage) 80%, transparent); border-style: dashed; }
 .mag-cv-lb.ghost .mag-cv-mark { color: color-mix(in srgb, var(--bc) 60%, var(--on-frame)); }
-.mag-cv-lb.ghost:hover { opacity: 1; border-style: solid; }
+.mag-cv-lb.ghost:hover, .mag-cv-lb.ghost.hot { opacity: 1; border-style: solid; }
 .mag-cv-lb.ghost.on { opacity: 1; border-style: solid; background: var(--bc); }
 .mag-cv-lb.ghost.on .mag-cv-mark { color: inherit; }
 
@@ -338,13 +359,16 @@
 .fe-agent .fe-sec-t .ui-ic { color: var(--agent-fg); }
 .fe-obj.pending .ui-swatch { outline: 1px dashed color-mix(in srgb, var(--agent-fg) 70%, transparent); outline-offset: 2px; }
 .fe-conf { color: var(--agent-fg); }
+.fe-confirm { gap: 8px; align-items: center; }
+/* Разведка в панели: находки — пунктирный образец, как призрак на кадре */
+.fe-scout-ic { font-style: normal; color: var(--muted-fg); }
+.fe-obj.ghost .ui-swatch { opacity: .7; outline: 1px dashed color-mix(in srgb, var(--fg) 40%, transparent); outline-offset: 2px; }
 
-/* Призрак разведки поверх картинки (Marks): без подложки, тонко и полупрозрачно */
-.mk-ghost .mag-cv-hull { display: none; }
-.mk-ghost .mag-cv-line { stroke-width: 1; opacity: .7; }
-/* Под курсором призрак перестаёт быть прозрачным — его разглядывают */
-.mk-ghost.hot .mag-cv-hull { display: inline; }
-.mk-ghost.hot .mag-cv-line { stroke-width: 1.5; opacity: 1; }
+/* Призрак разведки поверх картинки (Marks): жёлтая рамка разведки на тёмной подложке, как в редакторе */
+.mk-ghost .mag-cv-line { stroke: var(--scout); stroke-width: 2; }
+/* Под курсором призрак прибавляет в весе — его разглядывают */
+.mk-ghost .mag-cv-hull { stroke-width: 4; }
+.mk-ghost.hot .mag-cv-line { stroke-width: 2.5; }
 .mk-labels .mag-cv-lb.ghost.hot { opacity: 1; border-style: solid; }
 .vc-ghosts { position: absolute; inset: 0; pointer-events: none; }
 

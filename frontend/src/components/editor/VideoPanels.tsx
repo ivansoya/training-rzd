@@ -13,8 +13,12 @@ import type { Item } from "./video";
 
 type Label = (ci: number) => { name: string; color: string };
 
+/** Находка разведки на этом кадре — как её показывает панель. */
+export interface SideGhost { name: string; color: string; conf: number; class_index: number | null }
+
 export function HereSide({ items, shapes, frame, numbers, labelOf, classes, selected, hidden, frozen,
-  onSelect, onHide, onClass, onDelete, onToTrack, onPatch }: {
+  ghosts = [], ghostOn = null, onGhost, onTake,
+  onSelect, onHide, onClass, onDelete, onToTrack, onPatch, onConfirm }: {
   items: Item[];
   shapes: CanvasShape[];
   frame: number;
@@ -30,6 +34,14 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
   onDelete: (i: number) => void;
   onToTrack: (i: number) => void;
   onPatch: (track: VideoTrack, body: { interpolate?: boolean; export_step?: number }) => void;
+  /** Подтвердить одну рамку агента — то же, что в меню правой кнопки. */
+  onConfirm: (i: number) => void;
+  /** Находки разведки кадра; пусто — разведка скрыта или ничего не нашла. */
+  ghosts?: SideGhost[];
+  ghostOn?: number | null;
+  onGhost?: (k: number | null) => void;
+  /** Взять находку в разметку; `as` — класс, выбранный здесь же. */
+  onTake?: (k: number, as?: number) => void;
 }) {
   const options = classes.map((c) => ({
     value: String(c.class_index),
@@ -83,6 +95,12 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
                     ))}
                   </dl>
                 )}
+                {sh?.pending && !frozen && (
+                  <div className="row fe-confirm">
+                    <span className="t-xs t-faint grow">Правка рамки — тоже проверка.</span>
+                    <Button size="sm" variant="agent" icon="tick" onClick={() => onConfirm(i)}>Подтвердить</Button>
+                  </div>
+                )}
                 {!frozen && (
                   <div className="row wrap">
                     <Button size="sm" variant="ghost" icon="route" disabled={it.box.shape?.kind === "polygon"}
@@ -108,6 +126,43 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
             <span className="ui-mono">{agent.length}</span>
           </div>
           <div className="fe-list">{agent.map(row)}</div>
+        </section>
+      )}
+      {ghosts.length > 0 && (
+        <section className="fe-sec fe-objs fe-scout">
+          <div className="fe-sec-t">
+            <span className="row"><i className="fe-scout-ic" aria-hidden>◎</i>Разведка</span>
+            <span className="ui-mono">{ghosts.length}</span>
+          </div>
+          <div className="fe-list">
+            {ghosts.map((g, k) => {
+              const on = k === ghostOn;
+              return (
+                <div key={k} className={cx("fe-obj", "ghost", on && "on")}>
+                  <div className="fe-obj-r" role="button" tabIndex={0} aria-pressed={on}
+                    onClick={() => onGhost?.(on ? null : k)}
+                    onKeyDown={(e) => { if (e.key === "Enter") onGhost?.(on ? null : k); }}>
+                    <Swatch color={g.color} />
+                    <span className="t-ell grow">{g.name}</span>
+                    <span className="ui-mono t-xs t-faint">{fmtConf(g.conf)}</span>
+                  </div>
+                  {on && !frozen && onTake && (
+                    <div className="fe-obj-b">
+                      <Select full size="sm" label="Класс в разметке" value={g.class_index === null ? undefined : String(g.class_index)}
+                        placeholder="Класс агента не сопоставлен" options={options}
+                        onChange={(v) => onTake(k, Number(v))} />
+                      <div className="row">
+                        <span className="grow" />
+                        <Button size="sm" variant="agent" icon="plus" kbd="⏎" disabled={g.class_index === null}
+                          title={g.class_index === null ? "Выберите класс выше — находка возьмётся им" : undefined}
+                          onClick={() => onTake(k)}>Взять в разметку</Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
       {/* Пустая секция под группой агента — лишняя строка «0» */}

@@ -197,14 +197,21 @@
   fill: var(--bc, var(--ed-ink));
   stroke: rgba(0, 0, 0, 0.55);
   stroke-width: 1;
-  pointer-events: all;
+  pointer-events: none;
   cursor: crosshair;
   transition: transform 0.1s ease, fill 0.1s ease, opacity 0.12s ease;
   transform-box: fill-box;
   transform-origin: center;
 }
 
-.mag-cv-v:hover {
+/* Мышь ловит прозрачная зона вокруг ромба; сам ромб событий не берёт, но растёт под ней */
+.mag-cv-vhit {
+  fill: transparent;
+  pointer-events: all;
+  cursor: crosshair;
+}
+
+.mag-cv-vhit:hover + .mag-cv-v {
   transform: scale(1.35);
 }
 
@@ -217,7 +224,7 @@
 /* Пока держат Alt, вершины событий не ловят: под ним целятся в грань между
    ними, и вершина, перехватившая нажатие, отняла бы вставку у самой частой
    её цели — середины короткого ребра. */
-.mag-cv-layer.alt .mag-cv-v {
+.mag-cv-layer.alt .mag-cv-vhit {
   pointer-events: none;
 }
 

@@ -8,10 +8,11 @@ import {
   useRef,
   useState,
 } from "react";
-import type { PointerEvent as ReactPointerEvent } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { imageFileUrl, imagePreviewUrl } from "../../auth/api";
 import * as poly from "./polygon";
 import { inkOn } from "../editor/look";
+import { Icon } from "../../ui";
 import type { Point, Ring } from "./polygon";
 import {
   HIT,
@@ -85,7 +86,7 @@ type Drag =
   | { kind: "move"; i: number; part: number | null; dx: number; dy: number }
   | { kind: "resize"; i: number; corner: string }
   // Вершина контура: тянут одну точку, остальные стоят.
-  | { kind: "vertex"; i: number; part: number; vertex: number }
+  | { kind: "vertex"; i: number; part: number; vertex: number; dx: number; dy: number }
   | { kind: "pan"; px: number; py: number; ox: number; oy: number }
   // Выделение области под подсказку модели — объектом оно ещё не становится.
   | { kind: "lasso"; x0: number; y0: number }
@@ -97,6 +98,8 @@ type Drag =
 export interface CanvasHandle {
   zoomBy(factor: number): void;
   fit(): void;
+  /** Объект не виден целиком — сдвинуть вид так, чтобы он встал в центр свободного места; зум прежний. */
+  reveal(box: { x: number; y: number; w: number; h: number }): void;
   /** Замкнуть рисуемый контур, если точек уже хватает. */
   closePolygon(): void;
   /** Бросить рисуемый контур целиком. */
@@ -138,6 +141,8 @@ const HANDLES = ["tl", "tc", "tr", "lc", "rc", "bl", "bc", "br"];
 // Радиус ромба вершины в экранных пикселях. Ромб той же ширины, что квадратный
 // якорь, «весит» меньше: у него на угол приходится вдвое меньше площади.
 const VERTEX_R = 7;
+// Зона захвата вершины — шире видимого ромба
+const VERTEX_HIT = 13;
 // Углы и середины: середины прибавляются только на крупном объекте.
 const CORNERS = new Set(["tl", "tr", "bl", "br"]);
 // Подпись видна всегда, если меньшая сторона рамки на экране не меньше этого
@@ -177,12 +182,13 @@ function isPoly(s: CanvasShape): boolean {
  * значило бы моргать при каждом шаге стрелкой.
  */
 function BitmapView({
-  bitmap, width, height, maxHeight,
+  bitmap, width, height, style,
 }: {
   bitmap: ImageBitmap | null;
   width: number;
   height: number;
-  maxHeight: string;
+  /** Вписывание в сцену — то же, что у картинки: по ширине и высоте места. */
+  style: CSSProperties;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
@@ -216,15 +222,17 @@ function BitmapView({
       ref={ref}
       width={width}
       height={height}
-      style={{ maxHeight }}
+      style={style}
     />
   );
 }
 
 const BoxCanvas = forwardRef<CanvasHandle, {
-  /** Ключ картинки: по нему сбрасывается зум при смене кадра. Для изображения
-   *  это его id, для кадра видео — номер кадра. */
+  /** Ключ картинки. Для изображения это его id, для кадра видео — номер кадра. */
   imageId: string;
+  /** Ключ вида: зум и сдвиг сбрасываются, когда он меняется. Пусто — с каждой
+   *  картинкой; редакторы дают свой, чтобы вид не прыгал при листании и проигрывании. */
+  viewKey?: string;
   /** Готовый адрес картинки. Кадр видео приходит из декодера одним размером,
    *  и превью с оригиналом у него не различаются — значит адрес задаёт хозяин. */
   src?: string;
@@ -298,23 +306,24 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     p: { x: number; y: number },
     opts: { shift: boolean; negative: boolean; onBox: number | null }
   ) => void;
-  /** Находки разведки: щелчок выбирает, правки нет. */
+  /** Находки разведки: щелчок выбирает, правки нет; правая кнопка — меню. */
   ghosts?: CanvasGhost[];
   ghostOn?: number | null;
   onGhost?: (i: number | null) => void;
+  onGhostContext?: (i: number, clientX: number, clientY: number) => void;
   /** Область, выделенная в полуавтомате: подсказка-бокс для модели. */
   onAutoBox?: (b: { x: number; y: number; w: number; h: number }) => void;
   /** Клик без протяжки в режиме области — «закрепить показанное». */
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, src, bitmap, fileName, width, height, boxes, labelOf, dashed, hidden, hiddenItems,
+    imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, dashed, hidden, hiddenItems,
     labels = true, editable = false, waiting = false, tool = "select", auto = false,
     autoMode = "points", autoPoints, autoPreview = null, activeClass = null,
     selected = null, selectedPart = null, splitParts = false, canMovePoly = false,
     grid = true, reserve = 210, onSelect, onBoxes, onDrawn,
     onScale, onContext, onPolygon, onAutoPoint, onAutoBox, onAutoCommit,
-    ghosts, ghostOn = null, onGhost,
+    ghosts, ghostOn = null, onGhost, onGhostContext,
   },
   ref
 ) {
@@ -325,6 +334,9 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   const [shift, setShift] = useState(false);
   // Объект под курсором: его подпись проявляется в полную силу
   const [hot, setHot] = useState<number | null>(null);
+  // Призрак под курсором — одно состояние на рамку и ярлык, они подсвечиваются вместе
+  const [ghostHot, setGhostHot] = useState<number | null>(null);
+  useEffect(() => { setGhostHot(null); }, [ghosts]);
   // Alt держат — значит целятся вставить вершину. Показываем, куда она встанет:
   // не в курсор, а на грань, которую разделит. Иначе рука, промахнувшаяся мимо
   // контура, вывернула бы его и не поняла почему.
@@ -353,10 +365,22 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   const draftRef = useRef(draft);
   draftRef.current = draft;
 
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const geomRef = useRef({ rect, width, height });
+  geomRef.current = { rect, width, height };
+  const lastViewKey = useRef(viewKey ?? imageId);
   useEffect(() => {
-    setView({ s: 1, x: 0, y: 0 });
-    setHires(false);
-  }, [imageId]);
+    const key = viewKey ?? imageId;
+    if (key !== lastViewKey.current) {
+      lastViewKey.current = key;
+      setView({ s: 1, x: 0, y: 0 });
+      setHires(false);
+    } else {
+      // Вид остался, а полный размер у каждой картинки свой — просим его снова, если зум велик.
+      setHires(viewRef.current.s >= HIRES_AT);
+    }
+  }, [imageId, viewKey]);
 
   // Сменился кадр или инструмент — недорисованный контур бросаем. Он привязан
   // к кадру, на котором его начали, и переезд на соседний сделал бы из него
@@ -437,12 +461,48 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     onPolygon?.(d);
   }, [onPolygon]);
 
+  /** Рамка и ярлык призрака ведут себя одинаково: щелчок выбирает, правая — меню. */
+  const ghostHandlers = (k: number) => ({
+    onPointerEnter: () => setGhostHot(k),
+    onPointerLeave: () => setGhostHot((h) => (h === k ? null : h)),
+    onPointerDown: (e: ReactPointerEvent) => {
+      if (e.button !== 0 || e.shiftKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      onSelect?.(null);
+      onGhost?.(ghostOn === k ? null : k);
+    },
+    onContextMenu: (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!onGhostContext) return;
+      onSelect?.(null);
+      onGhost?.(k);
+      onGhostContext(k, e.clientX, e.clientY);
+    },
+  });
+
   useImperativeHandle(ref, () => ({
     zoomBy(factor: number) {
       const box = stageRef.current?.getBoundingClientRect();
       if (box) zoomAt(box.left + box.width / 2, box.top + box.height / 2, factor);
     },
     fit() { setView({ s: 1, x: 0, y: 0 }); },
+    reveal(b) {
+      const st = stageRef.current;
+      const { rect: r, width: w, height: h } = geomRef.current;
+      if (!st || !r.w || !r.h) return;
+      const cs = getComputedStyle(st);
+      // Свободное место — сцена без полей: поля и есть место под плавающие панели
+      const l = parseFloat(cs.paddingLeft), t = parseFloat(cs.paddingTop);
+      const rr = st.clientWidth - parseFloat(cs.paddingRight), bb = st.clientHeight - parseFloat(cs.paddingBottom);
+      const [x0, y0] = toScreen(b.x, b.y, w, h, r);
+      const [x1, y1] = toScreen(b.x + b.w, b.y + b.h, w, h, r);
+      if (x0 >= l && y0 >= t && x1 <= rr && y1 <= bb) return;
+      const dx = (l + rr) / 2 - (x0 + x1) / 2;
+      const dy = (t + bb) / 2 - (y0 + y1) / 2;
+      setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
+    },
     closePolygon() { closeDraft(); },
     cancelPolygon() { setDraft([]); setGhost(null); },
     undoPoint() { setDraft((d) => d.slice(0, -1)); },
@@ -707,8 +767,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
 
     if (d.kind === "vertex") {
       const parts = poly.moveVertex(b.parts || [], d.part, d.vertex, [
-        Math.max(0, Math.min(p.x, width)),
-        Math.max(0, Math.min(p.y, height)),
+        Math.max(0, Math.min(p.x - d.dx, width)),
+        Math.max(0, Math.min(p.y - d.dy, height)),
       ]);
       next[d.i] = { ...b, parts, ...(poly.bounds(parts) || {}) };
       onBoxes?.(next);
@@ -814,7 +874,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
               bitmap={bitmap}
               width={width}
               height={height}
-              maxHeight={`calc(100vh - ${reserve}px)`}
+              style={fitStyle}
             />
           ) : (
             <img
@@ -840,7 +900,26 @@ const BoxCanvas = forwardRef<CanvasHandle, {
         width="100%"
         height="100%"
       >
-        {boxes.map((s, i) => {
+        {/* Находки разведки ловят нажатия под разметкой: вершины и ручки объектов всегда сверху,
+            иначе нажатие на вершину у рамки призрака уходило призраку и снимало выбор. Видно их
+            рамки — над объектами, отдельным слоем ниже.
+            Ловят щелчок всей площадью и полосой шире рамки, только в выборе: там, где призрак
+            накрыт объектом, нажатие достаётся объекту. */}
+        {ghosts?.map((g, k) => {
+          const [gx, gy] = sx(g.x, g.y);
+          const [gx2, gy2] = sx(g.x + g.w, g.y + g.h);
+          const live = tool === "select" && !auto && !!onGhost;
+          const geo = { x: gx, y: gy, width: Math.max(gx2 - gx, 0), height: Math.max(gy2 - gy, 0) };
+          return (
+            <rect key={`g${k}`} className="mag-cv-ghost-hit" style={{ pointerEvents: live ? "all" : "none" }} {...geo}
+              {...ghostHandlers(k)} />
+          );
+        })}
+
+        {(() => {
+        let top: ReactNode = null;
+        const frames: ReactNode[] = [];
+        const shapes = boxes.map((s, i) => {
           if (hidden?.has(s.class_index) || hiddenItems?.has(i)) return null;
           const meta = labelOf(s.class_index);
           const on = i === selected;
@@ -927,6 +1006,99 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             begin(e, { kind: "move", i, part: grip, dx: p.x - from.x, dy: p.y - from.y });
           }
 
+          // Ручки и вершины выбранного — в верхний слой: иначе их накрывает соседний объект
+          const tools = (
+            <>
+              {/* Якоря выбранного бокса: четыре угла всегда, середины — у крупного. */}
+              {on && editable && !contour &&
+                HANDLES.filter((c) => (mids && corners) || CORNERS.has(c)).map((corner) => {
+                  const hx = corner.includes("l") ? px : corner.includes("r") ? px2 : (px + px2) / 2;
+                  const hy = corner.includes("t") ? py : corner.includes("b") ? py2 : (py + py2) / 2;
+                  return (
+                    <rect
+                      key={corner}
+                      className={`mag-cv-h ${corner}`}
+                      x={hx - HIT / 2} y={hy - HIT / 2} width={HIT} height={HIT}
+                      onPointerDown={(e) => {
+                        if (e.button !== 0 || e.shiftKey) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        begin(e, { kind: "resize", i, corner });
+                      }}
+                    />
+                  );
+                })}
+
+              {/* Вершины контура — ромбы, тем же знаком, что ключи в дорожках
+                  треков: «это поставил человек». Убрать вершину — правой
+                  кнопкой: Alt занят вставкой, и один модификатор не может
+                  значить и «добавить», и «убрать». */}
+              {vertices && s.parts!.map((ring, part) =>
+                ring.map(([vx, vy], vertex) => {
+                  const [cx, cy] = sx(vx, vy);
+                  const dim = splitParts && selectedPart !== null && part !== selectedPart;
+                  // Ловит мышь прозрачный ромб побольше, видимый остаётся прежним: в мелкий не попасть
+                  return (
+                    <g key={`${part}-${vertex}`}>
+                    <path
+                      className="mag-cv-vhit"
+                      d={diamond(cx, cy, VERTEX_HIT)}
+                      onPointerDown={(e) => {
+                        if (e.button !== 0 || e.shiftKey || e.altKey) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        onSelect?.(i, part);
+                        // Взяли не в центр — вершина держит это смещение, а не прыгает под курсор
+                        const at = toImage(e);
+                        begin(e, { kind: "vertex", i, part, vertex, dx: at.x - vx, dy: at.y - vy });
+                      }}
+                      onContextMenu={(e) => {
+                        // Правая по вершине — сразу убрать её; меню — только когда убрать нельзя (осталось минимум)
+                        if (!editable || !onBoxes || ring.length <= poly.MIN_POINTS) { menu(e, { part, vertex }); return; }
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const parts = poly.removeVertex(s.parts!, part, vertex);
+                        onSelect?.(i, part);
+                        onBoxes(boxesRef.current.map((b, k) => (k === i ? { ...b, parts, ...(poly.bounds(parts) || {}) } : b)));
+                      }}
+                    />
+                    <path className={dim ? "mag-cv-v dim" : "mag-cv-v"} d={diamond(cx, cy, VERTEX_R)} />
+                    </g>
+                  );
+                })
+              )}
+
+              {/* Куда встанет вершина под Alt — прямо под курсором. Усы к
+                  концам грани показывают, какое ребро при этом разойдётся:
+                  место выбирает человек, промежуток кольца — геометрия.
+                  Подсказка событий не ловит, нажатие обрабатывает сцена. */}
+              {on && alt && insertAt && editable && (() => {
+                const [cx, cy] = sx(insertAt.at[0], insertAt.at[1]);
+                const [ax, ay] = sx(insertAt.a[0], insertAt.a[1]);
+                const [bx, by] = sx(insertAt.b[0], insertAt.b[1]);
+                return (
+                  <>
+                    <path
+                      className="mag-cv-new-edge"
+                      d={`M${ax} ${ay}L${cx} ${cy}L${bx} ${by}`}
+                    />
+                    <path className="mag-cv-new" d={diamond(cx, cy, 8)} />
+                  </>
+                );
+              })()}
+            </>
+          );
+          if (on) top = <g className={cls + " mag-cv-ov"} style={{ ["--bc" as string]: meta.color }}>{tools}</g>;
+          // Рамка агента — поверх всех контуров, событий не берёт
+          if (s.pending) {
+            frames.push(
+              <g key={`f${i}`} className={cls + " mag-cv-ov"} style={{ ["--bc" as string]: meta.color, pointerEvents: "none" }}>
+                {contour
+                  ? <rect className="mag-cv-cage" x={px} y={py} width={Math.max(sw, 0)} height={Math.max(sh, 0)} />
+                  : <><path className="mag-cv-hull" d={outline} /><path className="mag-cv-line" d={outline} /></>}
+              </g>
+            );
+          }
           return (
             <g key={i} className={cls + (hot === i ? " hot" : "")} style={{ ["--bc" as string]: meta.color }}
               onPointerEnter={() => setHot(i)} onPointerLeave={() => setHot((h) => (h === i ? null : h))}>
@@ -980,92 +1152,21 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   />
                 )}
 
-              {/* Якоря выбранного бокса: четыре угла всегда, середины — у крупного. */}
-              {on && editable && !contour &&
-                HANDLES.filter((c) => (mids && corners) || CORNERS.has(c)).map((corner) => {
-                  const hx = corner.includes("l") ? px : corner.includes("r") ? px2 : (px + px2) / 2;
-                  const hy = corner.includes("t") ? py : corner.includes("b") ? py2 : (py + py2) / 2;
-                  return (
-                    <rect
-                      key={corner}
-                      className={`mag-cv-h ${corner}`}
-                      x={hx - HIT / 2} y={hy - HIT / 2} width={HIT} height={HIT}
-                      onPointerDown={(e) => {
-                        if (e.button !== 0 || e.shiftKey) return;
-                        e.preventDefault();
-                        e.stopPropagation();
-                        begin(e, { kind: "resize", i, corner });
-                      }}
-                    />
-                  );
-                })}
-
-              {/* Вершины контура — ромбы, тем же знаком, что ключи в дорожках
-                  треков: «это поставил человек». Убрать вершину — правой
-                  кнопкой: Alt занят вставкой, и один модификатор не может
-                  значить и «добавить», и «убрать». */}
-              {vertices && s.parts!.map((ring, part) =>
-                ring.map(([vx, vy], vertex) => {
-                  const [cx, cy] = sx(vx, vy);
-                  const dim = splitParts && selectedPart !== null && part !== selectedPart;
-                  return (
-                    <path
-                      key={`${part}-${vertex}`}
-                      className={dim ? "mag-cv-v dim" : "mag-cv-v"}
-                      d={diamond(cx, cy, VERTEX_R)}
-                      onPointerDown={(e) => {
-                        if (e.button !== 0 || e.shiftKey || e.altKey) return;
-                        e.preventDefault();
-                        e.stopPropagation();
-                        onSelect?.(i, part);
-                        begin(e, { kind: "vertex", i, part, vertex });
-                      }}
-                      onContextMenu={(e) => menu(e, { part, vertex })}
-                    />
-                  );
-                })
-              )}
-
-              {/* Куда встанет вершина под Alt — прямо под курсором. Усы к
-                  концам грани показывают, какое ребро при этом разойдётся:
-                  место выбирает человек, промежуток кольца — геометрия.
-                  Подсказка событий не ловит, нажатие обрабатывает сцена. */}
-              {on && alt && insertAt && editable && (() => {
-                const [cx, cy] = sx(insertAt.at[0], insertAt.at[1]);
-                const [ax, ay] = sx(insertAt.a[0], insertAt.a[1]);
-                const [bx, by] = sx(insertAt.b[0], insertAt.b[1]);
-                return (
-                  <>
-                    <path
-                      className="mag-cv-new-edge"
-                      d={`M${ax} ${ay}L${cx} ${cy}L${bx} ${by}`}
-                    />
-                    <path className="mag-cv-new" d={diamond(cx, cy, 8)} />
-                  </>
-                );
-              })()}
             </g>
           );
-        })}
-
-        {/* Находки разведки — призраки поверх разметки. Ловят щелчок только в
-            выборе: в рисовании кадр под ними должен оставаться доступным. */}
-        {ghosts?.map((g, k) => {
+        });
+        // Видимые рамки разведки — над объектами; нажатия они ловят слоем под объектами
+        const ghostFrames = ghosts?.map((g, k) => {
           const [gx, gy] = sx(g.x, g.y);
           const [gx2, gy2] = sx(g.x + g.w, g.y + g.h);
           return (
-            <rect key={`g${k}`} className={"mag-cv-ghost" + (ghostOn === k ? " on" : "")}
-              style={{ ["--bc" as string]: g.color, pointerEvents: tool === "select" && !auto && onGhost ? "auto" : "none" }}
-              x={gx} y={gy} width={Math.max(gx2 - gx, 0)} height={Math.max(gy2 - gy, 0)}
-              onPointerDown={(e) => {
-                if (e.button !== 0 || e.shiftKey) return;
-                e.preventDefault();
-                e.stopPropagation();
-                onSelect?.(null);
-                onGhost?.(ghostOn === k ? null : k);
-              }} />
+            <rect key={`gv${k}`} className={"mag-cv-ghost" + (ghostOn === k ? " on" : "") + (ghostHot === k ? " hot" : "")}
+              style={{ ["--bc" as string]: g.color }}
+              x={gx} y={gy} width={Math.max(gx2 - gx, 0)} height={Math.max(gy2 - gy, 0)} />
           );
-        })}
+        });
+        return <>{shapes}{frames}{ghostFrames}{top}</>;
+        })()}
 
         {/* Контур, который рисуют. Начальная точка выделена: в неё и целятся,
             чтобы замкнуть. */}
@@ -1181,7 +1282,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   onSelect?.(i, null);
                 }}
               >
-                {s.pending && <i className="mag-cv-mark" aria-label="агент, на проверке">◆</i>}
+                {s.pending && <Icon name="bot" size={12} className="mag-cv-mark" />}
                 {meta.name || s.class_index}
                 {s.pending && s.conf != null && <b className="mag-cv-conf">{fmtConf(s.conf)}</b>}
               </span>
@@ -1191,16 +1292,11 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             const [lx, py] = sx(g.x, g.y);
             return (
               <span key={`g${k}`} aria-hidden
-                className={"mag-cv-lb ghost" + (ghostOn === k ? " on" : "") + (inkOn(g.color) === "dark" ? " ink-dark" : "")}
+                className={"mag-cv-lb ghost" + (ghostOn === k ? " on" : "") + (ghostHot === k ? " hot" : "") +
+                  (inkOn(g.color) === "dark" ? " ink-dark" : "")}
                 style={{ left: lx, top: py, ["--bc" as string]: g.color,
                   pointerEvents: tool === "select" && !auto && onGhost ? "auto" : "none" }}
-                onPointerDown={(e) => {
-                  if (e.button !== 0) return;
-                  e.preventDefault();
-                  e.stopPropagation();
-                  onSelect?.(null);
-                  onGhost?.(ghostOn === k ? null : k);
-                }}>
+                {...ghostHandlers(k)}>
                 <i className="mag-cv-mark">◎</i>{g.name}<b className="mag-cv-conf">{fmtConf(g.conf)}</b>
               </span>
             );

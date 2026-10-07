@@ -13,7 +13,8 @@ import type {
 } from "./BoxCanvas";
 import * as poly from "./polygon";
 import type { Ring } from "./polygon";
-import ClassMenu from "./ClassMenu";
+import ObjectMenu from "../editor/ObjectMenu";
+import type { MenuAction } from "../editor/ObjectMenu";
 import FilmStrip from "./FilmStrip";
 import { frameActions } from "./frameActions";
 import * as history from "./editHistory";
@@ -446,12 +447,26 @@ export default function AnnotationEditor({
 
   /** Уйти с кадра можно только записав его: при сбое остаёмся, и на экране
    *  «не сохранено» — переход не случается молча. */
+  // Переходы в полёте: зажатый Пробел шлёт повторы, и запись кадра у раннего могла закончиться
+  // позже — он уводил обратно. Выполняется только последний, шаги считаются от цели, а не от показанного.
+  const navSeq = useRef(0);
+  const navAt = useRef(index);
+  useEffect(() => { navAt.current = index; }, [index]);
   const jump = useCallback(
     async (target: number) => {
-      if (!(await flush())) return;
-      if (target >= 0 && target < images.length) onIndex(target);
+      // За край ленты — не переход: иначе он отменил бы ещё не случившийся шаг на последний кадр
+      if (target < 0 || target >= images.length) {
+        await flush();
+        return;
+      }
+      const ticket = ++navSeq.current;
+      navAt.current = target;
+      const saved = await flush();
+      if (ticket !== navSeq.current) return;
+      if (!saved) { navAt.current = index; return; }
+      onIndex(target);
     },
-    [flush, images.length, onIndex]
+    [flush, images.length, onIndex, index]
   );
 
   const close = useCallback(async () => {
@@ -479,13 +494,13 @@ export default function AnnotationEditor({
   // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет.
   const go = useCallback(
     (delta: number) => {
-      let i = index + delta;
+      let i = navAt.current + delta;
       while (i >= 0 && i < images.length && images[i].task_status === "deleted") {
         i += delta;
       }
       return jump(i);
     },
-    [index, images, jump]
+    [images, jump]
   );
 
   const verdict = useCallback(
@@ -684,6 +699,35 @@ export default function AnnotationEditor({
     }
     clearAuto();
   }, [autoPrev, active, replacing, boxes, edit, clearAuto, tool]);
+
+  /** «В контур»: рамка уходит в SAM2 подсказкой, контур встаёт на её место с тем же
+   *  классом и id. Правка — значит и проверка рамки агента. */
+  // SAM2 позвали из меню, а не тумблером: его ход и отказ всё равно показываем
+  const [samOn, setSamOn] = useState(false);
+  useEffect(() => { setSamOn(false); }, [image?.id]);
+
+  const toContour = useCallback(async (i: number) => {
+    const b = boxesRef.current[i];
+    const at = live.current.image?.id;
+    if (!b || frozen) return;
+    setSamOn(true);
+    auto.setError(null);
+    const shape = await auto.predict({ box: { x: b.x, y: b.y, w: b.w, h: b.h } }, refine);
+    // Пока модель думала, ушли на другой кадр или объект уже не тот — ответ не к месту
+    if (live.current.image?.id !== at || boxesRef.current[i] !== b) return;
+    const rings = (shape?.polygons || []).filter((r) => r.length >= poly.MIN_POINTS) as Ring[];
+    if (!rings.length) { auto.setError("SAM2 не нашёл объект в этой рамке."); return; }
+    setSamOn(false);
+    edit(boxesRef.current.map((s, k) => (k === i
+      ? { ...s, kind: "polygon" as const, parts: rings, ...(poly.bounds(rings) || {}), pending: false }
+      : s)));
+    setSelected(i);
+  }, [frozen, auto, refine, edit]);
+
+  /** «Подтвердить» на одной рамке агента — остальные на кадре ждут своей очереди. */
+  const confirmOne = useCallback((i: number) => {
+    edit(boxesRef.current.map((s, k) => (k === i && s.pending ? { ...s, pending: false } : s)));
+  }, [edit]);
 
   /** Замкнули контур руками: он либо новый объект, либо ещё одна часть того,
    *  к которому его просили присоединить. */
@@ -954,10 +998,17 @@ export default function AnnotationEditor({
       }
       e.preventDefault();
     }
+    // Пробел — клавиша редактора, и отпускание тоже: браузер «нажимает» кнопку в фокусе на отпускании
+    // Пробела — миниатюра ленты, по которой пришли на кадр, возвращала к нему после листания
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code === "Space" && !hasLayer() && !isTyping(e.target)) e.preventDefault();
+    }
     window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
       document.body.style.overflow = "";
     };
   }, [go, close, step, selected, selPart, splitParts, classes, tool, autoOn,
@@ -969,6 +1020,26 @@ export default function AnnotationEditor({
    *
    *  Действия появляются только когда им есть на чём сработать: пункт, который
    *  ничего не сделает, хуже отсутствующего — по нему нажимают и ждут. */
+  /** Главное в меню объекта: проверка рамки агента и перевод рамки в контур. */
+  function mainActions(i: number | null): MenuAction[] {
+    const me = i === null ? undefined : boxes[i];
+    if (i === null || !me || frozen) return [];
+    const acts: MenuAction[] = [];
+    if (me.pending) {
+      acts.push({ label: "Подтвердить", icon: "tick", agent: true,
+        run: () => { confirmOne(i); setMenu(null); } });
+    }
+    if (!me.parts?.length) {
+      acts.push({
+        label: "В контур (SAM2)", icon: "poly",
+        hint: auto.state === "ready" ? undefined : auto.state === "error" ? "модель недоступна" : "модель готовится…",
+        disabled: auto.state !== "ready" || auto.busy,
+        run: () => { setMenu(null); void toContour(i); },
+      });
+    }
+    return acts;
+  }
+
   function menuActions(m: {
     i: number | null;
     part?: number;
@@ -1080,6 +1151,7 @@ export default function AnnotationEditor({
         <BoxCanvas
           ref={canvas}
           imageId={image.id}
+          viewKey="frames"
           fileName={image.file_name}
           width={iw}
           height={ih}
@@ -1163,8 +1235,8 @@ export default function AnnotationEditor({
         )}
 
         <div className="ed-plates">
-          <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn}
-            quiet={frozen} onRetry={auto.retry} onDismiss={() => auto.setError(null)} />
+          <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn || samOn}
+            quiet={frozen} onRetry={auto.retry} onDismiss={() => { auto.setError(null); setSamOn(false); }} />
           {addTo !== null && (
             <div className="mag-auto-plate" role="status">Следующий контур ляжет в выбранный объект · Esc — отменить</div>
           )}
@@ -1207,7 +1279,7 @@ export default function AnnotationEditor({
               selected={selected}
               hidden={hidden}
               frozen={frozen}
-              onSelect={(i) => pick(i)}
+              onSelect={(i) => { pick(i); if (i !== null && boxes[i]) canvas.current?.reveal(boxes[i]); }}
               onHide={(i) => setHidden((h) => {
                 const next = new Set(h);
                 if (next.has(i)) next.delete(i); else next.add(i);
@@ -1216,6 +1288,7 @@ export default function AnnotationEditor({
               onClass={(i, ci) => pickClass(ci, i)}
               onDelete={(i) => { edit(boxes.filter((_, k) => k !== i)); pick(null); }}
               onAddContour={(i) => { pick(i); setAddTo(i); setTool("polygon"); }}
+              onConfirm={confirmOne}
             />
           </Float>
         )}
@@ -1245,13 +1318,13 @@ export default function AnnotationEditor({
       {mapOpen && <AgentSetupDialog taskId={taskId} tool={agentTool} onClose={() => setMapOpen(false)} />}
 
       {menu && (
-        <ClassMenu
+        <ObjectMenu
           classes={classes}
           at={{ x: menu.x, y: menu.y }}
           current={menu.i === null ? active : boxes[menu.i]?.class_index ?? null}
           onPick={(ci) => { pickClass(ci, menu.i); setMenu(null); }}
           deleteLabel="объект"
-          actions={menuActions(menu)}
+          groups={[mainActions(menu.i), menuActions(menu) ?? []]}
           onDelete={
             menu.i === null || frozen
               ? undefined

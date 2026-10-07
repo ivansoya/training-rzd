@@ -24,7 +24,7 @@ export function Who({ box }: { box?: TaskBox }) {
 }
 
 export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selected, hidden, frozen,
-  onSelect, onHide, onClass, onDelete, onAddContour }: {
+  onSelect, onHide, onClass, onDelete, onAddContour, onConfirm }: {
   status: string;
   tags: ReactNode;
   boxes: CanvasShape[];
@@ -39,6 +39,8 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
   onClass: (i: number, ci: number) => void;
   onDelete: (i: number) => void;
   onAddContour: (i: number) => void;
+  /** Подтвердить одну рамку агента — то же, что в меню правой кнопки. */
+  onConfirm: (i: number) => void;
 }) {
   const st = statusLook(status);
   const options = classes.map((c) => ({
@@ -78,7 +80,12 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
               ))}
             </dl>
             <Who box={meta.get(b.id ?? "")} />
-            {b.pending && <p className="t-xs t-faint">Правка рамки — тоже проверка: поправленная уйдёт в объекты.</p>}
+            {b.pending && !frozen && (
+              <div className="row fe-confirm">
+                <span className="t-xs t-faint grow">Правка рамки — тоже проверка.</span>
+                <Button size="sm" variant="agent" icon="tick" onClick={() => onConfirm(i)}>Подтвердить</Button>
+              </div>
+            )}
             {!frozen && (
               <div className="row wrap">
                 <Button size="sm" variant="ghost" icon="poly" kbd="⇧P" onClick={() => onAddContour(i)}>

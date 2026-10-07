@@ -61,9 +61,12 @@ describe("дорожки и призраки", () => {
 
   it("взятая находка призраком не рисуется", () => {
     const boxes = [{ class_index: 1, x: 10, y: 10, w: 100, h: 50 }];
-    expect(isTaken({ class_index: 1, x: 12, y: 10, w: 100, h: 50 }, boxes)).toBe(true);
-    expect(isTaken({ class_index: 2, x: 12, y: 10, w: 100, h: 50 }, boxes)).toBe(false);
-    expect(isTaken({ class_index: null, x: 12, y: 10, w: 100, h: 50 }, boxes)).toBe(false);
+    expect(isTaken({ class_index: 1, x: 40, y: 10, w: 100, h: 50 }, boxes)).toBe(true);
+    expect(isTaken({ class_index: 2, x: 40, y: 10, w: 100, h: 50 }, boxes)).toBe(false);
+    expect(isTaken({ class_index: null, x: 40, y: 10, w: 100, h: 50 }, boxes)).toBe(false);
+    // Взяли другим классом или несопоставленную — рамка ровно на месте находки
+    expect(isTaken({ class_index: 2, x: 10, y: 10, w: 100, h: 50 }, [{ class_index: 1, x: 10, y: 10, w: 100, h: 50 }])).toBe(true);
+    expect(isTaken({ class_index: null, x: 10, y: 10, w: 100, h: 50 }, [{ class_index: 3, x: 11, y: 10, w: 100, h: 50 }])).toBe(true);
   });
 });
 

@@ -86,9 +86,10 @@ export function iou(a: Box, b: Box): number {
   return union > 0 ? inter / union : 0;
 }
 
-/** Находка, которую уже взяли в разметку (тот же класс, IoU ≥ 0,5 к рамке кадра), призраком не рисуется. */
+/** Находка, которую уже взяли в разметку, призраком не рисуется: рядом рамка того же класса (IoU ≥ 0,5)
+ *  или рамка почти ровно на её месте (IoU ≥ 0,9) — «взять» кладёт её туда, класс при этом мог быть другим. */
 export function isTaken(g: Box & { class_index: number | null }, boxes: readonly (Box & { class_index: number })[]): boolean {
-  return g.class_index != null && boxes.some((b) => b.class_index === g.class_index && iou(g, b) >= 0.5);
+  return boxes.some((b) => iou(g, b) >= 0.9 || (g.class_index != null && b.class_index === g.class_index && iou(g, b) >= 0.5));
 }
 
 /** Чьи находки показывать на кадре `cur`. На паузе — только проверенного разведкой кадра

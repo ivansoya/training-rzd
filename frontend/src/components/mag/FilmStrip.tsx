@@ -132,6 +132,8 @@ export default function FilmStrip({
             type="button"
             className={`mag-fs-cell ${im.ring || ""}${i === index ? " cur" : ""}`}
             style={{ width: cellW, height: cellH }}
+            // Щелчок мышью фокус не забирает: иначе Пробел редактора «нажимал» бы эту миниатюру
+            onMouseDown={(e) => e.preventDefault()}
             onClick={() => onPick(i)}
             title={im.title}
           >

@@ -39,7 +39,8 @@ import { useLive } from "../../live/LiveProvider";
 import type { CanvasGhost, CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
 import * as poly from "./polygon";
 import type { Ring } from "./polygon";
-import ClassMenu from "./ClassMenu";
+import ObjectMenu from "../editor/ObjectMenu";
+import type { MenuAction } from "../editor/ObjectMenu";
 import { useAutoLabel } from "./useAutoLabel";
 import { isUnplayable } from "./clipReader";
 import AutoStatus from "./AutoStatus";
@@ -224,7 +225,8 @@ export default function VideoAnnotator({
   const [note, setNote] = useState<string | null>(null);
   const [plan, setPlan] = useState<MaterializePreview | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ i: number | null; x: number; y: number } | null>(null);
+  // `ghost` — меню открыто на находке разведки (номер в `ghosts`), а не на объекте.
+  const [menu, setMenu] = useState<{ i: number | null; x: number; y: number; ghost?: number } | null>(null);
   const [laneMenu, setLaneMenu] = useState<LaneAction | null>(null);
   const [scale, setScale] = useState(1);
   const [draft, setDraft] = useState<CanvasShape[] | null>(null);
@@ -383,6 +385,13 @@ export default function VideoAnnotator({
   itemsRef.current = items;
   const pickedRef = useRef(pickedTrack);
   pickedRef.current = pickedTrack;
+  const shapesRef = useRef(boxes);
+  shapesRef.current = boxes;
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  // Выбранная одиночная: id и последняя фигура — по ним выбор переживает перечитывание кадра
+  const selId = useRef<string | null>(null);
+  const selShape = useRef<CanvasShape | null>(null);
 
   // Выбор один: трек держится и на других кадрах, одиночная — только на своём.
   const pick = useCallback((i: number | null, part: number | null = null) => {
@@ -390,6 +399,8 @@ export default function VideoAnnotator({
     setSelPart(part);
     const it = i === null ? null : itemsRef.current[i];
     setPickedTrack(it?.kind === "track" ? it.track.id : null);
+    selId.current = it?.kind === "single" ? it.box.id ?? null : null;
+    selShape.current = i === null ? null : (draftRef.current ?? shapesRef.current)[i] ?? null;
   }, []);
 
   useEffect(() => {
@@ -401,6 +412,22 @@ export default function VideoAnnotator({
   useEffect(() => {
     if (!pickedRef.current) setSelected(null);
   }, [frame]);
+
+  // Одиночная выбрана номером, а сервер после записи кадра отдаёт их в другом порядке:
+  // перечитали — находим её снова по id, у свежей (ещё без id) — по фигуре.
+  useEffect(() => {
+    if (draft && selected !== null && draft[selected]) selShape.current = draft[selected];
+  }, [draft, selected]);
+  useEffect(() => {
+    if (draft || selected === null || pickedRef.current) return;
+    let k = selId.current ? items.findIndex((it) => it.kind === "single" && it.box.id === selId.current) : -1;
+    if (k < 0 && selShape.current) k = boxes.findIndex((b) => same(b, selShape.current ?? undefined));
+    if (k < 0) return;
+    const it = items[k];
+    if (it?.kind === "single") selId.current = it.box.id ?? null;
+    if (k !== selected) setSelected(k);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, draft]);
 
   // --- сохранение ---------------------------------------------------------- #
   const shownNow = useRef({ frame, boxes, items });
@@ -822,6 +849,8 @@ export default function VideoAnnotator({
     [ghostsAll, draft, boxes]
   );
   useEffect(() => { setGhostOn(null); }, [frame, scoutOn]);
+  // Меню говорит об объектах кадра — сменился кадр, меню к нему не относится
+  useEffect(() => { setMenu(null); }, [frame]);
   const scoutDots = useMemo(() => {
     const by = new Map<string, number[]>();
     const all: number[] = [];
@@ -836,11 +865,12 @@ export default function VideoAnnotator({
   }, [found]);
 
   /** «В разметку»: выбранная находка или все на кадре — проверенными одиночными рамками. */
-  const take = useCallback((which: "one" | "all") => {
+  const take = useCallback((which: "one" | "all", as?: number) => {
     if (frozen) return;
     const list = which === "one" ? ghosts.filter((_, k) => k === ghostOn) : ghosts;
     if (!list.length) return;
-    if (list.some((g) => g.class_index === null) && active === null) {
+    // Класс из меню призрака — его и ставим, сопоставление агента тут уже не решает
+    if (as === undefined && list.some((g) => g.class_index === null) && active === null) {
       setError("У находки класс агента не сопоставлен с проектом — выберите класс в панели, он и встанет.");
       return;
     }
@@ -849,7 +879,8 @@ export default function VideoAnnotator({
     setGhostOn(null);
     guard(async () => {
       await takeScout(taskId, video.id, at, list.map((g) => ({
-        i: g.i, ...(g.class_index === null ? { class_index: active as number } : {}),
+        i: g.i,
+        ...(as !== undefined ? { class_index: as } : g.class_index === null ? { class_index: active as number } : {}),
       })));
       await load();
     });
@@ -1116,6 +1147,33 @@ export default function VideoAnnotator({
     [tool, selected, recolor]
   );
 
+  /** «Подтвердить» одну рамку агента: остальные на кадре ждут своей очереди. */
+  const confirmOne = useCallback((i: number) => {
+    const item = items[i];
+    if (item?.kind === "single" && item.box.pending && !frozen) editSingle(item.box, (s) => ({ ...s, pending: false }));
+  }, [items, frozen, editSingle]);
+
+  /** «В контур»: рамка одиночной уходит в SAM2 подсказкой, контур встаёт на её место.
+   *  Ушли с кадра, пока модель думала, — правка всё равно попадёт на свой кадр, по id. */
+  // SAM2 позвали из меню, а не тумблером: его ход и отказ всё равно показываем
+  const [samOn, setSamOn] = useState(false);
+  useEffect(() => { setSamOn(false); }, [frame]);
+
+  const toContour = useCallback(async (i: number) => {
+    const item = items[i];
+    const b = boxes[i];
+    if (!item || item.kind !== "single" || !b || frozen) return;
+    setSamOn(true);
+    auto.setError(null);
+    const shape = await auto.predict({ box: { x: b.x, y: b.y, w: b.w, h: b.h } }, refine);
+    const rings = (shape?.polygons || []).filter((r) => r.length >= poly.MIN_POINTS) as Ring[];
+    if (!rings.length) { auto.setError("SAM2 не нашёл объект в этой рамке."); return; }
+    setSamOn(false);
+    editSingle(item.box, (s) => ({
+      ...s, kind: "polygon", parts: rings, ...(poly.bounds(rings) || {}), pending: false,
+    }));
+  }, [items, boxes, frozen, auto, refine, editSingle]);
+
   // --- закрытие разметки --------------------------------------------------- #
   const finishAnnotation = useCallback(async () => {
     if (!(await settle())) return;
@@ -1229,10 +1287,17 @@ export default function VideoAnnotator({
       }
       e.preventDefault();
     }
+    // Пробел — клавиша редактора, и отпускание тоже: браузер «нажимает» кнопку в фокусе на отпускании
+    // Пробела — миниатюра ленты, по которой пришли на кадр, возвращала к нему после листания
+    function onKeyUp(e: KeyboardEvent) {
+      if (e.code === "Space" && !hasLayer() && !isTyping(e.target)) e.preventDefault();
+    }
     window.addEventListener("keydown", onKey);
+    window.addEventListener("keyup", onKeyUp);
     document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
+      window.removeEventListener("keyup", onKeyUp);
       document.body.style.overflow = "";
     };
   }, [tool, frozen, autoPrev, autoPts, clearAuto, closeEditor, togglePlay, go, auto.state, pickAuto,
@@ -1257,6 +1322,38 @@ export default function VideoAnnotator({
   const problem = error || clip.error || shown.error;
   const saveState = error ? "refused" : busy ? "saving" : "saved";
   const emptyState = markedHere ? (busyHere ? "idle" : "on") : busyHere ? "busy" : "off";
+
+  /** Меню объекта: проверка и контур — первой группой, превращения — второй. */
+  function objectActions(i: number | null): MenuAction[][] {
+    const item = i === null ? undefined : items[i];
+    if (i === null || !item || frozen) return [];
+    const main: MenuAction[] = [];
+    if (item.kind === "single" && item.box.pending) {
+      main.push({ label: "Подтвердить", icon: "tick", agent: true, run: () => { confirmOne(i); setMenu(null); } });
+    }
+    if (!boxes[i]?.parts?.length) {
+      // Трек ведут рамкой: пункт остаётся с причиной, а не исчезает
+      const track = item.kind === "track";
+      main.push({
+        label: "В контур (SAM2)", icon: "poly",
+        hint: track ? "трек ведут рамкой"
+          : auto.state === "ready" ? undefined : auto.state === "error" ? "модель недоступна" : "модель готовится…",
+        disabled: track || auto.state !== "ready" || auto.busy,
+        run: () => { setMenu(null); void toContour(i); },
+      });
+    }
+    const more: MenuAction[] = [];
+    if (item.kind === "single") {
+      const contour = item.box.shape?.kind === "polygon";
+      more.push({
+        label: "Сделать треком",
+        hint: contour ? "контуром нельзя: трек ведут рамкой" : "объект начнёт жить во времени",
+        disabled: contour,
+        run: () => { if (!contour) toTrack(item.box); setMenu(null); },
+      });
+    }
+    return [main, more];
+  }
 
   return (
     <div className="ed ve" role="dialog" aria-modal="true" aria-label="Разметка видео">
@@ -1315,7 +1412,8 @@ export default function VideoAnnotator({
         <div
           className={autoLive && auto.busy ? "ed-main auto-wait" : "ed-main"}
           style={{ ["--pt" as string]: "64px", ["--pr" as string]: `${SIDE_W + 28}px`,
-            ["--pb" as string]: autoPrev || (!frozen && (pendingHere > 0 || ghosts.length > 0)) ? "66px" : "16px", ["--pl" as string]: "16px" }}
+            // Место под нижнюю плашку держим всегда: появится она — кадр не должен вписываться заново
+            ["--pb" as string]: "66px", ["--pl" as string]: "16px" }}
         >
           {/* Кадр готовится: гасим картинку и показываем кружок */}
           {shown.pending && (
@@ -1324,6 +1422,7 @@ export default function VideoAnnotator({
           <BoxCanvas
             ref={canvas}
             imageId={`${video.id}:${frame}`}
+            viewKey={video.id}
             bitmap={shown.image}
             fileName={video.file_name}
             width={video.width || 1}
@@ -1344,7 +1443,9 @@ export default function VideoAnnotator({
             activeClass={active}
             selected={selected}
             reserve={56}
-            onSelect={(i, part) => pick(i, part ?? null)}
+            // Выбор с холста — объект или пустое место — снимает и выбранную находку разведки;
+            // щелчок по самой находке холст сообщает следом, и она выбирается снова
+            onSelect={(i, part) => { setGhostOn(null); pick(i, part ?? null); }}
             onBoxes={onBoxes}
             onDrawn={() => setTool("select")}
             onScale={setScale}
@@ -1355,6 +1456,7 @@ export default function VideoAnnotator({
             ghosts={ghosts}
             ghostOn={ghostOn}
             onGhost={frozen ? undefined : setGhostOn}
+            onGhostContext={frozen ? undefined : (k, x, y) => setMenu({ i: null, x, y, ghost: k })}
           />
 
           {/* Пока кадр догоняет, панель гаснет: рисовать нельзя, и это видно сразу */}
@@ -1390,8 +1492,8 @@ export default function VideoAnnotator({
           </Float>
 
           <div className="ed-plates">
-            <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn}
-              quiet={frozen} onRetry={auto.retry} onDismiss={() => auto.setError(null)} />
+            <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn || samOn}
+              quiet={frozen} onRetry={auto.retry} onDismiss={() => { auto.setError(null); setSamOn(false); }} />
             {(agentTool.busy || agentNote) && (
               <div className="mag-auto-plate ed-agent-plate" role="status">{agentTool.busy ? "Агент смотрит кадр…" : agentNote}</div>
             )}
@@ -1400,10 +1502,24 @@ export default function VideoAnnotator({
           <Float className="fe-side ve-side" label="На этом кадре">
             <HereSide items={items} shapes={boxes} frame={frame} numbers={numbers} labelOf={labelOf}
               classes={classes} selected={selected} hidden={hiddenKeys} frozen={frozen}
-              onSelect={(i) => pick(i)} onHide={toggleHidden} onClass={recolor}
+              onSelect={(i) => {
+                setGhostOn(null);
+                pick(i);
+                const b = i === null ? undefined : (draft ?? boxes)[i];
+                if (b) canvas.current?.reveal(b);
+              }}
+              onHide={toggleHidden} onClass={recolor}
               onDelete={(i) => { const it = items[i]; if (it) dropItem(it); }}
               onToTrack={(i) => { const it = items[i]; if (it?.kind === "single") toTrack(it.box); }}
-              onPatch={(t, b) => void patchTrack(t, b)} />
+              onPatch={(t, b) => void patchTrack(t, b)}
+              onConfirm={confirmOne}
+              ghosts={ghosts} ghostOn={ghostOn}
+              onGhost={frozen ? undefined : (k) => {
+                setGhostOn(k);
+                pick(null);
+                if (k !== null && ghosts[k]) canvas.current?.reveal(ghosts[k]);
+              }}
+              onTake={frozen ? undefined : (_k, as) => take("one", as)} />
           </Float>
 
           {autoPrev && (
@@ -1450,8 +1566,26 @@ export default function VideoAnnotator({
           onStarted={(run) => { setAgentOpen(false); setAgentRun(run); agentTool.reload(); }} />
       )}
 
-      {menu && (
-        <ClassMenu
+      {menu && menu.ghost !== undefined && ghosts[menu.ghost] && (() => {
+        const g = ghosts[menu.ghost];
+        return (
+          <ObjectMenu
+            classes={classes}
+            at={{ x: menu.x, y: menu.y }}
+            current={g.class_index}
+            classLabel={g.name}
+            classHint="класс агента не сопоставлен"
+            onPick={(ci) => { take("one", ci); setMenu(null); }}
+            groups={[[{ label: "Взять в разметку", hint: "⏎", icon: "plus", agent: true,
+              disabled: frozen || (g.class_index === null && active === null),
+              ...(g.class_index === null && active === null ? { hint: "сначала выберите класс" } : {}),
+              run: () => { take("one"); setMenu(null); } }]]}
+            onClose={() => setMenu(null)}
+          />
+        );
+      })()}
+      {menu && menu.ghost === undefined && (
+        <ObjectMenu
           classes={classes}
           at={{ x: menu.x, y: menu.y }}
           current={menu.i === null ? active : boxes[menu.i]?.class_index ?? null}
@@ -1469,26 +1603,7 @@ export default function VideoAnnotator({
                   setMenu(null);
                 }
           }
-          actions={
-            menu.i !== null && items[menu.i]?.kind === "single" && !frozen
-              ? [
-                  (() => {
-                    const item = items[menu.i as number];
-                    // Трек ведут рамкой: пункт для контура остаётся с причиной, а не исчезает.
-                    const contour = item.kind === "single" && item.box.shape?.kind === "polygon";
-                    return {
-                      label: "Сделать треком",
-                      hint: contour ? "контуром нельзя: трек ведут рамкой" : "объект начнёт жить во времени",
-                      disabled: contour,
-                      run: () => {
-                        if (item.kind === "single" && !contour) toTrack(item.box);
-                        setMenu(null);
-                      },
-                    };
-                  })(),
-                ]
-              : undefined
-          }
+          groups={objectActions(menu.i)}
           onClose={() => setMenu(null)}
         />
       )}
@@ -1545,6 +1660,8 @@ function wireOf(box: CanvasShape, id?: string): SingleWire {
 function same(a: CanvasShape | undefined, b: CanvasShape | undefined): boolean {
   if (!a || !b) return false;
   if (a.class_index !== b.class_index) return false;
+  // Подтверждение меняет только флаг — это тоже правка, её надо отправить
+  if (!!a.pending !== !!b.pending) return false;
   if (a.parts || b.parts) {
     return JSON.stringify(a.parts ?? null) === JSON.stringify(b.parts ?? null);
   }
