@@ -463,6 +463,17 @@ def test_текст_контур_sam3_возвращается_в_пиксели
     assert ag.text_outline((38, 18, 84, 44), tiny, 0.9, {}, k) is None
 
 
+def test_текст_контур_sam3_не_режется_по_короткой_рамке():
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("cv2")
+    mask = np.zeros((100, 100), dtype=bool)
+    mask[10:50, 10:50] = True    # объект 40×40, а рамка SAM 3 — 30×30 от того же угла
+    mask[80:90, 80:90] = True    # дальнее пятно рамки не касается
+    got = ag.text_outline((10, 10, 30, 30), mask, 0.9, {"min_area": 0}, 1.0)
+    assert got["box"] == (10, 10, 40, 40)
+    assert len(got["parts"]) == 1
+
+
 def test_текст_образцы_и_порог_строки():
     rows = [{"prompt": "person", "agent": "Человек", "on": True},
             {"kind": "examples", "set": "s1", "agent": "Инструмент", "on": True, "conf": 0.1},

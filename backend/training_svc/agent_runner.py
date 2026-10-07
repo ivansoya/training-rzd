@@ -293,7 +293,7 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
     в разметку. `models` — {узел сети или «Сети по тексту»: модель, имя SAM:
     предиктор}, `weights` — {узел сети: строка полки}. `picture` — кадр ролика,
     уже распакованный декодером (PIL, RGB); тогда `path` не читается.
-    `contour=False` — разведка: контур SAM 3 ей не нужен, и его не считаем."""
+    `contour=False` — разведка: контур SAM 3 ей не нужен, отдаём только рамку по маске."""
     frame = []
 
     def predict(node):
@@ -407,7 +407,9 @@ def _sam3(model, pixels, rows, node, contour, grow=False):
     def collect(r, k, top, row_of):
         if r.boxes is None or not len(r.boxes):
             return
-        masks = r.masks.data.cpu().numpy() if contour and r.masks is not None else None
+        # Маска нужна и разведке: рамка SAM 3 короче его маски, и рамку
+        # находки даёт маска (см. `agent_graph.text_outline`).
+        masks = r.masks.data.cpu().numpy() if r.masks is not None else None
         cut = round(top * k)
         for j, (c, p, (x1, y1, x2, y2)) in enumerate(zip(
                 r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist())):
@@ -418,7 +420,9 @@ def _sam3(model, pixels, rows, node, contour, grow=False):
             box = (x1 / k, y1, (x2 - x1) / k, y2 - y1)
             shape = (agent_graph.text_outline(box, masks[j][cut:], p, params, k)
                      if masks is not None else None)
-            out.append((row_of(c), p, *box, shape))
+            if shape:
+                box = shape["box"]
+            out.append((row_of(c), p, *box, shape if contour else None))
 
     def shrink(image):
         k = SAM3_SIDE / max(image.shape[:2])

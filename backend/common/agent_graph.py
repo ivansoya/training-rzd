@@ -619,12 +619,13 @@ def filter_dets(dets, params):
     return out
 
 
-def outline(det, masks, scores, params):
+def outline(det, masks, scores, params, whole=False):
     """Обнаружение после SAM: с обводкой и рамкой по маске — или как было.
 
     Выбор маски, чистка и обводка — те же, что у полуавтомата
     (`common.contours`). Своё здесь только обрезка по рамке с запасом и
-    решение «SAM не справился»."""
+    решение «SAM не справился». `whole` — маску не резать, а брать куски,
+    задевшие рамку с запасом, целиком: так у SAM 3, чья маска точнее его рамки."""
     import numpy as np
 
     from common import contours
@@ -637,8 +638,11 @@ def outline(det, masks, scores, params):
     dx, dy = w * MASK_SLACK, h * MASK_SLACK
     x0, y0 = max(0, int(x - dx)), max(0, int(y - dy))
     x1, y1 = int(np.ceil(x + w + dx)), int(np.ceil(y + h + dy))
-    clipped = np.zeros_like(mask)
-    clipped[y0:y1, x0:x1] = mask[y0:y1, x0:x1]
+    if whole:
+        clipped = contours.touching(mask, (x0, y0, x1, y1))
+    else:
+        clipped = np.zeros_like(mask)
+        clipped[y0:y1, x0:x1] = mask[y0:y1, x0:x1]
     clipped = contours.clean_mask(clipped, int(p["min_area"]), bool(p["fill_holes"]))
     if clipped.sum() < MASK_MIN_SHARE * w * h:
         return det
@@ -655,9 +659,14 @@ def text_outline(box, mask, conf, params, k):
     входа, и на полном кадре с сотней масок это десятки гигабайт), поэтому
     рамка приходит в пикселях кадра, а маска — ужатой. Чистка та же, что у
     «Уточнения SAM»; оценку маски SAM 3 не даёт отдельно от уверенности, а
-    уверенность уже прошла порог узла — поэтому порог маски здесь нулевой."""
+    уверенность уже прошла порог узла — поэтому порог маски здесь нулевой.
+
+    Рамка SAM 3 недотягивает до своей же маски справа и снизу на ~5 px входа
+    (замер 07.10.2026: 22 находки из 22, маска сходится с ручным SAM2), поэтому
+    маска по рамке не режется, а рамкой становятся её границы."""
     small = {"box": tuple(v * k for v in box)}
-    got = outline(small, [mask], [conf], {**(params or {}), "score_min": 0, "detail": "auto"})
+    got = outline(small, [mask], [conf], {**(params or {}), "score_min": 0, "detail": "auto"},
+                  whole=True)
     if "parts" not in got:
         return None
     x, y, w, h = got["box"]

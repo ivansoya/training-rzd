@@ -56,6 +56,17 @@ def clean_mask(mask, min_area=0, fill_holes=False):
     return mask
 
 
+def touching(mask, rect):
+    """Куски маски, задевшие прямоугольник (x0, y0, x1, y1), — целиком, остальные долой."""
+    import cv2
+    import numpy as np
+
+    x0, y0, x1, y1 = rect
+    _, labels_img = cv2.connectedComponents(mask.astype(np.uint8), connectivity=8)
+    hit = np.unique(labels_img[y0:y1, x0:x1])
+    return np.isin(labels_img, hit[hit > 0]).astype(np.uint8)
+
+
 def mask_bounds(mask):
     """(x, y, w, h) по крайним точкам маски, в пикселях. ``None`` — маска пуста."""
     import numpy as np
