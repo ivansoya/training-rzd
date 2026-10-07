@@ -20,7 +20,25 @@ const writeLast = (code: string) => { try { localStorage.setItem(LAST, code); } 
 /** «№14» по адресу прогона; uuid старой ссылки — просто «Прогон», пока страница не подменит адрес. */
 const runCrumb = (id: string | undefined) => (id && /^\d+$/.test(id) ? `№${id}` : "Обучение");
 
-export default function MagShell({ children }: { children: ReactNode }) {
+/** Окно уже `px` — живьём, по matchMedia; без `px` — никогда. */
+function useNarrow(px?: number): boolean {
+  const query = px ? `(max-width: ${px - 1}px)` : null;
+  const [narrow, setNarrow] = useState(() => Boolean(query && window.matchMedia(query).matches));
+  useEffect(() => {
+    if (!query) return;
+    const list = window.matchMedia(query);
+    const sync = () => setNarrow(list.matches);
+    sync();
+    list.addEventListener("change", sync);
+    return () => list.removeEventListener("change", sync);
+  }, [query]);
+  return narrow;
+}
+
+/** `railBelow` — окно уже стольких px: сайдбар полосой значков и без верхней полосы
+ *  (редактору агента нужно место); шире — каркас как у всех. */
+export default function MagShell({ children, railBelow }: { children: ReactNode; railBelow?: number }) {
+  const rail = useNarrow(railBelow);
   const { me, refresh } = useAuth();
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
@@ -58,18 +76,25 @@ export default function MagShell({ children }: { children: ReactNode }) {
   }];
   const roleOf = current ?? project;
 
+  // В полосе подпись уходит в подсказку и в имя для читалки.
+  const tip = (label: string) => (rail ? { title: label, "aria-label": label } : {});
+
   const shell = (
-    <div className="mag shell">
+    <div className={cx("mag shell", rail && "rail")}>
       <a className="shell-skip" href="#workspace-content">К содержимому</a>
       <aside className="sb" aria-label="Навигация">
         <Popover align="start" width={232} trigger={
-          <button type="button" className="sb-proj" aria-label="Сменить проект">
+          <button type="button" className="sb-proj" aria-label="Сменить проект" title={rail ? project?.name ?? "Магистраль ML" : undefined}>
             <span className="sb-logo"><RailsMark /></span>
-            <span className="sb-proj-t">
-              <b>{project?.name ?? "Магистраль ML"}</b>
-              <span>{project ? `${project.code} · ${project.role_label.toLowerCase()}` : "проект не выбран"}</span>
-            </span>
-            <Icon name="updown" size={14} />
+            {!rail && (
+              <>
+                <span className="sb-proj-t">
+                  <b>{project?.name ?? "Магистраль ML"}</b>
+                  <span>{project ? `${project.code} · ${project.role_label.toLowerCase()}` : "проект не выбран"}</span>
+                </span>
+                <Icon name="updown" size={14} />
+              </>
+            )}
           </button>
         }>
           {(close) => (
@@ -89,18 +114,20 @@ export default function MagShell({ children }: { children: ReactNode }) {
 
         <nav className="sb-nav" aria-label="Разделы">
           <Link to="/" className={cx("nv", active === "projects" && "on")}
-            aria-current={active === "projects" ? "page" : undefined}>
-            <Icon name="folder" /><span>Все проекты</span>
-            {me.projects.length > 0 && <span className="ui-count">{me.projects.length}</span>}
+            aria-current={active === "projects" ? "page" : undefined} {...tip("Все проекты")}>
+            <Icon name="folder" />
+            {!rail && <span>Все проекты</span>}
+            {!rail && me.projects.length > 0 && <span className="ui-count">{me.projects.length}</span>}
           </Link>
           {groups.map((g) => (
             <Fragment key={g.title}>
-              <div className="nv-g">{g.title}</div>
+              {rail ? <hr className="sb-sep" /> : <div className="nv-g">{g.title}</div>}
               {g.items.map((it) => (
                 <Link key={it.key} to={hrefOf(it, project?.code ?? "")}
                   className={cx("nv", active === it.key && "on")}
-                  aria-current={active === it.key ? "page" : undefined}>
-                  <Icon name={it.icon} /><span>{it.label}</span>
+                  aria-current={active === it.key ? "page" : undefined} {...tip(it.label)}>
+                  <Icon name={it.icon} />
+                  {!rail && <span>{it.label}</span>}
                 </Link>
               ))}
             </Fragment>
@@ -108,24 +135,28 @@ export default function MagShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="sb-f">
-          <GpuMeter />
+          {!rail && <GpuMeter />}
           {/* Всем, а не только обслуживанию: свою очередь к картам видит каждый. */}
           <Link to="/hardware" className={cx("nv", active === "hardware" && "on")}
-            aria-current={active === "hardware" ? "page" : undefined}>
-            <Icon name="cpu" /><span>Оборудование</span>
+            aria-current={active === "hardware" ? "page" : undefined} {...tip("Оборудование")}>
+            <Icon name="cpu" />
+            {!rail && <span>Оборудование</span>}
           </Link>
-          <Link to="/account" className={cx("sb-me", active === "account" && "on")} title="Личный кабинет">
+          <Link to="/account" className={cx("sb-me", active === "account" && "on")}
+            title={rail ? `${me.user.display_name} — личный кабинет` : "Личный кабинет"}>
             <Avatar name={me.user.display_name} size={28} />
-            <span className="sb-me-t">
-              <span>{me.user.display_name}</span>
-              <span>{roleOf ? roleOf.role_label.toLowerCase() : me.user.login}</span>
-            </span>
+            {!rail && (
+              <span className="sb-me-t">
+                <span>{me.user.display_name}</span>
+                <span>{roleOf ? roleOf.role_label.toLowerCase() : me.user.login}</span>
+              </span>
+            )}
           </Link>
         </div>
       </aside>
 
       <div className="shell-main">
-        <header className="topbar">
+        {!rail && <header className="topbar">
           <nav className="crumbs" aria-label="Путь">
             {current ? (
               <>
@@ -154,7 +185,7 @@ export default function MagShell({ children }: { children: ReactNode }) {
           <SearchBox projects={me.projects} project={project} />
           <Bell />
           <MeMenu />
-        </header>
+        </header>}
         <main id="workspace-content" className="shell-content" tabIndex={-1}>
           <ErrorBoundary resetKey={pathname}>
             {!missing ? children : checked === rawCode ? (

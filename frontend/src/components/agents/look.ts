@@ -4,7 +4,7 @@
 import type { IconName } from "../../ui";
 import type { PreviewDet } from "../../api/agents";
 import {
-  SAM_DEFAULTS, TEXT_IMGSZ, TEXT_MODEL, isExamples, mergeInputs, promptsOf, rowTarget, rowsOf, textConfDefault, textModel,
+  SAM_DEFAULTS, TEXT_IMGSZ, TEXT_MODEL, isExamples, mergeInputs, promptsOf, rowTarget, rowsOf, sam3Side, textConfDefault, textModel,
   tileSide, viewCount,
 } from "./agentDoc";
 
@@ -98,7 +98,7 @@ export function textLine(p: Record<string, unknown>, sam3Missing: boolean, frame
   const ex = rows.filter(isExamples).length;
   const yolo = model !== "sam3";
   return [
-    yolo ? `YOLOE-26 ${model}` : "SAM 3",
+    yolo ? `YOLOE-26 ${model}` : `SAM 3 ${sam3Side(p)}`,
     ex ? `${rows.length - ex ? `${rows.length - ex} сл. + ` : ""}${ex} обр.` : rows.length ? `${rows.length} сл.` : null,
     `conf ${decimal(num(p.conf, textConfDefault(model)))}`,
     tileText("text", p, null, frame),

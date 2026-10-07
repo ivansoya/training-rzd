@@ -270,12 +270,169 @@
 .gl-empty > p { margin: 0; max-width: 66ch; font-size: 13px; color: var(--muted-fg); }
 .gl-pick { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow: auto; }
 
-/* ================= Агенты разметки: тот же «Холст и шторка», свои колонки шторки ================= */
-/* Параметры шире (~40 %): у «Сети» там таблица классов. Колонки прокручиваются каждая сама. */
-.ae .ge-drawer { grid-template-columns: minmax(0, 1.4fr) minmax(0, 1.1fr) 240px; overflow: hidden; }
+/* ================= Агенты разметки: тот же «Холст и шторка», вариант А ================= */
+/* Каркас приложения — полосой значков без верхней полосы (MagShell rail); сверху холст и полоса узлов,
+   шторка на всю ширину в две колонки: узел | превью и что найдено. «Развернуть» прячет холст, сверху — цепочка узлов. */
+.ae .ge-body { grid-template-columns: minmax(0, 1fr); }
+.ae-top { display: grid; grid-template-columns: minmax(0, 1fr) 52px; min-height: 0; min-width: 0; }
+.ae .ge-main.exp { grid-template-rows: auto minmax(0, 1fr); }
+.ae .ge-main.exp > .ae-top, .ae .ge-main.exp > .ge-grip { display: none; }
+.ae .ge-drawer { grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); overflow: hidden; }
 .ae .ge-sec > * { flex-shrink: 0; }
 .ae .ge-sec { overflow: auto; min-height: 0; scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--input) transparent; }
+.ae-col {
+  display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: auto;
+  scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--input) transparent;
+}
+.ae .ae-col > .ge-sec { overflow: visible; min-height: auto; border-right: 0; }
+.ae .ae-col > .ge-sec + .ge-sec { border-top: 1px solid var(--border); }
 .ae-badge { flex: none; font: 500 10.5px var(--mono); color: var(--muted-fg); }
+
+/* полоса значков */
+.ae-rail {
+  display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 0; min-height: 0; overflow: auto;
+  border-left: 1px solid var(--border); background: var(--sidebar); scrollbar-width: none;
+}
+.ae-rail hr { width: 24px; border: 0; border-top: 1px solid var(--border); margin: 4px 0; flex: none; }
+.ae-rail-i {
+  display: grid; place-items: center; width: 32px; height: 32px; flex: none; padding: 0; border: 0; border-radius: var(--r);
+  background: transparent; cursor: grab;
+}
+.ae-rail-i:hover, .ae-rail-i:focus-visible { background: var(--hover); outline: none; }
+.ae-rail-i:active { cursor: grabbing; }
+.ae-rail-i:disabled { cursor: not-allowed; opacity: .45; }
+.ae-pal-pop.ge-pal { border-left: 0; background: transparent; padding: 4px; max-height: min(60vh, 420px); }
+
+/* цепочка узлов развёрнутого вида */
+.ae-chain {
+  display: flex; align-items: center; gap: 12px; padding: 8px 12px; min-width: 0;
+  border-bottom: 1px solid var(--border); background: var(--sidebar);
+}
+.ae-chain-l { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow-x: auto; scrollbar-width: thin; padding: 2px; }
+.ae-chain-sep { color: var(--faint); flex: none; }
+.ae-chain-note { flex: none; }
+.ae-cn {
+  display: inline-flex; align-items: center; gap: 7px; height: 28px; max-width: 260px; flex: none; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: var(--r-full); background: var(--card); color: var(--fg);
+  font: 500 12.5px var(--font); cursor: pointer;
+}
+.ae-cn > i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.ae-cn > b { font: 500 11px var(--mono); color: var(--muted-fg); }
+.ae-cn:hover { border-color: var(--input); }
+.ae-cn.on { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 22%, transparent); }
+.ae-pair { display: inline-flex; gap: 4px; padding: 3px; border: 1px dashed var(--input); border-radius: var(--r-full); flex: none; }
+.ae-kbd { margin-left: 6px; padding: 0 4px; border: 1px solid var(--border); border-radius: var(--r-sm); font: 500 10.5px var(--mono); color: var(--faint); }
+@media (max-width: 1440px) { .ae-chain-note { display: none; } }
+
+/* шторка узла — как страница таски: фон страницы, на нём обычные карточки (ui-card) с шапкой внутри.
+   Черты до края здесь нет; шапки карточек классов чуть тронуты цветом класса. */
+.ae .ge-drawer { background: var(--bg); }
+.ae .ae-insp { gap: 16px; }
+.ae-label-in {
+  min-width: 0; max-width: 240px; padding: 1px 6px; border: 1px solid transparent; border-radius: var(--r);
+  background: transparent; color: var(--muted-fg); font: 500 13px var(--font); field-sizing: content;
+}
+.ae-label-in::placeholder { color: var(--faint); }
+.ae-label-in:hover:not(:disabled) { border-color: var(--border); }
+.ae-label-in:focus { border-color: var(--ring); color: var(--fg); outline: none; }
+.ae-block { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ae-block-h { display: flex; align-items: center; gap: 10px; min-height: 32px; min-width: 0; }
+.ae-block-h > b { font-size: 14px; font-weight: 600; white-space: nowrap; }
+.ae-block-d { min-width: 0; font-size: 12.5px; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ae-readout { font: 500 12px var(--mono); color: var(--fg); white-space: nowrap; }
+.ae-readout em { font-style: normal; font-family: var(--font); color: var(--muted-fg); }
+.ae-find { flex: 0 1 260px; }
+.ae-none { margin: 0; font-size: 12.5px; color: var(--faint); }
+.ae-block > span.bad { font-size: 12px; color: var(--destructive); }
+
+.ae-panel { min-width: 0; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--card); }
+.ae-panel-h {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.ae-panel-h > b { font-size: 14px; font-weight: 600; }
+.ae-panel-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 28px; padding: 14px 16px 16px; }
+.ae-panel-top .ui-input { width: 96px; }
+/* сегмент на карточке: своя дорожка, иначе он сливается с фоном (--muted = --card) */
+.ae-panel .ui-seg { background: var(--bg); box-shadow: inset 0 0 0 1px var(--border); }
+.ae-panel .ui-seg button[aria-pressed="true"] { background: var(--hover); }
+.ae-panel-row {
+  display: grid; grid-template-columns: 84px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  min-height: 44px; padding: 4px 12px 4px 16px; border-top: 1px solid var(--border);
+}
+.ae-panel-l { font-size: 13px; font-weight: 500; }
+.ae-panel-v { min-width: 0; font-size: 12.5px; color: var(--muted-fg); }
+.ae-panel-sub { display: flex; flex-direction: column; gap: 10px; padding: 12px 16px 16px; border-top: 1px solid var(--border); }
+.ae-contour { display: flex; flex-direction: column; gap: 12px; padding: 4px; }
+
+/* карточки классов: шапка чуть тронута цветом класса, квадрат, имя, сводка второй строкой; справа счёт на кадре и переключатель; щелчок по шапке раскрывает */
+.ae-cards { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ae-card {
+  min-width: 0; border: 1px solid color-mix(in srgb, var(--cc) 18%, var(--border)); border-radius: var(--r-lg);
+  background: var(--card); transition: border-color .15s;
+}
+/* в покое шапка тронута цветом класса едва, под курсором — заметнее; цвет тот же, что в квадрате */
+.ae-card-h {
+  display: flex; align-items: center; gap: 8px; min-height: 56px; min-width: 0; padding: 8px 12px 8px 16px; cursor: pointer;
+  border-radius: calc(var(--r-lg) - 1px); user-select: none; transition: background .15s;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--cc) 8%, var(--card)), color-mix(in srgb, var(--cc) 2%, var(--card)) 70%);
+}
+.ae-card.open > .ae-card-h { border-radius: calc(var(--r-lg) - 1px) calc(var(--r-lg) - 1px) 0 0; }
+.ae-card:hover { border-color: color-mix(in srgb, var(--cc) 32%, var(--border)); }
+.ae-card-h:hover { background: linear-gradient(90deg, color-mix(in srgb, var(--cc) 18%, var(--card)), color-mix(in srgb, var(--cc) 6%, var(--card)) 70%); }
+.ae-card.off { border-color: var(--border); }
+.ae-card.off > .ae-card-h { background: var(--card); }
+.ae-card.off > .ae-card-h:hover { background: color-mix(in srgb, var(--hover) 50%, var(--card)); }
+.ae-card-t { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.ae-card-n { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.ae-card-n > b { min-width: 0; font-size: 14px; font-weight: 600; }
+.ae-card-n > .ui-mono { flex: none; font-size: 11px; color: var(--faint); }
+.ae-card-sum { min-width: 0; padding-left: 21px; font-size: 12.5px; color: var(--muted-fg); }
+.ae-card.off .ae-card-t, .ae-card.off .ae-card-h > .ae-hit { opacity: .5; }
+.ae-sw { display: inline-flex; flex: none; }
+.ae-card-h > .ae-hit { margin-right: 6px; }
+.ae-card-h > .ui-switch { margin-left: 6px; }
+.ae-hit { display: inline-flex; align-items: baseline; gap: 5px; flex: none; font-size: 12px; color: var(--muted-fg); white-space: nowrap; }
+.ae-hit > b { font-size: 13px; font-weight: 500; color: var(--fg); }
+.ae-hit.zero > b { color: var(--faint); }
+.ae-card-b { border-top: 1px solid color-mix(in srgb, var(--cc) 18%, var(--border)); }
+.ae-card.off > .ae-card-b { border-top-color: var(--border); }
+.ae-sub { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 12px 16px 14px 37px; }
+.ae-sub + .ae-sub { border-top: 1px solid var(--border); }
+.ae-sub-h { display: flex; align-items: center; gap: 10px; min-height: 28px; min-width: 0; }
+.ae-sub-h > b { flex: none; font-size: 13px; font-weight: 600; }
+.ae-sub-h > span:not(.grow):not(.ae-chip) { min-width: 0; font-size: 12px; color: var(--muted-fg); }
+.ae-pl { display: grid; grid-template-columns: 16px minmax(0, 1fr) 96px 64px 28px; align-items: center; gap: 4px 10px; }
+.ae-pl > .ae-hit { justify-self: end; }
+.ae-pl.off > .ae-in, .ae-pl.off > .ae-hit { opacity: .5; }
+.ae-in.warn.ui-input { border-color: var(--st-skip); }
+.ae-under { grid-column: 2 / -1; display: flex; align-items: flex-start; gap: 12px; padding: 0 2px 4px; font-size: 11.5px; color: var(--muted-fg); }
+.ae-under > .ui-mono { flex: none; color: var(--faint); }
+.ae-under.bad, .ae-under.bad > .ui-mono { color: var(--destructive); }
+.ae-under.warn { color: color-mix(in srgb, var(--st-skip) 85%, var(--fg)); }
+.ae-addl {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; height: 30px; padding: 0 10px;
+  border: 1px dashed var(--input); border-radius: var(--r); background: transparent; color: var(--muted-fg);
+  font: 500 12.5px var(--font); cursor: pointer;
+}
+.ae-addl:hover:not(:disabled) { color: var(--fg); border-color: var(--faint); }
+.ae-addl:disabled { cursor: default; opacity: .5; }
+.ae-cards-add { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ae-cards-new { display: flex; align-items: center; gap: 6px; }
+.ae-cards-new .ui-input { width: 220px; height: 30px; font-size: 12.5px; }
+.ae-pick { display: flex; flex-direction: column; gap: 8px; padding: 4px; }
+.ae-pick-l { max-height: 320px; overflow: auto; }
+
+/* образцы: ряды и проходы коллажа SAM 3 */
+.ae-exb { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ae-exb.off { opacity: .6; }
+.ae-chip { display: inline-flex; align-items: center; height: 22px; padding: 0 8px; flex: none; border-radius: var(--r-full); background: var(--hover); font: 500 11px var(--mono); color: var(--fg); }
+.ae-rows { display: flex; flex-direction: column; gap: 6px; }
+.ae-exr { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.ae-exr > .ui-mono { width: 56px; flex: none; font-size: 10.5px; color: var(--faint); }
+.ae-exr .ae-thumbs { flex-wrap: nowrap; }
+.ae-exf { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; color: var(--muted-fg); }
+.ae-exf .ae-in.ui-input { width: 64px; }
 
 /* кадр превью с рамками */
 .ae-frame { position: relative; width: 100%; aspect-ratio: var(--ar, 16 / 9); border-radius: var(--r-md); overflow: hidden; background: var(--stage); user-select: none; }
@@ -285,14 +442,39 @@
 .ae-pv-nav { display: flex; align-items: center; gap: 2px; }
 .ae-pv-file { display: block; color: var(--muted-fg); }
 
-/* что найдено */
-.ae-tally, .ae-cls { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; }
-.ae-tally li { display: grid; grid-template-columns: 8px minmax(0, 1fr) 36px 36px; align-items: center; gap: 8px; min-height: 24px; }
-.ae-tally li > span.ui-mono { text-align: right; }
-.ae-tally i, .ae-cls i, .ae-an > i, .al-chip > i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.ae-cls li { display: grid; grid-template-columns: 8px minmax(0, auto) auto; grid-template-rows: auto auto; column-gap: 8px; align-items: center; padding: 4px 0; }
-.ae-cls li > b { font-weight: 500; min-width: 0; }
-.ae-cls li > small { grid-column: 2 / 4; font: 500 10.5px var(--mono); color: var(--faint); }
+/* что найдено: уравнение «пришло ± своё = ушло» и полосы по классам, как «Чем размечено» у таски */
+.ae-found { gap: 14px; }
+.ae-f-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ae-f-title > b { font-size: 14px; font-weight: 600; }
+.ae-f-title > span { font-size: 12.5px; color: var(--muted-fg); }
+.ae-f-none { margin: 0; font-size: 12.5px; color: var(--faint); }
+.ae-eq { display: flex; align-items: stretch; min-width: 0; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--card); }
+.ae-eq-t { display: flex; align-items: center; flex: 1; min-width: 0; }
+.ae-eq-t + .ae-eq-t { border-left: 1px solid var(--border); }
+.ae-eq-op {
+  flex: none; display: grid; place-items: center; width: 20px; height: 20px; margin-left: -10px; border-radius: 50%;
+  background: var(--card); box-shadow: 0 0 0 1px var(--border); font: 500 13px var(--mono); color: var(--muted-fg);
+}
+.ae-eq-c { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; padding: 10px 12px; }
+.ae-eq-c > b { font-size: 18px; font-weight: 500; line-height: 1.2; color: var(--muted-fg); }
+.ae-eq-c > small { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ae-eq-c.main > b { color: var(--fg); }
+.ae-eq-c.warn > b { color: color-mix(in srgb, var(--st-skip) 85%, var(--fg)); }
+.ae-f-cls { display: flex; flex-direction: column; gap: 8px; }
+.ae-f-h { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ae-f-h > h5 { margin: 0; font-size: 12px; font-weight: 500; color: var(--faint); }
+.ae-f-key { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--faint); }
+.ae-f-key > i, .ae-fbar-t > s {
+  background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--fg) 30%, transparent) 0 2px, transparent 2px 4px);
+}
+.ae-f-key > i { width: 14px; height: 6px; border-radius: 2px; }
+.ae-fbar { display: grid; grid-template-columns: 12px minmax(0, 1fr) 72px 28px 40px; gap: 10px; align-items: center; font-size: 12.5px; }
+.ae-fbar > b { font-size: 12.5px; font-weight: 500; text-align: right; }
+.ae-fbar > small { font-size: 11px; color: var(--faint); white-space: nowrap; }
+.ae-fbar-t { display: flex; height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; }
+.ae-fbar-t > i { display: block; height: 100%; background: var(--cc); transition: width .4s var(--ease); }
+.ae-fbar-t > s { display: block; height: 100%; text-decoration: none; }
+.ae-an > i, .al-chip > i { width: 8px; height: 8px; border-radius: 2px; flex: none; }
 .ae-merge { font: 600 10.5px var(--mono); color: var(--c3); }
 
 /* параметры узла */
@@ -338,7 +520,6 @@
 .ae-ct-tools > .ui-inp { flex: 1 1 180px; }
 .ae-ct-row { display: grid; align-items: center; gap: 8px; min-height: 30px; min-width: 0; font-size: 12.5px; }
 .ae-ct-row.net { grid-template-columns: 16px 28px minmax(0, 1fr) minmax(0, 1.2fr); }
-.ae-ct-row.pr { grid-template-columns: 16px 30px minmax(0, 1fr) minmax(0, 1.1fr) 64px 28px; }
 .ae-ct-row.flt { grid-template-columns: 16px minmax(0, 1fr) 96px; }
 .ae-ct-row.head { min-height: 22px; font-size: 11px; color: var(--faint); border-bottom: 1px solid var(--border); }
 .ae-ct-row .r { text-align: right; }
@@ -346,24 +527,10 @@
 .ae-ct-none { padding: 8px 0; }
 .ae-in.ui-input { height: 28px; padding: 0 8px; font-size: 12.5px; min-width: 0; width: 100%; }
 .ae-an { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.ae-kind { font: 600 10px var(--mono); text-transform: uppercase; color: var(--muted-fg); background: var(--muted); border-radius: var(--r-sm); padding: 2px 4px; text-align: center; }
-.ae-kind.ex { color: var(--agent-fg); background: color-mix(in srgb, var(--agent) 22%, transparent); }
-.ae-src {
-  display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 28px; padding: 0 8px; min-width: 0;
-  border: 1px solid var(--input); border-radius: var(--r); background: transparent; color: var(--fg); font-size: 12.5px; cursor: pointer;
-}
-.ae-src:hover { background: var(--hover); }
-.ae-src[aria-expanded="true"] { border-color: var(--ring); }
-.ae-ct-note { grid-column: 3 / -1; font-size: 11.5px; }
-.ae-ct-wide { grid-column: 1 / -1; padding: 4px 0 8px; }
-.ae-ct-add { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); margin-top: 4px; }
-.ae-ct-add > .ui-input { flex: 1 1 140px; height: 28px; font-size: 12.5px; }
 
-/* полоса образцов */
-.ae-strip { display: flex; flex-direction: column; gap: 6px; }
+/* миниатюры образцов */
 .ae-thumbs { display: flex; flex-wrap: wrap; gap: 4px; }
 .ae-th { position: relative; width: 56px; height: 56px; border: 1px solid var(--border); border-radius: var(--r-sm); overflow: hidden; background: var(--stage); cursor: grab; }
-.ae-th.col { border-color: var(--agent); box-shadow: 0 0 0 1px var(--agent); }
 .ae-th.drag { opacity: .4; }
 .ae-th.over { border-color: var(--ring); }
 .ae-th img { width: 100%; height: 100%; object-fit: cover; display: block; }
@@ -373,9 +540,6 @@
   border-radius: 50%; background: var(--on-frame-bg); color: var(--on-frame); font-size: 12px; line-height: 1; cursor: pointer;
 }
 .ae-th:hover .rm { display: grid; }
-.ae-strip-f { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; font-size: 11.5px; color: var(--muted-fg); min-width: 0; }
-.ae-strip-lg { display: inline-flex; align-items: center; gap: 6px; }
-.ae-strip-lg > i { width: 10px; height: 10px; border-radius: 2px; border: 1.5px solid var(--agent); }
 .ae-pal-note { padding: 12px 6px 4px; }
 
 /* окна весов и образцов */
@@ -386,7 +550,6 @@
 .ae-wp-act .ui-btn + .ui-btn { margin-left: 6px; }
 .ae-ex { display: flex; flex-direction: column; gap: 14px; }
 .ae-ex-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-.ae-ex-3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
 .ae-ex-ds { display: flex; flex-direction: column; gap: 6px; max-height: 160px; overflow: auto; }
 
 /* список агентов */

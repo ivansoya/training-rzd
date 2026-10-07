@@ -1,17 +1,49 @@
 import { describe, expect, it } from "vitest";
 import {
-  CYRILLIC, PALETTE, agentClasses, bindRows, carryClasses, findOrCreate, isExamples, keepWired, offLimits, rowTarget, statClasses,
-  switchTextModel, unfinished, upgradeDoc,
+  CYRILLIC, PALETTE, agentClasses, bindRows, carryClasses, collagePasses, findOrCreate, frameCalls, isExamples, keepWired, offLimits,
+  promptMax, rowTarget, sam3Side, statClasses, switchTextModel, tileSide, unfinished, upgradeDoc,
 } from "./agentDoc";
 import type { PromptRow } from "./agentDoc";
 
 describe("«Сеть по тексту»", () => {
   it("порог на умолчании переходит к умолчанию новой модели, правленый остаётся", () => {
-    expect(switchTextModel({ model: "l", conf: 0.25 }, "sam3")).toEqual({ model: "sam3", conf: 0.4 });
+    expect(switchTextModel({ model: "l", conf: 0.25 }, "sam3")).toEqual({ model: "sam3", conf: 0.4, side: 1008 });
     expect(switchTextModel({ model: "sam3", conf: 0.4 }, "m")).toEqual({ model: "m", conf: 0.25 });
-    expect(switchTextModel({ model: "l", conf: 0.3 }, "sam3")).toEqual({ model: "sam3", conf: 0.3 });
-    expect(switchTextModel({}, "sam3")).toEqual({ model: "sam3", conf: 0.4 });
+    expect(switchTextModel({ model: "l", conf: 0.3 }, "sam3")).toEqual({ model: "sam3", conf: 0.3, side: 1008 });
+    expect(switchTextModel({}, "sam3")).toEqual({ model: "sam3", conf: 0.4, side: 1008 });
     expect(switchTextModel({ model: "s", conf: 0.25 }, "x")).toEqual({ model: "x", conf: 0.25 });
+  });
+
+  it("вход SAM 3: только 644 и 1008, без поля — 644; уже выбранный вход смена модели не трогает", () => {
+    expect(sam3Side({})).toBe(644);
+    expect(sam3Side({ side: 1008 })).toBe(1008);
+    expect(sam3Side({ side: 900 })).toBe(644);
+    expect(switchTextModel({ model: "l", side: 644 }, "sam3")).not.toHaveProperty("side");
+    expect(tileSide("text", { model: "sam3", side: 1008 })).toBe(1008);
+    expect(tileSide("text", { model: "sam3" })).toBe(644);
+    expect(promptMax("sam3")).toBe(100);
+    expect(promptMax("l")).toBe(200);
+  });
+
+  it("проходы образцов: на широком кадре 12 за проход, на квадратном тайле 6 — как collage_passes", () => {
+    expect(collagePasses(13, 2688, 1520)).toEqual([Array.from({ length: 12 }, (_, i) => i), [12]]);
+    expect(collagePasses(13, 1008, 1008).map((p) => p.length)).toEqual([6, 6, 1]);
+    expect(collagePasses(0, 2688, 1520)).toEqual([]);
+  });
+
+  it("вызовов на кадр — как agent_graph.calls: слова порциями на 1008, проходы каждого набора на каждом виде", () => {
+    const rows = [
+      ...["a", "b", "c", "d", "e"].map((w) => ({ kind: "text" as const, prompt: w, cls: "c1", on: true })),
+      { kind: "examples" as const, set: "s1", cls: "c1", on: true },
+      { kind: "examples" as const, set: "s2", cls: "c1", on: false },
+    ];
+    const p = { model: "sam3", side: 1008, prompts: rows };
+    const count = (s: string) => (s === "s1" ? 13 : undefined);
+    expect(frameCalls("text", p, 2688, 1520, 1008, count)).toBe(2 + 2);
+    // тайлы 1008: 4×2 тайла и целый кадр; на тайле образцы идут по 6
+    expect(frameCalls("text", { ...p, tiles: true }, 2688, 1520, 1008, count)).toBe(4 + 8 * (2 + 3));
+    expect(frameCalls("text", { ...p, side: 644 }, 2688, 1520, 644)).toBe(1 + 1);
+    expect(frameCalls("text", { model: "l", prompts: rows, tiles: true }, 2688, 1520, 1280)).toBe(1 + 3 * 2);
   });
 
   it("классы агента: синонимы в один класс, строка без промта и выключенная не в счёт", () => {

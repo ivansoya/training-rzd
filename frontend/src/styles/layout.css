@@ -56,6 +56,16 @@
 .sb-me-t span:first-child { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sb-me-t span:last-child { font-size: 11.5px; color: var(--faint); }
 
+/* сайдбар полосой значков (MagShell rail): подписи — в подсказках, верхней полосы нет */
+.shell.rail { --sidebar-w: 52px; --topbar-h: 0px; }
+.shell.rail .shell-main { overflow: hidden; scrollbar-gutter: auto; }
+.shell.rail .sb { align-items: center; padding: 10px 0; scrollbar-width: none; scrollbar-gutter: auto; }
+.shell.rail .sb-proj { width: auto; padding: 4px; }
+.shell.rail .sb-nav, .shell.rail .sb-f { align-items: center; }
+.shell.rail .nv { width: 36px; height: 36px; padding: 0; justify-content: center; }
+.shell.rail .sb-me { padding: 4px; }
+.sb-sep { width: 24px; margin: 6px 0; border: 0; border-top: 1px solid var(--border); flex: none; }
+
 .topbar {
   height: var(--topbar-h); flex: none; display: flex; align-items: center; gap: 12px; padding: 0 24px;
   border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 30;

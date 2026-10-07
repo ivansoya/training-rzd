@@ -1,15 +1,10 @@
-// Таблицы в параметрах узла: классы «Сети», строки «Сети по тексту», классы «Фильтра».
+// Таблицы в параметрах узла: классы «Сети» и классы «Фильтра» (строки «Сети по тексту» — карточками, ClassCards).
 // Классов у сети бывает несколько десятков — поэтому поиск и фильтр, а не список галочек.
 
 import { useEffect, useState } from "react";
-import * as api from "../../api/agents";
 import { Button, Input, Seg, cx } from "../../ui";
 import { NumInput } from "../NumInput";
-import {
-  CLASS_NAME_MAX, CYRILLIC, exampleConfDefault, foldName, isExamples, offLimits, withConf, type AgentClass, type FilterRow,
-  type NetRow, type PromptRow, type TextModel,
-} from "./agentDoc";
-import { ExampleStrip, ExamplesDialog } from "./ExamplesDialog";
+import { CLASS_NAME_MAX, foldName, offLimits, type AgentClass, type FilterRow, type NetRow, type PromptRow } from "./agentDoc";
 
 type Shown = "all" | "on" | "off";
 /** Класс агента по имени: найденный или заведённый редактором; пустое имя — null. */
@@ -125,108 +120,6 @@ export function NetClasses({ names, rows, readOnly, classes, ensure, onRows }: {
             label={`Класс агента для ${r.name}`} onPick={(name) => set(r.i, { cls: ensure(name) ?? undefined, agent: undefined })} />
         </div>
       ))}
-    </div>
-  );
-}
-
-/** Строки «Сети по тексту»: слово или набор образцов → класс агента, у каждой свой порог (пусто — порог узла).
- *  Слово по-русски не запрещено — модель его примет, только найдёт хуже или не то. */
-export function PromptTable({ rows, readOnly, classes, ensure, nodeConf, model, sets, onSet, onRows }: {
-  rows: PromptRow[]; readOnly: boolean; classes: AgentClass[]; ensure: Ensure; nodeConf: number; model: TextModel;
-  sets: Map<string, api.ExampleSet>; onSet: (set: api.ExampleSet) => void; onRows: (rows: PromptRow[]) => void;
-}) {
-  const [query, setQuery] = useState("");
-  const [shown, setShown] = useState<Shown>("all");
-  const [prompt, setPrompt] = useState("");
-  const [agent, setAgent] = useState("");
-  // Раскрытые полосы образцов — по id набора: номер строки съезжал при удалении строки выше.
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  const [dialog, setDialog] = useState(false);
-  const set = (i: number, patch: Partial<PromptRow>) => onRows(rows.map((r, k) => (k === i ? { ...r, ...patch } : r)));
-  const q = query.trim().toLowerCase();
-  const label = (r: PromptRow) => (isExamples(r) ? sets.get(r.set ?? "")?.class_name ?? "образцы" : r.prompt ?? "");
-  const nameOf = (r: PromptRow) => classes.find((c) => c.id === r.cls)?.name ?? r.agent ?? "";
-  const visible = filterBy(rows.map((r, i) => ({ ...r, i })), shown).filter((r) => !q || `${label(r)} ${nameOf(r)}`.toLowerCase().includes(q));
-  const add = () => {
-    const clean = prompt.trim();
-    if (!clean) return;
-    onRows([...rows, { kind: "text", prompt: clean, cls: ensure(agent.trim() || clean) ?? undefined, on: true }]);
-    setPrompt("");
-    setAgent("");
-  };
-  const toggle = (id: string) => setOpen((old) => {
-    const next = new Set(old);
-    if (next.has(id)) next.delete(id); else next.add(id);
-    return next;
-  });
-
-  return (
-    <div className="ae-ct">
-      <Head title="Строки" total={rows.length} on={rows.filter((r) => r.on).length} query={query} onQuery={setQuery}
-        placeholder="Найти слово или класс" shown={shown} onShown={setShown} readOnly={readOnly}
-        onAll={(on) => onRows(rows.map((r) => (on ? bound(r, classes, ensure, label(r)) : { ...r, on })))} />
-      <div className="ae-ct-row pr head"><span /><span /><span>слово / образцы</span><span>класс агента</span><span className="r">порог</span><span /></div>
-      {rows.length === 0 && <p className="t-xs t-faint ae-ct-none">Строк нет — добавьте слово или образцы ниже</p>}
-      {rows.length > 0 && visible.length === 0 && <p className="t-xs t-faint ae-ct-none">Ничего не найдено</p>}
-      {visible.map((r) => {
-        const ex = isExamples(r);
-        const exSet = ex ? sets.get(r.set ?? "") : undefined;
-        const cyr = !ex && CYRILLIC.test(r.prompt ?? "");
-        const opened = ex && open.has(r.set ?? "");
-        return (
-          <div key={r.i} className={cx("ae-ct-row pr", !r.on && "off")}>
-            <Tick checked={r.on} disabled={readOnly} label={label(r) || "строка"}
-              onChange={(on) => set(r.i, on ? bound(rows[r.i], classes, ensure, label(r)) : { on })} />
-            <span className={cx("ae-kind", ex && "ex")} title={ex ? "образцы" : "слово"}>{ex ? "обр" : "сл"}</span>
-            {ex ? (
-              <button type="button" className="ae-src" aria-expanded={opened} onClick={() => toggle(r.set ?? "")}>
-                <b className="t-ell">{exSet?.class_name ?? "набор"}</b>
-                <span className="ui-mono t-faint">{exSet ? `${exSet.items.length} обр.` : "…"}</span>
-              </button>
-            ) : (
-              <input className="ui-input ui-ctl ae-in ui-mono" value={r.prompt ?? ""} disabled={readOnly} aria-label="Слово"
-                onChange={(e) => set(r.i, { prompt: e.target.value })} />
-            )}
-            <ClassPick cls={r.cls} hint={r.agent ?? label(r)} classes={classes} readOnly={readOnly}
-              label={`Класс агента для ${label(r)}`} onPick={(name) => set(r.i, { cls: ensure(name) ?? undefined, agent: undefined })} />
-            <NumInput className="ui-input ui-ctl ae-in ui-mono r" min={0} max={1} step={0.05} allowEmpty disabled={readOnly}
-              placeholder={String(nodeConf).replace(".", ",")} value={typeof r.conf === "number" ? r.conf : undefined}
-              aria-label="Порог строки" aria-invalid={offLimits({ lo: 0, hi: 1 }, r.conf) || undefined}
-              onValue={(v) => set(r.i, { conf: v ?? null })} />
-            {!readOnly ? (
-              <Button size="sm" variant="ghost" icon="x" aria-label={`Удалить строку ${label(r)}`} onClick={() => onRows(rows.filter((_, k) => k !== r.i))} />
-            ) : <span />}
-            {cyr && <span className="ae-ct-note ge-warn">Слово по-русски — модель понимает английский</span>}
-            {opened && exSet && (
-              <div className="ae-ct-wide">
-                <ExampleStrip set={exSet} readOnly={readOnly} onSet={(next) => {
-                  onSet(next);
-                  // Набор неизменяем: правка рождает новый id — раскрытой остаётся та же строка.
-                  setOpen((old) => new Set([...old].map((id) => (id === exSet.id ? next.id : id))));
-                  set(r.i, { set: next.id });
-                }} />
-              </div>
-            )}
-          </div>
-        );
-      })}
-      {!readOnly && (
-        <form className="ae-ct-add" onSubmit={(e) => { e.preventDefault(); add(); }}>
-          <Input className="ui-mono" placeholder="слово по-английски" value={prompt} aria-label="Новое слово" onChange={(e) => setPrompt(e.target.value)} />
-          <Input placeholder="класс агента" value={agent} list="ae-agent-classes" aria-label="Класс агента для нового слова"
-            onChange={(e) => setAgent(e.target.value)} />
-          <Button type="submit" size="sm" icon="plus" disabled={!prompt.trim()}>Слово</Button>
-          <Button size="sm" icon="images" onClick={() => setDialog(true)}>Образцы из разметки</Button>
-        </form>
-      )}
-      {dialog && (
-        <ExamplesDialog onClose={() => setDialog(false)} onDone={(made, agentName) => {
-          onSet(made);
-          onRows([...rows, withConf({ kind: "examples", set: made.id, cls: ensure(agentName) ?? undefined, on: true }, exampleConfDefault(model))]);
-          setOpen((old) => new Set(old).add(made.id));
-          setDialog(false);
-        }} />
-      )}
     </div>
   );
 }

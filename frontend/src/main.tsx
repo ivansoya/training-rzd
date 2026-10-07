@@ -161,10 +161,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                     </MagShell>
                   }
                 />
+                {/* Редактору агента нужно место: окно уже 1600 px — сайдбар полосой значков,
+                    без верхней полосы; шире — каркас как в редакторе графа. */}
                 <Route
                   path="/agents/:graphId"
                   element={
-                    <MagShell>
+                    <MagShell railBelow={1600}>
                       <AgentEditor />
                     </MagShell>
                   }

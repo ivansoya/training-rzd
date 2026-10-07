@@ -43,6 +43,8 @@ export const textConfDefault = (model: TextModel) => (model === "sam3" ? 0.4 : 0
 export const YOLOE_MB: Record<string, number> = { s: 31, m: 70, l: 79, x: 172 };
 /** Кириллица в промте: модель понимает английский — предупредить, не запрещать. */
 export const CYRILLIC = /[а-яё]/i;
+/** Предел описания в знаках — как agent_graph.PROMPT_MAX: кодировщик SAM 3 на 32 токена, YOLOE — на 77. */
+export const promptMax = (model: TextModel) => (model === "sam3" ? 100 : 200);
 
 /** Порог строки с образцами по умолчанию. У YOLOE лучший F1 по образцам при
  *  0,05–0,15; у SAM 3 пусто — действует порог узла (0,1 давал сотни ложных масок). */
@@ -69,6 +71,8 @@ export function switchTextModel(p: Record<string, unknown>, next: TextModel) {
   return {
     model: next,
     conf: conf === was ? textConfDefault(next) : conf,
+    // SAM 3 без входа — новый для узла: 1008 (сервер без поля берёт 644, как у старых версий).
+    ...(next === "sam3" && !SAM3_SIDES.includes(p.side as Sam3Side) ? { side: SAM3_NEW_SIDE } : {}),
     ...(prompts ? { prompts } : {}),
   };
 }
@@ -324,22 +328,43 @@ export const LIMITS: Record<string, Record<string, Limit>> = {
 
 export const TILE_OVERLAP = 0.2;
 export const MAX_PASSES = 100;
-export const SAM3_SIDE = 644;
+// Вход SAM 3 — как agent_graph.SAM3_SIDES: без поля 644 (версии до переключателя), новые узлы — 1008.
+export const SAM3_SIDES = [644, 1008] as const;
+export type Sam3Side = (typeof SAM3_SIDES)[number];
+export const SAM3_SIDE: Sam3Side = 644;
+export const SAM3_NEW_SIDE: Sam3Side = 1008;
+export const sam3Side = (p: Record<string, unknown>): Sam3Side =>
+  SAM3_SIDES.includes(p.side as Sam3Side) ? (p.side as Sam3Side) : SAM3_SIDE;
+/** Слов за вызов SAM 3 — как sam3_words_per_call: на 1008 память растёт с каждым словом. */
+export const sam3WordsPerCall = (p: Record<string, unknown>) => (sam3Side(p) === 1008 ? 4 : 16);
 
 const fin = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 
-/** Сторона тайла — как tile_side: пусто — вход сети (у SAM 3 его 644). */
+/** Сторона тайла — как tile_side: пусто — вход сети (у SAM 3 — его вход). */
 export function tileSide(kind: string, p: Record<string, unknown>, netImgsz?: number | null): number {
   const own = fin(p.tile);
   if (own) return own;
-  if (kind === "text") return textModel(p) === "sam3" ? SAM3_SIDE : fin(p.imgsz) ?? TEXT_IMGSZ;
+  if (kind === "text") return textModel(p) === "sam3" ? sam3Side(p) : fin(p.imgsz) ?? TEXT_IMGSZ;
   return fin(p.imgsz) ?? netImgsz ?? 640;
 }
 
 /** Входная сторона сети: во сколько раз тайл растянут к ней. */
 export function inputSide(kind: string, p: Record<string, unknown>, netImgsz?: number | null): number {
-  if (kind === "text") return textModel(p) === "sam3" ? SAM3_SIDE : fin(p.imgsz) ?? TEXT_IMGSZ;
+  if (kind === "text") return textModel(p) === "sam3" ? sam3Side(p) : fin(p.imgsz) ?? TEXT_IMGSZ;
   return fin(p.imgsz) ?? netImgsz ?? 640;
+}
+
+/** Образцов в ряду коллажа SAM 3 — как agent_examples.ROW. */
+export const EX_ROW = 6;
+/** Образцов за проход на виде w×h: второй ряд — в тот же проход, если коллаж не выше своей ширины. */
+export const perPass = (w: number, h: number) => EX_ROW * (h + (2 * w) / EX_ROW <= w ? 2 : 1);
+
+/** Номера образцов по проходам — как agent_examples.collage_passes. */
+export function collagePasses(n: number, w: number, h: number): number[][] {
+  const per = perPass(w, h);
+  const out: number[][] = [];
+  for (let at = 0; at < n; at += per) out.push(Array.from({ length: Math.min(per, n - at) }, (_, k) => at + k));
+  return out;
 }
 
 const starts = (length: number, side: number, overlap: number) =>
@@ -353,12 +378,23 @@ export function viewCount(p: Record<string, unknown>, w: number, h: number, side
   return { whole: p.whole === false ? 0 : 1, tiles: starts(w, side, overlap) * starts(h, side, overlap) };
 }
 
-/** Вызовов модели на вид: у SAM 3 слова — один, каждая строка-образцы — свой. */
-export function callsPerView(kind: string, p: Record<string, unknown>): number {
-  if (kind !== "text" || textModel(p) !== "sam3") return 1;
+/** Размеры видов кадра — как views: целый (если не выключен) и тайлы min(кадр, тайл). */
+export function viewSizes(p: Record<string, unknown>, w: number, h: number, side: number): [number, number][] {
+  const v = viewCount(p, w, h, side);
+  const tile: [number, number] = [Math.min(w, side), Math.min(h, side)];
+  return [...Array.from({ length: v.whole }, (): [number, number] => [w, h]), ...Array.from({ length: v.tiles }, () => tile)];
+}
+
+/** Вызовов модели на кадр — как agent_graph.calls: у SAM 3 на каждый вид слова порциями и проходы
+ *  каждого набора образцов. `count` — образцов в наборе; не знаем — один проход. */
+export function frameCalls(kind: string, p: Record<string, unknown>, w: number, h: number, side: number,
+  count?: (set: string) => number | undefined): number {
+  const views = viewSizes(p, w, h, side);
+  if (kind !== "text" || textModel(p) !== "sam3") return views.length;
   const rows = promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.cls);
-  const ex = rows.filter(isExamples).length;
-  return (rows.length > ex ? 1 : 0) + ex || 1;
+  const sets = rows.filter(isExamples).map((r) => Math.max(1, count?.(rowTarget(r)) ?? 1));
+  const words = Math.ceil((rows.length - sets.length) / sam3WordsPerCall(p));
+  return views.reduce((sum, [vw, vh]) => sum + words + sets.reduce((s, n) => s + collagePasses(n, vw, vh).length, 0), 0);
 }
 
 /** Значение вне пределов (пустое — умолчание, это не ошибка). */
@@ -386,6 +422,10 @@ export function unfinished(doc: {
     if (n.type !== "output" && !doc.edges.some((e) => e.from === n.id)) return `${name}: подключите выход.`;
     const bad = Object.entries(LIMITS[n.type] ?? {}).find(([k, lim]) => offLimits(lim, p[k]));
     if (bad) return `${name}: исправьте число в поле.`;
+    // Как _check_text: только включённые описания с классом.
+    const max = promptMax(textModel(p));
+    if (n.type === "text" && promptsOf(n).some((r) => r.on && r.cls && !isExamples(r) && rowTarget(r).length > max))
+      return `${name}: описание длиннее ${max} знаков.`;
   }
   const up = upgradeDoc(doc);
   const used = agentClasses(up.classes, up.nodes, () => []).filter((c) => c.sources.length);

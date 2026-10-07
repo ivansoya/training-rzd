@@ -1,4 +1,4 @@
-// Шторка, первая колонка: параметры выбранного узла агента.
+// Шторка, левая колонка: параметры выбранного узла агента.
 //
 // Проверку формы делает сервер при сохранении версии (common/agent_graph.py). Пределы
 // чисел — исключение: форма берёт их из той же таблицы (agentDoc.LIMITS) и не даёт за них
@@ -7,15 +7,16 @@
 import type { Node } from "@xyflow/react";
 import { useState, type ReactNode } from "react";
 import * as api from "../../api/agents";
-import { Badge, Button, Empty, Field, Icon, Input, Seg, Select, Switch } from "../../ui";
+import { Badge, Button, Empty, Field, Icon, Popover, Seg, Select, Switch } from "../../ui";
 import { NumInput } from "../NumInput";
 import {
-  LIMITS, MAX_PASSES, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, TILE_OVERLAP, YOLOE_MB, callsPerView, inputSide,
-  isExamples, mergeInputs, offLimits, promptsOf, rowTarget, rowsOf, switchTextModel, textConfDefault, textModel, tileSide,
-  viewCount, type AgentClass, type FilterRow,
+  LIMITS, MAX_PASSES, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, TILE_OVERLAP, TITLES, frameCalls, inputSide, mergeInputs,
+  offLimits, promptsOf, rowsOf, sam3Side, switchTextModel, textConfDefault, textModel, tileSide, viewCount,
+  type AgentClass, type FilterRow,
 } from "./agentDoc";
 import { agentTitle, type AgentNodeData } from "./AgentNodes";
-import { ClassList, FilterClasses, NetClasses, PromptTable } from "./ClassTables";
+import ClassCards from "./ClassCards";
+import { ClassList, FilterClasses, NetClasses } from "./ClassTables";
 import { decimal, iconOf, roleOf, toneOf } from "./look";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
@@ -34,18 +35,30 @@ const DETAIL = [
   { value: "subpart", label: "Подчасть" },
 ];
 
-export default function AgentInspector({ node, readOnly, weights, sam3Ready, sets, onSet, classes, ensure, incoming, loose,
-  onChange, onPickWeights, onRemove, pinned, onPin, frame, msPerCall }: {
+const SIDES = [
+  { value: "644", label: "644 · быстрее" },
+  { value: "1008", label: "1008 · точнее" },
+];
+
+export default function AgentInspector({ node, readOnly, weights, sam3Ready, sets, goneSets, onSet, classes, ensure, ensureRef, projects,
+  onClasses, incoming, loose, onChange, onPickWeights, onRemove, pinned, onPin, frame, msPerCall, hits, expanded, onExpand }: {
   node: Node | null;
   readOnly: boolean;
   weights?: api.Weights;
   sam3Ready: boolean | null;
   sets: Map<string, api.ExampleSet>;
+  /** Наборы, которых больше нет на сервере. */
+  goneSets: Set<string>;
   onSet: (set: api.ExampleSet) => void;
   /** Классы агента — для выбора в строках узлов. */
   classes: AgentClass[];
   /** Класс агента по имени: найденный или заведённый. */
   ensure: (name: string) => string | null;
+  /** Класс-ссылка на класс проекта. */
+  ensureRef: (project: api.ClassSource, cls: api.ClassSource["classes"][number]) => string | null;
+  projects: api.ClassSource[] | null;
+  /** Окно «Классы агента». */
+  onClasses: () => void;
   /** Id классов агента, что приходят к узлу: «Фильтр» показывает только их. */
   incoming: string[];
   loose: boolean;
@@ -58,13 +71,19 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   frame: api.FrameSummary | null;
   /** Замер последнего превью: мс на один вызов модели этого узла. */
   msPerCall?: number;
+  /** Своих рамок узла на кадре превью по номеру строки; null — превью нет. */
+  hits: Map<number, number> | null;
+  /** Узел развёрнут на всё окно. */
+  expanded: boolean;
+  onExpand: () => void;
 }) {
   const [fine, setFine] = useState(false);
   if (!node) {
     return (
       <section className="ge-sec ae-insp">
         <Empty compact icon="pointer" title="Выберите узел на холсте">
-          Здесь появятся его параметры. Новый узел — из колонки справа: щелчком или перетаскиванием, можно прямо на провод.
+          Здесь появятся его параметры. Новый узел — из полосы справа: щелчком или перетаскиванием, можно прямо на провод.
+          Двойной щелчок по узлу разворачивает его на всё окно.
         </Empty>
       </section>
     );
@@ -72,7 +91,8 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   const d = node.data as AgentNodeData;
   const p = d.params;
   const model = textModel(p);
-  const sam3Missing = d.kind === "text" && model === "sam3" && sam3Ready === false;
+  const sam3 = d.kind === "text" && model === "sam3";
+  const sam3Missing = sam3 && sam3Ready === false;
   const fixed = d.kind === "frame" || d.kind === "output";
 
   // Пустое необязательное поле — «без предела», поэтому null, а не умолчание.
@@ -95,40 +115,59 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
       <Switch checked={on} label={label} disabled={readOnly} onChange={(v) => onChange({ [key]: v })} />
     </div>
   );
-  // Тайлинг: блок с итогом — сколько проходов на кадр проекта превью и сколько это времени.
+
+  // Тайлинг и вызовы модели на кадр проекта превью — тем же счётом, что потолок на сервере.
   const netIn = d.kind === "net" ? weights?.imgsz : null;
   const side = tileSide(d.kind, p, netIn);
   const zoom = inputSide(d.kind, p, netIn) / side;
   const overlap = num(p.overlap, TILE_OVERLAP);
-  const calls = callsPerView(d.kind, p);
-  const examples = d.kind === "text" && model === "sam3"
-    ? promptsOf({ params: p }).filter((r) => r.on && rowTarget(r) && r.cls && isExamples(r)).length : 0;
   const tiling = Boolean(p.tiles);
+  const size = (set: string) => sets.get(set)?.items.length;
   const views = frame ? viewCount(p, frame.w, frame.h, side) : null;
   const total = views ? views.whole + views.tiles : 1;
-  const big = frame && (frame.largest[0] !== frame.w || frame.largest[1] !== frame.h)
-    ? viewCount(p, frame.largest[0], frame.largest[1], side) : null;
-  const worst = big ? big.whole + big.tiles : total;
-  const time = msPerCall !== undefined
-    ? tiling && total > 1 ? `≈ ${took(msPerCall * calls * total)} на кадр (было ${took(msPerCall * calls)})`
-      : `≈ ${took(msPerCall * calls)} на кадр` : null;
-  const passes = (
+  const calls = frame ? frameCalls(d.kind, p, frame.w, frame.h, side, size) : null;
+  const big = frame && (frame.largest[0] !== frame.w || frame.largest[1] !== frame.h) ? frame.largest : null;
+  const worst = big ? frameCalls(d.kind, p, big[0], big[1], side, size) : calls;
+  const time = msPerCall !== undefined && calls !== null ? `≈ ${took(msPerCall * calls)}` : null;
+  const ceiling = (
+    <>
+      {worst !== null && worst > MAX_PASSES && big && (
+        <span className="bad">На самом большом кадре {big[0]}×{big[1]} — {worst} вызовов модели, больше {MAX_PASSES} нельзя</span>
+      )}
+      {calls !== null && calls > MAX_PASSES && (
+        <span className="bad">Больше {MAX_PASSES} вызовов модели на кадр нельзя — увеличьте тайл{sam3 ? " или уберите образцы" : ""}</span>
+      )}
+    </>
+  );
+  const viewsText = views && views.tiles
+    ? `${views.whole ? "1 целый + " : ""}${views.tiles} ${plural(views.tiles, "тайл", "тайла", "тайлов")}` : "кадр не больше тайла";
+  const tileFields = (
+    <div className="ae-tile-f">
+      {number("tile", "Тайл, px", side, 32, false,
+        Math.abs(zoom - 1) > 0.01 ? `${zoom > 1 ? "×" : "÷"}${ru(zoom > 1 ? zoom : 1 / zoom)} к объекту` : "1:1")}
+      {number("overlap", "Перекрытие", overlap, 0.05, false, `${Math.round(side * overlap)} px`)}
+      <div className="ae-wide">
+        {flag("whole", "+ целый кадр", p.whole !== false, "Отдельный проход целым кадром: крупный объект тайл режет на обрывки")}
+      </div>
+    </div>
+  );
+  const fineFields = (
+    <>
+      <button type="button" className="ae-fold" aria-expanded={fine} onClick={() => setFine((v) => !v)}>
+        <Icon name="chevD" size={14} />Тонкая настройка
+      </button>
+      {fine && <div className="ae-tile-f">{number("glue", "Склейка от, IoS", num(p.glue, 0.5), 0.05)}</div>}
+    </>
+  );
+  // У «Сети» — блок с переключателем и итогом, как был.
+  const netPasses = (
     <div className={tiling ? "ae-tile on" : "ae-tile"}>
       <div className="ae-tile-h">
         <b>Тайлинг</b>
         <span className="grow" />
         <Switch checked={tiling} label="Тайлинг" disabled={readOnly} onChange={(v) => onChange({ tiles: v })} />
       </div>
-      {tiling && (
-        <div className="ae-tile-f">
-          {number("tile", "Тайл, px", side, 32, false,
-            Math.abs(zoom - 1) > 0.01 ? `${zoom > 1 ? "×" : "÷"}${ru(zoom > 1 ? zoom : 1 / zoom)} к объекту` : "1:1")}
-          {number("overlap", "Перекрытие", overlap, 0.05, false, `${Math.round(side * overlap)} px`)}
-          <div className="ae-wide">
-            {flag("whole", "+ целый кадр", p.whole !== false, "Отдельный проход целым кадром: крупный объект тайл режет на обрывки")}
-          </div>
-        </div>
-      )}
+      {tiling && tileFields}
       <div className="ae-tile-sum">
         {!frame ? <span>Размер кадра появится, когда в проекте превью будут кадры</span> : (
           <>
@@ -136,44 +175,38 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
               {frame.w}×{frame.h}
               {frame.share < 0.995 && <em> · у {Math.round((1 - frame.share) * 100)} % кадров другой размер</em>}
             </span>
-            {tiling && views && (
-              <span>
-                {views.tiles === 0 ? `кадр не больше тайла — 1 проход`
-                  : `${views.whole ? "1 целый + " : ""}${views.tiles} ${plural(views.tiles, "тайл", "тайла", "тайлов")} = ${total} ${plural(total, "проход", "прохода", "проходов")}`}
-              </span>
-            )}
-            {examples > 0 && tiling && <span>образцы: × {examples} {plural(examples, "строка", "строки", "строк")} на каждый проход</span>}
+            {tiling && views && <span>{viewsText} = {total} {plural(total, "проход", "прохода", "проходов")}</span>}
           </>
         )}
-        <b>{time ?? (tiling ? "время — после превью" : "1 проход")}</b>
-        {worst > MAX_PASSES && big && (
-          <span className="bad">На самом большом кадре {frame!.largest[0]}×{frame!.largest[1]} — {worst} проходов, больше {MAX_PASSES} нельзя</span>
-        )}
-        {total > MAX_PASSES && <span className="bad">Больше {MAX_PASSES} проходов на кадр нельзя — увеличьте тайл</span>}
+        <b>{time ? `${time} на кадр` : tiling ? "время — после превью" : "1 проход"}</b>
+        {ceiling}
       </div>
-      {tiling && (
-        <>
-          <button type="button" className="ae-fold" aria-expanded={fine} onClick={() => setFine((v) => !v)}>
-            <Icon name="chevD" size={14} />Тонкая настройка
-          </button>
-          {fine && (
-            <div className="ae-tile-f">
-              {number("glue", "Склейка от, IoS", num(p.glue, 0.5), 0.05)}
-            </div>
-          )}
-        </>
-      )}
+      {tiling && fineFields}
     </div>
   );
+  const contour = `до ${num(p.polygon_points, SAM_DEFAULTS.polygon_points)} точек · куски от ${num(p.min_area, SAM_DEFAULTS.min_area)} px²`
+    + (p.fill_holes !== false ? " · дыры залиты" : "");
 
   return (
     <section className="ge-sec ae-insp">
       <ClassList classes={classes} />
       <div className="ge-sec-h">
         <span className="ge-tone" style={{ color: toneOf(d.kind) }}><Icon name={iconOf(d.kind)} /></span>
-        <b className="t-ell">{agentTitle(d)}</b>
+        <b className="t-ell">{fixed ? agentTitle(d) : TITLES[d.kind] ?? d.kind}</b>
+        {/* Подпись правится прямо в шапке, как имя агента: отдельное поле только теснило параметры. */}
+        {!fixed && (
+          <input className="ae-label-in" value={String(p.label ?? "")} disabled={readOnly} maxLength={60}
+            placeholder={readOnly ? "" : "+ подпись"} aria-label="Подпись узла" size={Math.max(10, String(p.label ?? "").length + 1)}
+            title="Подпись различает два одинаковых узла на холсте и в ошибках"
+            onChange={(e) => onChange({ label: e.target.value || undefined })}
+            onKeyDown={(e) => e.key === "Enter" && (e.target as HTMLInputElement).blur()} />
+        )}
         <Badge tone={toneOf(d.kind)}>{roleOf(d.kind)}</Badge>
         <span className="grow" />
+        <Button size="sm" icon={expanded ? "shrink" : "fit"} onClick={onExpand}
+          title={expanded ? "Вернуть холст (Esc)" : "Узел на всё окно — или двойной щелчок по узлу на холсте"}>
+          {expanded ? "Свернуть" : "Развернуть"}
+        </Button>
         <Button size="sm" variant="ghost" icon="eye" className={pinned ? "ge-pin on" : "ge-pin"} aria-pressed={pinned}
           aria-label={pinned ? "Открепить превью" : "Закрепить в превью"} onClick={onPin} />
         {!readOnly && !fixed && <Button size="sm" variant="ghost" icon="trash" aria-label="Удалить узел (Delete)" onClick={onRemove} />}
@@ -185,13 +218,72 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
       {d.kind === "frame" && <p className="t-xs t-muted">Кадр таски — с него начинается каждый проход агента. Параметров нет.</p>}
       {d.kind === "output" && <p className="t-xs t-muted">Что придёт сюда, ляжет в разметку кадра рамками агента. Параметров нет.</p>}
 
-      {!fixed && (
-        <div className="ge-params">
-          <Field label="Подпись" hint="Различает два одинаковых узла на холсте и в ошибках">
-            {(id) => <Input id={id} value={String(p.label ?? "")} disabled={readOnly} maxLength={60}
-              onChange={(e) => onChange({ label: e.target.value || undefined })} />}
-          </Field>
+      {d.kind === "text" && (
+        <>
+          <div className="ae-block">
+            <section className="ae-panel">
+              <div className="ae-panel-h">
+                <b>Модель и поиск</b>
+                <span className="ae-readout" title={calls !== null && frame ? `Вызовов модели на кадр ${frame.w}×${frame.h}` : undefined}>
+                  {time ? <>{time} <em>на кадр</em></> : <em>время — после превью</em>}
+                  {calls !== null && <em> · {calls} {plural(calls, "вызов", "вызова", "вызовов")}</em>}
+                </span>
+              </div>
+              <div className="ae-panel-top">
+                <Field label="Модель">
+                  {() => (
+                    <Seg size="sm" label="Модель" value={model} onChange={(m) => !readOnly && onChange(switchTextModel(p, m))}
+                      options={TEXT_MODELS.map((m) => ({ value: m, label: m === "sam3" ? "SAM 3" : m, disabled: readOnly,
+                        title: m === "sam3" ? "SAM 3 — рамка и контур" : `YOLOE-26 ${m} — только рамки` }))} />
+                  )}
+                </Field>
+                {sam3 ? (
+                  <Field label="Вход">
+                    {() => (
+                      <Seg size="sm" label="Вход SAM 3" value={String(sam3Side(p))} onChange={(v) => !readOnly && onChange({ side: Number(v) })}
+                        options={SIDES.map((o) => ({ ...o, disabled: readOnly }))} />
+                    )}
+                  </Field>
+                ) : number("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
+                {number("conf", "Порог узла", num(p.conf, textConfDefault(model)), 0.05)}
+              </div>
+              {sam3 && (
+                <div className="ae-panel-row">
+                  <span className="ae-panel-l">Контур</span>
+                  <span className="ae-panel-v t-ell" title={contour}>{contour}</span>
+                  <Popover align="end" width={280} trigger={<Button size="sm" variant="ghost" icon="sliders" disabled={readOnly}>Настроить</Button>}>
+                    <div className="ae-contour">
+                      {number("polygon_points", "Точек контура до", num(p.polygon_points, SAM_DEFAULTS.polygon_points), 8)}
+                      {number("min_area", "Кусок от, px² кадра", num(p.min_area, SAM_DEFAULTS.min_area), 16)}
+                      {flag("fill_holes", "Заливать дыры", p.fill_holes !== false)}
+                    </div>
+                  </Popover>
+                </div>
+              )}
+              <div className="ae-panel-row">
+                <span className="ae-panel-l">Тайлинг</span>
+                <span className="ae-panel-v">
+                  {tiling ? `${views ? viewsText : "тайлы"} · тайл ${side} px` : "выключен — кадр идёт целиком"}
+                </span>
+                <Switch checked={tiling} label="Тайлинг" disabled={readOnly} onChange={(v) => onChange({ tiles: v })} />
+              </div>
+              {tiling && <div className="ae-panel-sub">{tileFields}{fineFields}</div>}
+            </section>
+            {sam3Missing && (
+              <div className="ae-w bad"><b>Нет весов SAM 3 на сервере</b><span>Нужен файл _autolabel/sam3/sam3.pt — без него версию не сохранить</span></div>
+            )}
+            {ceiling}
+          </div>
+          <ClassCards rows={promptsOf({ params: p })} readOnly={readOnly} classes={classes} ensure={ensure} ensureRef={ensureRef}
+            projects={projects} nodeConf={num(p.conf, textConfDefault(model))} model={model} sets={sets} gone={goneSets} onSet={onSet}
+            onRows={(rows) => onChange({ prompts: rows })} hits={hits}
+            view={frame ? (tiling ? [Math.min(frame.w, side), Math.min(frame.h, side)] : [frame.w, frame.h]) : null}
+            views={total} msPerCall={msPerCall} onClasses={onClasses} />
+        </>
+      )}
 
+      {!fixed && d.kind !== "text" && (
+        <div className="ge-params">
           {d.kind === "net" && (
             <>
               <div className="ae-w">
@@ -207,46 +299,13 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
               {/* IoU здесь нет: у yolo26 NMS нет вовсе, у yolo11 и v8 он встроен — гасить дубли узлом «NMS». */}
               {number("conf", "Уверенность от", num(p.conf, 0.25), 0.05)}
               {number("imgsz", "Размер входа", num(p.imgsz, weights?.imgsz ?? 640), 32)}
-              {passes}
+              {netPasses}
               {weights && (
                 <div className="ae-wide">
                   <NetClasses names={weights.names} rows={rowsOf({ params: p })} readOnly={readOnly} classes={classes} ensure={ensure}
                     onRows={(rows) => onChange({ classes: rows })} />
                 </div>
               )}
-            </>
-          )}
-
-          {d.kind === "text" && (
-            <>
-              <Field label="Модель" hint={model === "sam3" ? "SAM 3 — рамка и контур" : "YOLOE-26 — только рамки"}>
-                {() => (
-                  <Seg size="sm" label="Модель" value={model} onChange={(m) => !readOnly && onChange(switchTextModel(p, m))}
-                    options={TEXT_MODELS.map((m) => ({ value: m, label: m === "sam3" ? "SAM 3" : m, disabled: readOnly }))} />
-                )}
-              </Field>
-              <div className={sam3Missing ? "ae-w bad" : "ae-w"}>
-                {model !== "sam3" ? (
-                  <><b className="ui-mono">yoloe-26{model}-seg.pt</b><span>{YOLOE_MB[model]} МБ · в образе · только рамки</span></>
-                ) : sam3Missing ? (
-                  <><b>Нет весов SAM 3 на сервере</b><span>Нужен файл _autolabel/sam3/sam3.pt — без него версию не сохранить</span></>
-                ) : (
-                  <><b className="ui-mono">sam3.pt</b><span>3,45 ГБ · на сервере · рамка и контур</span></>
-                )}
-              </div>
-              {number("conf", "Порог узла", num(p.conf, textConfDefault(model)), 0.05)}
-              {model === "sam3" ? (
-                <>
-                  {number("polygon_points", "Точек контура до", num(p.polygon_points, SAM_DEFAULTS.polygon_points), 8)}
-                  {number("min_area", "Кусок от, px²", num(p.min_area, SAM_DEFAULTS.min_area), 16)}
-                  {flag("fill_holes", "Заливать дыры", p.fill_holes !== false)}
-                </>
-              ) : number("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
-              {passes}
-              <div className="ae-wide">
-                <PromptTable rows={promptsOf({ params: p })} readOnly={readOnly} classes={classes} ensure={ensure} nodeConf={num(p.conf, textConfDefault(model))}
-                  model={model} sets={sets} onSet={onSet} onRows={(rows) => onChange({ prompts: rows })} />
-              </div>
             </>
           )}
 

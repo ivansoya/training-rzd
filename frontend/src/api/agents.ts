@@ -202,6 +202,8 @@ export interface PreviewDet {
   /** После «Уточнения SAM»: обводка кольцами точек и оценка маски. */
   parts?: [number, number][][];
   sam?: number;
+  /** У «Сети по тексту»: номер строки узла, что дала рамку («N на кадре» у описания). */
+  row?: number;
 }
 
 export interface HumanShape {
@@ -289,7 +291,8 @@ export interface ExampleSet {
   error: string | null;
   project: string;
   class_name: string;
-  params: { datasets: string[] | null; n: number; collage: number; ctx: number; seed: number };
+  // collage и ctx — у наборов до шага «авто»: SAM 3 их больше не читает.
+  params: { datasets: string[] | null; n: number; seed: number; collage?: number; ctx?: number };
   parent_id: string | null;
   items: ExampleItem[];
   frames: number;
@@ -316,11 +319,9 @@ export const createExamples = (body: {
   class_id: string;
   datasets: string[] | null;
   n: number;
-  collage: number;
-  ctx: number;
 }) => post<{ set: ExampleSet }>("agents/examples", body);
 
-export const deriveExamples = (id: string, body: { order?: string[]; add?: number; collage?: number }) =>
+export const deriveExamples = (id: string, body: { order?: string[]; add?: number }) =>
   post<{ set: ExampleSet }>(`agents/examples/${id}/derive`, body);
 
 export const listExamples = (ids: string[]) =>

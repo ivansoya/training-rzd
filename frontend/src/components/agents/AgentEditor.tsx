@@ -5,7 +5,7 @@
 // классов прямо здесь), кадр превью с рамками узла и что он нашёл. Числа на проводах —
 // рамки с того же кадра: превью считает вход и выход каждого узла за один прогон.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent } from "react";
 import NotFound, { isMissing } from "../NotFound";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
@@ -16,7 +16,8 @@ import {
 import * as aug from "../../api/aug";
 import * as api from "../../api/agents";
 import type { GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
-import { Badge, Button, LinkButton, MenuItem, Notice, Select } from "../../ui";
+import { Badge, Button, Icon, LinkButton, MenuItem, Notice, Select, cx } from "../../ui";
+import { hasLayer } from "../../ui/useEscape";
 import { ago, count } from "../ru";
 import { edgeKey, findCycle } from "../aug/counts";
 import * as hist from "../aug/history";
@@ -24,8 +25,8 @@ import { WireDraft, edgeTypes, type WireData } from "../aug/GraphNodes";
 import { keep, load } from "../aug/NodePreview";
 import { DRAWER_DEFAULT, clampDrawer } from "../aug/look";
 import {
-  agentClasses, bindRows, callsPerView, carryClasses, findOrCreate, isExamples, keepWired, promptsOf, rowTarget, rowsOf, textModel,
-  tileSide, unfinished, upgradeDoc, upstream, viewCount, type ClassDef, type FilterRow, type NetRow, type PromptRow,
+  agentClasses, bindRows, carryClasses, findOrCreate, foldName, frameCalls, isExamples, keepWired, promptsOf, rowTarget, rowsOf,
+  sam3Side, textModel, tileSide, unfinished, upgradeDoc, upstream, type ClassDef, type FilterRow, type NetRow, type PromptRow,
 } from "./agentDoc";
 import AgentClasses from "./AgentClasses";
 import AgentFound from "./AgentFound";
@@ -36,11 +37,14 @@ import AgentPreviewPane, { useAgentPreview } from "./AgentPreview";
 import SixFrames from "./SixFrames";
 import WeightsPicker from "./WeightsPicker";
 import {
-  defaults, filterLine, netBadge, netLine, onePort, plainLine, textLine, wireText, type Addable, type AgentKind,
+  defaults, filterLine, netBadge, netLine, onePort, plainLine, textLine, toneOf, wireText, type Addable, type AgentKind,
 } from "./look";
 
 const DRAFT_WAIT_MS = 700;
-const DRAWER_KEY = "agent-drawer-h";
+// Новый ключ: шторка стала выше, прежняя запомненная высота ей мала.
+const DRAWER_KEY = "agent-drawer-h2";
+// 60 % места под верхней полосой приложения и шапкой редактора (по 52 px), как в макете А.
+const drawerStart = () => Math.max(DRAWER_DEFAULT + 60, Math.round((window.innerHeight - 104) * 0.6));
 const GAP = 260;
 
 let seq = 0;
@@ -124,6 +128,34 @@ function toDoc(nodes: Node[], edges: Edge[], classes: ClassDef[]): GraphDoc {
   };
 }
 
+/** Цепочка узлов развёрнутого вида: столбец — узлы одной глубины от «Кадра», неподключённые — в конце. */
+function chainOf(nodes: Node[], edges: Edge[]): string[][] {
+  const preds = new Map(nodes.map((n) => [n.id, edges.filter((e) => e.target === n.id).map((e) => e.source)]));
+  const linked = new Set(edges.flatMap((e) => [e.source, e.target]));
+  const depth = new Map<string, number>();
+  const walk = (id: string, seen: Set<string>): number => {
+    const known = depth.get(id);
+    if (known !== undefined) return known;
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const d = Math.max(-1, ...(preds.get(id) ?? []).map((p) => walk(p, seen))) + 1;
+    depth.set(id, d);
+    return d;
+  };
+  const cols: string[][] = [];
+  const loose: string[] = [];
+  for (const n of nodes) {
+    if (!linked.has(n.id) && kindOfNode(n) !== "frame") {
+      loose.push(n.id);
+      continue;
+    }
+    const d = walk(n.id, new Set());
+    if (!cols[d]) cols[d] = [];
+    cols[d].push(n.id);
+  }
+  return [...cols.filter(Boolean), ...(loose.length ? [loose] : [])];
+}
+
 const pointOf = (e: MouseEvent | TouchEvent): [number, number] => {
   const p = "changedTouches" in e ? e.changedTouches[0] : e;
   return [p?.clientX ?? 0, p?.clientY ?? 0];
@@ -169,10 +201,12 @@ function Editor() {
   const [aim, setAim] = useState<string | null>(null);
   const [picking, setPicking] = useState<string | null>(null);
   const [six, setSix] = useState(false);
+  // Узел на всё окно: холст прячется, сверху цепочка узлов.
+  const [expanded, setExpanded] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [drawerH, setDrawerH] = useState(() => load(DRAWER_KEY, DRAWER_DEFAULT + 60));
+  const [drawerH, setDrawerH] = useState(() => load(DRAWER_KEY, drawerStart()));
   const lastSaved = useRef<string | null>(null);
   const pending = useRef<GraphDoc | null>(null);
   const [saveState, setSaveState] = useState<"saved" | "saving" | string>("saved");
@@ -239,6 +273,18 @@ function Editor() {
     api.classSources().then((r) => setProjects(r.projects)).catch(() => setProjects([]));
   }, []);
 
+  // Esc сворачивает узел, если нет окна поверх и курсор не в поле: там у Esc своя работа.
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || hasLayer()) return;
+      if ((e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable='true']")) return;
+      setExpanded(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [expanded]);
+
   useEffect(() => {
     if (!savedAt) return;
     const t = window.setInterval(() => setNow(Date.now()), 10_000);
@@ -255,10 +301,18 @@ function Editor() {
       .flatMap((n) => promptsOf(n).filter(isExamples).map((r) => r.set ?? "")).filter(Boolean))],
     [draft]
   );
+  // Наборы, которых сервер не вернул: удалены — карточка предложит собрать заново, а не «загружается».
+  const [goneSets, setGoneSets] = useState<Set<string>>(new Set());
   useEffect(() => {
-    const lack = wantedSets.filter((id) => !sets.has(id));
-    if (lack.length) api.listExamples(lack).then((r) => r.sets.forEach(keepSet)).catch(() => undefined);
-  }, [wantedSets, sets, keepSet]);
+    const lack = wantedSets.filter((id) => !sets.has(id) && !goneSets.has(id));
+    if (!lack.length) return;
+    api.listExamples(lack).then((r) => {
+      r.sets.forEach(keepSet);
+      const got = new Set(r.sets.map((s) => s.id));
+      const gone = lack.filter((id) => !got.has(id));
+      if (gone.length) setGoneSets((old) => new Set([...old, ...gone]));
+    }).catch(() => undefined);
+  }, [wantedSets, sets, goneSets, keepSet]);
 
   const namesOf = useCallback((id: string) => {
     const node = draft.nodes.find((n) => n.id === id);
@@ -282,6 +336,20 @@ function Editor() {
       defsRef.current = next;
       setDefs(next);
     }
+    return id;
+  }, []);
+
+  // Класс-ссылка на класс проекта — как «Из проекта» в окне классов: тот же по имени становится ссылкой.
+  const ensureRef = useCallback((project: api.ClassSource, c: api.ClassSource["classes"][number]) => {
+    const ref = { project: project.id, cls: c.id, project_name: project.name };
+    const was = defsRef.current;
+    const same = was.find((d) => d.ref?.project === project.id && d.ref.cls === c.id)
+      ?? was.find((d) => foldName(d.name) === foldName(c.name));
+    const [next, id] = same
+      ? [was.map((d) => (d.id === same.id ? { ...d, name: c.name, color: c.color, ref } : d)), same.id]
+      : findOrCreate(was, c.name, { color: c.color, ref });
+    defsRef.current = next;
+    setDefs(next);
     return id;
   }, []);
 
@@ -336,8 +404,8 @@ function Editor() {
   const flaw = unfinished(draft);
   const frame = preview.project?.frame ?? null;
   // Мс на вызов модели у каждого узла-находчика: время узла в превью, делённое на его
-  // вызовы на том кадре. Из него итог тайлинга пересчитывается сразу. Берётся лучший
-  // замер при тех же модели и входе: первый вызов греет модель и бывает в 30 раз дольше.
+  // вызовы на том кадре (с проходами образцов). Из него итог тайлинга пересчитывается сразу.
+  // Берётся лучший замер при тех же модели и входе: первый вызов греет модель и бывает в 30 раз дольше.
   const [speeds, setSpeeds] = useState<Map<string, { key: string; ms: number }>>(() => new Map());
   const result = preview.result;
   useEffect(() => {
@@ -349,9 +417,10 @@ function Editor() {
         const ms = result.nodes[n.id]?.ms;
         if ((kind !== "net" && kind !== "text") || ms === undefined) continue;
         const p = n.params ?? {};
-        const v = viewCount(p, result.image.width, result.image.height, tileSide(kind, p, weightsOf(p)?.imgsz));
-        const per = ms / ((v.whole + v.tiles) * callsPerView(kind, p));
-        const key = JSON.stringify([p.weights, p.model, p.imgsz]);
+        const calls = frameCalls(kind, p, result.image.width, result.image.height, tileSide(kind, p, weightsOf(p)?.imgsz),
+          (s) => sets.get(s)?.items.length);
+        const per = ms / Math.max(1, calls);
+        const key = JSON.stringify([p.weights, p.model, p.imgsz, kind === "text" && textModel(p) === "sam3" ? sam3Side(p) : null]);
         const old = next.get(n.id);
         next.set(n.id, { key, ms: old?.key === key ? Math.min(old.ms, per) : per });
       }
@@ -360,6 +429,16 @@ function Editor() {
     // Только на новый ответ: граф к нему уже пришёл, а правка до ответа даст свой.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [result]);
+
+  // Свои рамки выбранного узла по строкам — «N на кадре» у описаний и образцов.
+  const hits = useMemo(() => {
+    const t = selected ? trace?.[selected] : undefined;
+    if (!t) return null;
+    const own = `${selected}.`;
+    const by = new Map<number, number>();
+    for (const det of t.out) if (det.id.startsWith(own) && typeof det.row === "number") by.set(det.row, (by.get(det.row) ?? 0) + 1);
+    return by;
+  }, [selected, trace]);
 
   const killWire = useCallback((id: string) => setEdges((old) => old.filter((e) => e.id !== id)), [setEdges]);
   const wires = useMemo(
@@ -667,7 +746,8 @@ function Editor() {
   const output = nodes.find((n) => kindOfNode(n) === "output") ?? null;
   const pinned = eyeOn && nodes.some((n) => n.id === eyeOn) ? eyeOn : null;
   const watch = pinned ?? (selected && nodes.some((n) => n.id === selected) ? selected : output?.id ?? null);
-  const watchKind = kindOfNode(nodes.find((n) => n.id === watch)) ?? null;
+  const watchNode = nodes.find((n) => n.id === watch);
+  const watchKind = kindOfNode(watchNode) ?? null;
   const nextVersion = Math.max(0, ...versions.map((v) => v.version)) + 1;
   const pickedFor = picking ? nodes.find((n) => n.id === picking) : null;
 
@@ -681,8 +761,13 @@ function Editor() {
     !readOnly && changed ? "правки вне версий" : null,
   ].filter(Boolean);
 
+  const pick = (id: string) => {
+    setSelected(id);
+    setNodes((old) => old.map((n) => ({ ...n, selected: n.id === id })));
+  };
+
   return (
-    <div className="ge ae">
+    <div className={cx("ge ae", expanded && "exp")}>
       <header className="ge-h">
         <LinkButton variant="ghost" icon="chevL" to="/agents" aria-label="К моим агентам" />
         <div className="ge-title">
@@ -715,72 +800,80 @@ function Editor() {
       </header>
 
       <div className="ge-body">
-        <div className="ge-main" ref={main} style={{ "--dh": `${drawerH}px` } as CSSProperties}>
-          <div className="ge-canvas" ref={wrap}>
-            <ReactFlow
-              className="ge-flow"
-              colorMode="dark"
-              nodes={shown}
-              edges={wires}
-              nodeTypes={agentNodeTypes}
-              edgeTypes={edgeTypes}
-              onNodesChange={onNodesChange}
-              onEdgesChange={onEdgesChange}
-              nodesDraggable={!readOnly}
-              onConnect={readOnly ? undefined : onConnect}
-              onReconnect={readOnly ? undefined : onReconnect}
-              onReconnectStart={() => { moved.current = false; }}
-              onReconnectEnd={onReconnectEnd}
-              reconnectRadius={12}
-              connectionRadius={30}
-              connectionLineComponent={WireDraft}
-              edgesReconnectable={!readOnly}
-              nodesConnectable={!readOnly}
-              deleteKeyCode={readOnly ? null : ["Delete", "Backspace"]}
-              isValidConnection={canConnect}
-              onSelectionChange={({ nodes: picked }) => setSelected(picked[0]?.id ?? null)}
-              onNodeContextMenu={openMenu}
-              onPaneClick={() => setMenu(null)}
-              onMoveStart={() => setMenu(null)}
-              onNodeDragStart={() => setMenu(null)}
-              onNodeDrag={onNodeDrag}
-              onNodeDragStop={onNodeDragStop}
-              onDrop={onDrop}
-              onDragOver={onDragOver}
-              onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node | null)) setAim(null); }}
-              minZoom={0.25}
-              maxZoom={1.8}
-              proOptions={{ hideAttribution: true }}
-              defaultEdgeOptions={{ type: "volume" }}
-            >
-              <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
-            </ReactFlow>
-            <div className="ge-tools">
-              <Button size="sm" icon="fit" aria-label="Вписать агента" onClick={() => void fitView({ maxZoom: 1, padding: 0.2, duration: 200 })} />
-              <Button size="sm" icon="zin" aria-label="Приблизить" onClick={() => void zoomIn({ duration: 150 })} />
-              <Button size="sm" icon="zout" aria-label="Отдалить" onClick={() => void zoomOut({ duration: 150 })} />
-            </div>
-            {(flaw || problem || note) && (
-              <div className="ge-notes">
-                {/* Недоделка без крестика: убрать её можно, только доделав агента. */}
-                {flaw && !readOnly && <Notice tone="warn">{flaw}</Notice>}
-                {problem && <Notice tone="error" onClose={() => setProblem(null)}>{problem}</Notice>}
-                {note && <Notice tone="ok" onClose={() => setNote(null)}>{note}</Notice>}
+        <div className={cx("ge-main", expanded && "exp")} ref={main} style={{ "--dh": `${drawerH}px` } as CSSProperties}>
+          {expanded && (
+            <Chain nodes={nodes} edges={edges} trace={trace} selected={selected} onPick={pick} onClose={() => setExpanded(false)} />
+          )}
+          <div className="ae-top">
+            <div className="ge-canvas" ref={wrap}>
+              <ReactFlow
+                className="ge-flow"
+                colorMode="dark"
+                nodes={shown}
+                edges={wires}
+                nodeTypes={agentNodeTypes}
+                edgeTypes={edgeTypes}
+                onNodesChange={onNodesChange}
+                onEdgesChange={onEdgesChange}
+                nodesDraggable={!readOnly}
+                onConnect={readOnly ? undefined : onConnect}
+                onReconnect={readOnly ? undefined : onReconnect}
+                onReconnectStart={() => { moved.current = false; }}
+                onReconnectEnd={onReconnectEnd}
+                reconnectRadius={12}
+                connectionRadius={30}
+                connectionLineComponent={WireDraft}
+                edgesReconnectable={!readOnly}
+                nodesConnectable={!readOnly}
+                deleteKeyCode={readOnly ? null : ["Delete", "Backspace"]}
+                isValidConnection={canConnect}
+                onSelectionChange={({ nodes: picked }) => setSelected(picked[0]?.id ?? null)}
+                onNodeDoubleClick={(_e, n) => { pick(n.id); setExpanded(true); }}
+                zoomOnDoubleClick={false}
+                onNodeContextMenu={openMenu}
+                onPaneClick={() => setMenu(null)}
+                onMoveStart={() => setMenu(null)}
+                onNodeDragStart={() => setMenu(null)}
+                onNodeDrag={onNodeDrag}
+                onNodeDragStop={onNodeDragStop}
+                onDrop={onDrop}
+                onDragOver={onDragOver}
+                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node | null)) setAim(null); }}
+                minZoom={0.25}
+                maxZoom={1.8}
+                proOptions={{ hideAttribution: true }}
+                defaultEdgeOptions={{ type: "volume" }}
+              >
+                <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
+              </ReactFlow>
+              <div className="ge-tools">
+                <Button size="sm" icon="fit" aria-label="Вписать агента" onClick={() => void fitView({ maxZoom: 1, padding: 0.2, duration: 200 })} />
+                <Button size="sm" icon="zin" aria-label="Приблизить" onClick={() => void zoomIn({ duration: 150 })} />
+                <Button size="sm" icon="zout" aria-label="Отдалить" onClick={() => void zoomOut({ duration: 150 })} />
               </div>
-            )}
-            {menu && nodes.some((n) => n.id === menu.id) && (() => {
-              const fixed = ["frame", "output"].includes(kindOfNode(nodes.find((n) => n.id === menu.id)) ?? "");
-              return (
-                <div className="ui-pop ge-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
-                  <MenuItem icon="eye" onSelect={() => { togglePin(menu.id); setMenu(null); }}>
-                    {menu.id === eyeOn ? "Открепить превью" : "Закрепить в превью"}</MenuItem>
-                  <MenuItem icon="x" disabled={!edges.some((e) => e.source === menu.id || e.target === menu.id)}
-                    onSelect={() => { unlink(menu.id); setMenu(null); }}>Убрать все связи</MenuItem>
-                  <MenuItem icon="trash" danger hint={fixed ? "Кадр и выход есть всегда" : "Delete"} disabled={fixed}
-                    onSelect={() => { removeNode(menu.id); setMenu(null); }}>Удалить узел</MenuItem>
+              {(flaw || problem || note) && (
+                <div className="ge-notes">
+                  {/* Недоделка без крестика: убрать её можно, только доделав агента. */}
+                  {flaw && !readOnly && <Notice tone="warn">{flaw}</Notice>}
+                  {problem && <Notice tone="error" onClose={() => setProblem(null)}>{problem}</Notice>}
+                  {note && <Notice tone="ok" onClose={() => setNote(null)}>{note}</Notice>}
                 </div>
-              );
-            })()}
+              )}
+              {menu && nodes.some((n) => n.id === menu.id) && (() => {
+                const fixed = ["frame", "output"].includes(kindOfNode(nodes.find((n) => n.id === menu.id)) ?? "");
+                return (
+                  <div className="ui-pop ge-menu" role="menu" style={{ left: menu.x, top: menu.y }}>
+                    <MenuItem icon="eye" onSelect={() => { togglePin(menu.id); setMenu(null); }}>
+                      {menu.id === eyeOn ? "Открепить превью" : "Закрепить в превью"}</MenuItem>
+                    <MenuItem icon="x" disabled={!edges.some((e) => e.source === menu.id || e.target === menu.id)}
+                      onSelect={() => { unlink(menu.id); setMenu(null); }}>Убрать все связи</MenuItem>
+                    <MenuItem icon="trash" danger hint={fixed ? "Кадр и выход есть всегда" : "Delete"} disabled={fixed}
+                      onSelect={() => { removeNode(menu.id); setMenu(null); }}>Удалить узел</MenuItem>
+                  </div>
+                );
+              })()}
+            </div>
+            <AgentPalette onPick={(kind) => addNode(kind)} disabled={readOnly} />
           </div>
 
           <div className="ge-grip" role="separator" aria-orientation="horizontal" aria-label="Граница холста и шторки"
@@ -799,7 +892,7 @@ function Editor() {
               grab.current = null;
             }}
             onPointerCancel={() => { grab.current = null; }}
-            onDoubleClick={() => setDrawer(DRAWER_DEFAULT + 60)}
+            onDoubleClick={() => setDrawer(drawerStart())}
             onKeyDown={(e) => {
               if (e.key === "ArrowUp" || e.key === "ArrowDown") {
                 e.preventDefault();
@@ -816,9 +909,13 @@ function Editor() {
               weights={current ? weightsOf((current.data as AgentNodeData).params) : undefined}
               sam3Ready={sam3Ready}
               sets={sets}
+              goneSets={goneSets}
               onSet={keepSet}
               classes={classes}
               ensure={ensureClass}
+              ensureRef={ensureRef}
+              projects={projects}
+              onClasses={() => setClassesOpen(true)}
               incoming={current ? incomingOf(current.id) : []}
               loose={Boolean((current?.data as AgentNodeData | undefined)?.loose)}
               onChange={(next) => current && patchParams(current.id, next)}
@@ -828,14 +925,18 @@ function Editor() {
               onPin={() => current && togglePin(current.id)}
               frame={frame}
               msPerCall={current ? speeds.get(current.id)?.ms : undefined}
+              hits={hits}
+              expanded={expanded}
+              onExpand={() => setExpanded((v) => !v)}
             />
-            <AgentPreviewPane state={preview} nodes={shown} watch={watch} pinned={Boolean(pinned)} onPin={setEyeOn}
-              colorOf={colorOf} enabled={Boolean(graph?.mine)} />
-            <AgentFound kind={watchKind} trace={watch && trace ? trace[watch] : undefined} classes={used} colorOf={colorOf} />
+            <div className="ae-col">
+              <AgentPreviewPane state={preview} nodes={shown} watch={watch} pinned={Boolean(pinned)} onPin={setEyeOn}
+                colorOf={colorOf} enabled={Boolean(graph?.mine)} />
+              <AgentFound kind={watchKind} title={watchNode ? agentTitle(watchNode.data as AgentNodeData) : null}
+                trace={watch && trace ? trace[watch] : undefined} colorOf={colorOf} />
+            </div>
           </div>
         </div>
-
-        <AgentPalette onPick={(kind) => addNode(kind)} disabled={readOnly} />
       </div>
 
       {pickedFor && (
@@ -872,6 +973,41 @@ function Editor() {
       {graphId && (
         <SixFrames open={six} onClose={() => setSix(false)} graphId={graphId} doc={draft} project={preview.project} colorOf={colorOf} />
       )}
+    </div>
+  );
+}
+
+/** Цепочка узлов над развёрнутым узлом: щелчок переключает узел, числа — рамки с кадра превью. */
+function Chain({ nodes, edges, trace, selected, onPick, onClose }: {
+  nodes: Node[]; edges: Edge[]; trace: Record<string, { out: unknown[] }> | null; selected: string | null;
+  onPick: (id: string) => void; onClose: () => void;
+}) {
+  const cols = useMemo(() => chainOf(nodes, edges), [nodes, edges]);
+  const chip = (id: string) => {
+    const d = nodes.find((n) => n.id === id)?.data as AgentNodeData | undefined;
+    if (!d) return null;
+    const out = trace?.[id]?.out.length;
+    return (
+      <button key={id} type="button" className={cx("ae-cn", id === selected && "on")} aria-pressed={id === selected} onClick={() => onPick(id)}
+        title={agentTitle(d)}>
+        <i style={{ background: toneOf(d.kind) }} />
+        <span className="t-ell">{String(d.params.label ?? "").trim() || agentTitle(d)}</span>
+        {out !== undefined && d.kind !== "frame" && <b className="ui-mono">{out}</b>}
+      </button>
+    );
+  };
+  return (
+    <div className="ae-chain">
+      <Button size="sm" icon="shrink" onClick={onClose} title="Вернуть холст">Свернуть<kbd className="ae-kbd">Esc</kbd></Button>
+      <div className="ae-chain-l">
+        {cols.map((col, k) => (
+          <Fragment key={k}>
+            {k > 0 && <Icon name="chevR" size={14} className="ae-chain-sep" />}
+            {col.length > 1 ? <span className="ae-pair">{col.map(chip)}</span> : chip(col[0])}
+          </Fragment>
+        ))}
+      </div>
+      <span className="t-xs t-faint ae-chain-note">числа — рамки с кадра превью</span>
     </div>
   );
 }
