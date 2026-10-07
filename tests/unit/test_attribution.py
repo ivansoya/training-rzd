@@ -82,3 +82,26 @@ def test_attributes_агента_живут_у_нетронутой_рамки()
     moved = _in("a", geometry={"x": 11.0, "y": 20.0, "w": 100.0, "h": 50.0})
     [edited] = settle({"a": _old(attributes=conf)}, [moved], EDITOR)
     assert "attributes" not in edited
+
+
+def test_проверка_идёт_за_правкой():
+    moved = _in("a", geometry={"x": 11.0, "y": 20.0, "w": 100.0, "h": 50.0})
+    kept, edited, fresh = settle({"a": _old(pending=True), "b": _old(pending=True)},
+                                 [_in("b"), moved, _in("новая", source="model")], EDITOR)
+    assert kept["pending"] is True      # нетронутая ждёт дальше
+    assert edited["pending"] is False   # поправил — значит посмотрел
+    assert fresh["pending"] is False    # своя рамка не бывает непроверенной
+
+
+def test_подтвердить_кадр_снимает_флаг_со_всех():
+    rows = settle({"a": _old(pending=True), "b": _old(pending=True)},
+                  [_in("a"), _in("b")], EDITOR, confirm=True)
+    assert [r["pending"] for r in rows] == [False, False]
+    # авторство остаётся за агентом: подтвердить не значит поправить
+    assert {r["created_by"] for r in rows} == {OWNER}
+
+
+def test_клиент_снимает_флаг_но_не_ставит():
+    kept, fresh = settle({"a": _old(pending=True), "b": _old(pending=False)},
+                         [_in("a", pending=False), _in("b", pending=True)], EDITOR)
+    assert kept["pending"] is False and fresh["pending"] is False

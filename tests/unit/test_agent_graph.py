@@ -337,10 +337,26 @@ def test_кадры_где_работал_человек():
              "keys": [{"frame_no": 10, "geometry": {"x": 0, "y": 0, "w": 5, "h": 5}},
                       {"frame_no": 20, "geometry": {"x": 5, "y": 0, "w": 5, "h": 5}}]}
     singles = [{"frame_no": 30, "source": "human", "agent_version_id": None},
-               {"frame_no": 0, "source": "model", "agent_version_id": "v1"},     # рамка агента — не занят
-               {"frame_no": 35, "source": "human", "agent_version_id": "v1"}]    # правленая агентова — занят
-    busy = human_frames([track], singles, marks=[25], frames=[0, 10, 15, 20, 25, 30, 35, 40])
-    assert busy == {10, 15, 20, 25, 30, 35}
+               {"frame_no": 0, "source": "model", "agent_version_id": "v1", "pending": True},  # на проверке — не занят
+               {"frame_no": 35, "source": "human", "agent_version_id": "v1"},     # правленая агентова — занят
+               {"frame_no": 40, "source": "model", "agent_version_id": "v1"}]     # подтверждённая — занят
+    busy = human_frames([track], singles, marks=[25], frames=[0, 10, 15, 20, 25, 30, 35, 40, 45])
+    assert busy == {10, 15, 20, 25, 30, 35, 40}
+
+
+def test_находки_повторяющие_лежащие_рамки_отбрасываются():
+    found = [{"cls": "вагон", "conf": 0.9, "box": [10, 10, 100, 50]},     # тот же объект — прочь
+             {"cls": "цистерна", "conf": 0.8, "box": [12, 10, 100, 50]},  # в тот же класс проекта — прочь
+             {"cls": "вагон", "conf": 0.7, "box": [300, 10, 100, 50]},    # новое место — остаётся
+             {"cls": "люк", "conf": 0.6, "box": [10, 10, 100, 50]}]       # другой класс — остаётся
+    mapping = {"вагон": "c1", "цистерна": "c1", "люк": "c2"}
+    kept = ag.drop_known(found, [("c1", (10.0, 10.0, 100.0, 50.0))], mapping)
+    assert [d["conf"] for d in kept] == [0.7, 0.6]
+
+
+def test_охват_контура_для_сравнения():
+    assert ag.geometry_box("polygon", {"parts": [[[0, 0], [10, 0], [10, 5]]]}) == (0.0, 0.0, 10.0, 5.0)
+    assert ag.geometry_box("bbox", {"x": 1, "y": 2, "w": 3, "h": 4}) == (1.0, 2.0, 3.0, 4.0)
 
 
 def test_статистика_разведки():

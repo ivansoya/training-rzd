@@ -14,23 +14,25 @@ import random
 import time
 import uuid
 from datetime import timedelta
+from types import SimpleNamespace
 
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import func, select, text
 from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
 
-from common import agent_graph, config, frame_sizes, live, task_frames
+from common import agent_graph, attribution, config, frame_sizes, live, shapes, task_frames
+from common import scout as scout_lib
 from common.auth import current_user, has_role, role_in
 from common.db import SessionLocal
 from common.models import (
     AgentClassMap, AgentExamples, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph,
     AugGraphVersion, Dataset, Image, LabelClass, Project, ProjectMember, Task, TaskVideo, TrainRun,
-    VideoScout, utcnow,
+    User, VideoScout, utcnow,
 )
 from common.web import int_field, json_body, public_error
 from common import agent_examples as ax
-from training_svc import agent_preview as agent_preview_lib, examples as examples_lib, pt_guard
+from training_svc import agent_preview as agent_preview_lib, agent_runner, examples as examples_lib, pt_guard
 
 bp = Blueprint("agents", __name__)
 
@@ -377,14 +379,25 @@ def _run_view(db, run):
     }
 
 
+def _frame_sources(db, task):
+    """Блоки кадров таски: файлы, нарезка и кадры каждого закрытого размечаемого ролика."""
+    own = db.execute(
+        select(TaskVideo.id).where(TaskVideo.task_id == task.id, TaskVideo.mode == "annotate",
+                                   TaskVideo.id.in_(select(Image.source_video_id).where(Image.task_id == task.id)))
+    ).scalars().all()
+    return [*task_frames.SOURCES, *(str(v) for v in own)]
+
+
 def _source_counts(db, task):
     out = {}
-    for source in task_frames.SOURCES:
+    for source in _frame_sources(db, task):
         clause = task_frames.source_clause(task.id, source)
         base = select(func.count(Image.id)).where(Image.task_id == task.id, clause)
         out[source] = {
             "new": db.execute(base.where(Image.task_status == "new")).scalar_one(),
-            "agent": db.execute(base.where(task_frames.agent_pending())).scalar_one(),
+            # Новые кадры, чьё непроверенное прогон заменит.
+            "agent": db.execute(base.where(Image.task_status == "new",
+                                           task_frames.has_pending())).scalar_one(),
         }
     return out
 
@@ -505,7 +518,8 @@ def start_agent_run(task_id):
         mode = data.get("mode") or "frames"
         if mode not in ("frames", "annotate", "scout"):
             return jsonify({"error": "Неизвестный режим прогона."}), 400
-        sources = [s for s in data.get("sources") or [] if s in task_frames.SOURCES]
+        known = _frame_sources(db, task)
+        sources = [s for s in data.get("sources") or [] if s in known]
         if mode == "frames" and not sources:
             return jsonify({"error": "Выберите, что размечать."}), 400
         videos = []
@@ -725,7 +739,7 @@ def _human(db, project, image):
         {"cls": classes[a.class_id].name, "color": classes[a.class_id].color,
          "type": a.ann_type, "geometry": a.geometry}
         for a in db.execute(select(Annotation).where(Annotation.image_id == image.id)).scalars()
-        if a.class_id in classes and a.source != "model"
+        if a.class_id in classes and not a.pending
     ]
 
 
@@ -734,10 +748,11 @@ def _frame(image):
 
 
 def _ask_worker(db, user, image, doc):
-    """Положить запрос воркеру и дождаться ответа в той же строке."""
+    """Положить запрос воркеру и дождаться ответа в той же строке. `image` пуст —
+    кадр ролика, он в `doc.apply`."""
     db.execute(AgentPreview.__table__.delete().where(
         AgentPreview.created_at < utcnow() - timedelta(minutes=PREVIEW_KEEP_MIN)))
-    row = AgentPreview(user_id=user.id, image_id=image.id, doc=doc)
+    row = AgentPreview(user_id=user.id, image_id=image.id if image is not None else None, doc=doc)
     db.add(row)
     db.flush()
     db.execute(text(f"NOTIFY {agent_preview_lib.CHANNEL}"))
@@ -783,6 +798,158 @@ def agent_preview():
         if bad:
             return bad
         return jsonify({"image": frame, "human": human, **row.result})
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Агент на одном кадре из редактора (кнопка «Агент», G)
+#
+# Решение владельца (2026-10-07): тот же агент, что на блоке, но на текущем
+# кадре и сразу — тёплыми моделями превью, а не очередью прогонов (там один
+# прогон на таску, и кнопка стояла бы, пока агент идёт по блоку). Рамки встают
+# на проверку тем же кодом, что у прогона: прежнее непроверенное кадра
+# заменяется, повторы лежащих рамок отбрасываются.
+# --------------------------------------------------------------------------- #
+def _saved_mapping(db, graph, version, project):
+    """Класс агента (имя) → id класса проекта: ссылкой или запомненным для пары
+    «агент + проект». Новых сопоставлений здесь не спрашивают — это окно запуска."""
+    project_classes = {str(c) for c in db.execute(
+        select(LabelClass.id).where(LabelClass.project_id == project.id)).scalars()}
+    saved = db.get(AgentClassMap, (graph.id, project.id))
+    remembered = (saved.mapping or {}) if saved else {}
+    out = {}
+    for c in agent_graph.classes(version.doc):
+        ref = (c.get("ref") or {}).get("cls")
+        target = ref if ref in project_classes else remembered.get(c["id"], remembered.get(c["name"]))
+        out[c["name"]] = target if target in project_classes else None
+    return out
+
+
+def _image_boxes(db, image):
+    """Разметка кадра в виде редактора — ответ после агента, без второго запроса."""
+    classes = {c.id: c for c in db.execute(
+        select(LabelClass).where(LabelClass.project_id == image.project_id)).scalars()}
+    anns = db.execute(select(Annotation).where(Annotation.image_id == image.id)).scalars().all()
+    agents = attribution.agent_names(db, {a.agent_version_id for a in anns if a.agent_version_id})
+    users = {u.id: u.display_name for u in db.execute(
+        select(User).where(User.id.in_({a.created_by for a in anns if a.created_by} or {None}))).scalars()}
+    out = []
+    for a in anns:
+        wire = shapes.to_wire(a.ann_type, a.geometry)
+        c = classes.get(a.class_id)
+        if not wire or c is None:
+            continue
+        out.append({"id": str(a.id), **wire, "class_index": c.class_index, "name": c.name, "color": c.color,
+                    "source": a.source, "pending": a.pending, "conf": (a.attributes or {}).get("conf"),
+                    "author": users.get(a.created_by), "agent": agents.get(a.agent_version_id)})
+    return out
+
+
+@bp.put("/api/agents/tasks/<task_id>/mapping")
+def save_mapping(task_id):
+    """Окно «Агент таски»: сопоставление классов агента с классами проекта — без
+    запуска. Помнится на пару «агент + проект», как при запуске; классы-ссылки
+    на этот проект сопоставлены сами и сюда не пишутся."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        task, project, err = _task(db, user, task_id)
+        if err:
+            return err
+        data = request.get_json(silent=True) or {}
+        graph = db.get(AugGraph, _uuid(data.get("graph_id")))
+        if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
+            return jsonify({"error": "Агент не найден."}), 404
+        raw = data.get("mapping")
+        if not isinstance(raw, dict):
+            return jsonify({"error": "mapping: класс агента → класс проекта."}), 400
+        project_classes = {str(c) for c in db.execute(
+            select(LabelClass.id).where(LabelClass.project_id == project.id)).scalars()}
+        clean = {str(k): (v if v in project_classes else None) for k, v in raw.items()}
+        saved = db.get(AgentClassMap, (graph.id, project.id))
+        if saved is None:
+            saved = AgentClassMap(graph_id=graph.id, project_id=project.id, mapping=clean)
+            db.add(saved)
+        else:
+            saved.mapping = {**(saved.mapping or {}), **clean}
+        db.commit()
+        return jsonify({"mapping": saved.mapping})
+    finally:
+        db.close()
+
+
+@bp.post("/api/agents/tasks/<task_id>/apply")
+def apply_agent(task_id):
+    """Агент на одном кадре таски: `image_id` или `video_id` + `frame_no`."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        task, project, err = _task(db, user, task_id)
+        if err:
+            return err
+        if task.status == "closed":
+            return jsonify({"error": "Таска закрыта."}), 409
+        if not _may_work(db, user, task, project):
+            return jsonify({"error": "Звать агента можно в своей таске."}), 403
+        data = request.get_json(silent=True) or {}
+        graph = db.get(AugGraph, _uuid(data.get("graph_id")))
+        if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
+            return jsonify({"error": "Агент не найден."}), 404
+        version = db.get(AugGraphVersion, _uuid(data.get("version_id")))
+        if version is None or version.graph_id != graph.id:
+            return jsonify({"error": "Версия не от этого агента."}), 404
+        mapping = _saved_mapping(db, graph, version, project)
+        if not any(mapping.values()):
+            return jsonify({"error": "Классы агента не сопоставлены с классами проекта — сопоставьте их в окне запуска.",
+                            "code": "unmapped"}), 400
+
+        image = video = None
+        if data.get("image_id"):
+            image = db.get(Image, _uuid(data["image_id"]))
+            if image is None or image.task_id != task.id or image.task_status == "deleted":
+                return jsonify({"error": "Кадр не найден в таске."}), 404
+            target = {"image": str(image.id)}
+        else:
+            video = db.get(TaskVideo, _uuid(data.get("video_id")))
+            if video is None or video.task_id != task.id or video.mode != "annotate":
+                return jsonify({"error": "Ролик не найден в таске."}), 404
+            if video.annotation_closed_at is not None:
+                return jsonify({"error": "Разметка ролика закрыта."}), 409
+            try:
+                frame_no = int(data.get("frame_no"))
+            except (TypeError, ValueError):
+                return jsonify({"error": "frame_no: номер кадра."}), 400
+            target = {"video": str(video.id), "frame": frame_no}
+
+        shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars().all()
+        doc = agent_graph.prepare(version.doc)
+        try:
+            agent_graph.check(doc, clamp=True, frame=frame_sizes.largest(db, [project.id]),
+                              inputs={str(w.id): w.imgsz for w in shelf})
+        except agent_graph.AgentGraphError as exc:
+            return jsonify({"error": str(exc)}), 400
+        row = _ask_worker(db, user, image, {**doc, "apply": target})
+        bad = _not_done(row)
+        if bad:
+            return bad
+        found = row.result.get("found") or []
+        # Автор рамок агента — его владелец, как у прогона
+        owner = SimpleNamespace(version_id=version.id, created_by=graph.owner_id)
+        if image is not None:
+            put = agent_runner._write(db, owner, image, found, mapping)
+            db.refresh(image)
+            return jsonify({"put": put, "found": len(found), "boxes": _image_boxes(db, image),
+                            "rev": image.annotations_rev, "task_status": image.task_status,
+                            "ms": row.result.get("ms"), "device": row.result.get("device")})
+        try:
+            put = agent_runner._write_video(db, owner, video, target["frame"], found, mapping)
+        except agent_runner.VideoClosed:
+            return jsonify({"error": "Разметку ролика закрыли — агенту писать некуда."}), 409
+        return jsonify({"put": put, "found": len(found), "ms": row.result.get("ms"),
+                        "device": row.result.get("device")})
     finally:
         db.close()
 
@@ -857,7 +1024,7 @@ def task_scouts(task_id):
 
 @bp.get("/api/agents/tasks/<task_id>/scouts/<video_id>")
 def task_scout(task_id, video_id):
-    """Разведка одного ролика числами — окно статистики."""
+    """Разведка одного ролика: числа, покадровые находки и их классы в проекте."""
     db, user, err = _me()
     if err:
         return err
@@ -881,6 +1048,10 @@ def task_scout(task_id, video_id):
             "last_frame": scout.last_frame,
             "created_at": scout.created_at.isoformat(),
             "segments": scout.segments,
+            # Покадровые находки — призракам на кадре и точкам на дорожках;
+            # классы агента сведены к классам проекта, если сопоставлены.
+            "frames": scout.frames,
+            "mapped": scout_lib.class_view(scout_lib.classes(db, scout, task.project_id)),
             **agent_graph.scout_stats(scout.frames),
         })
     finally:

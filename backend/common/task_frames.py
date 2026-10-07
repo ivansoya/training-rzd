@@ -4,6 +4,8 @@
 (`training-worker`). Разойдись они — агент разметил бы не те кадры, что
 показывает блок, на который человек нажал.
 """
+import uuid
+
 from sqlalchemy import and_, exists, select
 
 from common.models import Annotation, Image, TaskVideo, VideoAnnotation, VideoTrack
@@ -30,25 +32,22 @@ def source_clause(task_id, source):
                 TaskVideo.task_id == task_id, TaskVideo.mode == "cut"
             )
         )
-    return Image.source_video_id == source
+    # Из параметров прогона источник приходит строкой, а колонка ждёт UUID.
+    return Image.source_video_id == (source if isinstance(source, uuid.UUID) else uuid.UUID(str(source)))
 
 
-def agent_marked():
-    """На кадре есть рамка агента — не правленная человеком."""
-    return exists().where(
-        Annotation.image_id == Image.id,
-        Annotation.source == "model",
-        Annotation.agent_version_id.isnot(None),
-    )
+def has_pending():
+    """На кадре есть рамка агента, которую ещё не проверили."""
+    return exists().where(Annotation.image_id == Image.id, Annotation.pending.is_(True))
 
 
 def agent_pending():
-    """«Агент, не проверено»: кадр новый, а рамки агента на нём есть.
+    """«Агент, на проверке»: на кадре есть непроверенная рамка агента.
 
-    Отдельного статуса нет нарочно: кадр агента — это новый кадр с
-    предложением, и принятым его делает человек — сохранением или «Принять».
+    Состояние кадра тут ни при чём — агента зовут и на размеченный кадр, и тогда
+    на нём рядом работа человека и непроверенное. Забракованный не в счёт.
     """
-    return and_(Image.task_status == "new", agent_marked())
+    return and_(Image.task_status != "deleted", has_pending())
 
 
 def video_payload(db, video):
@@ -75,6 +74,7 @@ def video_payload(db, video):
                 "source": row.source,
                 "agent_version_id": row.agent_version_id,
                 "created_by": row.created_by,
+                "pending": row.pending,
             })
         else:
             keys_by_track.setdefault(row.track_id, []).append({

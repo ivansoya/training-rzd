@@ -213,6 +213,8 @@ def gather(db, project, sel) -> Selection:
             .where(
                 Image.dataset_id.in_(sel["datasets"]),
                 Annotation.class_id.in_([c.id for c in out.classes]),
+                # Непроверенное агента — не данные проекта.
+                Annotation.pending.is_(False),
             )
         ).scalars().all()
         # Фильтр по тагам уже сузил список кадров, а запрос выше по-прежнему
@@ -270,7 +272,7 @@ def _background_parts(db, sel, out):
     labelled = set(db.execute(
         select(Annotation.image_id)
         .join(Image, Annotation.image_id == Image.id)
-        .where(Image.dataset_id.in_(sel["datasets"]))
+        .where(Image.dataset_id.in_(sel["datasets"]), Annotation.pending.is_(False))
         .distinct()
     ).scalars())
     for img in out.images:

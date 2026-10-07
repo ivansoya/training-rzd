@@ -14,6 +14,11 @@
   полуавтомат помечает свои), но **версию агента клиент задать не может**:
   иначе любой запрос подписал бы рамку чужим агентом.
 
+Проверка (`pending`) идёт за правкой: нетронутая рамка агента ждёт проверки
+дальше, поправленная — проверена (человек её посмотрел и сдвинул), новая —
+проверена. «Подтвердить кадр» — `pending: false` у рамки от клиента или
+`confirm` на весь кадр; поставить флаг клиент не может.
+
 Один и тот же `id` дважды (скопировали рамку) — прежнее авторство достаётся
 первой, вторая считается новой.
 
@@ -23,9 +28,9 @@
 """
 
 
-def settle(existing, incoming, user_id):
+def settle(existing, incoming, user_id, confirm=False):
     """`existing` — {id: {class_id, ann_type, geometry, source, created_by,
-    agent_version_id}}; `incoming` — [{id, class_id, ann_type, geometry,
+    agent_version_id, pending}}; `incoming` — [{id, class_id, ann_type, geometry,
     source}]. Возвращает строки для вставки: те же поля, что у `existing`."""
     used = set()
     rows = []
@@ -41,7 +46,10 @@ def settle(existing, incoming, user_id):
                 # правки они уже не про эту геометрию. У рамок видео колонки нет.
                 rows.append({"id": item["id"], **{k: old[k] for k in (
                     "class_id", "ann_type", "geometry", "source",
-                    "created_by", "agent_version_id", "attributes") if k in old}})
+                    "created_by", "agent_version_id", "attributes") if k in old},
+                    # Клиент может только снять флаг (`pending: false`), поставить — нет.
+                    "pending": bool(old.get("pending")) and not confirm
+                               and item.get("pending") is not False})
                 continue
             rows.append({
                 "id": item["id"],
@@ -49,6 +57,7 @@ def settle(existing, incoming, user_id):
                 "geometry": item["geometry"], "source": "human",
                 "created_by": user_id,
                 "agent_version_id": old["agent_version_id"],
+                "pending": False,
             })
             continue
         rows.append({
@@ -57,5 +66,24 @@ def settle(existing, incoming, user_id):
             "geometry": item["geometry"],
             "source": "model" if item.get("source") == "model" else "human",
             "created_by": user_id, "agent_version_id": None,
+            "pending": False,
         })
     return rows
+
+
+def agent_names(db, version_ids):
+    """{agent_version_id: {name, version}} — подпись «агент „Путеец“ v3»."""
+    from sqlalchemy import select
+
+    from common.models import AugGraph, AugGraphVersion
+
+    if not version_ids:
+        return {}
+    return {
+        version.id: {"name": graph.name, "version": version.version}
+        for version, graph in db.execute(
+            select(AugGraphVersion, AugGraph)
+            .join(AugGraph, AugGraph.id == AugGraphVersion.graph_id)
+            .where(AugGraphVersion.id.in_(version_ids))
+        ).all()
+    }

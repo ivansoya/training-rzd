@@ -241,6 +241,7 @@ def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None)
             # решает, уходит ли кадр на проверку.
             "agent_version_id": single.get("agent_version_id"),
             "created_by": single.get("created_by"),
+            "pending": bool(single.get("pending")),
             "track_id": None,
         })
 
@@ -278,13 +279,13 @@ def human_frames(tracks: list[dict], singles: list[dict], marks, frames) -> set[
     видимый объект трека или пометка «пустой».
 
     Агент такие кадры не трогает — как кадры изображений не `new`. Рамка
-    агента, поправленная человеком, уже человеческая (`source='human'`), и
-    кадр с ней тоже занят.
+    агента, проверенная человеком (подтверждённая или поправленная), — уже
+    его работа, и кадр с ней тоже занят.
     """
     wanted = {int(f) for f in frames}
     busy = {int(m) for m in marks or []} & wanted
     for s in singles:
-        if not (s.get("source") == "model" and s.get("agent_version_id")):
+        if not s.get("pending"):
             busy.add(int(s["frame_no"]))
     prepared = [(t, sorted(t.get("keys") or [], key=lambda k: k["frame_no"])) for t in tracks]
     for f in wanted - busy:

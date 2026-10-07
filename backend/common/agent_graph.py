@@ -546,6 +546,40 @@ def iou(a, b):
     return inter / union if union > 0 else 0.0
 
 
+# Находка агента того же класса, что уже лежащая рамка, с таким перекрытием —
+# тот же объект: класть её на проверку значило бы заставить человека удалять дубли.
+KNOWN_IOU = 0.5
+
+
+def geometry_box(ann_type, geometry):
+    """(x, y, w, h) лежащей фигуры — рамки или охвата контура."""
+    if ann_type == "polygon":
+        from common import polygon
+
+        b = polygon.bounds(polygon.parts_of(geometry))
+    else:
+        b = geometry
+    if not b:
+        return None
+    return (float(b["x"]), float(b["y"]), float(b["w"]), float(b["h"]))
+
+
+def drop_known(found, known, mapping, threshold=KNOWN_IOU):
+    """Находки без тех, что повторяют уже лежащие на кадре рамки.
+
+    `known` — [(id класса проекта, (x, y, w, h))], `mapping` — класс агента →
+    id класса проекта. Сравнение в классах проекта: два класса агента могут
+    лечь в один класс проекта, и тогда это тот же объект."""
+    out = []
+    for det in found:
+        cid = mapping.get(det["cls"])
+        box = tuple(det["box"])
+        if cid and any(str(k) == str(cid) and iou(box, kb) >= threshold for k, kb in known):
+            continue
+        out.append(det)
+    return out
+
+
 def nms(dets, threshold=NMS_IOU, agnostic=False):
     """Из перекрытых рамок остаётся самая уверенная, координаты не
     усредняются. По умолчанию — внутри одного класса агента: «вагон» и

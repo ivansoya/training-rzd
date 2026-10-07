@@ -247,6 +247,49 @@ def test_разметка_ролика_каждый_n_й_кадр_кроме_р�
     assert [(r[2], r[4]) for r in again if r[1] == HUMAN_FRAME] == [(PERSON, "human")]
 
 
+def test_агент_на_кадре_из_редактора(owner, setup, db):
+    """G в редакторе ролика: рамки встают на проверку, повторный вызов заменяет
+    непроверенное, а подтверждённое не дублирует (решение 2026-10-07)."""
+    task, video = setup["task"], setup["videos"]["annotate"]
+    url = f"{BASE_URL}/api/agents/tasks/{task['id']}/apply"
+    frame = 2   # блок с человеком, мимо плана каждого N-го кадра
+    body = {"graph_id": setup["graph"]["id"],
+            "version_id": _context(owner, setup)["agents"][0]["versions"][0]["id"],
+            "video_id": video["id"], "frame_no": frame}
+    res = owner.post(url, json=body)
+    assert res.status_code == 200, res.text
+    assert res.json()["put"] > 0
+    with db.cursor() as cur:
+        cur.execute("select id, pending from video_annotations where video_id = %s and frame_no = %s",
+                    (video["id"], frame))
+        first = cur.fetchall()
+    assert first and all(p for _, p in first), first
+
+    # Повторный вызов — «перепрогнать»: прежнее непроверенное заменяется, а не копится
+    again = owner.post(url, json=body).json()
+    with db.cursor() as cur:
+        cur.execute("select id from video_annotations where video_id = %s and frame_no = %s", (video["id"], frame))
+        second = {r[0] for r in cur.fetchall()}
+    assert len(second) == again["put"] and second.isdisjoint({r[0] for r in first})
+
+    # Подтвердили кадр — агент те же объекты больше не предлагает
+    singles = owner.get(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/annotations").json()["singles"]
+    wire = [{**s["shape"], "id": s["id"], "class_index": s["class_index"], "pending": False}
+            for s in singles if s["frame_no"] == frame]
+    res = owner.put(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/{frame}/boxes",
+                    json={"boxes": wire})
+    assert res.status_code == 200 and res.json()["pending"] == 0, res.text
+    third = owner.post(url, json=body).json()
+    assert third["put"] == 0, third
+
+    # Изображение таски: ответ несёт разметку кадра, рамки — на проверке
+    images = owner.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]
+    if images:
+        got = owner.post(url, json={**{k: body[k] for k in ("graph_id", "version_id")},
+                                    "image_id": images[0]["id"]}).json()
+        assert all(b["pending"] for b in got["boxes"] if b["source"] == "model")
+
+
 def test_закрытие_отдаёт_кадры_агента_на_проверку(owner, setup, db):
     task, video = setup["task"], setup["videos"]["annotate"]
     rows = [r for r in _agent_singles(db, video["id"]) if r[4] == "model" and r[5]]

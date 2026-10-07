@@ -354,7 +354,7 @@ def test_рамка_модели_остаётся_её_пока_не_попра�
     again = save(api, image["id"], [{**box, "id": first["id"]}])["shapes"][0]
     assert again == first, "нетронутая рамка сохраняет и id, и автора"
     moved = save(api, image["id"], [{**box, "id": first["id"], "x": 20}])["shapes"][0]
-    assert moved == {"id": first["id"], "source": "human"}
+    assert moved == {"id": first["id"], "source": "human", "pending": False}
 
 
 def test_вернуть_после_брака_восстанавливает_принятый_фон(api, db, task, image):

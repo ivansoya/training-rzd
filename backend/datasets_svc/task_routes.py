@@ -26,8 +26,6 @@ from common.db import SessionLocal
 from common.models import (
     AgentRun,
     Annotation,
-    AugGraph,
-    AugGraphVersion,
     Dataset,
     Image,
     LabelClass,
@@ -605,12 +603,16 @@ def set_status(task_id):
 
 
 def _accept(db, task, user):
-    """Размеченные и фоновые кадры уходят в датасет; остальные ждут."""
+    """Размеченные и фоновые кадры уходят в датасет; остальные ждут.
+
+    Кадр с непроверенной рамкой агента тоже ждёт: непроверенное в данные
+    проекта не попадает, а выбросить его молча значило бы потерять работу."""
     pending = db.execute(
         select(Image).where(
             Image.task_id == task.id,
             Image.task_status.in_(ACCEPTABLE),
             Image.dataset_id.is_(None),
+            ~task_frames.has_pending(),
         )
     ).scalars().all()
     if not pending:
@@ -737,6 +739,14 @@ def _close(db, task, user):
     и кадр, размеченный после «Готово», пропадал вместе с разметкой."""
     accepted = _accept(db, task, user)
     db.flush()
+    # Агента звали и на уже принятые кадры: его непроверенное с ними не уходит.
+    unchecked = db.execute(
+        Annotation.__table__.delete().where(
+            Annotation.pending.is_(True),
+            Annotation.image_id.in_(select(Image.id).where(
+                Image.task_id == task.id, Image.dataset_id.isnot(None))),
+        )
+    ).rowcount
     drafts = db.execute(
         select(Image).where(Image.task_id == task.id, Image.dataset_id.is_(None))
     ).scalars().all()
@@ -759,8 +769,10 @@ def _close(db, task, user):
         _drop_video_files(path)
         video_index.forget(v.id)
         db.delete(v)
-    _log(db, task, user, "closed", removed_images=removed, removed_videos=len(videos))
-    return {**accepted, "removed_images": removed, "removed_videos": len(videos)}
+    _log(db, task, user, "closed", removed_images=removed, removed_videos=len(videos),
+         removed_unchecked=unchecked)
+    return {**accepted, "removed_images": removed, "removed_videos": len(videos),
+            "removed_unchecked": unchecked}
 
 
 # --------------------------------------------------------------------------- #
@@ -1318,6 +1330,8 @@ def _task_boxes(db, ids):
             "id": str(ann.id), **wire,
             "class_index": idx, "name": name, "color": color,
             "source": ann.source,
+            "pending": ann.pending,
+            "conf": (ann.attributes or {}).get("conf"),
             "author": authors.get(ann.created_by),
             # Рамка агента или поправленная рамка агента: что именно,
             # говорит `source`.
@@ -1483,7 +1497,7 @@ def _save_annotations(db, image_id):
             "class_id": a.class_id, "ann_type": a.ann_type,
             "geometry": a.geometry, "source": a.source,
             "created_by": a.created_by, "agent_version_id": a.agent_version_id,
-            "attributes": a.attributes,
+            "attributes": a.attributes, "pending": a.pending,
         }
         for a in db.execute(
             select(Annotation).where(Annotation.image_id == image.id)
@@ -1510,12 +1524,14 @@ def _save_annotations(db, image_id):
         fresh.append({
             "id": str(raw.get("id") or ""), "class_id": cls.id,
             "ann_type": ann_type, "geometry": geometry, "area": area,
-            "source": raw.get("source"),
+            "source": raw.get("source"), "pending": raw.get("pending"),
         })
 
     # Разметка по-прежнему заменяется целиком, но автор переживает замену:
     # нетронутая рамка агента остаётся его, поправленная — того, кто правил.
-    settled = attribution.settle(existing, fresh, user.id)
+    # «Подтвердить кадр» — то же сохранение с `confirm`: так оно идёт в общей
+    # очереди редактора и сверяется по версии, как любая правка.
+    settled = attribution.settle(existing, fresh, user.id, confirm=bool(data.get("confirm")))
     db.execute(
         Annotation.__table__.delete().where(Annotation.image_id == image.id)
     )
@@ -1529,12 +1545,17 @@ def _save_annotations(db, image_id):
         db.add(ann)
         written.append(ann)
 
-    # Статус кадра идёт за содержимым: появились боксы — размечен, стёрли
-    # все — снова нетронутый, если его не откладывали осознанно. У
-    # забракованного статус не трогаем, иначе он оживёт сам собой.
+    # Статус кадра идёт за проверенным содержимым: есть рамка человека или
+    # проверенная агентова — размечен; стёрли всё — снова нетронутый, если его
+    # не откладывали осознанно. Одно непроверенное агента кадр не размечает:
+    # «размечен» — это решение человека. У забракованного статус не трогаем.
+    checked = any(not row["pending"] for row in settled)
     if image.task_id and image.task_status != "deleted":
-        if fresh:
+        if checked:
             image.task_status = "annotated"
+        elif fresh:
+            if image.task_status == "annotated":
+                image.task_status = "empty" if image.dataset_id else "new"
         elif image.task_status == "annotated":
             # Кадр в датасете без объектов остаётся данными — фоновым примером.
             image.task_status = "empty" if image.dataset_id else "new"
@@ -1544,7 +1565,7 @@ def _save_annotations(db, image_id):
     # клиента каждая запись считалась бы новой рамкой, и settle не работал.
     saved = [None] * len(data["boxes"])
     for pos, ann in zip(positions, written):
-        saved[pos] = {"id": str(ann.id), "source": ann.source}
+        saved[pos] = {"id": str(ann.id), "source": ann.source, "pending": ann.pending}
     return jsonify({"saved": len(fresh), "clamped": clamped, "shapes": saved,
                     "task_status": image.task_status, "rev": image.annotations_rev})
 
@@ -1557,54 +1578,8 @@ def _authorship(db, anns):
         u.id: u.display_name
         for u in db.execute(select(User).where(User.id.in_(user_ids))).scalars()
     } if user_ids else {}
-    agents = {}
-    if version_ids:
-        for version, graph in db.execute(
-            select(AugGraphVersion, AugGraph)
-            .join(AugGraph, AugGraph.id == AugGraphVersion.graph_id)
-            .where(AugGraphVersion.id.in_(version_ids))
-        ).all():
-            agents[version.id] = {"name": graph.name, "version": version.version}
+    agents = attribution.agent_names(db, version_ids)
     return authors, agents
-
-
-@bp.post("/api/tasks/<task_id>/accept-agent")
-def accept_agent(task_id):
-    """«Принять разметку агента»: кадры, которые агент разметил и никто не
-    трогал, становятся размеченными — и уходят в датасет на «Готово».
-
-    Пачкой: по блоку (`source`) или по списку кадров (`image_ids`). Кадр,
-    который человек успел отложить или забраковать, не трогается — условие
-    то же, что у фильтра «агент, не проверено».
-    """
-    db, task, project, user, role, err = _resolve_task(task_id, "editor")
-    if err:
-        return err
-    try:
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта, кадры заморожены."}), 409
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
-        data = request.get_json(silent=True) or {}
-        q = select(Image).where(Image.task_id == task.id, task_frames.agent_pending())
-        source = data.get("source")
-        if source and source not in task_frames.SOURCES:
-            source = _uuid_or_none(source)
-        clause = task_frames.source_clause(task.id, source)
-        if clause is not None:
-            q = q.where(clause)
-        if data.get("image_ids") is not None:
-            wanted = [i for i in map(_uuid_or_none, data["image_ids"]) if i]
-            q = q.where(Image.id.in_(wanted))
-        images = db.execute(q).scalars().all()
-        for image in images:
-            image.task_status = "annotated"
-        if images:
-            _log(db, task, user, "agent_accepted", count=len(images))
-        db.commit()
-        return jsonify({"accepted": len(images), "counts": _counts(db, task.id)})
-    finally:
-        db.close()
 
 
 @bp.patch("/api/images/<image_id>/task-status")

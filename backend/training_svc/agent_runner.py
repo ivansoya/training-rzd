@@ -8,9 +8,11 @@
 
 * только кадры `new`: размеченные, фоновые, отложенные и забракованные —
   это уже решение человека, агент их не трогает;
-* на кадре заменяются только рамки агентов (`source='model'` с версией
-  агента); рамки человека, в том числе поправленные после агента, остаются;
-* кадр остаётся `new` — принятым его делает человек;
+* на кадре заменяются только непроверенные рамки агентов (`pending`); рамки
+  человека и проверенные рамки агента остаются, а находки, повторяющие их,
+  отбрасываются (`agent_graph.drop_known`);
+* новые рамки встают на проверку, кадр остаётся `new` — размеченным его
+  делает человек, подтвердив кадр;
 * автор рамки — владелец агента, `agent_version_id` — версия прогона.
 
 Каждый кадр — своя транзакция, и статус кадра перечитывается под замком:
@@ -522,11 +524,11 @@ def text_key(node):
 def _write(db, run, image, found, mapping):
     db.execute(
         Annotation.__table__.delete().where(
-            Annotation.image_id == image.id,
-            Annotation.source == "model",
-            Annotation.agent_version_id.isnot(None),
-        )
+            Annotation.image_id == image.id, Annotation.pending.is_(True))
     )
+    known = [(a.class_id, agent_graph.geometry_box(a.ann_type, a.geometry))
+             for a in db.execute(select(Annotation).where(Annotation.image_id == image.id)).scalars()]
+    found = agent_graph.drop_known(found, [k for k in known if k[1]], mapping)
     put = 0
     for det in found:
         class_id = mapping.get(det["cls"])
@@ -544,7 +546,7 @@ def _write(db, run, image, found, mapping):
             attributes["sam"] = det["sam"]
         db.add(Annotation(
             image_id=image.id, class_id=_uuid(class_id), ann_type=ann_type,
-            geometry=geometry, area=area, source="model",
+            geometry=geometry, area=area, source="model", pending=True,
             attributes=attributes,
             agent_version_id=run.version_id, created_by=run.created_by,
         ))
@@ -671,10 +673,10 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
 
 
 def _agent_rows(video):
-    """Одиночные рамки агентов на ролике — то, что повторный прогон заменяет."""
+    """Непроверенные рамки агентов на ролике — то, что повторный прогон заменяет."""
     return VideoAnnotation.__table__.delete().where(
         VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
-        VideoAnnotation.source == "model", VideoAnnotation.agent_version_id.isnot(None))
+        VideoAnnotation.pending.is_(True))
 
 
 class VideoClosed(Exception):
@@ -705,6 +707,11 @@ def _write_video(db, run, video, frame_no, found, mapping):
     # Замена по кадру в одной транзакции: остановка на середине не теряет прежние рамки.
     _lock_open(db, video)
     db.execute(_agent_rows(video).where(VideoAnnotation.frame_no == frame_no))
+    known = [(a.class_id, agent_graph.geometry_box(a.ann_type, a.geometry))
+             for a in db.execute(select(VideoAnnotation).where(
+                 VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
+                 VideoAnnotation.frame_no == frame_no)).scalars()]
+    found = agent_graph.drop_known(found, [k for k in known if k[1]], mapping)
     put = 0
     for det in found:
         class_id = mapping.get(det["cls"])
@@ -717,9 +724,13 @@ def _write_video(db, run, video, frame_no, found, mapping):
         if parsed is None:
             continue
         ann_type, geometry, _area = parsed
+        attributes = {"conf": round(float(det["conf"]), 3)}
+        if "sam" in det:
+            attributes["sam"] = det["sam"]
         db.add(VideoAnnotation(
             video_id=video.id, track_id=None, frame_no=frame_no, class_id=_uuid(class_id),
-            ann_type=ann_type, geometry=geometry, source="model",
+            ann_type=ann_type, geometry=geometry, source="model", pending=True,
+            attributes=attributes,
             agent_version_id=run.version_id, created_by=run.created_by,
         ))
         put += 1

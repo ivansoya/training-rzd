@@ -19,9 +19,9 @@ import time
 
 from sqlalchemy import select, update
 
-from common import agent_graph, config, gpu
+from common import agent_graph, config, gpu, video_frames
 from common.db import SessionLocal, engine
-from common.models import AgentPreview, AgentWeights, Image
+from common.models import AgentPreview, AgentWeights, Image, TaskVideo
 from training_svc import agent_runner
 
 log = logging.getLogger("training.preview")
@@ -143,6 +143,27 @@ def _answer(db, warm, row):
         return trace
 
     out = {"device": "cpu" if warm.device == "cpu" else "cuda", "note": warm.note}
+    apply = doc.get("apply")
+    if apply:
+        # Агент из редактора на одном кадре: нужен только «Выход», пишет веб.
+        if apply.get("video"):
+            video = db.get(TaskVideo, agent_runner._uuid(apply["video"]))
+            if video is None:
+                raise agent_graph.AgentGraphError("Ролик не найден.")
+            got = []
+            video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), [int(apply["frame"])],
+                                        lambda _n, _t, pic: got.append(pic),
+                                        pts=video_frames.unpack_pts(video.frame_index))
+            if not got:
+                raise agent_graph.AgentGraphError("Кадр ролика не достался декодеру.")
+            predict, segment = agent_runner.frame_fns(None, f"{video.file_name} #{apply['frame']}", models,
+                                                      weights, warm.device, picture=got[0])
+        else:
+            image = db.get(Image, row.image_id)
+            predict, segment = agent_runner.frame_fns(os.path.join(config.DATA_DIR, image.file_path),
+                                                      image.file_name, models, weights, warm.device)
+        found = agent_graph.run(doc, predict, order, segment)
+        return {**out, "found": found, "ms": round((time.monotonic() - started) * 1000)}
     batch = doc.get("batch")
     if batch:
         # Несколько кадров разом: модели те же, отдаём только «Выход» каждого.

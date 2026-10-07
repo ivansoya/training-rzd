@@ -21,10 +21,12 @@ from PIL import Image as PilImage
 from sqlalchemy import select
 
 from common import attribution, config, jobs
+from common import scout as scout_lib
 from common.db import SessionLocal
 from common.models import (
     AgentRun,
     Image,
+    VideoScout,
     LabelClass,
     Task,
     TaskVideo,
@@ -609,6 +611,7 @@ def video_annotations(task_id, video_id):
             .order_by(VideoAnnotation.frame_no)
         ).scalars().all()
 
+        agents = attribution.agent_names(db, {r.agent_version_id for r in rows if r.agent_version_id})
         keys_by_track = {}
         singles = []
         for row in rows:
@@ -626,6 +629,9 @@ def video_annotations(task_id, video_id):
                     "geometry": row.geometry,
                     "shape": wire,
                     "source": row.source,
+                    "pending": row.pending,
+                    "conf": (row.attributes or {}).get("conf"),
+                    "agent": agents.get(row.agent_version_id),
                 })
             else:
                 keys_by_track.setdefault(row.track_id, []).append(row)
@@ -1113,7 +1119,7 @@ def put_frame_boxes(task_id, video_id, frame_no):
             ann_type, geometry, _area = parsed
             fresh.append({"id": str(raw.get("id") or ""), "class_id": cls.id,
                           "ann_type": ann_type, "geometry": geometry,
-                          "source": _source_arg(raw.get("source"))})
+                          "source": _source_arg(raw.get("source")), "pending": raw.get("pending")})
 
         single = (VideoAnnotation.video_id == video.id,
                   VideoAnnotation.track_id.is_(None),
@@ -1123,6 +1129,7 @@ def put_frame_boxes(task_id, video_id, frame_no):
                 "class_id": a.class_id, "ann_type": a.ann_type,
                 "geometry": a.geometry, "source": a.source,
                 "created_by": a.created_by, "agent_version_id": a.agent_version_id,
+                "attributes": a.attributes, "pending": a.pending,
             }
             for a in db.execute(select(VideoAnnotation).where(*single)).scalars()
         }
@@ -1130,14 +1137,82 @@ def put_frame_boxes(task_id, video_id, frame_no):
         # не трогали, остаётся его, и при закрытии разметки её кадр уйдёт на
         # проверку, а не в датасет. Прежде `source` брался у клиента, а версия
         # агента терялась на первом же сохранении кадра.
-        settled = attribution.settle(existing, fresh, user.id)
+        # «Подтвердить кадр» идёт тем же сохранением: оставшиеся рамки агента проверены.
+        settled = attribution.settle(existing, fresh, user.id, confirm=bool(json_body().get("confirm")))
         db.execute(VideoAnnotation.__table__.delete().where(*single))
         for row in settled:
             ann_id = _uuid_or_none(row.pop("id"))
             db.add(VideoAnnotation(video_id=video.id, track_id=None, frame_no=frame_no,
                                    **row, **({"id": ann_id} if ann_id else {})))
         db.commit()
-        return jsonify({"saved": len(fresh)})
+        return jsonify({"saved": len(fresh), "pending": sum(1 for r in settled if r["pending"])})
+    finally:
+        db.close()
+
+
+@bp.post("/api/tasks/<task_id>/videos/<video_id>/scout/take")
+def take_scout(task_id, video_id):
+    """«В разметку»: находки разведки на кадре становятся одиночными рамками.
+
+    Сразу проверенными — человек выбрал их сам, это и есть проверка. Класс —
+    сопоставленный с классом агента; несопоставленному редактор присылает свой
+    (`class_index`), иначе отказ. `items` — [{i: номер находки на кадре, class_index?}].
+    """
+    db, task, project, user, role, video = _resolve_video(task_id, video_id, "editor")
+    if db is None:
+        return video
+    try:
+        denied = _writable(task, user, role, video)
+        if denied:
+            return denied
+        data = json_body()
+        try:
+            frame_no = int(data.get("frame_no"))
+        except (TypeError, ValueError):
+            raise InputError("frame_no: номер кадра.", "frame_no")
+        bad = _frame_error(video, frame_no)
+        if bad:
+            return bad
+        scout = db.execute(select(VideoScout).where(VideoScout.video_id == video.id)).scalar_one_or_none()
+        found = (scout.frames or {}).get(str(frame_no)) if scout else None
+        if not found:
+            return jsonify({"error": "На этом кадре разведка ничего не нашла."}), 404
+        mapped = scout_lib.classes(db, scout, project.id)
+        items = data.get("items")
+        if not isinstance(items, list) or not items:
+            raise InputError("items: какие находки взять.", "items")
+        made = []
+        for item in items:
+            try:
+                det = found[int(item.get("i"))]
+            except (TypeError, ValueError, IndexError, AttributeError):
+                raise InputError("items: такой находки на кадре нет.", "items")
+            name, conf, x, y, w, h = det
+            cls = mapped.get(name)
+            if item.get("class_index") is not None:
+                cls = _class_by_index(db, project.id, item.get("class_index"))
+            if cls is None:
+                return jsonify({"error": f"Класс агента «{name}» не сопоставлен с классом проекта — выберите класс.",
+                                "code": "unmapped", "agent_class": name}), 409
+            parsed = shapes.from_wire({"kind": "bbox", "x": x, "y": y, "w": w, "h": h},
+                                      video.width or 0, video.height or 0)
+            if parsed is None:
+                continue
+            ann_type, geometry, _area = parsed
+            row = VideoAnnotation(
+                video_id=video.id, track_id=None, frame_no=frame_no, class_id=cls.id,
+                ann_type=ann_type, geometry=geometry, source="model", pending=False,
+                attributes={"conf": conf}, agent_version_id=scout.version_id, created_by=user.id,
+            )
+            db.add(row)
+            made.append((row, cls))
+        db.commit()
+        return jsonify({"singles": [
+            {"id": str(row.id), "frame_no": frame_no, "class_index": cls.class_index,
+             "geometry": row.geometry, "shape": shapes.to_wire(row.ann_type, row.geometry),
+             "source": row.source, "pending": False, "conf": (row.attributes or {}).get("conf")}
+            for row, cls in made
+        ]}), 201
     finally:
         db.close()
 
@@ -1223,6 +1298,7 @@ def preview_materialize(task_id, video_id):
             "new_frames": len([f for f in frames if f not in kept]),
             "updated_frames": 0,
             "kept_accepted": len([f for f in frames if f in kept]),
+            "unchecked": materialize.unchecked_frames({f: v for f, v in by_frame.items() if f not in kept}),
             "first_frames": frames[:50],
         })
     finally:

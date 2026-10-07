@@ -162,7 +162,7 @@ def pending_summary(db, task):
             # пока их не уберут. Считать его в «ждут закрытия» значило бы
             # показать одни и те же кадры дважды — рядом с «размечено».
             row.update({
-                "frames": 0, "boxes": 0, "empty": 0,
+                "frames": 0, "boxes": 0, "empty": 0, "unchecked": 0,
                 "error": f"Прежние кадры ролика ещё в таске ({row['frames_in_task']}) — "
                          "уберите их, чтобы закрыть разметку заново.",
             })
@@ -173,7 +173,7 @@ def pending_summary(db, task):
         except tracklib.TrackError as exc:
             # План целиком не считается, но остальное показать всё равно надо:
             # человеку нужно знать, какой именно объект мешает закрыть разметку.
-            row.update({"frames": 0, "boxes": 0, "empty": 0, "error": str(exc)})
+            row.update({"frames": 0, "boxes": 0, "empty": 0, "unchecked": 0, "error": str(exc)})
             out.append(row)
             continue
         if not plan and not empty:
@@ -184,9 +184,15 @@ def pending_summary(db, task):
             "frames": len(plan) + len(empty),
             "boxes": sum(len(v) for v in plan.values()),
             "empty": len(empty),
+            "unchecked": unchecked_frames(plan),
         })
         out.append(row)
     return out
+
+
+def unchecked_frames(plan):
+    """Сколько кадров плана уйдут с непроверенной разметкой агента."""
+    return len([f for f, items in plan.items() if any(i.get("pending") for i in items)])
 
 
 def _file_name(video, frame_no):
@@ -238,12 +244,13 @@ def run_video(db, task, video, user_id, progress=None):
 
     base = config.image_base_dir(task.project_id, task.id)
     created = {}
-    # Кадр, на котором одни нетронутые рамки агента, уходит в таску новым —
-    # на проверку, как кадр изображений после агента. Любая работа человека на
-    # кадре (своя рамка, правка агентовой, трек) делает его размеченным.
+    # Кадр, на котором одно непроверенное агента, уходит в таску новым. Рамки
+    # переезжают со своим флагом: проверять их дальше можно и в редакторе кадров.
+    # Любая работа человека на кадре (своя рамка, проверенная агентова, трек)
+    # делает его размеченным.
     unchecked = {
         f for f, items in by_frame.items()
-        if items and all(i.get("agent_version_id") and i.get("source") == "model" for i in items)
+        if items and all(i.get("pending") for i in items)
     }
     # Таги ролика — один раз на всю материализацию, а не на кадр.
     video_tags = tags.ids_of(db, "video", video.id)
@@ -332,6 +339,7 @@ def _annotate(db, by_frame, created, user_id):
                 source=item.get("source") or "human",
                 agent_version_id=item.get("agent_version_id"),
                 created_by=item.get("created_by") or user_id,
+                pending=bool(item.get("pending")),
             ))
             boxes += 1
     # Ошибка строки (класс удалён, кривая геометрия) — здесь, а не на коммите.

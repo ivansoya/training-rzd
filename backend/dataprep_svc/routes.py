@@ -683,7 +683,8 @@ def _annotated(project_id):
     на нём нечего терять, и счёт «объекты было → стало» ничего не скажет."""
     return select(Image).where(
         Image.project_id == project_id,
-        select(Annotation.id).where(Annotation.image_id == Image.id).exists(),
+        select(Annotation.id).where(Annotation.image_id == Image.id,
+                                    Annotation.pending.is_(False)).exists(),
     )
 
 
@@ -749,7 +750,7 @@ def _project_frame(db, project, image_id, salt=None):
     # Контур едет контуром, рамка рамкой — как их разметили. Сборка боксового
     # набора свела бы контур к рамке, но смотреть надо на то, что есть.
     for ann in db.execute(
-        select(Annotation).where(Annotation.image_id == image.id)
+        select(Annotation).where(Annotation.image_id == image.id, Annotation.pending.is_(False))
     ).scalars():
         cls = index.get(ann.class_id)
         if cls is None:

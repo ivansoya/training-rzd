@@ -411,6 +411,7 @@ class Annotation(Base, AuditMixin):
     __table_args__ = (
         sa.Index("ix_annotations_image", "image_id"),
         sa.Index("ix_annotations_class", "class_id"),
+        sa.Index("ix_annotations_pending", "image_id", postgresql_where=sa.text("pending")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
@@ -445,6 +446,12 @@ class Annotation(Base, AuditMixin):
     # поле только сервер — от клиента оно не принимается.
     agent_version_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="SET NULL")
+    )
+    # Рамка агента ждёт проверки человеком. Снимается «Подтвердить кадр» или
+    # правкой самой рамки; пока стоит — кадр не уходит в датасет, а экспорт и
+    # наборы рамку пропускают. Авторство (`source`, версия) — отдельно и навсегда.
+    pending: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )
 
 
@@ -746,6 +753,13 @@ class VideoAnnotation(Base, AuditMixin):
     # То же, что у `annotations`: агент, поставивший рамку на кадр ролика.
     agent_version_id: Mapped[uuid.UUID | None] = mapped_column(
         sa.Uuid, sa.ForeignKey("aug_graph_versions.id", ondelete="SET NULL")
+    )
+    # Уверенность агента и оценка SAM — как у `annotations`, до первой правки.
+    attributes: Mapped[dict | None] = mapped_column(JsonCol)
+    # То же, что у `annotations`: рамка агента ждёт проверки. При закрытии
+    # разметки флаг переезжает на кадр таски вместе с рамкой.
+    pending: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )
 
 
@@ -1757,8 +1771,9 @@ class AgentPreview(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid, sa.ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
-    image_id: Mapped[uuid.UUID] = mapped_column(
-        sa.Uuid, sa.ForeignKey("images.id", ondelete="CASCADE"), nullable=False
+    # Пусто — кадр ролика: агент из редактора видео (`doc.apply`).
+    image_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("images.id", ondelete="CASCADE"), nullable=True
     )
     doc: Mapped[dict] = mapped_column(JsonCol, nullable=False)
     status: Mapped[str] = mapped_column(
