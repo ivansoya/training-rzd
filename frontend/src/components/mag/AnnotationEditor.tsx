@@ -34,11 +34,13 @@ import { plural, ru } from "../ru";
 import AutoSettings from "../editor/AutoSettings";
 import ClassPicker from "../editor/ClassPicker";
 import { EditorHead, Float, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip } from "../editor/Chrome";
-import { AutoBar, FrameBar, FrameSide } from "../editor/FramePanels";
+import { AutoBar, FrameBar, FrameSide, Who, agentKeyOf } from "../editor/FramePanels";
 import { ReviewBar } from "../editor/ReviewBars";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
 import AgentSetupDialog from "../agents/AgentSetupDialog";
-import { confirmAll, nextFlagged, pendingCount, rejectAll, settlePending } from "../editor/review";
+import {
+  agentGroups, confirmAll, confirmWhere, nextFlagged, pendingCount, rejectAll, rejectWhere, settlePending,
+} from "../editor/review";
 import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad } from "../editor/look";
 import type { KeyGroup } from "../editor/look";
 
@@ -301,6 +303,8 @@ export default function AnnotationEditor({
     ? frameActions({ status: image.task_status, objects: boxes.length, readOnly })
     : [];
   const unchecked = pendingCount(boxes);
+  // Агенты кадра — для групп на проверке и подписи «класс · агент» при двух и больше.
+  const agentsHere = useMemo(() => agentGroups(boxes, (b) => agentKeyOf(meta.get(b.id ?? ""))), [boxes, meta]);
   const canEmpty = actions.includes("empty");
 
   const progress = useMemo(() => progressOf(images), [images]);
@@ -569,6 +573,18 @@ export default function AnnotationEditor({
     if (i !== null && i !== index) void jump(i);
     else void go(1);
   }, [frozen, edit, flush, flagged, index, jump, go]);
+
+  /** Рамки одного агента: «Принять всё от …» и «Отклонить всё от …», когда агентов на кадре несколько. */
+  const ofAgent = useCallback((key: string) => (s: CanvasShape) => agentKeyOf(meta.get(s.id ?? ""))?.key === key, [meta]);
+  const confirmAgent = useCallback((key: string) => {
+    if (frozen) return;
+    edit(confirmWhere(boxesRef.current, ofAgent(key)));
+  }, [frozen, edit, ofAgent]);
+  const rejectAgent = useCallback((key: string) => {
+    if (frozen) return;
+    edit(rejectWhere(boxesRef.current, ofAgent(key)));
+    pick(null);
+  }, [frozen, edit, ofAgent, pick]);
 
   /** «Отклонить все»: непроверенное агента уходит с кадра, кадр остаётся. */
   const rejectFrame = useCallback(() => {
@@ -1026,8 +1042,13 @@ export default function AnnotationEditor({
     if (i === null || !me || frozen) return [];
     const acts: MenuAction[] = [];
     if (me.pending) {
-      acts.push({ label: "Подтвердить", icon: "tick", agent: true,
+      acts.push({ label: "Принять рамку", icon: "tick", agent: true,
         run: () => { confirmOne(i); setMenu(null); } });
+    }
+    const mine = me.pending ? agentsHere.find((g) => g.idx.includes(i)) : undefined;
+    if (mine && agentsHere.length > 1) {
+      acts.push({ label: `Только рамки ${mine.agent.name}`, icon: "eye", hint: "остальные скрыть — вернуть глазком в панели",
+        run: () => { setHidden(new Set(boxes.map((_, k) => k).filter((k) => !mine.idx.includes(k)))); setMenu(null); } });
     }
     if (!me.parts?.length) {
       acts.push({
@@ -1150,6 +1171,8 @@ export default function AnnotationEditor({
       >
         <BoxCanvas
           ref={canvas}
+          captionOf={agentsHere.length > 1
+            ? (i) => (boxes[i]?.pending ? agentKeyOf(meta.get(boxes[i].id ?? ""))?.name : undefined) : undefined}
           imageId={image.id}
           viewKey="frames"
           fileName={image.file_name}
@@ -1285,6 +1308,11 @@ export default function AnnotationEditor({
                 if (next.has(i)) next.delete(i); else next.add(i);
                 return next;
               })}
+              onHideMany={(idx, off) => setHidden((h) => {
+                const next = new Set(h);
+                idx.forEach((i) => (off ? next.add(i) : next.delete(i)));
+                return next;
+              })}
               onClass={(i, ci) => pickClass(ci, i)}
               onDelete={(i) => { edit(boxes.filter((_, k) => k !== i)); pick(null); }}
               onAddContour={(i) => { pick(i); setAddTo(i); setTool("polygon"); }}
@@ -1307,7 +1335,9 @@ export default function AnnotationEditor({
         )}
 
         {panels && unchecked > 0 && !frozen && !autoPrev && (
-          <ReviewBar count={unchecked} onConfirm={() => void confirmFrame()} onReject={rejectFrame} />
+          <ReviewBar count={unchecked} onConfirm={() => void confirmFrame()} onReject={rejectFrame}
+            agents={agentsHere.map((g) => ({ agent: g.agent, count: g.idx.length }))}
+            onConfirmAgent={confirmAgent} onRejectAgent={rejectAgent} />
         )}
 
         <ZoomChip scale={scale} onZoom={(k) => canvas.current?.zoomBy(k)} onFit={() => canvas.current?.fit()}
@@ -1325,6 +1355,8 @@ export default function AnnotationEditor({
           onPick={(ci) => { pickClass(ci, menu.i); setMenu(null); }}
           deleteLabel="объект"
           groups={[mainActions(menu.i), menuActions(menu) ?? []]}
+          note={menu.i !== null && meta.get(boxes[menu.i]?.id ?? "")?.agent
+            ? <Who box={meta.get(boxes[menu.i]?.id ?? "")} /> : undefined}
           onDelete={
             menu.i === null || frozen
               ? undefined

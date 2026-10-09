@@ -1020,8 +1020,17 @@ export type TaskBox = Box & {
   /** Уверенность агента — у рамок агента. */
   conf?: number | null;
   author?: string | null;
-  agent?: { name: string; version: number } | null;
+  /** Агент, поставивший рамку (`id` — агент целиком: по нему группы на проверке). */
+  agent?: BoxAgent | null;
+  /** Кто снял рамку агента с проверки. */
+  reviewer?: string | null;
 };
+
+export interface BoxAgent {
+  id?: string;
+  name: string;
+  version: number;
+}
 
 export interface Segment {
   start_ms: number;
@@ -1324,7 +1333,8 @@ export interface VideoSingleBox {
   /** Рамка агента ждёт проверки. */
   pending?: boolean;
   conf?: number | null;
-  agent?: { name: string; version: number } | null;
+  agent?: BoxAgent | null;
+  reviewer?: string | null;
 }
 
 export interface VideoAnnotations {

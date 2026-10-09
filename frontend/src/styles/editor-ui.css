@@ -84,6 +84,8 @@
 .ed-omenu-g { display: flex; flex-direction: column; }
 .ed-omenu-cls { font-weight: 500; }
 .ed-omenu-cls > .ui-ic:last-child { margin-left: auto; }
+.ed-omenu-note { padding: 6px 10px 4px; font-size: 12px; line-height: 1.45; color: var(--muted-fg); max-width: 300px; }
+.ed-omenu-note .fe-who { display: block; margin: 0; }
 .ed-omenu-cls[aria-expanded="true"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 55%, transparent); }
 .ui-opt.is-agent, .ui-opt.is-agent > .ui-ic { color: var(--agent-fg); }
 .ed-omenu-fly { width: 260px; }
@@ -324,6 +326,7 @@
 .mag-cv-mark { font-style: normal; font-size: 9px; color: var(--agent-fg); margin-right: 5px; line-height: 1; flex: none; }
 .mag-cv-lb.on .mag-cv-mark { color: inherit; }
 .mag-cv-conf { font: 500 10.5px var(--mono); margin-left: 6px; opacity: .75; }
+.mag-cv-ag { font-weight: 400; opacity: .8; }
 
 /* Призрак разведки: плотная жёлтая рамка разведки, непрозрачная — её для того и показывают, чтобы
    увидеть и решить; заливка под курсором — цвета класса. Тень вместо подложки: читается на светлом кадре */
@@ -357,6 +360,9 @@
 
 /* Группа «Агент · на проверке» в панели объектов */
 .fe-agent .fe-sec-t .ui-ic { color: var(--agent-fg); }
+.fe-agent-g + .fe-agent-g { margin-top: 6px; }
+.fe-agent-h { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 2px 0 4px; font-size: 12.5px; font-weight: 500; color: var(--agent-fg); }
+.fe-agent-h .ui-mono { font-size: 12px; color: var(--muted-fg); }
 .fe-obj.pending .ui-swatch { outline: 1px dashed color-mix(in srgb, var(--agent-fg) 70%, transparent); outline-offset: 2px; }
 .fe-conf { color: var(--agent-fg); }
 .fe-confirm { gap: 8px; align-items: center; }

@@ -11,10 +11,11 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../../api/agents";
-import { Badge, Button, Check, Dialog, Empty, Field, LinkButton, Notice, Progress, Radio, Select } from "../../ui";
+import { Badge, Button, Check, Dialog, Empty, Field, Icon, LinkButton, Notice, Progress, Radio, Select } from "../../ui";
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
 import ClassMap, { guess, useAutoMapped } from "./ClassMap";
+import { VERDICT, VerdictChip, gb, short } from "./GpuVerdict";
 import ScoutOverview from "./ScoutOverview";
 import { sampledCount } from "./scoutMath";
 
@@ -48,7 +49,8 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
   useEffect(() => {
     api.runContext(taskId).then((got) => {
       setCtx(got);
-      const first = got.agents[0];
+      // Первым — тот, что влезает: подключённые к проекту идут раньше своих.
+      const first = got.agents.find((a) => a.verdict.state !== "never") ?? got.agents[0];
       if (first) {
         setAgentId(first.id);
         setVersionId(first.head);
@@ -83,6 +85,35 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
   const sourceKeys = ctx ? Object.keys(ctx.sources) : [];
   const sourceTitle = (s: string) => SOURCE_TITLE[s as "files" | "videos"]
     ?? `Из разметки «${ctx?.videos.find((v) => v.id === s)?.file_name ?? "ролика"}»`;
+
+  // Вердикт сервера — у текущей версии агента; у старой версии памяти может нужно другое.
+  const verdict = agent && version?.id === agent.head ? agent.verdict : null;
+  const never = verdict?.state === "never";
+  const cards = ctx?.resources.cards ?? [];
+  const est = verdict && ctx ? {
+    verdict, total_mb: verdict.state === "sequential" ? verdict.want_mb : verdict.want_mb, estimate_mb: verdict.want_mb,
+    measured: 0, units: [], heaviest: null, nodes: {}, words: {}, cards, queued: ctx.resources.queued,
+  } as api.Estimate : null;
+  const ordered = ctx ? [...ctx.agents].sort((a, b) => Number(a.group !== "project") - Number(b.group !== "project")) : [];
+  const agentOptions = ordered.flatMap((a, i) => {
+    const head = i === 0 || ordered[i - 1].group !== a.group
+      ? [{ value: `group:${a.group}`, disabled: true,
+        label: <span className="ar-grp">{a.group === "project" ? "Подключённые к проекту" : "Мои, не подключённые"}</span> }]
+      : [];
+    const look = VERDICT[a.verdict.state];
+    const ver = a.versions.find((v) => v.id === a.head)?.version;
+    const who = a.group === "project" ? `${a.mine ? "мой" : a.owner ?? "владелец удалён"} · v${ver}` : `v${ver} · запуск не подключает агента к проекту`;
+    return [...head, {
+      value: a.id,
+      label: (
+        <span className="ar-opt">
+          <span className="t-ell">{a.name}</span>
+          <span className={`ar-opt-v ${look.tone}`} title={a.verdict.reason}><Icon name={look.icon} size={13} />{gb(a.verdict.want_mb)} ГБ</span>
+        </span>
+      ),
+      hint: a.verdict.state === "sequential" ? `${who} · только поочерёдно, медленнее` : who,
+    }];
+  });
 
   const start = async () => {
     if (!agent || !version) return;
@@ -123,11 +154,15 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
     <Dialog open onOpenChange={(v) => !v && onClose()} width={720} title="Разметить агентом"
       desc="Агент ставит рамки с пометкой «модель» — человек их проверяет. Разметку людей агент не трогает"
       footer={<>
+        {ready && est && <VerdictChip est={est} source className="ar-vd" />}
+        <span className="grow" />
         <Button variant="ghost" onClick={onClose}>Отмена</Button>
         {ready && (
           <Button variant="agent" icon="sparkle" onClick={start}
-            disabled={busy || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
-            title={mode !== "scout" && mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}>{startText}</Button>
+            disabled={busy || never || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
+            title={never ? verdict?.reason : mode !== "scout" && mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}>
+            {startText}{verdict?.state === "wait" ? " · в очередь" : ""}
+          </Button>
         )}
       </>}>
       <div className="ar">
@@ -147,7 +182,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
                 {(id) => <Select id={id} full label="Агент" value={agentId} onChange={(v) => {
                   setAgentId(v);
                   setVersionId(ctx.agents.find((a) => a.id === v)?.head ?? "");
-                }} options={ctx.agents.map((a) => ({ value: a.id, label: a.name }))} />}
+                }} options={agentOptions} />}
               </Field>
               <Field label="Версия">
                 {(id) => <Select id={id} full label="Версия" value={version?.id} onChange={setVersionId}
@@ -170,7 +205,10 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
                     </Check>
                   ))}
                   {replacing > 0 && (
-                    <p className="t-xs ge-warn">На {ru(replacing)} {plural(replacing, "кадре", "кадрах", "кадрах")} уже есть непроверенная разметка агента — она будет заменена.</p>
+                    <p className="t-xs ge-warn">
+                      На {ru(replacing)} {plural(replacing, "кадре", "кадрах", "кадрах")} есть непроверенная разметка агентов:
+                      рамки этого агента будут заменены, с рамками других новые находки сравниваются — остаётся уверенная.
+                    </p>
                   )}
                 </div>
               </Radio>}
@@ -191,6 +229,36 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
 
             {mode !== "scout" && list.length > 0 && (
               <ClassMap list={list} classes={ctx.classes} mapping={mapping} auto={auto} onMapping={setMapping} />
+            )}
+
+            {verdict?.state === "wait" && (
+              <div className="ar-why wait">
+                <Icon name="clock" size={16} />
+                <span>
+                  <b>Встанет в очередь.</b> Агенту нужно {gb(verdict.want_mb)} ГБ, сейчас свободно{" "}
+                  {cards.map((c) => `${gb(c.free_mb)} из ${gb(c.cap_mb)} на ${short(c.name)}`).join(", ")}
+                  {ctx.resources.queued ? `, впереди ${count(ctx.resources.queued, "работа", "работы", "работ")}` : ""}.
+                  Процессор не используется: прогон дождётся карты и начнётся сам.
+                </span>
+              </div>
+            )}
+            {verdict?.state === "sequential" && (
+              <div className="ar-why seq">
+                <Icon name="layers" size={16} />
+                <span><b>Пойдёт поочерёдно.</b> {verdict.reason}</span>
+              </div>
+            )}
+            {never && verdict && (
+              <div className="ar-why no">
+                <Icon name="ban" size={16} />
+                <div>
+                  <p><b>Не поместится ни на одну карту.</b> {verdict.reason} Поочерёдно не поможет: узел не делится, а на процессоре агенты не считают.</p>
+                  <p className="t-xs t-muted">
+                    Что сделать в агенте: уменьшить «Слов за проход» у SAM 3, взять вход 644 вместо 1008 или выключить тайлинг.
+                  </p>
+                  <LinkButton size="sm" icon="external" to={`/agents/${agent.id}`}>Открыть агента</LinkButton>
+                </div>
+              </div>
             )}
           </>
         )}

@@ -11,14 +11,15 @@ import type { ClassStat, NodeStat } from "./summary";
 const took = (ms: number) => (ms < 1000 ? `${Math.round(ms)} мс`
   : `${(ms / 1000).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} с`);
 
-export default function AgentSummary({ nodes, classes, frame, worst, device, onClasses, onNode }: {
+export default function AgentSummary({ nodes, classes, frame, worst, sequential, onClasses, onNode }: {
   nodes: NodeStat[];
   classes: ClassStat[];
   /** Кадр превью; null — превью ещё не посчитано. */
   frame: { w: number; h: number; name: string } | null;
   /** Самый большой кадр проекта превью и вызовов на нём, если он больше кадра превью. */
   worst: { w: number; h: number; calls: number } | null;
-  device: "cuda" | "cpu" | null;
+  /** Превью шло поочерёдно: целиком агент не влезает — время выше, чем будет на свободной карте. */
+  sequential: boolean;
   onClasses: () => void;
   /** Выделить узел на холсте. */
   onNode: (id: string) => void;
@@ -37,7 +38,7 @@ export default function AgentSummary({ nodes, classes, frame, worst, device, onC
           <b>Время и вызовы модели</b>
           <span className="ae-readout">
             {timed ? <>≈ {took(total)} <em>на кадр</em></> : <em>время — после превью</em>}
-            <em> · {count(calls, "вызов", "вызова", "вызовов")}{device === "cpu" ? " · на процессоре" : ""}</em>
+            <em> · {count(calls, "вызов", "вызова", "вызовов")}{sequential ? " · поочерёдно" : ""}</em>
           </span>
         </div>
         <div className="ae-st">

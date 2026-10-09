@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { confirmAll, isTaken, nearestTick, nextFlagged, nextFrame, pendingCount, rejectAll, scoutFrameAt, settlePending } from "./review";
+import {
+  agentGroups, confirmAll, confirmWhere, isTaken, nearestTick, nextFlagged, nextFrame, pendingCount, rejectAll, rejectWhere,
+  scoutFrameAt, settlePending,
+} from "./review";
 
 const box = (id: string, pending = true, x = 10) => ({ id, class_index: 1, x, y: 10, w: 50, h: 40, pending });
 
@@ -79,5 +82,22 @@ describe("находки разведки при проигрывании", () =
     expect(scoutFrameAt([0, 25, 50], 33, true, 12)).toBe(25);
     expect(scoutFrameAt([0, 25, 50], 38, true, 12)).toBe(50);
     expect(scoutFrameAt([0, 50], 25, true, 12)).toBeNull();
+  });
+});
+
+describe("рамки нескольких агентов на кадре", () => {
+  const b = (id: string, pending: boolean) => ({ id, class_index: 0, x: 0, y: 0, w: 1, h: 1, pending });
+  const by: Record<string, string> = { a: "YOLOE", b: "SAM3", c: "YOLOE" };
+  const agentOf = (s: { id?: string }) => (s.id && by[s.id] ? { key: by[s.id], name: by[s.id], version: 1 } : null);
+  const list = [b("a", true), b("b", true), b("c", true), b("d", false)];
+
+  it("группы по агенту в порядке появления, проверенное не в счёт", () => {
+    expect(agentGroups(list, agentOf).map((g) => [g.agent.key, g.idx])).toEqual([["YOLOE", [0, 2]], ["SAM3", [1]]]);
+  });
+
+  it("принять и отклонить только своё агента", () => {
+    const yoloe = (s: { id?: string }) => agentOf(s)?.key === "YOLOE";
+    expect(confirmWhere(list, yoloe).map((s) => s.pending)).toEqual([false, true, false, false]);
+    expect(rejectWhere(list, yoloe).map((s) => s.id)).toEqual(["b", "d"]);
   });
 });

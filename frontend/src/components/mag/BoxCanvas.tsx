@@ -245,6 +245,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   height: number;
   boxes: CanvasShape[];
   labelOf: (classIndex: number) => { name: string; color: string };
+  /** Приписка к подписи рамки — агент, когда их на кадре несколько: «вагон · YOLOE-РСМ». */
+  captionOf?: (index: number) => string | undefined;
   /** Индексы объектов, которые рисуются прерывисто: объект на кадре есть, но
    *  заслонён, и в разметку этот кадр не пойдёт. */
   dashed?: Set<number>;
@@ -317,7 +319,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, dashed, hidden, hiddenItems,
+    imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, captionOf, dashed, hidden, hiddenItems,
     labels = true, editable = false, waiting = false, tool = "select", auto = false,
     autoMode = "points", autoPoints, autoPreview = null, activeClass = null,
     selected = null, selectedPart = null, splitParts = false, canMovePoly = false,
@@ -1284,6 +1286,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
               >
                 {s.pending && <Icon name="bot" size={12} className="mag-cv-mark" />}
                 {meta.name || s.class_index}
+                {captionOf?.(i) && <span className="mag-cv-ag"> · {captionOf(i)}</span>}
                 {s.pending && s.conf != null && <b className="mag-cv-conf">{fmtConf(s.conf)}</b>}
               </span>
             );

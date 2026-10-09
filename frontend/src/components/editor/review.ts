@@ -104,3 +104,30 @@ export function scoutFrameAt(checked: readonly number[], cur: number, playing: b
   }
   return best;
 }
+
+/** Агент рамки для групп на проверке: ключ (id агента, иначе имя) и подпись. */
+export type AgentKey = { key: string; name: string; version: number | null };
+
+/** Непроверенное на кадре по агентам: [{агент, номера рамок}], в порядке первого появления.
+ *  Рамка без известного агента (старые данные) идёт группой «агент». */
+export function agentGroups<T extends { pending?: boolean }>(list: readonly T[], agentOf: (s: T) => AgentKey | null):
+  { agent: AgentKey; idx: number[] }[] {
+  const out = new Map<string, { agent: AgentKey; idx: number[] }>();
+  list.forEach((s, i) => {
+    if (!s.pending) return;
+    const a = agentOf(s) ?? { key: "", name: "агент", version: null };
+    if (!out.has(a.key)) out.set(a.key, { agent: a, idx: [] });
+    out.get(a.key)!.idx.push(i);
+  });
+  return [...out.values()];
+}
+
+/** «Принять всё от …»: снять проверку только с рамок одного агента. */
+export function confirmWhere<T extends Reviewable>(list: readonly T[], pick: (s: T) => boolean): T[] {
+  return list.map((s) => (s.pending && pick(s) ? { ...s, pending: false } : s));
+}
+
+/** «Отклонить всё от …»: непроверенное одного агента уходит с кадра. */
+export function rejectWhere<T extends Reviewable>(list: readonly T[], pick: (s: T) => boolean): T[] {
+  return list.filter((s) => !(s.pending && pick(s)));
+}

@@ -8,7 +8,8 @@ import type { CanvasShape } from "../mag/BoxCanvas";
 import { exportCount, fmtFrameTime, frameToMs, trackEnd } from "../mag/trackMath";
 import { NumInput } from "../NumInput";
 import { count, ru } from "../ru";
-import { PRESENCE_TEXT, SPEEDS, itemKey, presenceAt, speedText } from "./video";
+import { agentGroups } from "./review";
+import { PRESENCE_TEXT, SPEEDS, itemKey, presenceAt, singleAgent, speedText } from "./video";
 import type { Item } from "./video";
 
 type Label = (ci: number) => { name: string; color: string };
@@ -18,7 +19,7 @@ export interface SideGhost { name: string; color: string; conf: number; class_in
 
 export function HereSide({ items, shapes, frame, numbers, labelOf, classes, selected, hidden, frozen,
   ghosts = [], ghostOn = null, onGhost, onTake,
-  onSelect, onHide, onClass, onDelete, onToTrack, onPatch, onConfirm }: {
+  onSelect, onHide, onHideMany, onClass, onDelete, onToTrack, onPatch, onConfirm }: {
   items: Item[];
   shapes: CanvasShape[];
   frame: number;
@@ -30,6 +31,8 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
   frozen: boolean;
   onSelect: (i: number | null) => void;
   onHide: (key: string) => void;
+  /** Скрыть или показать разом — рамки одного агента. */
+  onHideMany: (keys: string[], off: boolean) => void;
   onClass: (i: number, ci: number) => void;
   onDelete: (i: number) => void;
   onToTrack: (i: number) => void;
@@ -49,6 +52,8 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
   }));
   // Непроверенное агента — своей группой сверху, как в редакторе кадров
   const agent = items.map((_, i) => i).filter((i) => shapes[i]?.pending);
+  // Внутри — по агентам: на кадре их может быть несколько.
+  const groups = agentGroups(items.map((it, i) => ({ pending: shapes[i]?.pending, it })), (x) => singleAgent(x.it));
   const own = items.map((_, i) => i).filter((i) => !shapes[i]?.pending);
   const row = (i: number) => {
     const it = items[i];
@@ -98,7 +103,7 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
                 {sh?.pending && !frozen && (
                   <div className="row fe-confirm">
                     <span className="t-xs t-faint grow">Правка рамки — тоже проверка.</span>
-                    <Button size="sm" variant="agent" icon="tick" onClick={() => onConfirm(i)}>Подтвердить</Button>
+                    <Button size="sm" variant="agent" icon="tick" onClick={() => onConfirm(i)}>Принять</Button>
                   </div>
                 )}
                 {!frozen && (
@@ -125,7 +130,22 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
             <span className="row"><Icon name="bot" size={13} />Агент · на проверке</span>
             <span className="ui-mono">{agent.length}</span>
           </div>
-          <div className="fe-list">{agent.map(row)}</div>
+          {groups.map(({ agent: a, idx }) => {
+            const keys = idx.map((i) => itemKey(items[i]));
+            const off = keys.every((k) => hidden.has(k));
+            return (
+              <div key={a.key} className="fe-agent-g">
+                <div className="fe-agent-h">
+                  <span className="t-ell grow">{a.name}{a.version != null && <span className="ui-mono t-faint"> v{a.version}</span>}</span>
+                  <span className="ui-mono">{idx.length}</span>
+                  <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
+                    aria-label={`${off ? "Показать" : "Скрыть"} рамки ${a.name} на кадре`}
+                    onClick={() => onHideMany(keys, !off)} />
+                </div>
+                <div className="fe-list">{idx.map(row)}</div>
+              </div>
+            );
+          })}
         </section>
       )}
       {ghosts.length > 0 && (

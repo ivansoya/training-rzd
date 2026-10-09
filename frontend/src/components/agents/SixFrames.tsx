@@ -50,7 +50,7 @@ export default function SixFrames({ open, onClose, graphId, doc, project, colorO
           <Switch id="ae-six-human" checked={human} onChange={(v) => { setHuman(v); keep("agent-preview-human", v); }} />
           <span>Разметка человека</span>
         </label>
-        {got && <span className="t-xs t-faint">{got.device === "cuda" ? "на карте" : "на процессоре"} · {got.ms} мс{got.note ? ` — ${got.note}` : ""}</span>}
+        {got && <span className="t-xs t-faint">{got.sequential ? "на карте поочерёдно" : "на карте"} · {got.ms} мс</span>}
         <span className="grow" />
         <Button icon="refresh" disabled={!got && !error} onClick={() => setRound((r) => r + 1)}>Ещё 6 кадров</Button>
         <Button variant="primary" onClick={onClose}>Готово</Button>

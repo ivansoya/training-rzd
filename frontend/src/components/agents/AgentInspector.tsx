@@ -11,12 +11,15 @@ import { Badge, Button, Empty, Field, Icon, Popover, Seg, Select, Switch } from 
 import { NumInput } from "../NumInput";
 import {
   LIMITS, MAX_PASSES, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, TILE_OVERLAP, TITLES, frameCalls, inputSide, mergeInputs,
-  offLimits, promptsOf, rowsOf, sam3Side, switchTextModel, textConfDefault, textModel, tileSide, viewCount,
+  isExamples, offLimits, promptsOf, rowTarget, rowsOf, SAM3_WORDS, sam3DefaultWords, sam3Mb, sam3Side, sam3Words, switchTextModel,
+  textConfDefault,
+  textModel, tileSide, viewCount,
   type AgentClass, type FilterRow,
 } from "./agentDoc";
 import { agentTitle, type AgentNodeData } from "./AgentNodes";
 import ClassCards from "./ClassCards";
 import { ClassList, FilterClasses, NetClasses } from "./ClassTables";
+import { gb } from "./GpuVerdict";
 import { decimal, iconOf, roleOf, toneOf } from "./look";
 
 const num = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
@@ -42,7 +45,7 @@ const SIDES = [
 
 export default function AgentInspector({ node, readOnly, weights, sam3Ready, sets, goneSets, onSet, classes, ensure, ensureRef, projects,
   onClasses, incoming, loose, onChange, onPickWeights, onRemove, pinned, onPin, frame, previewImage, msPerCall, hits, expanded, onExpand,
-  summary }: {
+  summary, est }: {
   node: Node | null;
   readOnly: boolean;
   weights?: api.Weights;
@@ -81,6 +84,8 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   /** Узел развёрнут на всё окно. */
   expanded: boolean;
   onExpand: () => void;
+  /** Оценка памяти агента (сервер): память узла и порция «Авто» у SAM 3. */
+  est?: api.Estimate | null;
 }) {
   const [fine, setFine] = useState(false);
   if (!node) {
@@ -99,6 +104,27 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   const sam3 = d.kind === "text" && model === "sam3";
   const sam3Missing = sam3 && sam3Ready === false;
   const fixed = d.kind === "frame" || d.kind === "output";
+  const nodeMb = est?.nodes[node.id];
+  const heaviest = Boolean(est?.heaviest?.nodes.includes(node.id) && (est?.units.length ?? 0) > 1);
+  const words = d.kind === "text" ? promptsOf({ params: p }).filter((r) => r.on && !isExamples(r) && rowTarget(r) && r.cls).length : 0;
+  const autoWords = est?.words[node.id] ?? sam3DefaultWords(p);
+  // Цена порции: память агента целиком, если узел возьмёт её, и проходы описаний на вид кадра.
+  const wordsOption = (per: number) => {
+    const mb = sam3Mb(p, Math.min(per, words));
+    const total = est && nodeMb !== undefined ? est.estimate_mb - nodeMb + mb : mb;
+    const passes = Math.max(1, Math.ceil(words / per));
+    return `≈ ${gb(total)} ГБ · ${passes} ${plural(passes, "проход", "прохода", "проходов")}`;
+  };
+  const memoryRow = nodeMb !== undefined && (
+    <div className="ae-panel-row">
+      <span className="ae-panel-l">Память узла</span>
+      <span className="ae-panel-v t-ell">
+        <b className={heaviest ? "ae-heavy" : undefined} title={heaviest ? "Самый тяжёлый узел агента" : undefined}>≈ {gb(nodeMb)} ГБ</b>
+        {sam3 ? ` · SAM 3 на входе ${sam3Side(p)}` : ""}
+        {sam3 && words > 0 ? `, ${Math.min(autoWords, words)} ${plural(Math.min(autoWords, words), "слово", "слова", "слов")} за проход` : ""}
+      </span>
+    </div>
+  );
 
   // Пустое необязательное поле — «без предела», поэтому null, а не умолчание.
   const number = (key: string, label: string, value: number | undefined, step: number, empty?: boolean, aside?: ReactNode): ReactNode => {
@@ -256,7 +282,25 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
                   </Field>
                 ) : number("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
                 {number("conf", "Порог узла", num(p.conf, textConfDefault(model)), 0.05)}
+                {/* У SAM 3 всегда: без описаний поле видно, но выключено — порцию нечем делить */}
+                {sam3 && (
+                  <Field label="Слов за проход" aside={words > 0 ? wordsOption(sam3Words(p) ?? autoWords) : undefined}
+                    hint={words > 0 ? undefined : "Нет включённых описаний — делить нечего"}>
+                    {(id) => (
+                      <Select size="sm" id={id} label="Слов за проход" value={String(sam3Words(p) ?? "auto")} disabled={readOnly || words === 0}
+                        onChange={(v) => onChange({ words: v === "auto" ? null : Number(v) })}
+                        options={[
+                          { value: "auto", label: `Авто · ${autoWords}`, hint: `${wordsOption(autoWords)} — самая крупная порция, что влезает в карту` },
+                          ...SAM3_WORDS.map((w) => ({
+                            value: String(w), label: String(w),
+                            hint: `${wordsOption(w)}${w === 1 ? " — меньше всего памяти, дольше всего" : w === sam3DefaultWords(p) ? ` — умолчание для входа ${sam3Side(p)}` : w >= words ? ` — все ${words} разом` : ""}`,
+                          })),
+                        ]} />
+                    )}
+                  </Field>
+                )}
               </div>
+              {memoryRow}
               {sam3 && (
                 <div className="ae-panel-row">
                   <span className="ae-panel-l">Контур</span>
@@ -295,6 +339,12 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
 
       {!fixed && d.kind !== "text" && (
         <div className="ge-params">
+          {nodeMb !== undefined && (d.kind === "net" || d.kind === "sam") && (
+            <div className="ae-w">
+              <b>Память узла <span className={heaviest ? "ae-heavy" : undefined} title={heaviest ? "Самый тяжёлый узел агента" : undefined}>≈ {gb(nodeMb)} ГБ</span></b>
+              <span>{d.kind === "sam" ? "все модели уточнения грузятся вместе" : "прикидка, по замеру диспетчер поправит"}</span>
+            </div>
+          )}
           {d.kind === "net" && (
             <>
               <div className="ae-w">

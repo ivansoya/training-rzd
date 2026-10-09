@@ -90,8 +90,74 @@ export interface TaskVideoRow {
   frames: number | null;
 }
 
+// --- влезет ли агент на карту (решения 09.10.2026) --------------------------
+
+export type VerdictState = "fits" | "wait" | "sequential" | "never";
+
+/** Вердикт сервера: `want_mb` — сколько просить (поочерёдно — самый тяжёлый блок),
+ *  `card` — где влезает сейчас, `reason` — готовая к показу строка. */
+export interface Verdict {
+  state: VerdictState;
+  want_mb: number;
+  card: string | null;
+  reason: string;
+}
+
+/** Карта без держателей — видит каждый (`gpu.cards`). */
+export interface GpuCard {
+  id: string;
+  index: number;
+  name: string;
+  cap_mb: number;
+  free_mb: number;
+}
+
+/** Блок памяти: модели, которые прогон держит одновременно. Узлы SAM 3 на одном
+ *  входе — один блок (одна модель), «Уточнение SAM» — один блок на все модели. */
+export interface MemUnit {
+  key: string;
+  kind: "net" | "yoloe" | "sam3" | "sam";
+  label: string;
+  mb: number;
+  nodes: string[];
+}
+
+export interface Estimate {
+  verdict: Verdict;
+  /** Нужно целиком: замер, если был, иначе прикидка. */
+  total_mb: number;
+  estimate_mb: number;
+  /** Сколько запусков в замере; 0 — число по прикидке. */
+  measured: number;
+  units: MemUnit[];
+  heaviest: MemUnit | null;
+  /** Память каждого узла и выбранная «Авто» порция слов SAM 3. */
+  nodes: Record<string, number>;
+  words: Record<string, number>;
+  cards: GpuCard[];
+  queued: number;
+}
+
+export const estimateAgent = (
+  body: { graph_id?: string; doc: unknown; mode?: RunMode },
+  signal?: AbortSignal
+) => post<Estimate>("agents/estimate", body, signal);
+
+export interface RunAgent {
+  id: string;
+  name: string;
+  head: string;
+  versions: AgentVersion[];
+  /** «project» — подключён к проекту, «mine» — свой, не подключённый. */
+  group: "project" | "mine";
+  mine: boolean;
+  owner: string | null;
+  verdict: Verdict;
+}
+
 export interface RunContext {
-  agents: { id: string; name: string; head: string; versions: AgentVersion[] }[];
+  agents: RunAgent[];
+  resources: { cards: GpuCard[]; queued: number };
   videos: TaskVideoRow[];
   classes: { id: string; class_index: number; name: string; color: string }[];
   /** Сопоставление, запомненное на пару «агент + проект». */
@@ -229,9 +295,10 @@ export interface AgentPreview {
   human: HumanShape[];
   /** Вход и выход каждого узла; `ms` — сколько узел считал. */
   nodes: Record<string, { in: PreviewDet[]; out: PreviewDet[]; ms?: number }>;
-  device: "cuda" | "cpu";
-  /** Почему на процессоре: чем занята карта. */
-  note: string | null;
+  /** Агенты считают только на карте: процессора нет с 09.10.2026. */
+  device: "cuda";
+  /** Целиком не влезает — модели грузились по очереди, медленнее. */
+  sequential?: boolean;
   ms: number;
 }
 
@@ -276,8 +343,8 @@ export const runPreview = (
 /** «Выход» агента на нескольких случайных кадрах — один прогон моделей на сервере. */
 export interface PreviewFrames {
   frames: { image: AgentPreview["image"]; human: HumanShape[]; out: PreviewDet[] }[];
-  device: "cuda" | "cpu";
-  note: string | null;
+  device: "cuda";
+  sequential?: boolean;
   ms: number;
 }
 

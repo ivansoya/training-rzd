@@ -16,7 +16,7 @@ import {
 import * as aug from "../../api/aug";
 import * as api from "../../api/agents";
 import type { GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
-import { Badge, Button, Icon, LinkButton, MenuItem, Notice, Select, cx } from "../../ui";
+import { Badge, Button, Icon, LinkButton, MenuItem, Notice, Popover, Select, cx } from "../../ui";
 import { hasLayer } from "../../ui/useEscape";
 import { ago, count } from "../ru";
 import { edgeKey, findCycle } from "../aug/counts";
@@ -34,6 +34,7 @@ import AgentClasses from "./AgentClasses";
 import AgentFound from "./AgentFound";
 import AgentInspector from "./AgentInspector";
 import AgentSummary from "./AgentSummary";
+import { ResourcesPanel, VerdictChip, useEstimate } from "./GpuVerdict";
 import { classStats, nodeStats, type SummaryNode } from "./summary";
 import { judge, reachable } from "./verdict";
 import { agentNodeTypes, agentTitle, type AgentNodeData } from "./AgentNodes";
@@ -420,6 +421,8 @@ function Editor() {
   }, [setNodes]);
 
   const preview = useAgentPreview(graphId ?? "", draft, Boolean(graph?.mine), six);
+  // Влезет ли агент на карту — пересчёт на каждую правку, как превью.
+  const { est, busy: estimating } = useEstimate(graphId, draft, Boolean(graph));
   const trace = preview.result?.nodes ?? null;
   const flaw = unfinished(draft);
   const frame = preview.project?.frame ?? null;
@@ -807,7 +810,7 @@ function Editor() {
     return (
       <AgentSummary nodes={stats} classes={classStats(used, output && trace ? trace[output.id]?.out ?? null : null, titleOf)}
         frame={img ? { w: img.width, h: img.height, name: img.file_name } : null} worst={worst}
-        device={preview.result?.device ?? null} onClasses={() => setClassesOpen(true)} onNode={(id) => setSelected(id)} />
+        sequential={Boolean(preview.result?.sequential)} onClasses={() => setClassesOpen(true)} onNode={(id) => setSelected(id)} />
     );
   })();
 
@@ -901,6 +904,11 @@ function Editor() {
           ]} />
         <Button size="sm" icon="images" disabled={!graph?.mine || Boolean(flaw) || !preview.project} onClick={() => setSix(true)}
           title={flaw ?? (!preview.project ? "Нет проекта с кадрами" : "«Выход» агента на шести случайных кадрах")}>Превью на 6 кадрах</Button>
+        {est ? (
+          <Popover align="end" width={460} trigger={<VerdictChip est={est} busy={estimating} button compact="word" />}>
+            <ResourcesPanel est={est} />
+          </Popover>
+        ) : <VerdictChip est={null} busy={estimating} />}
         <Button size="sm" variant="primary" icon="save" disabled={busy || readOnly || Boolean(flaw)} onClick={save}
           title={flaw ? `Сперва доделайте агента: ${flaw}` : "Создать новую версию — её запускают в тасках"}>Сохранить версию {nextVersion}</Button>
       </header>
@@ -1028,6 +1036,7 @@ function Editor() {
               onPickWeights={() => current && setPicking(current.id)}
               onRemove={() => current && removeNode(current.id)}
               pinned={Boolean(current) && current?.id === eyeOn}
+              est={est}
               onPin={() => current && togglePin(current.id)}
               frame={frame}
               previewImage={preview.result?.image ?? null}

@@ -34,7 +34,7 @@ import { scoutStats } from "../../api/agents";
 import type { RunView, ScoutStats } from "../../api/agents";
 import { pollJob } from "../../api/jobs";
 import { Badge, Button, Notice, hasLayer } from "../../ui";
-import BoxCanvas from "./BoxCanvas";
+import BoxCanvas, { fmtConf } from "./BoxCanvas";
 import { useLive } from "../../live/LiveProvider";
 import type { CanvasGhost, CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
 import * as poly from "./polygon";
@@ -64,9 +64,9 @@ import type { LaneAction } from "../editor/Lanes";
 import { HereSide, Transport } from "../editor/VideoPanels";
 import { ReviewBar, ScoutBar } from "../editor/ReviewBars";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
-import { isTaken, nextFrame, scoutFrameAt, settlePending } from "../editor/review";
+import { agentGroups, isTaken, nextFrame, scoutFrameAt, settlePending } from "../editor/review";
 import {
-  DOCK_DEFAULT, clampDock, coveredSpans, itemKey, seekToTrack, singleTicks, trackNumbers,
+  DOCK_DEFAULT, clampDock, coveredSpans, itemKey, seekToTrack, singleAgent, singleTicks, trackNumbers,
 } from "../editor/video";
 import type { Item } from "../editor/video";
 
@@ -775,26 +775,26 @@ export default function VideoAnnotator({
   const pendingHere = (draft ?? boxes).filter((b) => b.pending).length;
 
   /** Список одиночных кадра для записи: как его видит холст, с поправкой `change`. */
-  const singlesOf = useCallback((was: Sent, keepIt: (s: CanvasShape) => CanvasShape | null) => {
+  const singlesOf = useCallback((was: Sent, keepIt: (s: CanvasShape, item?: Local) => CanvasShape | null) => {
     const list: SingleWire[] = [];
     was.shapes.forEach((box, i) => {
       const item = was.items[i];
       if (item.kind !== "single" && item.kind !== "new-single") return;
-      const got = keepIt(box);
+      const got = keepIt(box, item);
       if (got) list.push(wireOf(got, item.kind === "single" ? item.box.id : undefined));
     });
     return list;
   }, []);
 
   /** Записать одиночные кадра целиком и перечитать — подтверждение и отклонение. */
-  const rewrite = useCallback((keepIt: (s: CanvasShape) => CanvasShape | null) => {
+  const rewrite = useCallback((keepIt: (s: CanvasShape, item?: Local) => CanvasShape | null) => {
     flushDraft();
     const was = sentOf(frame);
     if (!was || frozen) return false;
     const list = singlesOf(was, keepIt);
     const at = frame;
     sent.current = null;
-    setDraft(was.shapes.flatMap((s) => { const g = keepIt(s); return g ? [g] : []; }));
+    setDraft(was.shapes.flatMap((s, i) => { const g = keepIt(s, was.items[i]); return g ? [g] : []; }));
     guard(async () => {
       await saveFrameBoxes(taskId, video.id, at, list);
       await load();
@@ -810,6 +810,18 @@ export default function VideoAnnotator({
     const to = nextFrame(agentFrames.filter((f) => f !== frame), frame, 1);
     if (to !== null) { stop(); setFrame(to); }
   }, [pendingHere, rewrite, pick, agentFrames, frame, stop]);
+
+  /** «Принять всё от …» / «Отклонить всё от …»: рамки одного агента, когда их на кадре несколько. */
+  const ofAgent = (key: string) => (item?: Local) => singleAgent(item)?.key === key;
+  const confirmAgent = useCallback((key: string) => {
+    rewrite((s, item) => (s.pending && ofAgent(key)(item) ? { ...s, pending: false } : s));
+  }, [rewrite]);
+  const rejectAgent = useCallback((key: string) => {
+    if (rewrite((s, item) => (s.pending && ofAgent(key)(item) ? null : s))) pick(null);
+  }, [rewrite, pick]);
+  const agentsHere = useMemo(
+    () => agentGroups(items.map((it, i) => ({ pending: boxes[i]?.pending, it })), (x) => singleAgent(x.it)),
+    [items, boxes]);
 
   /** «Отклонить все»: непроверенное агента уходит с кадра. */
   const rejectFrame = useCallback(() => {
@@ -1421,6 +1433,8 @@ export default function VideoAnnotator({
           )}
           <BoxCanvas
             ref={canvas}
+            captionOf={agentsHere.length > 1
+              ? (i) => (boxes[i]?.pending ? singleAgent(items[i])?.name : undefined) : undefined}
             imageId={`${video.id}:${frame}`}
             viewKey={video.id}
             bitmap={shown.image}
@@ -1509,6 +1523,7 @@ export default function VideoAnnotator({
                 if (b) canvas.current?.reveal(b);
               }}
               onHide={toggleHidden} onClass={recolor}
+              onHideMany={(keys, off) => keys.forEach((k) => { if (hiddenKeys.has(k) !== off) toggleHidden(k); })}
               onDelete={(i) => { const it = items[i]; if (it) dropItem(it); }}
               onToTrack={(i) => { const it = items[i]; if (it?.kind === "single") toTrack(it.box); }}
               onPatch={(t, b) => void patchTrack(t, b)}
@@ -1528,7 +1543,9 @@ export default function VideoAnnotator({
             </Float>
           )}
           {!autoPrev && !frozen && pendingHere > 0 && (
-            <ReviewBar count={pendingHere} onConfirm={confirmFrame} onReject={rejectFrame} />
+            <ReviewBar count={pendingHere} onConfirm={confirmFrame} onReject={rejectFrame}
+              agents={agentsHere.map((g) => ({ agent: g.agent, count: g.idx.length }))}
+              onConfirmAgent={confirmAgent} onRejectAgent={rejectAgent} />
           )}
           {!autoPrev && !frozen && !pendingHere && ghosts.length > 0 && (
             <ScoutBar count={ghosts.length} picked={ghostOn !== null}
@@ -1604,6 +1621,8 @@ export default function VideoAnnotator({
                 }
           }
           groups={objectActions(menu.i)}
+          note={menu.i !== null && items[menu.i]?.kind === "single" && singleAgent(items[menu.i])
+            ? <AgentNote item={items[menu.i]} /> : undefined}
           onClose={() => setMenu(null)}
         />
       )}
@@ -1673,4 +1692,17 @@ function same(a: CanvasShape | undefined, b: CanvasShape | undefined): boolean {
 
 function trackName(track: VideoTrack, labelOf: (ci: number) => { name: string }): string {
   return track.label || labelOf(track.class_index ?? -1).name || "объект";
+}
+
+/** «Разметил: агент X vN, уверенность …» — в меню объекта одиночной рамки агента. */
+function AgentNote({ item }: { item: Item }) {
+  if (item.kind !== "single" || !item.box.agent) return null;
+  const b = item.box;
+  return (
+    <span className="fe-who">
+      <span className="agent">Разметил: агент {b.agent!.name} v{b.agent!.version}</span>
+      {b.pending && b.conf != null && <>, уверенность {fmtConf(b.conf)}</>}
+      {!b.pending && b.reviewer && <>, принял {b.reviewer}</>}
+    </span>
+  );
 }

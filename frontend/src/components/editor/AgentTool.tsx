@@ -8,6 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../../api/agents";
 import { Button, Field, Select } from "../../ui";
 import { count } from "../ru";
+import { VERDICT } from "../agents/GpuVerdict";
 import { ToolButton, ToolMenu } from "./Chrome";
 
 const keyOf = (taskId: string) => `mag.agent.tool.${taskId}`;
@@ -71,7 +72,8 @@ export function useAgentTool(taskId: string) {
   const reason = !ctx ? "Загружаю агентов…"
     : !ctx.can_run ? "Звать агента можно в своей таске"
     : !agent || !version ? "Агентов с сохранённой версией нет"
-    : mapped === 0 ? "Классы агента не сопоставлены с проектом — откройте ▾" : null;
+    : mapped === 0 ? "Классы агента не сопоставлены с проектом — откройте ▾"
+    : version.id === agent.head && agent.verdict.state === "never" ? agent.verdict.reason : null;
 
   return { ctx, agent, version, mapped, busy, ready: !reason, reason, choose, apply, start,
     reload: () => setTick((t) => t + 1) };
@@ -102,7 +104,8 @@ export function AgentTool({ tool, disabled, onRun, onMap }: {
             <>
               <Field label="Агент">
                 {(id) => <Select id={id} full size="sm" value={agent.id} onChange={(v) => tool.choose(v)}
-                  options={ctx.agents.map((a) => ({ value: a.id, label: a.name }))} />}
+                  options={ctx.agents.map((a) => ({ value: a.id, label: a.name,
+                    hint: `${a.group === "project" ? "подключён к проекту" : "мой"} · ${VERDICT[a.verdict.state].word}` }))} />}
               </Field>
               <Field label="Версия">
                 {(id) => <Select id={id} full size="sm" value={version.id} onChange={(v) => tool.choose(agent.id, v)}

@@ -179,8 +179,7 @@ export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, c
           <div className="ae-pv-nav">{nav()}</div>
           <p className="t-xs t-faint">
             <span className="ae-pv-file t-ell" title={frameText}>{frameText}</span>
-            {result.device === "cuda" ? "на карте" : "на процессоре"} · {result.ms} мс{project ? ` · ${project.name}` : ""}
-            {result.note ? ` — ${result.note}` : ""}
+            {result.sequential ? "на карте поочерёдно" : "на карте"} · {result.ms} мс{project ? ` · ${project.name}` : ""}
           </p>
         </>
       )}

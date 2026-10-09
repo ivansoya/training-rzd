@@ -7,24 +7,38 @@ import { fmtConf } from "../mag/BoxCanvas";
 import type { CanvasShape } from "../mag/BoxCanvas";
 import type { FrameAction } from "../mag/frameActions";
 import { statusLook } from "./look";
+import { agentGroups, type AgentKey } from "./review";
 
 type Label = (ci: number) => { name: string; color: string };
 
-/** Кто поставил рамку: человек, агент или человек после агента. */
+/** Агент рамки для групп на проверке: id агента, у старых ответов — имя. */
+export const agentKeyOf = (box?: TaskBox): AgentKey | null =>
+  box?.agent ? { key: box.agent.id ?? box.agent.name, name: box.agent.name, version: box.agent.version } : null;
+
+/** Кто поставил рамку: человек, агент (и кто его принял) или человек после агента. */
 export function Who({ box }: { box?: TaskBox }) {
   if (!box?.author && !box?.agent) return null;
-  const agent = box.agent ? `«${box.agent.name}» v${box.agent.version}` : "";
+  const agent = box.agent ? `${box.agent.name} v${box.agent.version}` : "";
+  if (box.agent && box.source === "model") {
+    return (
+      <span className="fe-who">
+        <span className="agent">Разметил: агент {agent}</span>
+        {box.pending && box.conf != null && <>, уверенность {fmtConf(box.conf)}</>}
+        {box.author && <><br />запустил {box.author}</>}
+        {!box.pending && box.reviewer && <>, принял {box.reviewer}</>}
+      </span>
+    );
+  }
   return (
     <span className="fe-who">
       {box.author}
-      {box.agent && box.source === "model" && <> — <span className="agent">агент {agent}</span></>}
-      {box.agent && box.source !== "model" && <> — <span className="fix">поправлено после {agent}</span></>}
+      {box.agent && <> — <span className="fix">поправлено после агента {agent}</span></>}
     </span>
   );
 }
 
 export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selected, hidden, frozen,
-  onSelect, onHide, onClass, onDelete, onAddContour, onConfirm }: {
+  onSelect, onHide, onHideMany, onClass, onDelete, onAddContour, onConfirm }: {
   status: string;
   tags: ReactNode;
   boxes: CanvasShape[];
@@ -36,6 +50,8 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
   frozen: boolean;
   onSelect: (i: number | null) => void;
   onHide: (i: number) => void;
+  /** Скрыть или показать разом — рамки одного агента. */
+  onHideMany: (idx: number[], off: boolean) => void;
   onClass: (i: number, ci: number) => void;
   onDelete: (i: number) => void;
   onAddContour: (i: number) => void;
@@ -47,8 +63,10 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
     value: String(c.class_index),
     label: <span className="row"><Swatch color={c.color} />{c.name}</span>,
   }));
-  // Непроверенное агента — своей группой сверху: его надо пройти глазами первым.
+  // Непроверенное агента — своей группой сверху: его надо пройти глазами первым,
+  // а внутри — по агентам: на кадре их может быть несколько (решение 09.10.2026).
   const agent = boxes.map((_, i) => i).filter((i) => boxes[i].pending);
+  const groups = agentGroups(boxes, (b) => agentKeyOf(meta.get(b.id ?? "")));
   const own = boxes.map((_, i) => i).filter((i) => !boxes[i].pending);
   const row = (i: number) => {
     const b = boxes[i];
@@ -83,7 +101,7 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
             {b.pending && !frozen && (
               <div className="row fe-confirm">
                 <span className="t-xs t-faint grow">Правка рамки — тоже проверка.</span>
-                <Button size="sm" variant="agent" icon="tick" onClick={() => onConfirm(i)}>Подтвердить</Button>
+                <Button size="sm" variant="agent" icon="tick" onClick={() => onConfirm(i)}>Принять</Button>
               </div>
             )}
             {!frozen && (
@@ -112,7 +130,21 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
             <span className="row"><Icon name="bot" size={13} />Агент · на проверке</span>
             <span className="ui-mono">{agent.length}</span>
           </div>
-          <div className="fe-list">{agent.map(row)}</div>
+          {groups.map(({ agent: a, idx }) => {
+            const off = idx.every((i) => hidden.has(i));
+            return (
+              <div key={a.key} className="fe-agent-g">
+                <div className="fe-agent-h">
+                  <span className="t-ell grow">{a.name}{a.version != null && <span className="ui-mono t-faint"> v{a.version}</span>}</span>
+                  <span className="ui-mono">{idx.length}</span>
+                  <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
+                    aria-label={`${off ? "Показать" : "Скрыть"} рамки ${a.name} на кадре`}
+                    onClick={() => onHideMany(idx, !off)} />
+                </div>
+                <div className="fe-list">{idx.map(row)}</div>
+              </div>
+            );
+          })}
         </section>
       )}
       {/* Пустая секция под группой агента — лишняя строка «0» */}

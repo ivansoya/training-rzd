@@ -1110,6 +1110,16 @@ def _examples_row(db, user, set_id):
     return row if row is not None and row.owner_id == user.id else None
 
 
+def _shared_owners(db, user):
+    """Владельцы агентов, подключённых к проектам человека: их наборы образцов он видит
+    на чтение — иначе карточки классов чужого агента в общем проекте пустые."""
+    mine = select(ProjectMember.project_id).where(ProjectMember.user_id == user.id)
+    return {user.id} | set(db.execute(
+        select(AugGraph.owner_id).join(ProjectAugGraph, ProjectAugGraph.graph_id == AugGraph.id)
+        .where(AugGraph.kind == "agent", ProjectAugGraph.project_id.in_(mine), AugGraph.owner_id.isnot(None))
+    ).scalars())
+
+
 def _wait_examples(db, row):
     """Сборку делает воркер: ждём ответа в той же строке, как превью."""
     db.execute(text(f"NOTIFY {examples_lib.CHANNEL}"))
@@ -1421,7 +1431,7 @@ def list_examples():
     try:
         ids = [i for i in (_uuid(x) for x in (request.args.get("ids") or "").split(",")) if i]
         rows = db.execute(select(AgentExamples).where(
-            AgentExamples.owner_id == user.id, AgentExamples.id.in_(ids))).scalars() if ids else []
+            AgentExamples.owner_id.in_(_shared_owners(db, user)), AgentExamples.id.in_(ids))).scalars() if ids else []
         return jsonify({"sets": [examples_lib.view(r) for r in rows]})
     finally:
         db.close()
@@ -1433,8 +1443,8 @@ def example_crop(set_id, uid):
     if err:
         return err
     try:
-        row = _examples_row(db, user, set_id)
-        if row is None or not any(it["uid"] == uid for it in row.items):
+        row = db.get(AgentExamples, _uuid(set_id))
+        if row is None or row.owner_id not in _shared_owners(db, user) or not any(it["uid"] == uid for it in row.items):
             return jsonify({"error": "Образца нет."}), 404
         # Набор неизменяем — вырезку браузер может держать в кеше сколько угодно.
         return send_file(os.path.join(config.DATA_DIR, row.dir, f"{uid}.jpg"),

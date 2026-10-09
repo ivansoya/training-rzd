@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { LabelClass } from "../../auth/api";
 import { Icon, Swatch, useEscape } from "../../ui";
 import type { IconName } from "../../ui";
@@ -19,7 +19,7 @@ export interface MenuAction {
  *  группами, удаление последним. Список классов не занимает меню целиком — его
  *  открывают, только когда класс и правда хотят сменить. */
 export default function ObjectMenu({
-  at, classes, current, classLabel, classHint, onPick, groups, onDelete, deleteLabel, onClose,
+  at, classes, current, classLabel, classHint, onPick, groups, onDelete, deleteLabel, onClose, note,
 }: {
   at: { x: number; y: number };
   classes: LabelClass[];
@@ -32,6 +32,8 @@ export default function ObjectMenu({
   onDelete?: () => void;
   deleteLabel?: string;
   onClose: () => void;
+  /** Откуда объект: «Разметил: агент X vN, уверенность 0,82 · запустил …». */
+  note?: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const fly = useRef<HTMLDivElement>(null);
@@ -94,6 +96,7 @@ export default function ObjectMenu({
           </span>
           <Icon name="chevR" size={14} />
         </button>
+        {note && <div className="ed-omenu-note">{note}</div>}
         {actions.map((group, g) => (
           <div key={g} className="ed-omenu-g">
             <div className="ui-pop-sep" />

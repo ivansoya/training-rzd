@@ -335,8 +335,18 @@ export const SAM3_SIDE: Sam3Side = 644;
 export const SAM3_NEW_SIDE: Sam3Side = 1008;
 export const sam3Side = (p: Record<string, unknown>): Sam3Side =>
   SAM3_SIDES.includes(p.side as Sam3Side) ? (p.side as Sam3Side) : SAM3_SIDE;
-/** Слов за вызов SAM 3 — как sam3_words_per_call: на 1008 память растёт с каждым словом. */
-export const sam3WordsPerCall = (p: Record<string, unknown>) => (sam3Side(p) === 1008 ? 4 : 16);
+/** «Слов за проход» у SAM 3 — как agent_graph.SAM3_WORDS; пусто — «Авто». */
+export const SAM3_WORDS = [1, 2, 4, 8, 16] as const;
+export const sam3Words = (p: Record<string, unknown>): number | null =>
+  SAM3_WORDS.includes(p.words as (typeof SAM3_WORDS)[number]) ? (p.words as number) : null;
+/** Умолчание «Авто» без карты: на 1008 по 4 слова, на 644 все разом (до 16). */
+export const sam3DefaultWords = (p: Record<string, unknown>) => (sam3Side(p) === 1008 ? 4 : 16);
+/** Слов за вызов — как sam3_words_per_call; `auto` — порция «Авто», выбранная сервером под карту. */
+export const sam3WordsPerCall = (p: Record<string, unknown>, auto?: number) =>
+  sam3Words(p) ?? auto ?? sam3DefaultWords(p);
+/** Память SAM 3 при `atOnce` промтах в вызове — как agent_graph.sam3_mb (база + цена слова). */
+export const sam3Mb = (p: Record<string, unknown>, atOnce: number) =>
+  sam3Side(p) === 1008 ? 3600 + 850 * Math.max(1, atOnce) : 3000 + 150 * Math.max(1, atOnce);
 
 const fin = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 

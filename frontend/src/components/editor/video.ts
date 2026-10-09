@@ -10,6 +10,13 @@ export type Item =
   | { kind: "single"; box: VideoSingleBox };
 
 /** Ключ для глаза: трек гаснет на всём ролике, одиночная — на своём кадре. */
+/** Агент одиночной рамки ролика — для групп на проверке; у трека агента нет. */
+export function singleAgent(item?: { kind: string }): { key: string; name: string; version: number | null } | null {
+  if (item?.kind !== "single" || !(item as Extract<Item, { kind: "single" }>).box.agent) return null;
+  const a = (item as Extract<Item, { kind: "single" }>).box.agent!;
+  return { key: a.id ?? a.name, name: a.name, version: a.version };
+}
+
 export const itemKey = (it: Item) => (it.kind === "track" ? `t:${it.track.id}` : `s:${it.box.id}`);
 
 /** Склеить отрезки кадров [от, до] включительно; соседние кадры — один отрезок. */
