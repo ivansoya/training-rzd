@@ -13,7 +13,7 @@ import os
 import random
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from flask import Blueprint, Response, jsonify, request, send_file
@@ -21,14 +21,17 @@ from sqlalchemy import func, select, text
 from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
 
-from common import agent_graph, attribution, config, frame_sizes, live, shapes, task_frames
+from common import (
+    agent_access, agent_graph, agent_memory, attribution, config, frame_sizes, gpu, live, shapes,
+    task_frames,
+)
 from common import scout as scout_lib
-from common.auth import current_user, has_role, role_in
+from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
-    AgentClassMap, AgentExamples, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph,
-    AugGraphVersion, Dataset, Image, LabelClass, Project, ProjectMember, Task, TaskVideo, TrainRun,
-    User, VideoScout, utcnow,
+    AgentApply, AgentClassMap, AgentExamples, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph,
+    AugGraphVersion, Dataset, GpuDevice, GpuLease, GpuUsageHint, Image, LabelClass, Project, ProjectAugGraph,
+    ProjectMember, Task, TaskVideo, TrainRun, User, VideoScout, utcnow,
 )
 from common.web import int_field, json_body, public_error
 from common import agent_examples as ax
@@ -436,9 +439,15 @@ def run_context(task_id):
         if err:
             return err
         agents = []
+        cards = gpu.cards(db)
+        # Две группы (решение 09.10.2026): подключённые к проекту — все, и свои
+        # неподключённые. Свой агент к проекту сам не подключается.
+        linked = set(db.execute(select(ProjectAugGraph.graph_id).where(
+            ProjectAugGraph.project_id == project.id)).scalars())
+        owners = {}
         for graph in db.execute(
-            select(AugGraph).where(AugGraph.owner_id == user.id, AugGraph.kind == "agent",
-                                   AugGraph.archived_at.is_(None))
+            select(AugGraph).where(AugGraph.kind == "agent", AugGraph.archived_at.is_(None),
+                                   (AugGraph.owner_id == user.id) | AugGraph.id.in_(linked or {None}))
             .order_by(AugGraph.name)
         ).scalars():
             versions = db.execute(
@@ -447,9 +456,17 @@ def run_context(task_id):
             ).scalars().all()
             if not versions:
                 continue
+            head = next((v for v in versions if v.id == graph.head_version_id), versions[0])
+            if graph.owner_id and graph.owner_id not in owners:
+                got = db.get(User, graph.owner_id)
+                owners[graph.owner_id] = got.display_name if got else None
             agents.append({
                 "id": str(graph.id), "name": graph.name,
-                "head": str(graph.head_version_id) if graph.head_version_id else str(versions[0].id),
+                "group": "project" if graph.id in linked else "mine",
+                "mine": graph.owner_id == user.id,
+                "owner": owners.get(graph.owner_id),
+                "verdict": _verdict(db, head.doc, cards=cards)["verdict"],
+                "head": str(head.id),
                 "versions": [
                     {"id": str(v.id), "version": v.version,
                      "classes": _version_classes(db, v, project),
@@ -490,6 +507,7 @@ def run_context(task_id):
             "sources": _source_counts(db, task),
             "runs": [_run_view(db, r) for r in runs],
             "can_run": _may_work(db, user, task, project) and task.status != "closed",
+            "resources": {"cards": cards, "queued": gpu.queued_count(db)},
         })
     finally:
         db.close()
@@ -510,7 +528,7 @@ def start_agent_run(task_id):
             return jsonify({"error": "Запускать агента можно в своей таске."}), 403
         data = request.get_json(silent=True) or {}
         graph = db.get(AugGraph, _uuid(data.get("graph_id")))
-        if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
+        if not agent_access.may_use(db, user, graph, project):
             return jsonify({"error": "Агент не найден."}), 404
         version = db.get(AugGraphVersion, _uuid(data.get("version_id")))
         if version is None or version.graph_id != graph.id:
@@ -565,13 +583,16 @@ def start_agent_run(task_id):
             return jsonify({"error": "Ни один класс агента не сопоставлен с классом проекта."}), 400
 
         # Потолок тайлов сверяется на кадрах этого проекта: при сохранении
-        # версии их могло ещё не быть.
-        shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars().all()
+        # версии их могло ещё не быть. Полка — владельца агента.
+        shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)).scalars().all()
         try:
             agent_graph.check(agent_graph.prepare(version.doc), clamp=True, frame=frame_sizes.largest(db, [project.id]),
                               inputs={str(w.id): w.imgsz for w in shelf})
         except agent_graph.AgentGraphError as exc:
             return jsonify({"error": str(exc)}), 400
+        verdict = _verdict(db, version.doc, scout=mode == "scout")["verdict"]
+        if verdict["state"] == agent_memory.NEVER:
+            return jsonify({"error": verdict["reason"], "verdict": verdict}), 409
 
         total = None
         if mode == "frames":
@@ -715,20 +736,28 @@ def _preview_frame(db, project, image_id, step):
 def _preview_input(db, user, data):
     """Агент, черновик и проект превью. Возвращает (doc, project, ошибка)."""
     graph = db.get(AugGraph, _uuid(data.get("graph_id")))
-    if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
+    # Чужой агент из общего проекта смотрится только на чтение — но превью ему можно:
+    # оно ничего не пишет. Полка весов и образцов — владельца.
+    if not agent_access.may_view(db, user, graph):
         return None, None, (jsonify({"error": "Агент не найден."}), 404)
     doc = agent_graph.prepare(data.get("doc"))
     project = db.execute(select(Project).where(Project.code == data.get("project"))).scalar_one_or_none()
     if project is None or not has_role(role_in(db, user, project), "viewer"):
         return None, None, (jsonify({"error": "Проект не найден."}), 404)
-    shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars().all()
+    shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)).scalars().all()
     try:
         agent_graph.check(doc, weights={str(w.id): len(w.names or []) for w in shelf}, sam3=config.sam3_ready(),
-                          examples=examples_lib.readiness(db, user.id, doc),
+                          examples=examples_lib.readiness(db, graph.owner_id, doc),
                           frame=frame_sizes.largest(db, [project.id]), inputs={str(w.id): w.imgsz for w in shelf})
     except agent_graph.AgentGraphError as exc:
         return None, None, (jsonify({"error": str(exc)}), 400)
+    doc["owner"] = _owner_of(graph)
     return doc, project, None
+
+
+def _owner_of(graph):
+    """Владелец агента для воркера превью: с его полки берутся веса и образцы."""
+    return str(graph.owner_id) if graph.owner_id else None
 
 
 def _human(db, project, image):
@@ -774,6 +803,9 @@ def _not_done(row, extra=None):
     """Ответ, если воркер не посчитал; None — посчитал."""
     if row.status == "superseded":
         return jsonify({"superseded": True}), 409
+    if row.status == "waiting_gpu":
+        # Процессора нет: ждём карту, человек видит причину и может повторить.
+        return jsonify({"error": row.error, "code": "waiting_gpu", **(extra or {})}), 503
     if row.status == "queued":
         return jsonify({"error": "Воркер не ответил — он запущен?"}), 504
     if row.status == "error":
@@ -837,7 +869,8 @@ def _image_boxes(db, image):
     anns = db.execute(select(Annotation).where(Annotation.image_id == image.id)).scalars().all()
     agents = attribution.agent_names(db, {a.agent_version_id for a in anns if a.agent_version_id})
     users = {u.id: u.display_name for u in db.execute(
-        select(User).where(User.id.in_({a.created_by for a in anns if a.created_by} or {None}))).scalars()}
+        select(User).where(User.id.in_({a.created_by for a in anns if a.created_by}
+                                       | {a.reviewed_by for a in anns if a.reviewed_by} or {None}))).scalars()}
     out = []
     for a in anns:
         wire = shapes.to_wire(a.ann_type, a.geometry)
@@ -846,7 +879,8 @@ def _image_boxes(db, image):
             continue
         out.append({"id": str(a.id), **wire, "class_index": c.class_index, "name": c.name, "color": c.color,
                     "source": a.source, "pending": a.pending, "conf": (a.attributes or {}).get("conf"),
-                    "author": users.get(a.created_by), "agent": agents.get(a.agent_version_id)})
+                    "author": users.get(a.created_by), "agent": agents.get(a.agent_version_id),
+                    "reviewer": users.get(a.reviewed_by)})
     return out
 
 
@@ -864,7 +898,7 @@ def save_mapping(task_id):
             return err
         data = request.get_json(silent=True) or {}
         graph = db.get(AugGraph, _uuid(data.get("graph_id")))
-        if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
+        if not agent_access.may_use(db, user, graph, project):
             return jsonify({"error": "Агент не найден."}), 404
         raw = data.get("mapping")
         if not isinstance(raw, dict):
@@ -900,7 +934,7 @@ def apply_agent(task_id):
             return jsonify({"error": "Звать агента можно в своей таске."}), 403
         data = request.get_json(silent=True) or {}
         graph = db.get(AugGraph, _uuid(data.get("graph_id")))
-        if graph is None or graph.kind != "agent" or graph.owner_id != user.id:
+        if not agent_access.may_use(db, user, graph, project):
             return jsonify({"error": "Агент не найден."}), 404
         version = db.get(AugGraphVersion, _uuid(data.get("version_id")))
         if version is None or version.graph_id != graph.id:
@@ -928,18 +962,20 @@ def apply_agent(task_id):
                 return jsonify({"error": "frame_no: номер кадра."}), 400
             target = {"video": str(video.id), "frame": frame_no}
 
-        shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == user.id)).scalars().all()
+        shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)).scalars().all()
         doc = agent_graph.prepare(version.doc)
         try:
             agent_graph.check(doc, clamp=True, frame=frame_sizes.largest(db, [project.id]),
                               inputs={str(w.id): w.imgsz for w in shelf})
         except agent_graph.AgentGraphError as exc:
             return jsonify({"error": str(exc)}), 400
-        row = _ask_worker(db, user, image, {**doc, "apply": target})
+        row = _ask_worker(db, user, image, {**doc, "apply": target, "owner": _owner_of(graph)})
         bad = _not_done(row)
         if bad:
             return bad
         found = row.result.get("found") or []
+        db.add(AgentApply(graph_id=graph.id, project_id=project.id, user_id=user.id, boxes=len(found)))
+        db.commit()
         # Автор рамок агента — его владелец, как у прогона
         owner = SimpleNamespace(version_id=version.id, created_by=graph.owner_id)
         if image is not None:
@@ -985,7 +1021,7 @@ def agent_preview_frames():
         frames = [{"image": _frame(i), "human": _human(db, project, i), "out": outs.get(str(i.id), [])}
                   for i in images]
         return jsonify({"frames": frames, "device": row.result["device"],
-                        "note": row.result["note"], "ms": row.result["ms"]})
+                        "sequential": row.result.get("sequential"), "ms": row.result["ms"]})
     finally:
         db.close()
 
@@ -1403,5 +1439,276 @@ def example_crop(set_id, uid):
         # Набор неизменяем — вырезку браузер может держать в кеше сколько угодно.
         return send_file(os.path.join(config.DATA_DIR, row.dir, f"{uid}.jpg"),
                          mimetype="image/jpeg", max_age=86400 * 30)
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Влезет ли агент на карту (решения 09.10.2026)
+#
+# Одна функция на редактор, окно запуска, страницу агентов проекта и сам
+# прогон: число в редакторе и решение диспетчера разойтись не могут.
+# --------------------------------------------------------------------------- #
+def _verdict(db, doc, scout=False, cards=None):
+    doc = agent_graph.prepare(doc)
+    cards = gpu.cards(db) if cards is None else cards
+    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout)
+    hint = db.get(GpuUsageHint, ("agent", agent_memory.signature(doc, mem["words"], scout=scout)))
+    measured = int(hint.samples) if hint is not None and hint.samples else 0
+    total = int(hint.high_mb) if measured else mem["total_mb"]
+    return {
+        "verdict": agent_memory.verdict(total, mem["heaviest"], cards),
+        "total_mb": total, "estimate_mb": mem["total_mb"], "measured": measured,
+        "units": mem["units"], "heaviest": mem["heaviest"], "nodes": mem["nodes"], "words": mem["words"],
+    }
+
+
+@bp.post("/api/agents/estimate")
+def estimate_agent():
+    """Плашка «Ресурсы» в редакторе: вердикт, блоки памяти по узлам и карты.
+    `doc` — черновик как есть; `graph_id` — чей агент (смотреть можно и чужой)."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        data = request.get_json(silent=True) or {}
+        if data.get("graph_id"):
+            graph = db.get(AugGraph, _uuid(data["graph_id"]))
+            if not agent_access.may_view(db, user, graph):
+                return jsonify({"error": "Агент не найден."}), 404
+        doc = data.get("doc")
+        if not isinstance(doc, dict) or not isinstance(doc.get("nodes"), list):
+            return jsonify({"error": "doc: граф агента."}), 400
+        cards = gpu.cards(db)
+        return jsonify({**_verdict(db, doc, scout=data.get("mode") == "scout", cards=cards),
+                        "cards": cards, "queued": gpu.queued_count(db)})
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Агенты проекта: подключённые карточками и журнал прогонов
+# --------------------------------------------------------------------------- #
+def _project(db, user, code, needed="viewer"):
+    project = project_by_code(db, code)
+    role = role_in(db, user, project) if project is not None else None
+    if project is None or not has_role(role, "viewer"):
+        return None, None, (jsonify({"error": "Проект не найден."}), 404)
+    if not has_role(role, needed):
+        return None, None, (jsonify({"error": "Недостаточно прав в проекте."}), 403)
+    return project, role, None
+
+
+def _speed(rows):
+    """Кадров в минуту по законченным прогонам: обработано за время работы."""
+    frames = seconds = 0
+    for r in rows:
+        if r.started_at and r.finished_at and r.processed:
+            frames += r.processed
+            seconds += max(1.0, (r.finished_at - r.started_at).total_seconds())
+    return round(frames / seconds * 60, 1) if seconds else None
+
+
+def _confirmed(db, graph_id, project_id):
+    """Доля рамок агента в проекте, которую человек уже принял: (принято, всего)."""
+    versions = select(AugGraphVersion.id).where(AugGraphVersion.graph_id == graph_id)
+    q = (select(Annotation.pending, func.count(Annotation.id))
+         .join(Image, Image.id == Annotation.image_id)
+         .where(Image.project_id == project_id, Annotation.agent_version_id.in_(versions))
+         .group_by(Annotation.pending))
+    got = dict(db.execute(q).all())
+    total = sum(got.values())
+    return got.get(False, 0), total
+
+
+@bp.get("/api/projects/<code>/agents")
+def project_agents(code):
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project, role, err = _project(db, user, code)
+        if err:
+            return err
+        cards = gpu.cards(db)
+        members = set(db.execute(select(ProjectMember.user_id).where(
+            ProjectMember.project_id == project.id)).scalars())
+        week = utcnow() - timedelta(days=7)
+        out = []
+        for graph in db.execute(
+            select(AugGraph).join(ProjectAugGraph, ProjectAugGraph.graph_id == AugGraph.id)
+            .where(ProjectAugGraph.project_id == project.id, AugGraph.kind == "agent")
+            .order_by(AugGraph.name)
+        ).scalars():
+            head = db.get(AugGraphVersion, graph.head_version_id) if graph.head_version_id else None
+            owner = db.get(User, graph.owner_id) if graph.owner_id else None
+            runs = db.execute(select(AgentRun).where(
+                AgentRun.graph_id == graph.id, AgentRun.project_id == project.id)).scalars().all()
+            done = [r for r in runs if r.status == "done"]
+            accepted, boxes = _confirmed(db, graph.id, project.id)
+            applies = db.execute(select(func.count(AgentApply.id)).where(
+                AgentApply.graph_id == graph.id, AgentApply.project_id == project.id,
+                AgentApply.created_at >= week)).scalar() or 0
+            est = _verdict(db, head.doc, cards=cards) if head else None
+            out.append({
+                "id": str(graph.id), "name": graph.name, "description": graph.description,
+                "owner": {"id": str(owner.id), "name": owner.display_name} if owner else None,
+                # Ушёл из проекта или удалён — агент работает дальше, правит только владелец.
+                "owner_here": bool(owner and owner.id in members),
+                "mine": graph.owner_id == user.id,
+                "archived": graph.archived_at is not None,
+                "version": head.version if head else None,
+                "version_id": str(head.id) if head else None,
+                "verdict": est["verdict"] if est else None,
+                "total_mb": est["total_mb"] if est else None,
+                "measured": est["measured"] if est else 0,
+                "runs": len(runs),
+                "last_run_at": max((r.created_at for r in runs), default=None),
+                "speed": _speed(done),
+                "boxes": boxes, "accepted": accepted,
+                "applies_week": int(applies),
+            })
+        for item in out:
+            item["last_run_at"] = item["last_run_at"].isoformat() if item["last_run_at"] else None
+        return jsonify({
+            "agents": out,
+            "cards": cards,
+            "queued": gpu.queued_count(db),
+            # Подключает владелец агента с правом разметки; отключает он же или admin.
+            "can_link": has_role(role, "editor"),
+            "can_unlink_any": role == "admin",
+        })
+    finally:
+        db.close()
+
+
+@bp.post("/api/projects/<code>/agents")
+def link_agent(code):
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project, _role, err = _project(db, user, code, "editor")
+        if err:
+            return err
+        graph = db.get(AugGraph, _uuid((request.get_json(silent=True) or {}).get("graph_id")))
+        if graph is None or graph.kind != "agent" or graph.owner_id != user.id or graph.archived_at:
+            return jsonify({"error": "Подключить можно только своего агента."}), 404
+        if graph.head_version_id is None:
+            return jsonify({"error": "Сначала сохраните версию агента — запускают версии, а не черновик."}), 409
+        if db.get(ProjectAugGraph, (project.id, graph.id)) is None:
+            db.add(ProjectAugGraph(project_id=project.id, graph_id=graph.id, created_by=user.id))
+            db.commit()
+        return jsonify({"ok": True}), 201
+    finally:
+        db.close()
+
+
+@bp.delete("/api/projects/<code>/agents/<graph_id>")
+def unlink_agent(code, graph_id):
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project, role, err = _project(db, user, code)
+        if err:
+            return err
+        graph = db.get(AugGraph, _uuid(graph_id))
+        link = db.get(ProjectAugGraph, (project.id, graph.id)) if graph is not None else None
+        if link is None or graph.kind != "agent":
+            return jsonify({"error": "Агент к проекту не подключён."}), 404
+        # Владелец ушёл — без admin агент остался бы в проекте навсегда.
+        if graph.owner_id != user.id and role != "admin":
+            return jsonify({"error": "Отключает владелец агента или администратор проекта."}), 403
+        db.delete(link)
+        db.commit()
+        return jsonify({"ok": True})
+    finally:
+        db.close()
+
+
+JOURNAL_PAGE = 50
+
+
+@bp.get("/api/projects/<code>/agent-runs")
+def agent_journal(code):
+    """Журнал прогонов агентов по таскам проекта: свежие сверху, страницами.
+    Фильтры: `agent`, `status`, `task`, `user`; `before` — created_at последней строки."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project, _role, err = _project(db, user, code)
+        if err:
+            return err
+        q = select(AgentRun).where(AgentRun.project_id == project.id)
+        for arg, col in (("agent", AgentRun.graph_id), ("task", AgentRun.task_id), ("user", AgentRun.created_by)):
+            if request.args.get(arg):
+                q = q.where(col == _uuid(request.args[arg]))
+        status = request.args.get("status")
+        if status == "active":
+            q = q.where(AgentRun.status.in_(ACTIVE))
+        elif status:
+            q = q.where(AgentRun.status == status)
+        before = request.args.get("before")
+        if before:
+            try:
+                q = q.where(AgentRun.created_at < datetime.fromisoformat(before))
+            except ValueError:
+                return jsonify({"error": "before: время строки."}), 400
+        rows = db.execute(q.order_by(AgentRun.created_at.desc()).limit(JOURNAL_PAGE + 1)).scalars().all()
+        more = len(rows) > JOURNAL_PAGE
+        rows = rows[:JOURNAL_PAGE]
+
+        graphs = {g.id: g for g in db.execute(select(AugGraph).where(
+            AugGraph.id.in_({r.graph_id for r in rows} or {None}))).scalars()}
+        versions = {v.id: v.version for v in db.execute(select(AugGraphVersion).where(
+            AugGraphVersion.id.in_({r.version_id for r in rows} or {None}))).scalars()}
+        tasks = {t.id: t.name for t in db.execute(select(Task).where(
+            Task.id.in_({r.task_id for r in rows} or {None}))).scalars()}
+        people = {u.id: u.display_name for u in db.execute(select(User).where(
+            User.id.in_({r.created_by for r in rows} or {None}))).scalars()}
+        leases = {lz.id: lz for lz in db.execute(select(GpuLease).where(
+            GpuLease.id.in_({r.gpu_lease_id for r in rows} or {None}))).scalars()}
+        cards = {d.id: d.name for d in db.execute(select(GpuDevice)).scalars()}
+        classes = {str(c.id): {"name": c.name, "color": c.color} for c in db.execute(
+            select(LabelClass).where(LabelClass.project_id == project.id)).scalars()}
+
+        def view(r):
+            lease = leases.get(r.gpu_lease_id)
+            res = (r.stats or {}).get("res") or {}
+            mapping = (r.params or {}).get("mapping") or {}
+            end = r.finished_at or (utcnow() if r.status == "running" else None)
+            return {
+                **_run_view(db, r),
+                "agent_id": str(r.graph_id) if r.graph_id else None,
+                "agent": graphs[r.graph_id].name if r.graph_id in graphs else None,
+                "version": versions.get(r.version_id),
+                "task": {"id": str(r.task_id), "name": tasks.get(r.task_id)},
+                "user": people.get(r.created_by),
+                "started_at": r.started_at.isoformat() if r.started_at else None,
+                "seconds": int((end - r.started_at).total_seconds()) if end and r.started_at else None,
+                "card": res.get("card") or (cards.get(lease.device_id) if lease else None),
+                "want_mb": res.get("want_mb") or (lease.want_mb if lease else None),
+                "peak_mb": lease.peak_mb if lease else None,
+                "waited_s": res.get("waited_s"),
+                "sequential": bool(res.get("sequential")),
+                "words": res.get("words"),
+                "mapping": [{"agent": k, "to": classes.get(str(v))} for k, v in mapping.items()],
+                "step": (r.params or {}).get("step"),
+            }
+
+        facets = {
+            "agents": [{"id": str(g), "name": n} for g, n in db.execute(
+                select(AugGraph.id, AugGraph.name).join(AgentRun, AgentRun.graph_id == AugGraph.id)
+                .where(AgentRun.project_id == project.id).distinct().order_by(AugGraph.name)).all()],
+            "tasks": [{"id": str(t), "name": n} for t, n in db.execute(
+                select(Task.id, Task.name).join(AgentRun, AgentRun.task_id == Task.id)
+                .where(AgentRun.project_id == project.id).distinct().order_by(Task.name)).all()],
+            "users": [{"id": str(u), "name": n} for u, n in db.execute(
+                select(User.id, User.display_name).join(AgentRun, AgentRun.created_by == User.id)
+                .where(AgentRun.project_id == project.id).distinct().order_by(User.display_name)).all()],
+        }
+        return jsonify({"runs": [view(r) for r in rows], "more": more, "facets": facets})
     finally:
         db.close()

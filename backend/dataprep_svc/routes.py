@@ -16,7 +16,7 @@ from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
 
-from common import agent_graph, frame_sizes
+from common import agent_access, agent_graph, frame_sizes
 from common import selection as sel_lib
 from common.auth import current_user, has_role, may_manage, project_by_code, role_in
 from common.db import SessionLocal
@@ -420,8 +420,8 @@ def get_graph(graph_id):
         return err
     try:
         graph = db.get(AugGraph, _uuid(graph_id))
-        # Агента видит только владелец: делиться агентами пока не решено.
-        if graph is None or (graph.kind == "agent" and graph.owner_id != user.id):
+        # Чужого агента видно, только если он подключён к общему проекту, — на чтение.
+        if graph is None or (graph.kind == "agent" and not agent_access.may_view(db, user, graph)):
             return jsonify({"error": "Граф не найден."}), 404
         asked = _uuid(request.args.get("version") or "")
         want = asked or graph.head_version_id
@@ -482,7 +482,7 @@ def list_versions(graph_id):
         return err
     try:
         graph = db.get(AugGraph, _uuid(graph_id))
-        if graph is None or (graph.kind == "agent" and graph.owner_id != user.id):
+        if graph is None or (graph.kind == "agent" and not agent_access.may_view(db, user, graph)):
             return jsonify({"error": "Граф не найден."}), 404
         rows = db.execute(
             select(AugGraphVersion)
@@ -545,6 +545,41 @@ def save_version(graph_id):
             "changed": False,
             "draft_at": None,
         }), 201
+    finally:
+        db.close()
+
+
+@bp.post("/api/aug/graphs/<graph_id>/copy")
+def copy_agent(graph_id):
+    """«Сделать копию» чужого (или своего) агента: веса и образцы переезжают на
+    полку копирующего, версия — текущая версия оригинала. Копия — уже другой
+    агент: её рамки и рамки оригинала спорят по NMS."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        graph = db.get(AugGraph, _uuid(graph_id))
+        if graph is None or not agent_access.may_view(db, user, graph):
+            return jsonify({"error": "Агент не найден."}), 404
+        head = db.get(AugGraphVersion, graph.head_version_id) if graph.head_version_id else None
+        if head is None:
+            return jsonify({"error": "У агента нет сохранённой версии — копировать нечего."}), 409
+        # Копию делает тот, кто может размечать хоть в одном общем проекте, — или владелец.
+        shared = agent_access.projects_of(db, graph.id)
+        if graph.owner_id != user.id and not any(
+                has_role(role_in(db, user, db.get(Project, pid)), "editor") for pid in shared):
+            return jsonify({"error": "Копию делает участник с правом разметки."}), 403
+        doc = agent_access.copy_doc(db, head.doc, user.id)
+        got = agent_access.new_copy(db, graph, doc, user)
+        version, error = _save_version(db, got, doc, user, note=f"Копия «{graph.name}» v{head.version}")
+        if error:
+            # Версия не прошла проверку на новой полке — копия остаётся черновиком.
+            got.draft_at = utcnow()
+            db.commit()
+            return jsonify(_graph_view(db, got)), 201
+        got.draft = None
+        db.commit()
+        return jsonify(_graph_view(db, got, version)), 201
     finally:
         db.close()
 
@@ -923,7 +958,9 @@ def unlink_graph(code, graph_id):
         return err
     try:
         row = db.get(ProjectAugGraph, (project.id, _uuid(graph_id)))
-        if row is not None:
+        graph = db.get(AugGraph, row.graph_id) if row is not None else None
+        # Агента отключают на его странице проекта: там правило «владелец или admin».
+        if row is not None and graph is not None and graph.kind == "aug":
             db.delete(row)
             db.commit()
         return jsonify({"ok": True})
