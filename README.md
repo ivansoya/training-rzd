@@ -587,6 +587,7 @@ docker compose up --build
 Откройте **http://localhost:8080** (единственный внешний порт — nginx-шлюз).
 Порт слушает только `127.0.0.1`; открыть стенд в сеть — `APP_BIND=0.0.0.0` в `.env`,
 а за HTTPS ещё `COOKIE_SECURE=1`, чтобы кука сессии не уходила по голому http.
+Без HTTPS не работает разметка видео — как включить, в [HTTPS.md](HTTPS.md).
 Поднимаются четыре контейнера: `yolo-frontend` (шлюз+SPA), `yolo-datasets`,
 `yolo-augmentation`, `yolo-training`.
 

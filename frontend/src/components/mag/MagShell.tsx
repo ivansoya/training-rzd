@@ -32,7 +32,8 @@ function useNarrow(px?: number): boolean {
     list.addEventListener("change", sync);
     return () => list.removeEventListener("change", sync);
   }, [query]);
-  return narrow;
+  // Маршруты делят один экземпляр каркаса: ушли с агентов — прежнее «узко» не тянем.
+  return Boolean(query) && narrow;
 }
 
 /** `railBelow` — окно уже стольких px: сайдбар полосой значков и без верхней полосы

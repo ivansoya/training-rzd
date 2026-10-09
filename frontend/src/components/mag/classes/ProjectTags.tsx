@@ -1,9 +1,9 @@
-// Справочник тагов. Заводят их по ходу дела (ролик, загрузка, редактор),
-// здесь — переименовать опечатку и убрать то, чем перестали пользоваться.
+// Справочник тагов. Заводят их по ходу дела (ролик, загрузка, редактор) или здесь
+// заранее; здесь же — переименовать опечатку и убрать то, чем перестали пользоваться.
 
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../../../api/http";
-import { deleteTag, listTags, renameTag } from "../../../api/tags";
+import { createTag, deleteTag, listTags, renameTag } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
 import { Button, Card, Empty, Input, Notice, Table } from "../../../ui";
 import { count, ru } from "../../ru";
@@ -21,6 +21,8 @@ export default function ProjectTags() {
   const [error, setError] = useState<string | null>(null);
   const [edit, setEdit] = useState<Edit | null>(null);
   const [query, setQuery] = useState("");
+  /** Имя нового тага; null — поле закрыто. */
+  const [draft, setDraft] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -62,18 +64,37 @@ export default function ProjectTags() {
     }
   };
 
+  // Сервер сверяет имена без регистра и на повтор молча отдаёт старый таг — ловим заранее.
+  const name = draft?.trim() ?? "";
+  const taken = name ? tags?.find((t) => t.name.toLocaleLowerCase("ru") === name.toLocaleLowerCase("ru")) : undefined;
+
+  const add = async () => {
+    if (!name || taken) return;
+    try {
+      await createTag(code, name);
+      setDraft(""); // поле остаётся открытым: таги заводят пачкой
+      await load();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
   const q = query.trim().toLocaleLowerCase("ru");
   const shown = (tags ?? []).filter((t) => !q || t.name.toLocaleLowerCase("ru").includes(q));
+  const newTag = () => canEdit && draft === null && (
+    <Button variant="primary" icon="plus" onClick={() => setDraft("")}>Новый таг</Button>
+  );
 
   return (
     <div className="page">
-      <ClassesHead code={code} desc={tags ? (tags.length ? count(tags.length, "таг", "тага", "тагов") : "Тагов пока нет") : undefined} />
+      <ClassesHead code={code} desc={tags ? (tags.length ? count(tags.length, "таг", "тага", "тагов") : "Тагов пока нет") : undefined}
+        actions={tags && tags.length > 0 && newTag()} />
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
       {tags === null ? (
         !error && <p className="t-muted">Загружаем таги…</p>
-      ) : tags.length === 0 ? (
-        <Empty icon="tags" title="Тагов пока нет">
-          Их заводят в карточке ролика, в окне загрузки кадров или в редакторе разметки.
+      ) : tags.length === 0 && draft === null ? (
+        <Empty icon="tags" title="Тагов пока нет" action={newTag()}>
+          Их заводят здесь, в карточке ролика, в окне загрузки кадров или в редакторе разметки.
         </Empty>
       ) : (
         <Card className="cls-card">
@@ -84,13 +105,30 @@ export default function ProjectTags() {
             <span className="grow" />
             <span className="t-xs t-muted">Таг — условия съёмки: ночь, дождь, тоннель. По ним собирают наборы</span>
           </div>
-          {shown.length === 0 ? (
+          {shown.length === 0 && draft === null ? (
             <Empty compact icon="search" title="Ни один таг не подошёл"
               action={<Button size="sm" onClick={() => setQuery("")}>Сбросить</Button>} />
           ) : (
             <Table className="tag-tbl">
               <thead><tr><th>Таг</th><th className="r">Кадров</th>{canEdit && <th />}</tr></thead>
               <tbody>
+                {draft !== null && (
+                  <tr>
+                    <td>
+                      <form className="row" onSubmit={(e) => { e.preventDefault(); void add(); }}>
+                        <Input value={draft} maxLength={64} autoFocus className="tag-in" placeholder="Новый таг"
+                          aria-label="Название нового тага"
+                          onChange={(e) => setDraft(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setDraft(null); } }} />
+                        <Button size="sm" variant="primary" type="submit" disabled={!name || Boolean(taken)}>Добавить</Button>
+                        <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>Отмена</Button>
+                        {taken && <span className="ui-hint warn">«{taken.name}» уже есть</span>}
+                      </form>
+                    </td>
+                    <td />
+                    <td />
+                  </tr>
+                )}
                 {shown.map((tag) => {
                   const mine = edit?.id === tag.id ? edit : null;
                   return (
