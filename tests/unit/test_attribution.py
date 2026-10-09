@@ -105,3 +105,32 @@ def test_клиент_снимает_флаг_но_не_ставит():
     kept, fresh = settle({"a": _old(pending=True), "b": _old(pending=False)},
                          [_in("a", pending=False), _in("b", pending=True)], EDITOR)
     assert kept["pending"] is False and fresh["pending"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Кто принял рамку агента (решение 09.10.2026: «агент X v4, принял Иван»)
+# --------------------------------------------------------------------------- #
+def test_подтвердил_значит_принял():
+    [row] = settle({"a": _old(pending=True)}, [_in("a", pending=False)], EDITOR)
+    assert row["pending"] is False and row["reviewed_by"] == EDITOR
+
+
+def test_поправил_рамку_агента_тоже_принял():
+    moved = _in("a", geometry={"x": 12.0, "y": 20.0, "w": 100.0, "h": 50.0})
+    [row] = settle({"a": _old(pending=True)}, [moved], EDITOR)
+    assert row["reviewed_by"] == EDITOR
+
+
+def test_принявший_переживает_следующие_сохранения():
+    [row] = settle({"a": _old(pending=False, reviewed_by=OWNER)}, [_in("a")], EDITOR)
+    assert row["reviewed_by"] == OWNER
+
+
+def test_нетронутая_на_проверке_никем_не_принята():
+    [row] = settle({"a": _old(pending=True)}, [_in("a")], EDITOR)
+    assert row["pending"] is True and row["reviewed_by"] is None
+
+
+def test_своя_рамка_не_принимается():
+    [row] = settle({}, [_in(None)], EDITOR)
+    assert row["reviewed_by"] is None

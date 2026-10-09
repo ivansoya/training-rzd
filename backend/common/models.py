@@ -159,11 +159,10 @@ class User(Base, AuditMixin):
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=True)
     # Право на железо, а не на данные. Ролей в проекте для этого не хватает:
     # администратор своего проекта не должен снимать чужое обучение с карты.
-    # Один бит, а не справочник глобальных ролей — право пока ровно одно, и
-    # машинерию под него пришлось бы объяснять на пустом месте.
-    is_staff: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, default=False, server_default=sa.false()
-    )
+    # Два уровня (решение 09.10.2026): «view» — страница «Оборудование» целиком
+    # (держатели карт, чужая очередь), «manage» — ещё запас памяти, вкл/выкл
+    # карты, снятие задач и выдача этих прав. Пусто — обезличенная сводка карт.
+    hardware: Mapped[str | None] = mapped_column(sa.String(8))
     # Set when the confirmation link from the registration email is opened;
     # login is refused while it is NULL.
     email_confirmed_at: Mapped[datetime | None] = mapped_column(
@@ -452,6 +451,10 @@ class Annotation(Base, AuditMixin):
     # наборы рамку пропускают. Авторство (`source`, версия) — отдельно и навсегда.
     pending: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    # Кто снял рамку агента с проверки: «Агент YOLOE-РСМ v4, принял Иван».
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
     )
 
 
@@ -760,6 +763,9 @@ class VideoAnnotation(Base, AuditMixin):
     # разметки флаг переезжает на кадр таски вместе с рамкой.
     pending: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    reviewed_by: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
     )
 
 
@@ -1714,6 +1720,8 @@ class AgentRun(Base, AuditMixin):
             postgresql_where=sa.text("status IN ('queued', 'waiting_gpu')"),
         ),
         sa.Index("ix_agent_runs_task", "task_id", "created_at"),
+        # Журнал агентов проекта — свежие сверху.
+        sa.Index("ix_agent_runs_project", "project_id", "created_at"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
@@ -1752,6 +1760,30 @@ class AgentRun(Base, AuditMixin):
     error: Mapped[str | None] = mapped_column(sa.Text)
     started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class AgentApply(Base):
+    """Агент на одном кадре из редактора (G) — только счётчик для страницы
+    агентов проекта. В журнал прогонов эти вызовы не идут: их десятки в час,
+    а строки превью живут минуты."""
+
+    __tablename__ = "agent_applies"
+    __table_args__ = (sa.Index("ix_agent_applies_project", "project_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    graph_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("aug_graphs.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    boxes: Mapped[int] = mapped_column(sa.Integer, nullable=False, default=0, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow, server_default=sa.func.now()
+    )
 
 
 class AgentPreview(Base):

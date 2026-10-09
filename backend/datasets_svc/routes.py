@@ -17,7 +17,7 @@ import uuid
 from flask import Blueprint, jsonify
 
 from common import jobs
-from common.auth import current_user, has_role, role_in
+from common.auth import current_user, has_role, hw_view, role_in
 from common.config import DATA_DIR, HOST_STAT_PATH, PROJECTS_DIR
 from common.db import SessionLocal
 from common.models import Project
@@ -94,7 +94,7 @@ def storage():
     """
     with SessionLocal() as db:
         user = current_user(db)
-        if user is None or not user.is_staff:
+        if not hw_view(user):
             return jsonify({"error": "Только для администраторов стенда."}), 403
     now = time.time()
     cached = _storage_cache["data"]

@@ -39,8 +39,22 @@ export interface QueueRow {
   user_id: string | null;
 }
 
+/** Карта без держателей — видит каждый: на ней объясняется вердикт агента. */
+export interface GpuCard {
+  id: string;
+  index: number;
+  name: string;
+  cap_mb: number;
+  free_mb: number;
+}
+
 export interface GpuState {
+  /** «Просмотр оборудования» и выше: держатели карт и чужая очередь. */
   staff: boolean;
+  /** «Управление»: настройка карт, снятие задач, выдача прав. */
+  manage: boolean;
+  level: "view" | "manage" | null;
+  cards: GpuCard[];
   devices: Device[];
   queue: {
     mine: QueueRow[];

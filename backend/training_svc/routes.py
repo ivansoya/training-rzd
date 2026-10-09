@@ -11,7 +11,9 @@ from flask import Blueprint, Response, jsonify, request, send_file
 from sqlalchemy import func, select
 
 from common import config, gpu, live
-from common.auth import current_user, has_role, may_manage, project_by_code, role_in
+from common.auth import (
+    HARDWARE_LEVELS, current_user, has_role, hw_manage, hw_view, may_manage, project_by_code, role_in,
+)
 from common.db import SessionLocal
 from common.models import (
     AugGraph, AugGraphVersion, GpuDevice, Project, TrainEpoch, TrainRun, TrainSet,
@@ -103,20 +105,79 @@ def list_models():
 def gpu_state():
     """Что на картах и кто в очереди.
 
-    Свою строку очереди видит каждый — иначе ожидание необъяснимо. Подробности
-    по картам и чужие задачи — только обслуживанию.
+    Каждому — обезличенная сводка карт (`cards`: модель, потолок под задачи,
+    свободно) и своя строка очереди: без них не объяснить ни ожидание, ни
+    вердикт «влезет ли агент». Держатели карт и чужие задачи — с уровня
+    «Просмотр оборудования», настройка — с «Управления».
     """
     db, user, err = _me()
     if err:
         return err
     try:
-        staff = bool(user.is_staff)
+        staff = hw_view(user)
         return jsonify({
             "staff": staff,
+            "manage": hw_manage(user),
+            "level": user.hardware,
+            "cards": gpu.cards(db),
             "devices": gpu.devices_view(db) if staff else [],
             "queue": gpu.queue_view(db, user_id=user.id, staff=staff),
             "live": live.SLOTS.view(),
         })
+    finally:
+        db.close()
+
+
+def _access_row(u):
+    return {"id": str(u.id), "login": u.login, "email": u.email, "name": u.display_name, "level": u.hardware}
+
+
+@bp.get("/api/gpu/access")
+def hardware_access():
+    """Карточка «Доступ»: кому выданы права на оборудование; `q` — поиск человека."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        if not hw_manage(user):
+            return jsonify({"error": "Права на оборудование выдаёт управляющий."}), 403
+        q = (request.args.get("q") or "").strip().lower()
+        if q:
+            like = f"%{q}%"
+            found = db.execute(
+                select(User).where(User.is_active.is_(True),
+                                   func.lower(User.login).like(like) | func.lower(User.email).like(like)
+                                   | func.lower(User.display_name).like(like))
+                .order_by(User.login).limit(10)
+            ).scalars().all()
+            return jsonify({"found": [_access_row(u) for u in found]})
+        granted = db.execute(select(User).where(User.hardware.isnot(None)).order_by(User.login)).scalars().all()
+        return jsonify({"granted": [_access_row(u) for u in granted]})
+    finally:
+        db.close()
+
+
+@bp.put("/api/gpu/access/<user_id>")
+def set_hardware_access(user_id):
+    """Выдать или снять право: `level` — «view», «manage» или пусто."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        if not hw_manage(user):
+            return jsonify({"error": "Права на оборудование выдаёт управляющий."}), 403
+        level = json_body().get("level") or None
+        if level is not None and level not in HARDWARE_LEVELS:
+            raise InputError("level: view, manage или пусто.", "level")
+        target = db.get(User, _uuid(user_id))
+        if target is None:
+            return jsonify({"error": "Человек не найден."}), 404
+        if target.id == user.id and level != "manage":
+            # Иначе последний управляющий запрёт дверь изнутри.
+            return jsonify({"error": "Своё управление снять нельзя — попросите другого управляющего."}), 409
+        target.hardware = level
+        db.commit()
+        return jsonify(_access_row(target))
     finally:
         db.close()
 
@@ -127,7 +188,7 @@ def set_device_limits(device_id):
     if err:
         return err
     try:
-        if not user.is_staff:
+        if not hw_manage(user):
             return jsonify({"error": "Железо настраивает обслуживание."}), 403
         data = json_body()
         enabled = data.get("enabled")
@@ -154,7 +215,7 @@ def kill_lease(lease_id):
     if err:
         return err
     try:
-        if not user.is_staff:
+        if not hw_manage(user):
             return jsonify({"error": "Снимать задачи может обслуживание."}), 403
         if not gpu.kill(db, _uuid(lease_id)):
             return jsonify({"error": "Задача не найдена."}), 404
@@ -693,7 +754,7 @@ def live_poll(code):
         return jsonify({
             "runs": [_run_view(db, r) for r in runs],
             "queue": gpu.queue_view(db, user_id=user.id,
-                                    staff=bool(user.is_staff)),
+                                    staff=hw_view(user)),
             "at": utcnow().isoformat(),
         })
     finally:

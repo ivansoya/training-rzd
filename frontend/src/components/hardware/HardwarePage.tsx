@@ -40,8 +40,9 @@ function Card({
   onKill,
 }: {
   device: Device;
-  onLimit: (data: { reserved_mb?: number; max_heavy?: number }) => void;
-  /** Снять идущую задачу — только staff; без него кнопок нет. */
+  /** Настройка карты — только «Управление»; без него поля только для чтения. */
+  onLimit?: (data: { reserved_mb?: number; max_heavy?: number }) => void;
+  /** Снять идущую задачу — только «Управление»; без него кнопок нет. */
   onKill?: (leaseId: string) => void;
 }) {
   const used = device.sam2_reserve_mb + device.held_mb;
@@ -135,7 +136,9 @@ function Card({
             max={Math.round(device.total_mb / 1024)}
             step={0.5}
             defaultValue={(device.reserved_mb / 1024).toFixed(1)}
+            disabled={!onLimit}
             onBlur={(e) => {
+              if (!onLimit) return;
               // Пустое поле — не «ноль»: Number("") обнулял запас.
               const v = e.target.valueAsNumber;
               if (!Number.isFinite(v) || v < 0) {
@@ -154,7 +157,9 @@ function Card({
             min={1}
             max={4}
             defaultValue={device.max_heavy}
+            disabled={!onLimit}
             onBlur={(e) => {
+              if (!onLimit) return;
               const v = e.target.valueAsNumber;
               if (!Number.isInteger(v) || v < 1) {
                 e.target.value = String(device.max_heavy);
@@ -232,11 +237,11 @@ export default function HardwarePage() {
         <Card
           key={`${d.id}-${rev}`}
           device={d}
-          onKill={state.staff ? async (id) => {
+          onKill={state.manage ? async (id) => {
             await api.killLease(id).catch((e) => setActionError((e as Error).message));
             refresh();
           } : undefined}
-          onLimit={async (data) => {
+          onLimit={!state.manage ? undefined : async (data) => {
             try {
               await api.setLimits(d.id, data);
               setActionError(null);
@@ -298,7 +303,7 @@ export default function HardwarePage() {
                   </div>
                 </div>
                 <div className="right">
-                  {state.staff && (
+                  {state.manage && (
                     <button
                       type="button"
                       className="mag-ghost"

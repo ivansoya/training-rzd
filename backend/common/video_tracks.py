@@ -242,6 +242,7 @@ def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None)
             "agent_version_id": single.get("agent_version_id"),
             "created_by": single.get("created_by"),
             "pending": bool(single.get("pending")),
+            "reviewed_by": single.get("reviewed_by"),
             "track_id": None,
         })
 

@@ -612,6 +612,8 @@ def video_annotations(task_id, video_id):
         ).scalars().all()
 
         agents = attribution.agent_names(db, {r.agent_version_id for r in rows if r.agent_version_id})
+        reviewers = {u.id: u.display_name for u in db.execute(select(User).where(
+            User.id.in_({r.reviewed_by for r in rows if r.reviewed_by} or {None}))).scalars()}
         keys_by_track = {}
         singles = []
         for row in rows:
@@ -632,6 +634,7 @@ def video_annotations(task_id, video_id):
                     "pending": row.pending,
                     "conf": (row.attributes or {}).get("conf"),
                     "agent": agents.get(row.agent_version_id),
+                    "reviewer": reviewers.get(row.reviewed_by),
                 })
             else:
                 keys_by_track.setdefault(row.track_id, []).append(row)
@@ -1129,7 +1132,7 @@ def put_frame_boxes(task_id, video_id, frame_no):
                 "class_id": a.class_id, "ann_type": a.ann_type,
                 "geometry": a.geometry, "source": a.source,
                 "created_by": a.created_by, "agent_version_id": a.agent_version_id,
-                "attributes": a.attributes, "pending": a.pending,
+                "attributes": a.attributes, "pending": a.pending, "reviewed_by": a.reviewed_by,
             }
             for a in db.execute(select(VideoAnnotation).where(*single)).scalars()
         }

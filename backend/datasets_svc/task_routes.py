@@ -1336,6 +1336,7 @@ def _task_boxes(db, ids):
             # Рамка агента или поправленная рамка агента: что именно,
             # говорит `source`.
             "agent": agents.get(ann.agent_version_id),
+            "reviewer": authors.get(ann.reviewed_by),
         })
     return by_image
 
@@ -1497,7 +1498,7 @@ def _save_annotations(db, image_id):
             "class_id": a.class_id, "ann_type": a.ann_type,
             "geometry": a.geometry, "source": a.source,
             "created_by": a.created_by, "agent_version_id": a.agent_version_id,
-            "attributes": a.attributes, "pending": a.pending,
+            "attributes": a.attributes, "pending": a.pending, "reviewed_by": a.reviewed_by,
         }
         for a in db.execute(
             select(Annotation).where(Annotation.image_id == image.id)
@@ -1572,7 +1573,7 @@ def _save_annotations(db, image_id):
 
 def _authorship(db, anns):
     """Подписи к рамкам: ({user_id: имя}, {agent_version_id: {name, version}})."""
-    user_ids = {a.created_by for a in anns if a.created_by}
+    user_ids = {a.created_by for a in anns if a.created_by} | {a.reviewed_by for a in anns if a.reviewed_by}
     version_ids = {a.agent_version_id for a in anns if a.agent_version_id}
     authors = {
         u.id: u.display_name

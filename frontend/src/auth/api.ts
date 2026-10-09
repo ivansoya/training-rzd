@@ -10,7 +10,9 @@ export interface AuthUser {
   display_name: string;
   // Право на железо: по нему раздел «Оборудование» показывает все карты. Роли в проекте про
   // данные, а это про машину, и смешивать их нельзя.
+  /** Прежнее имя уровня «Управление» оборудованием. */
   is_staff: boolean;
+  hardware: "view" | "manage" | null;
   created_at: string;
 }
 

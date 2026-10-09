@@ -75,6 +75,7 @@ def video_payload(db, video):
                 "agent_version_id": row.agent_version_id,
                 "created_by": row.created_by,
                 "pending": row.pending,
+                "reviewed_by": row.reviewed_by,
             })
         else:
             keys_by_track.setdefault(row.track_id, []).append({

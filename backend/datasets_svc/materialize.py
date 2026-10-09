@@ -340,6 +340,7 @@ def _annotate(db, by_frame, created, user_id):
                 agent_version_id=item.get("agent_version_id"),
                 created_by=item.get("created_by") or user_id,
                 pending=bool(item.get("pending")),
+                reviewed_by=item.get("reviewed_by"),
             ))
             boxes += 1
     # Ошибка строки (класс удалён, кривая геометрия) — здесь, а не на коммите.

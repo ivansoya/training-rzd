@@ -54,6 +54,19 @@ def role_in(db, user: User, project: Project) -> str | None:
     return member.role if member is not None else None
 
 
+HARDWARE_LEVELS = ("view", "manage")
+
+
+def hw_view(user) -> bool:
+    """Страница «Оборудование» целиком: держатели карт и чужая очередь."""
+    return user is not None and user.hardware in HARDWARE_LEVELS
+
+
+def hw_manage(user) -> bool:
+    """Настройка карт, снятие задач и выдача прав на оборудование."""
+    return user is not None and user.hardware == "manage"
+
+
 def has_role(role: str | None, needed: str) -> bool:
     if role is None:
         return False

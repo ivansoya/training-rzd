@@ -11,7 +11,7 @@ from flask import Blueprint, jsonify
 
 from autolabel_svc.manager import WorkerError, manager
 from common import config
-from common.auth import current_user, has_role, project_by_code, role_in
+from common.auth import current_user, has_role, hw_view, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import Image, Project, Task, TaskVideo
 from common.web import InputError, finite, json_body
@@ -250,7 +250,7 @@ def predict(session_id):
 def health():
     with SessionLocal() as db:
         user = current_user(db)
-        staff = user is not None and user.is_staff
+        staff = hw_view(user)
     # Число сессий и воркеров — сведения о нагрузке, их видит только staff.
     if not staff:
         return jsonify({"ok": True})

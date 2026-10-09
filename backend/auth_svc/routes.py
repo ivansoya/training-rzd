@@ -43,10 +43,11 @@ def user_json(user: User) -> dict:
         "email": user.email,
         "login": user.login,
         "display_name": user.display_name,
-        # Право на железо, а не на данные: по нему открывается раздел «Железо».
-        # Ролей в проекте для этого не хватает — администратор своего проекта
-        # не должен снимать чужое обучение с карты.
-        "is_staff": bool(user.is_staff),
+        # Право на железо, а не на данные: «view» — страница «Оборудование»
+        # целиком, «manage» — ещё настройка карт и выдача прав. `is_staff` —
+        # прежнее имя «manage» для клиентов, что его ещё читают.
+        "hardware": user.hardware,
+        "is_staff": user.hardware == "manage",
         "created_at": user.created_at.isoformat(),
     }
 
