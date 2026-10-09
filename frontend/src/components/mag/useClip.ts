@@ -49,9 +49,13 @@ export function useClip(taskId: string, videoId: string): Clip {
     setError(null);
 
     if (webCodecsMissing()) {
+      // По голому http Chrome прячет VideoDecoder — свежий браузер тут ни при чём.
       setError(
-        "Этот браузер не умеет разжимать видео покадрово. " +
-          "Откройте разметку в Chrome, Edge или Safari посвежее."
+        window.isSecureContext
+          ? "Этот браузер не умеет разжимать видео покадрово. " +
+              "Откройте разметку в Chrome, Edge или Safari посвежее."
+          : "Страница открыта не по HTTPS — без него браузер не даёт разжимать видео покадрово. " +
+              "Нужен адрес https://, обратитесь к администратору."
       );
       setLoading(false);
       return () => undefined;
