@@ -31,7 +31,7 @@ from common.db import SessionLocal
 from common.models import (
     AgentApply, AgentClassMap, AgentExamples, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph,
     AugGraphVersion, Dataset, GpuDevice, GpuLease, GpuUsageHint, Image, LabelClass, Project, ProjectAugGraph,
-    ProjectMember, Task, TaskVideo, TrainRun, User, VideoScout, utcnow,
+    ProjectMember, Task, TaskVideo, TrainRun, User, VideoAnnotation, VideoScout, utcnow,
 )
 from common.web import int_field, json_body, public_error
 from common import agent_examples as ax
@@ -1527,6 +1527,14 @@ def _confirmed(db, graph_id, project_id):
          .where(Image.project_id == project_id, Annotation.agent_version_id.in_(versions))
          .group_by(Annotation.pending))
     got = dict(db.execute(q).all())
+    # Рамки в роликах — тем же счётом: агент таски на видео ставит только их.
+    vq = (select(VideoAnnotation.pending, func.count(VideoAnnotation.id))
+          .join(TaskVideo, TaskVideo.id == VideoAnnotation.video_id)
+          .join(Task, Task.id == TaskVideo.task_id)
+          .where(Task.project_id == project_id, VideoAnnotation.agent_version_id.in_(versions))
+          .group_by(VideoAnnotation.pending))
+    for pending, n in db.execute(vq).all():
+        got[pending] = got.get(pending, 0) + n
     total = sum(got.values())
     return got.get(False, 0), total
 
@@ -1560,6 +1568,7 @@ def project_agents(code):
                 AgentApply.graph_id == graph.id, AgentApply.project_id == project.id,
                 AgentApply.created_at >= week)).scalar() or 0
             est = _verdict(db, head.doc, cards=cards) if head else None
+            last = max(runs, key=lambda r: r.created_at, default=None)
             out.append({
                 "id": str(graph.id), "name": graph.name, "description": graph.description,
                 "owner": {"id": str(owner.id), "name": owner.display_name} if owner else None,
@@ -1572,8 +1581,12 @@ def project_agents(code):
                 "verdict": est["verdict"] if est else None,
                 "total_mb": est["total_mb"] if est else None,
                 "measured": est["measured"] if est else 0,
+                "heaviest": est["heaviest"] if est else None,
+                # Как в «Моих агентах»: классы из статистики версии, а не из документа.
+                "classes": len((head.stats or {}).get("classes") or []) if head else 0,
                 "runs": len(runs),
-                "last_run_at": max((r.created_at for r in runs), default=None),
+                "last_run_at": last.created_at if last else None,
+                "last_status": last.status if last else None,
                 "speed": _speed(done),
                 "boxes": boxes, "accepted": accepted,
                 "applies_week": int(applies),
@@ -1587,6 +1600,8 @@ def project_agents(code):
             # Подключает владелец агента с правом разметки; отключает он же или admin.
             "can_link": has_role(role, "editor"),
             "can_unlink_any": role == "admin",
+            # Копию делает участник с правом разметки — как в /api/aug/graphs/<id>/copy.
+            "can_copy": has_role(role, "editor"),
         })
     finally:
         db.close()
@@ -1660,6 +1675,13 @@ def agent_journal(code):
             q = q.where(AgentRun.status.in_(ACTIVE))
         elif status:
             q = q.where(AgentRun.status == status)
+        # Сколько всего и сколько живых — по фильтрам, но без страницы.
+        counted = db.execute(select(AgentRun.status, func.count(AgentRun.id))
+                             .where(AgentRun.id.in_(q.with_only_columns(AgentRun.id)))
+                             .group_by(AgentRun.status)).all()
+        totals = {"all": sum(n for _s, n in counted),
+                  "running": sum(n for st, n in counted if st == "running"),
+                  "waiting": sum(n for st, n in counted if st in ("queued", "waiting_gpu"))}
         before = request.args.get("before")
         if before:
             try:
@@ -1719,6 +1741,6 @@ def agent_journal(code):
                 select(User.id, User.display_name).join(AgentRun, AgentRun.created_by == User.id)
                 .where(AgentRun.project_id == project.id).distinct().order_by(User.display_name)).all()],
         }
-        return jsonify({"runs": [view(r) for r in rows], "more": more, "facets": facets})
+        return jsonify({"runs": [view(r) for r in rows], "more": more, "totals": totals, "facets": facets})
     finally:
         db.close()

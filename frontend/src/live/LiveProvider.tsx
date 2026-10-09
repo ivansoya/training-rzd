@@ -27,6 +27,7 @@ export interface LiveEvent {
   p?: string;             // проект
   s?: string;             // новое состояние, если оно уместилось
   e?: number;             // номер эпохи
+  n?: number;             // сколько кадров прошёл прогон агента
 }
 
 type Listener = (event: LiveEvent) => void;

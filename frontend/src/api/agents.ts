@@ -447,3 +447,82 @@ export const listExamples = (ids: string[]) =>
   get<{ sets: ExampleSet[] }>(`agents/examples?ids=${ids.join(",")}`);
 
 export const exampleCrop = (id: string, uid: string) => `/api/agents/examples/${id}/crops/${uid}`;
+
+// --- агенты проекта: карточки подключённых и журнал прогонов ------------------
+
+export interface ProjectAgent {
+  id: string;
+  name: string;
+  description: string | null;
+  owner: { id: string; name: string } | null;
+  /** Владелец ещё в проекте; ушёл — агент работает дальше, правит только он. */
+  owner_here: boolean;
+  mine: boolean;
+  archived: boolean;
+  version: number | null;
+  version_id: string | null;
+  verdict: Verdict | null;
+  total_mb: number | null;
+  measured: number;
+  heaviest: MemUnit | null;
+  classes: number;
+  runs: number;
+  last_run_at: string | null;
+  last_status: RunView["status"] | null;
+  /** Кадров в минуту по законченным прогонам. */
+  speed: number | null;
+  boxes: number;
+  accepted: number;
+  applies_week: number;
+}
+
+export interface ProjectAgents {
+  agents: ProjectAgent[];
+  cards: GpuCard[];
+  queued: number;
+  can_link: boolean;
+  can_unlink_any: boolean;
+  can_copy: boolean;
+}
+
+export const projectAgents = (code: string) => get<ProjectAgents>(`projects/${code}/agents`);
+export const linkAgent = (code: string, graphId: string) =>
+  post<{ ok: true }>(`projects/${code}/agents`, { graph_id: graphId });
+export const unlinkAgent = (code: string, graphId: string) => del<{ ok: true }>(`projects/${code}/agents/${graphId}`);
+/** Копия на свою полку: веса и образцы переезжают, версия — текущая версия оригинала. */
+export const copyAgent = (graphId: string) => post<{ id: string; name: string }>(`aug/graphs/${graphId}/copy`, {});
+
+export interface JournalRun extends RunView {
+  agent_id: string | null;
+  task: { id: string; name: string | null };
+  user: string | null;
+  started_at: string | null;
+  seconds: number | null;
+  card: string | null;
+  want_mb: number | null;
+  peak_mb: number | null;
+  waited_s: number | null;
+  sequential: boolean;
+  words: Record<string, number> | null;
+  mapping: { agent: string; to: { name: string; color: string } | null }[];
+  step: number | null;
+}
+
+export interface Facet { id: string; name: string }
+
+export interface Journal {
+  runs: JournalRun[];
+  more: boolean;
+  /** По фильтрам, без страницы: всего, идут, ждут (очередь и карта). */
+  totals: { all: number; running: number; waiting: number };
+  facets: { agents: Facet[]; tasks: Facet[]; users: Facet[] };
+}
+
+export interface JournalFilter { agent?: string; status?: string; task?: string; user?: string }
+
+export const agentRuns = (code: string, filter: JournalFilter, before?: string) => {
+  const q = new URLSearchParams();
+  for (const [k, v] of Object.entries(filter)) if (v) q.set(k, v);
+  if (before) q.set("before", before);
+  return get<Journal>(`projects/${code}/agent-runs${q.size ? `?${q}` : ""}`);
+};

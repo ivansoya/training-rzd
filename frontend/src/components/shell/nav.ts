@@ -18,6 +18,7 @@ export const PROJECT_GROUPS: { title: string; items: NavItem[] }[] = [
       { key: "overview", label: "Обзор", icon: "home", to: "", match: /^\/?$/ },
       { key: "datasets", label: "Датасеты", icon: "images", to: "/datasets", match: /^\/datasets(\/|$)/ },
       { key: "tasks", label: "Таски", icon: "check", to: "/tasks", match: /^\/tasks(\/|$)/ },
+      { key: "pagents", label: "Агенты", icon: "bot", to: "/agents", match: /^\/agents(\/|$)/ },
       { key: "classes", label: "Классы", icon: "tag", to: "/classes", match: /^\/(classes|tags)(\/|$)/ },
       { key: "members", label: "Участники", icon: "users", to: "/members", match: /^\/members(\/|$)/ },
     ],

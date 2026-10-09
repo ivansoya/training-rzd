@@ -180,6 +180,8 @@ function Editor() {
   const [search, setSearch] = useSearchParams();
   const wanted = search.get("version") ?? undefined;
   const goVersion = (id: string | null) => setSearch(id ? { version: id } : {}, { state: location.state });
+  // Со страницы «Агенты» проекта — назад туда, иначе в «Мои агенты».
+  const back = (location.state as { back?: string } | null)?.back ?? "/agents";
 
   const [missing, setMissing] = useState(false);
   const [graph, setGraph] = useState<aug.GraphDetail | null>(null);
@@ -878,7 +880,7 @@ function Editor() {
   return (
     <div className={cx("ge ae", expanded && "exp")}>
       <header className="ge-h">
-        <LinkButton variant="ghost" icon="chevL" to="/agents" aria-label="К моим агентам" />
+        <LinkButton variant="ghost" icon="chevL" to={back} aria-label={back === "/agents" ? "К моим агентам" : "К агентам проекта"} />
         <div className="ge-title">
           <input className="ge-name ui-ctl" value={title} disabled={readOnly} aria-label="Имя агента" size={Math.max(8, title.length)}
             onChange={(e) => setTitle(e.target.value)} onBlur={() => void rename()}

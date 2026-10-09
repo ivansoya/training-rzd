@@ -812,3 +812,53 @@ button.ae-vd:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px
 .ar-why.wait { --vd: var(--st-skip); }
 .ar-why.seq { --vd: var(--c4); }
 .ar-why.no { --vd: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 45%, var(--border)); background: color-mix(in srgb, var(--destructive) 7%, var(--bg)); }
+
+/* «Агенты» проекта: таблица подключённых как в «Аугментациях», журнал как в «Участниках» и «Обучениях». */
+.pa-agents .gl-name > b { margin-right: 8px; }
+.pa-mem { display: inline-flex; align-items: center; gap: 6px; font-weight: 500; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pa-mem em { font-style: normal; font-weight: 400; font-size: 12px; color: var(--muted-fg); }
+.pa-j > .ui-card-b { padding: 0; }
+.pa-j > .ui-card-h { padding-bottom: 14px; }
+.pa-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.pa > :not(.ui-ph) { animation: tp-rise .5s var(--ease) both; }
+.pa > :nth-child(3) { animation-delay: .07s; }
+.pa > :nth-child(n+4) { animation-delay: .13s; }
+/* Ширины заданы: раскрытая строка не должна переразмечать колонки. */
+.pa-runs { table-layout: fixed; font-variant-numeric: tabular-nums; }
+.pa-runs .c-chev { width: 36px; } .pa-runs .c-time { width: 66px; } .pa-runs .c-task { width: 12%; }
+.pa-runs .c-status { width: 168px; } .pa-runs .c-mode { width: 84px; } .pa-runs .c-who { width: 150px; } .pa-runs .c-card { width: 88px; }
+.pa-runs .c-mem { width: 104px; } .pa-runs .c-wait { width: 86px; } .pa-runs .c-dur { width: 76px; } .pa-runs .c-frames { width: 112px; }
+.pa-runs td { height: 48px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: background-color .15s var(--ease); }
+.pa-runs .pa-chev-c { padding-right: 0; color: var(--faint); }
+.pa-runs .pa-chev-c svg { display: block; transition: rotate .22s var(--ease), color .15s; }
+.pa-runs tr.on .pa-chev-c { color: var(--fg); }
+.pa-runs tr.on .pa-chev-c svg { rotate: 90deg; }
+.pa-take { animation: ui-fade .25s var(--ease) both; }
+/* Пришла живьём — короткая вспышка цветом агента; подгружена — проявляется. */
+.pa-runs tr.pa-land td { animation: pa-land 1.4s var(--ease) both; }
+.pa-runs tr.pa-in td { animation: ui-fade .35s var(--ease) both; }
+@keyframes pa-land { from { background: color-mix(in srgb, var(--agent) 22%, transparent); } }
+.pa-runs tr.pa-day td { height: 32px; font-size: 12px; font-weight: 500; color: var(--faint); background: var(--bg); }
+.ui-table tbody tr.pa-day:hover td { background: var(--bg); }
+.pa-ag { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; vertical-align: middle; }
+.pa-ag b { min-width: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+.pa-ag span { flex: none; font-size: 12px; color: var(--faint); }
+.pa-ell { display: inline-block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
+td.pa-ell { display: table-cell; }
+.pa-who { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
+.pa-who .ui-av { flex: none; }
+.pa-runs td.pa-st { white-space: normal; }
+.pa-st > .row { gap: 7px; }
+.pa-st > .ui-progress { margin-top: 5px; }
+.pa-why { display: block; margin-top: 3px; font-size: 12px; line-height: 1.35; color: var(--muted-fg); }
+.pa-seq { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--c4); }
+.pa-bad { color: var(--destructive); }
+.ui-table tbody tr.pa-xp:hover td, .pa-runs .pa-xp td { height: auto; padding: 0; white-space: normal; background: var(--bg); }
+.pa-x-w { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .3s var(--ease), opacity .22s var(--ease); }
+.pa-x-w.in { grid-template-rows: 1fr; opacity: 1; }
+.pa-x-in { min-height: 0; overflow: hidden; }
+.pa-x { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px; padding: 14px 16px 18px 48px; }
+.pa-x section { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.pa-x h4 { margin: 0; font-size: 12.5px; font-weight: 600; }
+.pa-x p { margin: 0; }
+.pa-more { margin: 10px 14px 14px; width: calc(100% - 28px); }

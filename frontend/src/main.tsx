@@ -4,6 +4,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import AccountPage from "./components/auth/AccountPage";
 import AgentEditor from "./components/agents/AgentEditor";
 import AgentList from "./components/agents/AgentList";
+import ProjectAgents from "./components/agents/ProjectAgents";
 import AugGraphEditor from "./components/aug/AugGraphEditor";
 import AugGraphList from "./components/aug/AugGraphList";
 import HardwarePage from "./components/hardware/HardwarePage";
@@ -100,6 +101,7 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
                   <Route path="import" element={<ImportRoute />} />
                   <Route path="tasks" element={<TaskBoard />} />
                   <Route path="aug" element={<ProjectAug />} />
+                  <Route path="agents" element={<ProjectAgents />} />
                   <Route path="training" element={<SetList />} />
                   <Route path="runs" element={<RunHistory />} />
                   <Route path="runs/:runId" element={<RunPage />} />

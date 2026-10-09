@@ -96,7 +96,9 @@ def test_страница_агентов_проекта_с_вердиктом(ow
     assert row["mine"] is False and row["owner_here"] is True
     assert row["verdict"]["state"] in ("fits", "wait", "sequential", "never")
     assert row["total_mb"] > 0 and row["version"] == 1
-    assert "cards" in body and body["can_link"] is False
+    assert "cards" in body and body["can_link"] is False and body["can_copy"] is False
+    assert row["classes"] >= 1 and row["heaviest"]["mb"] > 0
+    assert row["runs"] == 0 and row["last_status"] is None
 
 
 def test_окно_запуска_делит_на_группы(owner, agent, shared, db):
@@ -147,8 +149,9 @@ def test_журнал_прогонов_с_картой_и_памятью(owner, 
     assert row["id"] == run_id and row["card"] == "RTX 5070 Ti" and row["want_mb"] == 7300
     assert row["sequential"] is True and row["task"]["name"] == task["name"]
     assert body["facets"]["agents"][0]["id"] == agent["id"]
-    assert viewer.get(f"{BASE_URL}/api/projects/{code}/agent-runs",
-                      params={"status": "error"}).json()["runs"] == []
+    assert body["totals"] == {"all": 1, "running": 0, "waiting": 0}
+    gone = viewer.get(f"{BASE_URL}/api/projects/{code}/agent-runs", params={"status": "error"}).json()
+    assert gone["runs"] == [] and gone["totals"]["all"] == 0
 
 
 def test_оценка_памяти_по_черновику(owner, agent):
