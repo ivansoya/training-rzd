@@ -8,12 +8,16 @@
 
 * только кадры `new`: размеченные, фоновые, отложенные и забракованные —
   это уже решение человека, агент их не трогает;
-* на кадре заменяются только непроверенные рамки агентов (`pending`); рамки
-  человека и проверенные рамки агента остаются, а находки, повторяющие их,
-  отбрасываются (`agent_graph.drop_known`);
+* на кадре заменяются только непроверенные рамки ЭТОГО агента (любой его
+  версии); рамки человека и проверенные рамки остаются, а находки, повторяющие
+  их, отбрасываются (`agent_graph.drop_known`); с непроверенными рамками других
+  агентов находка спорит по NMS — остаётся уверенная (`agent_graph.settle_agents`);
 * новые рамки встают на проверку, кадр остаётся `new` — размеченным его
   делает человек, подтвердив кадр;
-* автор рамки — владелец агента, `agent_version_id` — версия прогона.
+* автор рамки — владелец агента, `agent_version_id` — версия прогона;
+* только на видеокарте: не дали карту — ждём, не влезет никогда — ошибка
+  (решение 09.10.2026). Целиком не влезает, а по блокам да — модели грузятся
+  по очереди на пачку кадров (`agent_memory`).
 
 Каждый кадр — своя транзакция, и статус кадра перечитывается под замком:
 человек мог открыть и сохранить кадр, пока агент шёл к нему.
@@ -27,21 +31,18 @@ from contextlib import contextmanager
 from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
-from common import agent_graph, config, gpu, live, shapes, task_frames, video_frames, video_tracks
+from common import (
+    agent_graph, agent_memory, config, gpu, live, shapes, task_frames, video_frames, video_tracks,
+)
 from common.db import SessionLocal
 from common.models import (
-    AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, GpuLease, Image, TaskVideo,
-    VideoAnnotation, VideoScout, utcnow,
+    AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, GpuDevice, GpuLease, Image,
+    TaskVideo, VideoAnnotation, VideoScout, utcnow,
 )
 
 log = logging.getLogger("training")
 
-# Прикидка памяти на одну сеть, пока нет замера. Средний yolo11 на входе 1280
-# с запасом; по факту диспетчер запомнит свой.
-NET_VRAM_MB = 1500
-# SAM2 small на кадре 1920×1400 — около гигабайта; large вдвое больше.
-SAM_VRAM_MB = 1500
-# «Сеть по тексту» считается по числу промтов — agent_graph.text_vram_mb.
+# Прикидки памяти — `common.agent_memory`; по факту диспетчер запомнит свой замер.
 # Веса YOLOE-26 и кодировщик промтов лежат в образе (training_svc/fetch_yoloe.py).
 YOLOE_DIR = os.environ.get("YOLOE_DIR", "/opt/yoloe")
 # SAM 3 в ultralytics растягивает кадр в квадрат входа (644 или 1008) без сохранения
@@ -154,7 +155,10 @@ def execute(db, run):
     doc = agent_graph.prepare(version.doc)
     from training_svc import examples
 
-    sets = examples.rows_for(db, run.created_by, doc)
+    # Образцы — с полки владельца агента: подключённого к проекту агента
+    # запускает не только он. Владелец удалён — наборы ищутся просто по id.
+    graph = db.get(AugGraph, version.graph_id)
+    sets = examples.rows_for(db, graph.owner_id if graph is not None else None, doc)
     try:
         # Версия уже сохранена — старые числа вне пределов зажимаем, а не отвергаем.
         order = agent_graph.check(doc, sam3=config.sam3_ready(), clamp=True,
@@ -163,32 +167,32 @@ def execute(db, run):
         _finish(db, run, "error", str(exc))
         return True
 
-    nets = [n for n in doc["nodes"] if n["type"] == "net"]
-    texts = [n for n in doc["nodes"] if n["type"] == "text"]
-    # Вход SAM 3 — в подписи: замер памяти на 644 не годится для 1008.
-    families = sorted(f"sam3@{agent_graph.sam3_side(n.get('params'))}"
-                      if agent_graph.text_model(n.get("params")) == "sam3" else "yoloe" for n in texts)
     weights = {}
-    for node in nets:
+    for node in (n for n in doc["nodes"] if n["type"] == "net"):
         row = db.get(AgentWeights, _uuid(node["params"].get("weights")))
         if row is None:
             _finish(db, run, "error", f"{agent_graph.title(node)}: весов нет на полке.")
             return True
         weights[node["id"]] = row
 
-    sams = sorted({(n.get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
-                   for n in doc["nodes"] if n["type"] == "sam"})
-    # Тайлы идут в сеть пачкой — памяти нужно больше, и замер диспетчера
-    # не должен смешиваться с замером одиночного прохода.
-    batch = max((agent_graph.TILE_BATCH if (n.get("params") or {}).get("tiles") else 1
-                 for n in nets + texts), default=1)
-    # Число промтов и наборов — в подписи: SAM 3 на 40 промтов и на 1 — разные задачи.
-    prompts = sorted(f"{len(agent_graph.text_prompts(n))}p{len(agent_graph.text_sets(n))}s"
-                     for n in texts)
-    sig = (f"agent:{len(nets)}:b{batch}:{','.join(sams)}:{','.join(families)}"
-           f":{','.join(prompts)}")
-    want, _ = gpu.estimate(db, "agent", sig, NET_VRAM_MB * len(nets) + SAM_VRAM_MB * len(sams)
-                           + sum(agent_graph.text_vram_mb(n) for n in texts))
+    mode = run.params.get("mode") or "frames"
+    scout = mode == "scout"
+    cards = gpu.cards(db)
+    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout)
+    sig = agent_memory.signature(doc, mem["words"], scout=scout)
+    total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
+    verdict = agent_memory.verdict(total, mem["heaviest"], cards)
+    if verdict["state"] == agent_memory.NEVER:
+        if run.gpu_lease_id:
+            gpu.cancel(db, run.gpu_lease_id, verdict["reason"])
+        _finish(db, run, "error", verdict["reason"])
+        return True
+    sequential = verdict["state"] == agent_memory.SEQUENTIAL
+    agent_memory.fix_words(doc, mem["words"])
+    want = total
+    if sequential:
+        sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout)
+        want, _ = gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])
     # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла время
     # ожидания, и защита от голодания (возраст брони) не срабатывала.
     lease = db.get(GpuLease, run.gpu_lease_id) if run.gpu_lease_id else None
@@ -201,8 +205,11 @@ def execute(db, run):
         lease = gpu.request(
             db, holder="training", kind="agent", want_mb=want, ref_id=run.id,
             project_id=run.project_id, user_id=run.created_by, priority=35,
-            allow_cpu=True, title="Агент разметки",
+            allow_cpu=False, title="Агент разметки",
         )
+    if lease.status == "denied":
+        _finish(db, run, "error", lease.reason or "Видеокарту не дали.")
+        return True
     if lease.status != "held":
         run.status = "waiting_gpu"
         run.queue_reason = lease.reason
@@ -211,16 +218,21 @@ def execute(db, run):
         live.notify(db, "agent", run.id, run.project_id, s="waiting_gpu")
         return False
 
+    card = db.get(GpuDevice, lease.device_id)
+    # Что прогон занял — для журнала агентов проекта; ход пишет счётчики рядом.
+    info = {"card": card.name if card else None, "want_mb": want, "sequential": sequential,
+            "words": mem["words"] or None, "waited_s": _waited(lease)}
     run.status = "running"
     run.gpu_lease_id = lease.id
     run.queue_reason = None
     run.started_at = run.started_at or utcnow()
+    run.stats = {"res": info}
     db.commit()
     live.notify(db, "agent", run.id, run.project_id, s="running")
-    device = "cpu" if lease.device_id is None else 0
     peak = 0
+    tick = None
     try:
-        mode = run.params.get("mode") or "frames"
+        device = _device(gpu.torch_index(db, lease))
         ids = frames(db, run) if mode == "frames" else None
         plan = _video_plan(db, run, mode) if ids is None else None
         run.total = len(ids) if ids is not None else sum(len(f) for _, f in plan)
@@ -228,23 +240,13 @@ def execute(db, run):
         # Своя память — прирост от этого уровня: соседний прогон или превью в
         # том же процессе не должны попадать в замер (раньше 6740 вместо 3900).
         base = _allocated_mb(device)
-        with _beating(lease.id):
-            models = _load(weights)
-            models.update({n["id"]: load_text(n, device, sets) for n in texts})
-            # Разведке нужны где и что, а не контур: SAM не грузим вовсе.
-            if mode != "scout":
-                models.update({name: _load_sam(name, device) for name in sams})
-        tick = _ticker(db, run, lease.id, device, base)
+        tick = _ticker(db, run, lease.id, device, base, info)
+        work = _Work(doc, order, mem["units"], weights, sets, device, lease.id, sequential, tick)
         mapping = run.params.get("mapping") or {}
         if ids is not None:
-            boxes = marked = 0
-            for image_id in ids:
-                put = _one(db, run, image_id, doc, order, models, weights, mapping, device)
-                boxes += put
-                marked += bool(put)
-                tick({"boxes": boxes, "frames": marked})
+            _frames(db, run, ids, work, mapping, tick)
         else:
-            _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, tick)
+            _videos(db, run, mode, plan, work, mapping, tick)
         peak = tick.peak()
         _finish(db, run, "done")
     except Stopped:
@@ -252,36 +254,155 @@ def execute(db, run):
     except Exception as exc:  # noqa: BLE001 — человеку нужен текст, а не трасса
         log.exception("прогон агента %s не удался", run.id)
         db.rollback()
-        _finish(db, run, "error", str(exc)[:500])
+        message = str(exc)[:500]
+        if _is_oom(exc):
+            # Оценка соврала — следующий запуск попросит больше, а не упадёт так же.
+            peak = max(tick.peak() if tick else 0, int(want * 1.25))
+            message = (f"Не хватило памяти карты{' ' + info['card'] if info['card'] else ''}: "
+                       f"просили {_gb(want)}. Следующий запуск попросит {_gb(peak)}.")
+        _finish(db, run, "error", message)
     finally:
         if peak:
             gpu.remember(db, "agent", sig, peak)
-        gpu.release(db, lease.id)
+        gpu.release(db, lease.id, peak_mb=peak or None)
         _free()
     return True
 
 
-def _one(db, run, image_id, doc, order, models, weights, mapping, device):
-    """Один кадр. Возвращает число поставленных рамок.
+def _gb(mb):
+    return f"{mb / 1024:.1f} ГБ".replace(".", ",")
 
-    Модель считает без замка: держать строку кадра секунды значило бы стопорить
-    запись человека и ловить взаимную блокировку. Писать — под замком и только
-    если за это время кадр не тронули (статус и версия разметки прежние)."""
-    image = db.get(Image, image_id)
-    if image is None or image.task_status != "new":
+
+def _waited(lease):
+    """Сколько прогон ждал карту, секунд: от постановки брони до выдачи."""
+    if lease.granted_at is None or lease.created_at is None:
+        return None
+    return max(0, int((lease.granted_at - lease.created_at).total_seconds()))
+
+
+def _is_oom(exc):
+    return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
+
+
+def _device(index):
+    """Карта брони для torch в этой нити.
+
+    Только объектом `torch.device`: ultralytics 8.4 на строку «1» или «cuda:1»
+    переписывает CUDA_VISIBLE_DEVICES на весь процесс и всё равно отдаёт
+    cuda:0. `set_device` — для кода, который берёт «текущую» карту нити."""
+    import torch
+
+    if index is None:
+        raise RuntimeError("Бронь без видеокарты — агенты на процессоре не считают.")
+    torch.cuda.set_device(index)
+    return torch.device(f"cuda:{index}")
+
+
+class _Work:
+    """Как прогон считает кадры: целиком — все модели в памяти, — или поочерёдно:
+    кадры копятся пачкой, и модели грузятся по одному блоку `agent_memory` на пачку."""
+
+    def __init__(self, doc, order, units, weights, sets, device, lease_id, sequential, tick):
+        self.doc, self.order, self.units = doc, order, units
+        self.weights, self.sets, self.device = weights, sets, device
+        self.lease_id, self.sequential, self.tick = lease_id, sequential, tick
+        self.byid = {n["id"]: n for n in doc["nodes"]}
+        self.buffer = []
+        self.models = None
+
+    def frame(self, key, path, picture, name, segment, handle, trace=None):
+        """Посчитать кадр и отдать находки в `handle(key, found)`; поочерёдно —
+        позже, на `flush` пачки. `segment=False` — разведка: SAM не грузится.
+        `trace` — словарь превью: вход и выход каждого узла."""
+        if not self.sequential:
+            if self.models is None:
+                self.models = self._load([u for u in self.units if segment or u["kind"] != "sam"])
+            predict, seg = frame_fns(path, name, self.models, self.weights, self.device,
+                                     picture=picture, contour=segment)
+            handle(key, agent_graph.run(self.doc, predict, self.order, seg if segment else None, trace))
+            return
+        self.buffer.append((key, path, picture, name, segment, handle, trace))
+        if len(self.buffer) >= agent_memory.SEQ_BATCH:
+            self.flush()
+
+    def flush(self):
+        items, self.buffer = self.buffer, []
+        if not items:
+            return
+        cache = [{} for _ in items]
+        for unit in (u for u in self.units if u["kind"] != "sam"):
+            self.tick.check()
+            models = self._load([unit])
+            for i, (_key, path, picture, name, segment, _handle, _trace) in enumerate(items):
+                predict, _ = frame_fns(path, name, models, self.weights, self.device,
+                                       picture=picture, contour=segment)
+                for nid in unit["nodes"]:
+                    cache[i][nid] = predict(self.byid[nid])
+            self.tick.measure()
+            del models
+            _free()
+        need_sam = any(item[4] for item in items)
+        sams = self._load([u for u in self.units if u["kind"] == "sam"]) if need_sam else {}
+        try:
+            for i, (key, path, picture, name, segment, handle, trace) in enumerate(items):
+                _, seg = frame_fns(path, name, sams, self.weights, self.device, picture=picture, contour=segment)
+                found = agent_graph.run(self.doc, lambda node, c=cache[i]: c[node["id"]], self.order,
+                                        seg if segment else None, trace)
+                handle(key, found)
+        finally:
+            del sams
+            _free()
+
+    def _load(self, units):
+        """Модели блоков: {узел сети или «Сети по тексту»: модель, имя SAM: предиктор}.
+        Узлы SAM 3 одного блока делят одну модель — у них разные только промты."""
+        out = {}
+        with _beating(self.lease_id):
+            for unit in units:
+                if unit["kind"] == "net":
+                    out.update(_load({nid: self.weights[nid] for nid in unit["nodes"]}))
+                elif unit["kind"] in ("yoloe", "sam3"):
+                    shared = {}
+                    for nid in unit["nodes"]:
+                        out[nid] = load_text(self.byid[nid], self.device, self.sets, shared)
+                elif unit["kind"] == "sam":
+                    for nid in unit["nodes"]:
+                        name = (self.byid[nid].get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
+                        if name not in out:
+                            out[name] = _load_sam(name, self.device)
+        self.tick.measure()
+        return out
+
+
+def _frames(db, run, ids, work, mapping, tick):
+    """Кадры таски. Модель считает без замка: держать строку кадра секунды значило
+    бы стопорить запись человека и ловить взаимную блокировку. Писать — под замком
+    и только если кадр за это время не тронули (статус и версия разметки прежние)."""
+    seen = {}
+    stats = {"boxes": 0, "frames": 0}
+
+    def handle(image_id, found):
+        image = db.execute(select(Image).where(Image.id == image_id).with_for_update()).scalar_one_or_none()
+        if image is None or image.task_status != "new" or image.annotations_rev != seen[image_id]:
+            db.rollback()
+            put = 0
+        else:
+            put = _write(db, run, image, found, mapping)
+        stats["boxes"] += put
+        stats["frames"] += bool(put)
+        tick(dict(stats))
+
+    for image_id in ids:
+        image = db.get(Image, image_id)
+        if image is None or image.task_status != "new":
+            db.rollback()
+            tick(dict(stats))
+            continue
+        seen[image_id] = image.annotations_rev
+        path, name = os.path.join(config.DATA_DIR, image.file_path), image.file_name
         db.rollback()
-        return 0
-    path, name, seen = os.path.join(config.DATA_DIR, image.file_path), image.file_name, image.annotations_rev
-    db.rollback()
-    predict, segment = frame_fns(path, name, models, weights, device)
-    found = agent_graph.run(doc, predict, order, segment)
-    image = db.execute(
-        select(Image).where(Image.id == image_id).with_for_update()
-    ).scalar_one_or_none()
-    if image is None or image.task_status != "new" or image.annotations_rev != seen:
-        db.rollback()
-        return 0
-    return _write(db, run, image, found, mapping)
+        work.frame(image_id, path, None, name, True, handle)
+    work.flush()
 
 
 def frame_fns(path, file_name, models, weights, device, picture=None, contour=True):
@@ -462,10 +583,12 @@ def _merge_passes(found, threshold=agent_graph.NMS_IOU):
     return kept
 
 
-def load_text(node, device, sets=None):
+def load_text(node, device, sets=None, shared=None):
     """Модель «Сети по тексту»: YOLOE с вшитыми классами — векторы слов и
     средние векторы наборов образцов по порядку строк, — или SAM 3 с
-    вырезками коллажа. `sets` — {id набора: строка agent_examples}."""
+    вырезками коллажа. `sets` — {id набора: строка agent_examples}.
+    `shared` — {вход: предиктор SAM 3}: узлы SAM 3 на одном входе делят модель
+    (3,45 ГБ весов), своё у каждого — только промты и вырезки."""
     from training_svc import examples
 
     params = node.get("params") or {}
@@ -479,11 +602,15 @@ def load_text(node, device, sets=None):
             raise RuntimeError(f"Нет весов SAM 3: положите sam3.pt в {config.SAM3_WEIGHTS}.")
         from ultralytics.models.sam import SAM3SemanticPredictor
 
-        return Sam3Text(SAM3SemanticPredictor(overrides=dict(
-            task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
-            imgsz=agent_graph.sam3_side(params), quantize=16 if device != "cpu" else None,
-            device="cpu" if device == "cpu" else 0)),
-            {s: examples.Crops(sets[s]) for _, s in agent_graph.text_sets(node)})
+        side = agent_graph.sam3_side(params)
+        predictor = (shared or {}).get(side)
+        if predictor is None:
+            predictor = SAM3SemanticPredictor(overrides=dict(
+                task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
+                imgsz=side, quantize=16, device=device))
+            if shared is not None:
+                shared[side] = predictor
+        return Sam3Text(predictor, {s: examples.Crops(sets[s]) for _, s in agent_graph.text_sets(node)})
 
     import torch
     from ultralytics import YOLOE
@@ -525,14 +652,34 @@ def text_key(node):
     return (model, *(p for _, p in agent_graph.text_prompts(node)), *sets)
 
 
+def _own_versions(db, version_id):
+    """Версии того же агента: перезапуск после правки заменяет и рамки прежних версий."""
+    graph_id = db.execute(select(AugGraphVersion.graph_id).where(AugGraphVersion.id == version_id)).scalar()
+    return select(AugGraphVersion.id).where(AugGraphVersion.graph_id == graph_id)
+
+
+def _settle(db, model, rows, found, mapping):
+    """Находки против того, что лежит на кадре: повторы рамок человека и
+    проверенных отбрасываются; с непроверенными рамками других агентов — NMS,
+    вытесненные удаляются."""
+    known = [(a.class_id, agent_graph.geometry_box(a.ann_type, a.geometry)) for a in rows if not a.pending]
+    others = [(a.id, a.class_id, agent_graph.geometry_box(a.ann_type, a.geometry),
+               (a.attributes or {}).get("conf") or 0) for a in rows if a.pending]
+    found = agent_graph.drop_known(found, [k for k in known if k[1]], mapping)
+    found, gone = agent_graph.settle_agents(found, [o for o in others if o[2]], mapping)
+    if gone:
+        db.execute(model.__table__.delete().where(model.id.in_(gone)))
+    return found
+
+
 def _write(db, run, image, found, mapping):
     db.execute(
         Annotation.__table__.delete().where(
-            Annotation.image_id == image.id, Annotation.pending.is_(True))
+            Annotation.image_id == image.id, Annotation.pending.is_(True),
+            Annotation.agent_version_id.in_(_own_versions(db, run.version_id)))
     )
-    known = [(a.class_id, agent_graph.geometry_box(a.ann_type, a.geometry))
-             for a in db.execute(select(Annotation).where(Annotation.image_id == image.id)).scalars()]
-    found = agent_graph.drop_known(found, [k for k in known if k[1]], mapping)
+    rows = db.execute(select(Annotation).where(Annotation.image_id == image.id)).scalars().all()
+    found = _settle(db, Annotation, rows, found, mapping)
     put = 0
     for det in found:
         class_id = mapping.get(det["cls"])
@@ -561,20 +708,31 @@ def _write(db, run, image, found, mapping):
     return put
 
 
-def _ticker(db, run, lease_id, device=None, base=0):
+def _ticker(db, run, lease_id, device=None, base=0, info=None):
     """Шаг хода: +1 кадр, статистика, отмена кнопкой, пульс брони и живой связи.
 
-    Заодно держит пик своей памяти: прирост `memory_allocated` от `base`."""
+    Заодно держит пик своей памяти: прирост `memory_allocated` от `base`.
+    `info` — что прогон занял (карта, память, режим), лежит рядом в `stats.res`."""
     last = [0.0]
     top = [0]
 
-    def tick(stats):
+    def measure():
         top[0] = max(top[0], _allocated_mb(device) - base)
+
+    def check():
+        # Поочерёдно модели грузятся минутами — отмена и пульс между блоками.
+        db.refresh(run)
+        if run.cancel_requested:
+            raise Stopped()
+        gpu.beat(db, lease_id)
+
+    def tick(stats):
+        measure()
         db.refresh(run)
         if run.cancel_requested:
             raise Stopped()
         run.processed += 1
-        run.stats = stats
+        run.stats = {**stats, "res": info} if info else stats
         run.lease_until = utcnow()
         db.commit()
         now = time.monotonic()
@@ -585,6 +743,8 @@ def _ticker(db, run, lease_id, device=None, base=0):
 
     # Запас 15 %: allocated не видит кэш распределителя.
     tick.peak = lambda: int(top[0] * 1.15) if top[0] > 0 else 0
+    tick.measure = measure
+    tick.check = check
     return tick
 
 
@@ -624,7 +784,7 @@ def _video_plan(db, run, mode):
     return out
 
 
-def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, tick):
+def _videos(db, run, mode, plan, work, mapping, tick):
     step = int(run.params.get("step") or agent_graph.VIDEO_STEP)
     gap_s = float(run.params.get("gap") if run.params.get("gap") is not None else agent_graph.SCOUT_GAP_S)
     version = db.get(AugGraphVersion, run.version_id)
@@ -633,10 +793,7 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
     for video, wanted in plan:
         hits, seen = {}, {}
 
-        def on_frame(frame_no, _time_ms, picture):
-            predict, segment = frame_fns(None, f"{video.file_name} #{frame_no}", models, weights,
-                                         device, picture=picture, contour=mode == "annotate")
-            found = agent_graph.run(doc, predict, order, segment if mode == "annotate" else None)
+        def handle(frame_no, found, video=video, hits=hits, seen=seen):
             if mode == "annotate":
                 put = _write_video(db, run, video, frame_no, found, mapping)
                 stats["boxes"] += put
@@ -649,15 +806,21 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
                     stats["frames"] += 1
             tick(dict(stats))
 
+        def on_frame(frame_no, _time_ms, picture, video=video, handle=handle):
+            work.frame(frame_no, None, picture, f"{video.file_name} #{frame_no}", mode == "annotate", handle)
+
         try:
             if wanted:
                 # Номера — по таблице кадров ролика, как у разметки и закрытия.
                 video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted,
                                             on_frame, pts=video_frames.unpack_pts(video.frame_index))
+            # Поочерёдно хвост ролика ещё в пачке — досчитать до итогов ролика.
+            work.flush()
             if mode == "annotate":
-                # Ролик пройден целиком: прежние рамки агента вне плана больше не нужны.
+                # Ролик пройден целиком: прежние рамки этого агента вне плана больше не нужны.
                 _lock_open(db, video)
-                db.execute(_agent_rows(video).where(VideoAnnotation.frame_no.notin_(wanted or [-1])))
+                db.execute(_agent_rows(video, _own_versions(db, run.version_id))
+                           .where(VideoAnnotation.frame_no.notin_(wanted or [-1])))
         except VideoClosed:
             log.warning("прогон %s: разметку ролика %s закрыли — дальше без него", run.id, video.id)
             stats["closed"] = stats.get("closed", 0) + 1
@@ -672,15 +835,16 @@ def _videos(db, run, mode, plan, doc, order, models, weights, mapping, device, t
                 segments=agent_graph.segments(hits, step, round(gap_s * (video.fps or 25)), last),
             ))
         stats["videos"] += 1
-        run.stats = dict(stats)
+        run.stats = {**stats, "res": (run.stats or {}).get("res")}
         db.commit()
 
 
-def _agent_rows(video):
-    """Непроверенные рамки агентов на ролике — то, что повторный прогон заменяет."""
+def _agent_rows(video, own):
+    """Непроверенные рамки этого агента на ролике — то, что повторный прогон
+    заменяет. `own` — его версии (`_own_versions`)."""
     return VideoAnnotation.__table__.delete().where(
         VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
-        VideoAnnotation.pending.is_(True))
+        VideoAnnotation.pending.is_(True), VideoAnnotation.agent_version_id.in_(own))
 
 
 class VideoClosed(Exception):
@@ -710,12 +874,11 @@ def _lock_open(db, video):
 def _write_video(db, run, video, frame_no, found, mapping):
     # Замена по кадру в одной транзакции: остановка на середине не теряет прежние рамки.
     _lock_open(db, video)
-    db.execute(_agent_rows(video).where(VideoAnnotation.frame_no == frame_no))
-    known = [(a.class_id, agent_graph.geometry_box(a.ann_type, a.geometry))
-             for a in db.execute(select(VideoAnnotation).where(
-                 VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
-                 VideoAnnotation.frame_no == frame_no)).scalars()]
-    found = agent_graph.drop_known(found, [k for k in known if k[1]], mapping)
+    db.execute(_agent_rows(video, _own_versions(db, run.version_id)).where(VideoAnnotation.frame_no == frame_no))
+    rows = db.execute(select(VideoAnnotation).where(
+        VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
+        VideoAnnotation.frame_no == frame_no)).scalars().all()
+    found = _settle(db, VideoAnnotation, rows, found, mapping)
     put = 0
     for det in found:
         class_id = mapping.get(det["cls"])
@@ -777,7 +940,7 @@ def _load_sam(name, device):
     from sam2.sam2_image_predictor import SAM2ImagePredictor
 
     _, cfg, _ = SAM_FILES[name]
-    model = build_sam2(cfg, sam_weights(name), device="cpu" if device == "cpu" else "cuda")
+    model = build_sam2(cfg, sam_weights(name), device=str(device))
     return SAM2ImagePredictor(model)
 
 
@@ -809,7 +972,7 @@ def _allocated_mb(device):
         return 0
     try:
         import torch
-        return int(torch.cuda.memory_allocated() / (1 << 20))
+        return int(torch.cuda.memory_allocated(device) / (1 << 20))
     except Exception:
         return 0
 

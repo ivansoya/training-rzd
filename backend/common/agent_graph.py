@@ -179,19 +179,44 @@ def sam3_side(params):
     return int(side) if side in SAM3_SIDES else SAM3_SIDE
 
 
-def sam3_words_per_call(params):
-    return SAM3_1008_WORDS if sam3_side(params) == 1008 else SAM3_MAX_ROWS
+# «Слов за проход» у SAM 3: меньше порция — меньше памяти, но больше проходов по кадру.
+# Пусто или «auto» — самая крупная порция, при которой узел влезает в карту.
+SAM3_WORDS = (1, 2, 4, 8, 16)
 
 
-def text_vram_mb(node) -> int:
+def sam3_words(params):
+    """Порция, выбранная человеком; None — «Авто»."""
+    value = num((params or {}).get("words"))
+    return int(value) if value in SAM3_WORDS else None
+
+
+def sam3_mb(params, at_once) -> int:
+    """Память SAM 3 при `at_once` промтах в одном вызове (образцы — один)."""
+    if sam3_side(params) == 1008:
+        return SAM3_1008_BASE_MB + SAM3_1008_PER_PROMPT_MB * max(1, at_once)
+    return SAM3_BASE_MB + SAM3_PER_PROMPT_MB * max(1, at_once)
+
+
+def sam3_words_per_call(params, words=None, cap_mb=None):
+    """Слов в одном вызове. «Авто» — умолчание входа (4 на 1008, все на 644),
+    а при известном потолке карты `cap_mb` — порция вдвое меньше, пока узел не влезет."""
+    own = sam3_words(params)
+    if own:
+        return own
+    per = SAM3_1008_WORDS if sam3_side(params) == 1008 else SAM3_MAX_ROWS
+    while cap_mb and per > 1 and sam3_mb(params, min(per, words or per)) > cap_mb:
+        per //= 2
+    return per
+
+
+def text_vram_mb(node, cap_mb=None) -> int:
     """Сколько видеопамяти просить под узел «Сети по тексту»."""
     params = node.get("params")
     if text_model(params) != "sam3":
         return YOLOE_MB
-    if sam3_side(params) == 1008:
-        words = min(SAM3_1008_WORDS, max(1, len(text_prompts(node))))
-        return SAM3_1008_BASE_MB + SAM3_1008_PER_PROMPT_MB * words
-    return SAM3_BASE_MB + SAM3_PER_PROMPT_MB * len(text_rows(node))
+    words = len(text_prompts(node))
+    per = sam3_words_per_call(params, words, cap_mb)
+    return sam3_mb(params, min(per, words))
 
 
 def text_rows(node):
@@ -520,6 +545,9 @@ def _check_text(node, sam3, examples):
     side = params.get("side")
     if text_model(params) == "sam3" and side not in (None, "") and num(side) not in SAM3_SIDES:
         raise AgentGraphError(f"{title(node)}: вход SAM 3 — 644 или 1008, сейчас {side!r}.")
+    words = params.get("words")
+    if words not in (None, "", "auto") and num(words) not in SAM3_WORDS:
+        raise AgentGraphError(f"{title(node)}: «Слов за проход» — авто, 1, 2, 4, 8 или 16, сейчас {words!r}.")
     if not text_rows(node):
         raise AgentGraphError(f"{title(node)}: не включена ни одна строка.")
     if text_model(params) == "sam3" and len(text_rows(node)) > SAM3_MAX_ROWS:
@@ -613,6 +641,31 @@ def drop_known(found, known, mapping, threshold=KNOWN_IOU):
             continue
         out.append(det)
     return out
+
+
+def settle_agents(found, others, mapping, threshold=KNOWN_IOU):
+    """NMS между агентами на кадре: находки этого агента против непроверенных
+    рамок других. Возвращает (что писать, id чужих рамок, которые вытеснены).
+
+    `others` — [(id, id класса проекта, (x, y, w, h), уверенность)]. На объекте
+    остаётся одна рамка — уверенная; уверенности разных моделей сравниваются
+    как есть (решение владельца 09.10.2026). Человеческие и проверенные рамки
+    сюда не входят — их держит `drop_known`."""
+    alive = list(others)
+    gone, kept = [], []
+    for det in sorted(found, key=lambda d: -d["conf"]):
+        cid = mapping.get(det["cls"])
+        box = tuple(det["box"])
+        hit = [o for o in alive if cid and str(o[1]) == str(cid) and iou(box, o[2]) >= threshold]
+        # Лежащая уверенность округлена до 3 знаков (`attributes.conf`) — сравниваем
+        # в той же точности, иначе ничья (тот же агент, копия) вытесняла бы по округлению.
+        if hit and max(o[3] or 0 for o in hit) >= round(det["conf"], 3):
+            continue
+        for o in hit:
+            alive.remove(o)
+            gone.append(o[0])
+        kept.append(det)
+    return kept, gone
 
 
 def nms(dets, threshold=NMS_IOU, agnostic=False):

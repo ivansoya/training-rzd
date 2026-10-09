@@ -1,8 +1,9 @@
 """Превью агента — нить `training-worker`: один кадр через черновик графа.
 
 Решения владельца (24.09.2026): считать на карте с тёплыми моделями, живой
-пересчёт; бронь отпускается после трёх минут тишины; нет места на карте —
-считаем на процессоре и говорим об этом, а не ждём часами.
+пересчёт; бронь отпускается после трёх минут тишины. С 09.10.2026 процессора
+нет: карта занята — запрос отвечает «ждёт карту» с причиной, а бронь стоит в
+очереди до следующего запроса; не влезет никогда — ошибка с вердиктом.
 
 Запрос — строка `agent_previews`: веб кладёт и шлёт NOTIFY, нить просыпается,
 берёт самый свежий запрос человека, а более старые помечает `superseded` —
@@ -19,20 +20,21 @@ import time
 
 from sqlalchemy import select, update
 
-from common import agent_graph, config, gpu, video_frames
+from common import agent_graph, agent_memory, config, gpu, video_frames
 from common.db import SessionLocal, engine
-from common.models import AgentPreview, AgentWeights, Image, TaskVideo
+from common.models import AgentPreview, AgentWeights, GpuLease, Image, TaskVideo
 from training_svc import agent_runner
 
 log = logging.getLogger("training.preview")
 
 CHANNEL = "agent_preview"
 IDLE_RELEASE = 180
-# Бронь превью — сеть или две плюс SAM2 small; по замеру диспетчер поправит.
-# SAM 3 в «Сети по тексту» сюда не влезает — на тесной карте превью с ним
-# уйдёт на процессор.
-# ponytail: одна прикидка на любой граф; больше сетей — считать по графу.
-VRAM_MB = 3000
+# Ждущая бронь превью без новых запросов снимается: человек ушёл из редактора.
+WAIT_DROP = 60
+
+
+class Waiting(Exception):
+    """Карту превью пока не дали — текст причины для человека."""
 
 
 class _Warm:
@@ -44,36 +46,50 @@ class _Warm:
         self.nets = {}     # id весов -> YOLO
         self.sams = {}     # имя SAM -> предиктор
         self.texts = {}    # agent_runner.text_key -> YOLOE с промтами или SAM 3
+        self.sam3 = {}     # вход -> общий предиктор SAM 3 узлов
         self.last = 0.0
-        self.note = None   # почему на процессоре
         self.want = 0      # сколько забронировано
+        self.queued = None  # бронь, стоящая в очереди: следующий запрос ждёт её, а не новую
 
     def drop(self, db):
         if self.lease_id:
             gpu.release(db, self.lease_id)
-        self.lease_id, self.device, self.nets, self.sams, self.texts, self.note = None, None, {}, {}, {}, None
+        self.lease_id, self.device = None, None
+        self.nets, self.sams, self.texts, self.sam3 = {}, {}, {}, {}
         agent_runner._free()
 
-    def ensure_device(self, db, want=VRAM_MB):
-        """Карта, если дают; иначе процессор и причина словами."""
+    def unqueue(self, db):
+        if self.queued:
+            gpu.cancel(db, self.queued, "Превью больше не ждут")
+            self.queued = None
+
+    def ensure_device(self, db, want):
+        """Карта под `want` МБ или `Waiting` с причиной — процессора нет."""
         if self.lease_id and self.want >= want:
             gpu.beat(db, self.lease_id)
             return
         if self.lease_id:
             # Граф стал прожорливее брони (SAM 3 с новыми промтами) — перебронируем.
             self.drop(db)
-        lease = gpu.request(db, holder="training", kind="agent-preview", want_mb=want,
-                            priority=20, allow_cpu=True, title="Превью агента")
-        self.want = want
-        if lease.status == "held":
-            self.lease_id = lease.id
-            device, note = ("cpu" if lease.device_id is None else 0), None
+        lease = db.get(GpuLease, self.queued) if self.queued else None
+        if lease is not None and lease.status == "queued" and lease.want_mb == want:
+            gpu.try_grant(db, lease.id)
+            db.refresh(lease)
         else:
-            gpu.cancel(db, lease.id, "Превью считает на процессоре")
-            device, note = "cpu", lease.reason or "карта занята"
+            self.unqueue(db)
+            lease = gpu.request(db, holder="training", kind="agent-preview", want_mb=want,
+                                priority=20, allow_cpu=False, title="Превью агента")
+        if lease.status == "denied":
+            raise agent_graph.AgentGraphError(lease.reason or "Видеокарту не дали.")
+        if lease.status != "held":
+            self.queued = lease.id
+            raise Waiting(lease.reason or "карта занята")
+        self.queued = None
+        self.lease_id, self.want = lease.id, want
+        device = agent_runner._device(gpu.torch_index(db, lease))
         if device != self.device:
-            self.nets, self.sams, self.texts = {}, {}, {}
-        self.device, self.note = device, note
+            self.nets, self.sams, self.texts, self.sam3 = {}, {}, {}, {}
+        self.device = device
 
     def models(self, doc, weights, sets):
         out = {}
@@ -81,9 +97,12 @@ class _Warm:
         # сейчас, иначе за вечер правок карта забилась бы старыми.
         keys = {agent_runner.text_key(n): n for n in doc["nodes"] if n["type"] == "text"}
         self.texts = {k: m for k, m in self.texts.items() if k in keys}
+        sides = {agent_graph.sam3_side(n.get("params")) for n in keys.values()
+                 if agent_graph.text_model(n.get("params")) == "sam3"}
+        self.sam3 = {k: p for k, p in self.sam3.items() if k in sides}
         for key, node in keys.items():
             if key not in self.texts:
-                self.texts[key] = agent_runner.load_text(node, self.device, sets)
+                self.texts[key] = agent_runner.load_text(node, self.device, sets, self.sam3)
         for node in doc["nodes"]:
             if node["type"] == "text":
                 out[node["id"]] = self.texts[agent_runner.text_key(node)]
@@ -115,34 +134,71 @@ def _take(db):
     return row
 
 
+class _NoTick:
+    """Ход превью: отмены нет, пульс брони — сама нить превью."""
+
+    def check(self):
+        pass
+
+    def measure(self):
+        pass
+
+
 def _answer(db, warm, row):
     from training_svc import examples
 
     doc = agent_graph.prepare(row.doc)
-    sets = examples.rows_for(db, row.user_id, doc)
+    # Веса и образцы — с полки владельца агента: подключённого к проекту агента
+    # смотрит и запускает не только он. Веб кладёт владельца в запрос.
+    owner = agent_runner._uuid(doc.get("owner")) or row.user_id
+    sets = examples.rows_for(db, owner, doc)
     order = agent_graph.check(doc, sam3=config.sam3_ready(),
                               examples={k: r.status == "ready" for k, r in sets.items()})
     weights = {}
     for node in doc["nodes"]:
         if node["type"] == "net":
             got = db.get(AgentWeights, agent_runner._uuid(node["params"].get("weights")))
-            if got is None or got.owner_id != row.user_id:
+            if got is None or got.owner_id != owner:
                 raise agent_graph.AgentGraphError(f"{agent_graph.title(node)}: весов нет на полке.")
             weights[node["id"]] = got
-    sam3 = [n for n in doc["nodes"] if n["type"] == "text"
-            and agent_graph.text_model(n.get("params")) == "sam3"]
-    warm.ensure_device(db, VRAM_MB + sum(agent_graph.text_vram_mb(n) for n in sam3))
+    cards = gpu.cards(db)
+    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None)
+    verdict = agent_memory.verdict(mem["total_mb"], mem["heaviest"], cards)
+    if verdict["state"] == agent_memory.NEVER:
+        raise agent_graph.AgentGraphError(verdict["reason"])
+    agent_memory.fix_words(doc, mem["words"])
+    sequential = verdict["state"] == agent_memory.SEQUENTIAL
+    warm.ensure_device(db, verdict["want_mb"])
     started = time.monotonic()
-    models = warm.models(doc, weights, sets)
+    if sequential:
+        # Целиком не влезает — тёплых моделей нет: блоки грузятся по очереди на каждый ответ.
+        warm.nets, warm.sams, warm.texts, warm.sam3 = {}, {}, {}, {}
+        agent_runner._free()
+        models = None
+    else:
+        models = warm.models(doc, weights, sets)
+
+    def frames_out(items):
+        """[(путь, картинка, имя)] → [(находки, трасса)] — целиком или поочерёдно."""
+        got = [None] * len(items)
+        if models is not None:
+            for i, (path, picture, name) in enumerate(items):
+                predict, segment = agent_runner.frame_fns(path, name, models, weights, warm.device, picture=picture)
+                trace = {}
+                got[i] = (agent_graph.run(doc, predict, order, segment, trace), trace)
+            return got
+        work = agent_runner._Work(doc, order, mem["units"], weights, sets, warm.device, warm.lease_id, True, _NoTick())
+        for i, (path, picture, name) in enumerate(items):
+            trace = {}
+            work.frame(i, path, picture, name, True,
+                       lambda key, found, trace=trace: got.__setitem__(key, (found, trace)), trace)
+        work.flush()
+        return got
 
     def trace_of(image):
-        predict, segment = agent_runner.frame_fns(
-            os.path.join(config.DATA_DIR, image.file_path), image.file_name, models, weights, warm.device)
-        trace = {}
-        agent_graph.run(doc, predict, order, segment, trace)
-        return trace
+        return frames_out([(os.path.join(config.DATA_DIR, image.file_path), None, image.file_name)])[0][1]
 
-    out = {"device": "cpu" if warm.device == "cpu" else "cuda", "note": warm.note}
+    out = {"device": "cuda", "sequential": sequential, "verdict": verdict}
     apply = doc.get("apply")
     if apply:
         # Агент из редактора на одном кадре: нужен только «Выход», пишет веб.
@@ -156,23 +212,19 @@ def _answer(db, warm, row):
                                         pts=video_frames.unpack_pts(video.frame_index))
             if not got:
                 raise agent_graph.AgentGraphError("Кадр ролика не достался декодеру.")
-            predict, segment = agent_runner.frame_fns(None, f"{video.file_name} #{apply['frame']}", models,
-                                                      weights, warm.device, picture=got[0])
+            item = (None, got[0], f"{video.file_name} #{apply['frame']}")
         else:
             image = db.get(Image, row.image_id)
-            predict, segment = agent_runner.frame_fns(os.path.join(config.DATA_DIR, image.file_path),
-                                                      image.file_name, models, weights, warm.device)
-        found = agent_graph.run(doc, predict, order, segment)
+            item = (os.path.join(config.DATA_DIR, image.file_path), None, image.file_name)
+        found = frames_out([item])[0][0]
         return {**out, "found": found, "ms": round((time.monotonic() - started) * 1000)}
     batch = doc.get("batch")
     if batch:
         # Несколько кадров разом: модели те же, отдаём только «Выход» каждого.
         exit_id = next(n["id"] for n in doc["nodes"] if n["type"] == "output")
-        frames = []
-        for image_id in batch:
-            image = db.get(Image, agent_runner._uuid(image_id))
-            if image is not None:
-                frames.append({"id": str(image.id), "out": trace_of(image)[exit_id]["out"]})
+        images = [im for im in (db.get(Image, agent_runner._uuid(i)) for i in batch) if im is not None]
+        got = frames_out([(os.path.join(config.DATA_DIR, im.file_path), None, im.file_name) for im in images])
+        frames = [{"id": str(im.id), "out": trace[exit_id]["out"]} for im, (_found, trace) in zip(images, got)]
         return {**out, "frames": frames, "ms": round((time.monotonic() - started) * 1000)}
     # Вход и выход каждого узла целиком — обнаружений десятки, а смена
     # выбранного узла в редакторе тогда ничего не пересчитывает.
@@ -187,7 +239,7 @@ def _trim(warm):
         return
     try:
         import torch
-        if torch.cuda.memory_reserved() / (1 << 20) > warm.want:
+        if torch.cuda.memory_reserved(warm.device) / (1 << 20) > warm.want:
             torch.cuda.empty_cache()
     except Exception:  # noqa: BLE001
         pass
@@ -209,6 +261,9 @@ def loop(stop):
                 try:
                     row.result = _answer(db, warm, row)
                     row.status = "done"
+                except Waiting as exc:
+                    # Не процессор: человек видит причину, бронь ждёт в очереди следующего запроса.
+                    row.status, row.error = "waiting_gpu", f"Ждёт карту: {exc}"
                 except agent_graph.AgentGraphError as exc:
                     row.status, row.error = "error", str(exc)
                 except Exception as exc:  # noqa: BLE001 — человеку нужен текст
@@ -223,6 +278,8 @@ def loop(stop):
                 warm.drop(db)
             elif warm.lease_id:
                 gpu.beat(db, warm.lease_id)
+            if warm.queued and time.monotonic() - warm.last > WAIT_DROP:
+                warm.unqueue(db)
         except Exception:
             log.exception("нить превью агента")
             db.rollback()

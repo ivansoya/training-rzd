@@ -1,0 +1,158 @@
+"""Память агента и вердикт «влезет ли», порция слов SAM 3, NMS между агентами.
+
+Решения владельца 09.10.2026: одна SAM 3 на вход, поочерёдный режим только
+когда сумма не влезает, а самый тяжёлый блок влезает; процессора нет."""
+from common import agent_graph, agent_memory as am
+
+
+def sam3(nid, words, side=1008, per=None, sets=0):
+    rows = [{"on": True, "agent": f"к{i}", "prompt": f"слово {i}"} for i in range(words)]
+    rows += [{"on": True, "agent": f"о{i}", "kind": "examples", "set": f"s{i}"} for i in range(sets)]
+    params = {"model": "sam3", "side": side, "prompts": rows}
+    if per is not None:
+        params["words"] = per
+    return {"id": nid, "type": "text", "params": params}
+
+
+def net(nid):
+    return {"id": nid, "type": "net", "params": {}}
+
+
+def sam(nid, model="sam2.1_hiera_small"):
+    return {"id": nid, "type": "sam", "params": {"model": model}}
+
+
+def card(name="RTX 5070 Ti", cap=13312, free=None):
+    return {"name": name, "cap_mb": cap, "free_mb": cap if free is None else free}
+
+
+# ---- порция слов -------------------------------------------------------------
+def test_авто_берёт_умолчание_входа_пока_влезает():
+    node = sam3("t", 8)
+    assert agent_graph.sam3_words_per_call(node["params"], 8) == 4
+    assert agent_graph.sam3_words_per_call(sam3("t", 8, side=644)["params"], 8) == 16
+
+
+def test_авто_ужимает_порцию_под_потолок_карты():
+    # 1008: 3600 + 850·4 = 7000 > 6000 → 2 слова: 5300.
+    assert agent_graph.sam3_words_per_call(sam3("t", 8)["params"], 8, cap_mb=6000) == 2
+
+
+def test_ручная_порция_не_зависит_от_карты():
+    node = sam3("t", 8, per=1)
+    assert agent_graph.sam3_words_per_call(node["params"], 8, cap_mb=100_000) == 1
+    assert agent_graph.text_vram_mb(node) == 3600 + 850
+
+
+def test_порция_умножает_вызовы():
+    one = sam3("t", 8, per=1)
+    four = sam3("t", 8, per=4)
+    assert agent_graph.calls(one, 1008, 1008) == 8
+    assert agent_graph.calls(four, 1008, 1008) == 2
+
+
+def test_неверная_порция_ошибка():
+    doc = {"nodes": [{"id": "f", "type": "frame"}, sam3("t", 2, per=3), {"id": "o", "type": "output"}],
+           "edges": [{"source": "f", "target": "t"}, {"source": "t", "target": "o"}]}
+    try:
+        agent_graph._check_text(doc["nodes"][1], True, None)
+    except agent_graph.AgentGraphError as exc:
+        assert "Слов за проход" in str(exc)
+    else:
+        raise AssertionError("порция 3 прошла")
+
+
+# ---- блоки памяти ------------------------------------------------------------
+def test_узлы_sam3_делят_одну_модель():
+    doc = {"nodes": [sam3("a", 2), sam3("b", 4)]}
+    got = am.plan(doc)
+    sam_units = [u for u in got["units"] if u["kind"] == "sam3"]
+    assert len(sam_units) == 1
+    assert sam_units[0]["mb"] == 3600 + 850 * 4
+    assert got["total_mb"] == 3600 + 850 * 4
+
+
+def test_разные_входы_это_разные_модели():
+    got = am.plan({"nodes": [sam3("a", 1), sam3("b", 1, side=644)]})
+    assert {u["key"] for u in got["units"]} == {"sam3@1008", "sam3@644"}
+
+
+def test_модели_sam2_один_блок_и_разведке_не_нужны():
+    doc = {"nodes": [net("n"), sam("s1"), sam("s2", "sam2.1_hiera_large")]}
+    assert [u["mb"] for u in am.plan(doc)["units"] if u["kind"] == "sam"] == [2 * am.SAM_MB]
+    assert all(u["kind"] != "sam" for u in am.plan(doc, scout=True)["units"])
+
+
+def test_самый_тяжёлый_блок():
+    got = am.plan({"nodes": [net("n"), sam3("t", 4)]})
+    assert got["heaviest"]["key"] == "sam3@1008"
+    assert got["total_mb"] == am.NET_MB + 7000
+
+
+# ---- вердикт -----------------------------------------------------------------
+def test_влезает_на_ту_где_свободнее():
+    got = am.verdict(7000, {"mb": 7000, "label": "SAM 3"},
+                     [card("A", free=7500), card("B", free=12000)])
+    assert got["state"] == am.FITS and got["card"] == "B"
+
+
+def test_занято_значит_ждать_а_не_процессор():
+    got = am.verdict(7000, {"mb": 7000, "label": "SAM 3"}, [card(free=2000)])
+    assert got["state"] == am.WAIT and got["want_mb"] == 7000
+
+
+def test_целиком_нет_по_частям_да():
+    got = am.verdict(15000, {"mb": 9000, "label": "SAM 3"}, [card()])
+    assert got["state"] == am.SEQUENTIAL and got["want_mb"] == 9000
+
+
+def test_самый_тяжёлый_больше_карты_не_запустится():
+    got = am.verdict(15000, {"mb": 14000, "label": "SAM 3 · вход 1008"}, [card()])
+    assert got["state"] == am.NEVER
+    assert "SAM 3 · вход 1008" in got["reason"]
+
+
+def test_без_карт_не_запустится():
+    assert am.verdict(100, {"mb": 100, "label": "x"}, [])["state"] == am.NEVER
+
+
+def test_подпись_различает_порцию_и_режим():
+    doc = {"nodes": [sam3("t", 8)]}
+    assert am.signature(doc, {"t": 4}) != am.signature(doc, {"t": 1})
+    assert am.signature(doc, {"t": 4}) != am.signature(doc, {"t": 4}, sequential=True)
+
+
+# ---- NMS между агентами ------------------------------------------------------
+MAP = {"вагон": "c1", "болт": "c2"}
+
+
+def det(cls, conf, box=(0, 0, 100, 100)):
+    return {"cls": cls, "conf": conf, "box": box}
+
+
+def test_уверенная_находка_вытесняет_чужую_рамку():
+    kept, gone = agent_graph.settle_agents([det("вагон", 0.9)], [("r1", "c1", (0, 0, 100, 100), 0.6)], MAP)
+    assert [d["conf"] for d in kept] == [0.9] and gone == ["r1"]
+
+
+def test_чужая_уверенней_остаётся():
+    kept, gone = agent_graph.settle_agents([det("вагон", 0.5)], [("r1", "c1", (0, 0, 100, 100), 0.6)], MAP)
+    assert kept == [] and gone == []
+
+
+def test_другой_класс_или_место_не_спорят():
+    others = [("r1", "c1", (0, 0, 100, 100), 0.99), ("r2", "c2", (500, 500, 50, 50), 0.99)]
+    kept, gone = agent_graph.settle_agents([det("болт", 0.1), det("вагон", 0.1, (300, 300, 50, 50))], others, MAP)
+    assert len(kept) == 2 and gone == []
+
+
+def test_одна_чужая_рамка_вытесняется_один_раз():
+    kept, gone = agent_graph.settle_agents(
+        [det("вагон", 0.9), det("вагон", 0.8, (5, 5, 100, 100))], [("r1", "c1", (0, 0, 100, 100), 0.6)], MAP)
+    assert gone == ["r1"] and len(kept) == 2
+
+
+def test_ничья_по_округлению_не_вытесняет():
+    # В базе 0.876 (округлено при записи), новая находка того же качества — 0.8764.
+    kept, gone = agent_graph.settle_agents([det("вагон", 0.8764)], [("r1", "c1", (0, 0, 100, 100), 0.876)], MAP)
+    assert kept == [] and gone == []

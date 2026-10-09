@@ -26,7 +26,7 @@ from sqlalchemy import select
 from common import agent_examples as ax, agent_graph, config, gpu
 from common.db import SessionLocal, engine
 from common.models import (
-    AgentExamples, Annotation, AugGraph, AugGraphVersion, Image, utcnow,
+    AgentExamples, Annotation, AugGraph, AugGraphVersion, GpuLease, Image, utcnow,
 )
 
 log = logging.getLogger("training.examples")
@@ -328,20 +328,40 @@ def _take(db):
     return row
 
 
+# Набор, ждущий карту, -> его бронь в очереди: следующая попытка ждёт её, а не новую.
+_waiting = {}
+
+
 def _answer(db, row):
-    lease = gpu.request(db, holder="training", kind="agent-examples", want_mb=VRAM_MB,
-                        priority=20, allow_cpu=True, title="Образцы агента")
+    """Собрать набор. False — карту пока не дали: набор остаётся в очереди с
+    причиной в `error`, процессор не берётся (решение 09.10.2026)."""
+    from training_svc import agent_runner
+
+    lease = db.get(GpuLease, _waiting.get(row.id)) if row.id in _waiting else None
+    if lease is not None and lease.status == "queued":
+        gpu.try_grant(db, lease.id)
+        db.refresh(lease)
+    else:
+        lease = gpu.request(db, holder="training", kind="agent-examples", want_mb=VRAM_MB,
+                            priority=20, allow_cpu=False, title="Образцы агента")
+    if lease.status == "denied":
+        _waiting.pop(row.id, None)
+        raise RuntimeError(lease.reason or "Видеокарту не дали.")
     if lease.status != "held":
-        gpu.cancel(db, lease.id, "Образцы считаются на процессоре")
-    device = 0 if lease.status == "held" and lease.device_id is not None else "cpu"
+        _waiting[row.id] = lease.id
+        row.error = f"Ждёт карту: {lease.reason or 'карта занята'}"
+        db.commit()
+        return False
+    _waiting.pop(row.id, None)
     try:
+        device = agent_runner._device(gpu.torch_index(db, lease))
         row.dir = os.path.relpath(folder(row.owner_id, row.id), config.DATA_DIR)
+        row.error = None
         build(db, row, device)
     finally:
-        if lease.status == "held":
-            gpu.release(db, lease.id)
-        from training_svc import agent_runner
+        gpu.release(db, lease.id)
         agent_runner._free()
+    return True
 
 
 def gc(db):
@@ -384,7 +404,8 @@ def loop(stop):
         try:
             while (row := _take(db)) is not None:
                 try:
-                    _answer(db, row)
+                    if not _answer(db, row):
+                        break  # ждёт карту — снова через одно пробуждение, без холостого круга
                 except Exception as exc:  # noqa: BLE001 — человеку нужен текст
                     log.exception("набор образцов не собран")
                     db.rollback()
