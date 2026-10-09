@@ -52,6 +52,23 @@ def fits(*, total_mb, reserved_mb, sam2_mb, held_mb, pledged_mb,
     return None
 
 
+def pick_device(candidates, heavy_request):
+    """Какую из подходящих карт отдать. ``candidates`` — [(id, свободно после
+    выдачи, живых броней)], все уже прошли ``fits``.
+
+    Тяжёлое (обучение, прогон агента) — на наименее загруженную: две тяжёлые
+    работы на одной карте вдвое медленнее каждая. Лёгкое (превью, образцы,
+    признаки) — туда, где после него останется меньше всего: большие дыры
+    остаются под большие работы. Ничья — меньший номер в списке."""
+    if not candidates:
+        return None
+    if heavy_request:
+        key = lambda c: (c[2], -c[1])  # noqa: E731
+    else:
+        key = lambda c: c[1]  # noqa: E731
+    return min(enumerate(candidates), key=lambda ic: (key(ic[1]), ic[0]))[1][0]
+
+
 def signature(kind, **facts) -> str:
     """Отпечаток того, что определяет расход памяти.
 

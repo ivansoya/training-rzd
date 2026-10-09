@@ -30,7 +30,7 @@ from sqlalchemy import func, select
 # Правила допуска зовут как gpu.fits и gpu.signature — снаружи диспетчер один,
 # а то, что его считающее ядро лежит отдельно, знают только тесты.
 from common.gpu_rules import (  # noqa: F401
-    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, signature,
+    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, pick_device, signature,
 )
 from common.models import (
     AgentRun, GpuDevice, GpuLease, GpuUsageHint, ModelCheck, TrainRun, utcnow,
@@ -51,6 +51,9 @@ STARVE_SECONDS = int(os.environ.get("GPU_STARVE", "600"))
 # влезут, но станут вдвое медленнее каждое, и оба человека решат, что сервер
 # сломался. Признаки и проверка ролика короткие, их пускаем по памяти.
 HEAVY_KINDS = ("train",)
+# Кому выбирать наименее загруженную карту, а не плотную укладку: прогон агента
+# под потолок тяжёлых не попадает, но считает долго и мешает соседу так же.
+BUSY_KINDS = ("train", "agent")
 
 # Карта, которую воркер давно не перечислял, для допуска не существует.
 # Без этого пересозданный контейнер оставлял в таблице призрака: 07.09.2026
@@ -246,7 +249,7 @@ def capacity_mb(db) -> int:
     ни жди: очередь освобождает чужую память, а не поднимает потолок карты.
     Тому, кто просит больше, надо отвечать сразу, а не ставить в очередь.
     """
-    devices, _held, _heavy = _load_state(db, lock=False)
+    devices, _held, _heavy, _busy = _load_state(db, lock=False)
     return max(
         (
             for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb)
@@ -254,6 +257,45 @@ def capacity_mb(db) -> int:
         ),
         default=0,
     )
+
+
+def cards(db):
+    """Живые карты без имён держателей — это видит каждый, кто собирает агента:
+    вердикт «влезет ли» без потолка и свободного места не объяснить.
+    [{id, index, name, cap_mb, free_mb}], свободное — без придержанного под ждущих."""
+    devices, held, _heavy, _busy = _load_state(db, lock=False)
+    return [{
+        "id": str(d.id),
+        "index": d.device_index,
+        "name": d.name,
+        "cap_mb": for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb),
+        "free_mb": max(0, for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb) - held.get(d.id, 0)),
+    } for d in devices]
+
+
+def queued_count(db) -> int:
+    return int(db.execute(
+        select(func.count(GpuLease.id)).where(GpuLease.status == "queued")
+    ).scalar() or 0)
+
+
+def torch_index(db, lease):
+    """Номер карты для torch в этом процессе; None — бронь без карты.
+
+    Номер из таблицы годится, только если карту перечислял этот же хост: в
+    чужом контейнере порядок может быть другим, там ищем по UUID. Порядок
+    задаёт CUDA_DEVICE_ORDER=PCI_BUS_ID — один на все GPU-контейнеры."""
+    if lease is None or lease.device_id is None:
+        return None
+    dev = db.get(GpuDevice, lease.device_id)
+    if dev is None:
+        return None
+    if dev.host == host_name():
+        return dev.device_index
+    uuids = _smi_uuids()
+    if dev.uuid_str and dev.uuid_str in uuids:
+        return uuids.index(dev.uuid_str)
+    return dev.device_index
 
 
 def _fresh(row, now=None):
@@ -287,7 +329,7 @@ def _load_state(db, lock=True, include_stale=False):
     now = utcnow()
     if not include_stale:
         devices = [d for d in devices if _fresh(d, now)]
-    held, heavy = {}, {}
+    held, heavy, busy = {}, {}, {}
     for row in db.execute(
         select(GpuLease).where(GpuLease.status == "held")
     ).scalars():
@@ -296,9 +338,10 @@ def _load_state(db, lock=True, include_stale=False):
         if row.lease_until is not None and _aware(row.lease_until) < now:
             continue  # просрочена: её вернёт reap, место уже не считаем
         held[row.device_id] = held.get(row.device_id, 0) + row.granted_mb
+        busy[row.device_id] = busy.get(row.device_id, 0) + 1
         if row.kind in HEAVY_KINDS:
             heavy[row.device_id] = heavy.get(row.device_id, 0) + 1
-    return devices, held, heavy
+    return devices, held, heavy, busy
 
 
 def _pledged(db, lease):
@@ -321,14 +364,14 @@ def try_grant(db, lease_id) -> bool:
     if lease is None or lease.status != "queued":
         return False
 
-    devices, held, heavy = _load_state(db)
+    devices, held, heavy, busy = _load_state(db)
     if not devices:
         db.commit()
         return False
 
     pledged = _pledged(db, lease)
     heavy_request = lease.kind in HEAVY_KINDS
-    reasons = []
+    reasons, ok = [], []
     for dev in devices:
         why = fits(
             total_mb=dev.total_mb,
@@ -342,15 +385,20 @@ def try_grant(db, lease_id) -> bool:
             heavy_request=heavy_request,
         )
         if why is None:
-            lease.device_id = dev.id
-            lease.granted_mb = lease.want_mb
-            lease.status = "held"
-            lease.granted_at = utcnow()
-            lease.lease_until = utcnow() + timedelta(seconds=LEASE_SECONDS)
-            lease.reason = None
-            db.commit()
-            return True
-        reasons.append(f"карта {dev.device_index}: {why}")
+            free = for_tasks_mb(dev.total_mb, dev.reserved_mb, dev.sam2_reserve_mb) - held.get(dev.id, 0)
+            ok.append((dev.id, free - lease.want_mb, busy.get(dev.id, 0)))
+        else:
+            reasons.append(f"карта {dev.device_index}: {why}")
+    chosen = pick_device(ok, heavy_request or lease.kind in BUSY_KINDS)
+    if chosen is not None:
+        lease.device_id = chosen
+        lease.granted_mb = lease.want_mb
+        lease.status = "held"
+        lease.granted_at = utcnow()
+        lease.lease_until = utcnow() + timedelta(seconds=LEASE_SECONDS)
+        lease.reason = None
+        db.commit()
+        return True
 
     lease.reason = "; ".join(reasons)[:200]
     db.commit()
@@ -442,7 +490,7 @@ def reap(db) -> int:
 # Что видно снаружи
 # --------------------------------------------------------------------------- #
 def devices_view(db):
-    devices, held, heavy = _load_state(db, lock=False, include_stale=True)
+    devices, held, heavy, _busy = _load_state(db, lock=False, include_stale=True)
     out = []
     for dev in devices:
         used = held.get(dev.id, 0)

@@ -207,15 +207,20 @@ def start_run(db, run) -> bool:
         return False
 
     run.gpu_lease_id = lease.id
-    run.device = "cpu" if lease.device_id is None else "cuda:0"
+    # Подпроцессу видна только карта брони, и внутри она — cuda:0. Строкой
+    # «cuda:N» нельзя: ultralytics 8.4 переписывает CUDA_VISIBLE_DEVICES и всё
+    # равно берёт cuda:0 — раньше любое обучение шло на первую карту.
+    index = gpu.torch_index(db, lease)
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "" if index is None else str(index)}
+    run.device = "cpu" if index is None else "cuda:0"
     run.queue_reason = None
     db.commit()
-    log.info("ран %s: просим %s МБ (%s), устройство %s",
-             run.id, want, source, run.device)
+    log.info("ран %s: просим %s МБ (%s), карта %s",
+             run.id, want, source, "процессор" if index is None else index)
 
     proc = subprocess.Popen(
         [sys.executable, RUNNER, "--run-id", str(run.id)],
-        start_new_session=True,
+        start_new_session=True, env=env,
     )
     run.pid = proc.pid
     db.commit()
@@ -335,7 +340,14 @@ def do_embed(db, job):
         # Карта занята — работа возвращается в очередь и придёт снова.
         raise RuntimeError(lease.reason or "Видеокарта занята.")
 
-    device = "cpu" if lease.device_id is None else "cuda:0"
+    index = gpu.torch_index(db, lease)
+    device = "cpu"
+    if index is not None:
+        import torch
+
+        # Карта брони этой нити; объектом, а не строкой — см. agent_runner._device.
+        torch.cuda.set_device(index)
+        device = torch.device(f"cuda:{index}")
     try:
         paths = [os.path.join(config.DATA_DIR, r.file_path) for r in rows]
 

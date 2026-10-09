@@ -239,6 +239,9 @@ services:
       - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
       # Веса сети признаков качаются один раз и живут на томе.
       - TORCH_HOME=/app/data/_embed
+      # Номер карты брони — по шине, как у nvidia-smi: иначе torch нумерует
+      # «быстрые первыми», и на двух картах бронь и счёт разойдутся.
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     depends_on:
       db:
         condition: service_healthy
@@ -270,6 +273,7 @@ services:
       - AUTOLABEL_MAX_WORKERS=3
       - SAM2_MODEL=sam2.1_hiera_small
       - SAM2_DEVICE=cuda
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     depends_on:
       db:
         condition: service_healthy

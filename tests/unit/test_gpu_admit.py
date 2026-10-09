@@ -108,3 +108,29 @@ def test_потолок_не_зависит_от_занятого():
     top = for_tasks_mb(SMALL["total_mb"], SMALL["reserved_mb"], SMALL["sam2_mb"])
     assert "никогда" in ask(SMALL, want=top + 1, held=0)
     assert "никогда" in ask(SMALL, want=top + 1, held=4096)
+
+
+# --------------------------------------------------------------------------- #
+# Какую из подходящих карт отдать
+# --------------------------------------------------------------------------- #
+from common.gpu_rules import pick_device  # noqa: E402
+
+
+def test_тяжёлое_идёт_на_наименее_загруженную():
+    # (id, свободно после выдачи, живых броней): на «a» висят превью и образцы.
+    cards = [("a", 9000, 2), ("b", 3000, 0)]
+    assert pick_device(cards, heavy_request=True) == "b"
+
+
+def test_тяжёлое_при_равной_загрузке_берёт_где_просторнее():
+    assert pick_device([("a", 3000, 1), ("b", 9000, 1)], heavy_request=True) == "b"
+
+
+def test_лёгкое_укладывается_плотно():
+    # Превью на 3 ГБ — туда, где после него меньше всего останется: дыра в 9 ГБ ждёт обучение.
+    assert pick_device([("a", 9000, 0), ("b", 1000, 3)], heavy_request=False) == "b"
+
+
+def test_ничья_и_пустой_список():
+    assert pick_device([("a", 5000, 0), ("b", 5000, 0)], heavy_request=True) == "a"
+    assert pick_device([], heavy_request=False) is None

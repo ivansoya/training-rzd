@@ -131,6 +131,13 @@ def main():
         trainer.pin_memory_policy()
         device = run.device
         is_cpu = str(device) == "cpu"
+        if not is_cpu:
+            import torch
+
+            # CUDA — до ultralytics: воркер оставил видимой одну карту брони, а
+            # select_device перепишет CUDA_VISIBLE_DEVICES на «0». После первой
+            # инициализации переменную уже никто не читает.
+            torch.cuda.set_device(0)
 
         # Веса — с тома; нет на томе — качаются, и это видно как отдельная
         # фаза, а не как молчание перед первой эпохой.
