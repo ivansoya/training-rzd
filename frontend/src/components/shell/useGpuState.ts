@@ -48,6 +48,8 @@ const KIND: Record<string, [string, string]> = {
   embed: ["Признаки", "var(--c2)"],
   infer: ["Проверка", "var(--c3)"],
 };
+/** Резерв под полуавтомат — штриховкой: это не работа, а место, которое держат для разметки. */
+export const HATCH = "repeating-linear-gradient(135deg, var(--input) 0 3px, var(--hover) 3px 6px)";
 export const FREE_COLOR = "color-mix(in srgb, var(--muted-fg) 22%, var(--card))";
 
 /** Доли памяти карты: SAM2, держатели по видам, неприкосновенный запас, свободное. */
@@ -61,18 +63,28 @@ export function deviceParts(d: Device, detailed = false) {
   }
   return [
     ...(d.sam2_reserve_mb > 0
-      ? [{ label: `SAM2 ${gb(d.sam2_reserve_mb)}${detailed ? " ГБ" : ""}`, value: d.sam2_reserve_mb, color: "var(--c4)" }]
+      ? [{ label: `Разметка ${gb(d.sam2_reserve_mb)}${detailed ? " ГБ" : ""}`, value: d.sam2_reserve_mb, color: HATCH }]
       : []),
     ...[...byKind].map(([k, r]) => ({
       label: `${detailed && r.titles.length === 1 ? r.titles[0] : KIND[k]?.[0] ?? k} ${gb(r.mb)}${detailed ? " ГБ" : ""}`,
       value: r.mb,
       color: KIND[k]?.[1] ?? "var(--c5)",
     })),
+    // Без права на оборудование держателей нет — занятое одной суммой.
+    ...(d.holders.length === 0 && d.held_mb > 0
+      ? [{ label: `Занято ${gb(d.held_mb)}${detailed ? " ГБ" : ""}`, value: d.held_mb, color: "var(--faint)" }]
+      : []),
     ...(d.reserved_mb > 0
       ? [{ label: `Запас ${gb(d.reserved_mb)}${detailed ? " ГБ" : ""}`, value: d.reserved_mb, color: "var(--input)" }]
       : []),
     { label: `Свободно ${gb(d.free_mb)}${detailed ? " ГБ" : ""}`, value: d.free_mb, color: FREE_COLOR },
   ];
 }
+
+/** Карты для сводок: выключенные и пропавшие показывает только «Оборудование». */
+export const liveDevices = (s: GpuState) => s.devices.filter((d) => d.enabled && d.fresh);
+
+/** «NVIDIA GeForce RTX 5070 Ti» → «RTX 5070 Ti»: в сайдбаре и шапках место дорого. */
+export const shortName = (name: string) => name.replace(/^NVIDIA\s+/i, "").replace(/^GeForce\s+/i, "");
 
 export { gb };

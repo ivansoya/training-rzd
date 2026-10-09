@@ -489,8 +489,12 @@ def reap(db) -> int:
 # --------------------------------------------------------------------------- #
 # Что видно снаружи
 # --------------------------------------------------------------------------- #
-def devices_view(db):
-    devices, held, heavy, _busy = _load_state(db, lock=False, include_stale=True)
+def devices_view(db, holders=True):
+    """Все карты, и выключенные: иначе выключенную негде включить обратно.
+    `holders=False` — без держателей, для тех, у кого нет права на оборудование."""
+    _live, held, heavy, _busy = _load_state(db, lock=False, include_stale=True)
+    devices = db.execute(select(GpuDevice).order_by(GpuDevice.device_index)).scalars().all()
+    now = utcnow()
     out = []
     for dev in devices:
         used = held.get(dev.id, 0)
@@ -498,7 +502,7 @@ def devices_view(db):
             select(GpuLease).where(
                 GpuLease.device_id == dev.id, GpuLease.status == "held"
             ).order_by(GpuLease.granted_at)
-        ).scalars().all()
+        ).scalars().all() if holders else []
         out.append({
             "id": str(dev.id),
             "host": dev.host,
@@ -514,6 +518,9 @@ def devices_view(db):
             ),
             "heavy": heavy.get(dev.id, 0),
             "seen_at": dev.seen_at.isoformat() if dev.seen_at else None,
+            "enabled": bool(dev.enabled),
+            "fresh": _fresh(dev, now),
+            "cap_mb": for_tasks_mb(dev.total_mb, dev.reserved_mb, dev.sam2_reserve_mb),
             "holders": [
                 {
                     "id": str(r.id),
@@ -522,6 +529,9 @@ def devices_view(db):
                     "granted_mb": r.granted_mb,
                     "peak_mb": r.peak_mb,
                     "user_id": str(r.user_id) if r.user_id else None,
+                    "project_id": str(r.project_id) if r.project_id else None,
+                    "ref_id": str(r.ref_id) if r.ref_id else None,
+                    "granted_at": r.granted_at.isoformat() if r.granted_at else None,
                 }
                 for r in rows
             ],
@@ -576,6 +586,8 @@ def queue_view(db, *, user_id=None, staff=False):
             "reason": r.reason,
             "mine": bool(user_id and r.user_id == user_id),
             "user_id": str(r.user_id) if r.user_id else None,
+            "project_id": str(r.project_id) if r.project_id else None,
+            "ref_id": str(r.ref_id) if r.ref_id else None,
         }
         everything.append(item)
         if item["mine"]:
@@ -611,9 +623,10 @@ def kill(db, lease_id) -> bool:
     контейнера нельзя, и делать вид, что можно, — тоже.
     """
     lease = db.get(GpuLease, lease_id)
-    if lease is None or lease.ref_id is None:
+    if lease is None:
         return False
-    for model in (TrainRun, ModelCheck, AgentRun):
+    # Без прогона за бронью (превью, образцы) гасить некому — бронь просто отменяется.
+    for model in (TrainRun, ModelCheck, AgentRun) if lease.ref_id else ():
         row = db.get(model, lease.ref_id)
         if row is not None:
             row.cancel_requested = True

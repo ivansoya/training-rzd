@@ -16,7 +16,7 @@ from common.auth import (
 )
 from common.db import SessionLocal
 from common.models import (
-    AugGraph, AugGraphVersion, GpuDevice, Project, TrainEpoch, TrainRun, TrainSet,
+    AgentRun, AugGraph, AugGraphVersion, GpuDevice, GpuLease, Project, Task, TrainEpoch, TrainRun, TrainSet,
     TrainSetFeed, User, utcnow,
 )
 from common.web import InputError, int_field, json_body
@@ -115,17 +115,47 @@ def gpu_state():
         return err
     try:
         staff = hw_view(user)
+        # Карты видят все, держателей — только с правом: занято показывается суммой.
+        devices = gpu.devices_view(db, holders=staff)
+        queue = gpu.queue_view(db, user_id=user.id, staff=staff)
+        _describe(db, [h for d in devices for h in d["holders"]] + queue["queue"] + queue["mine"])
         return jsonify({
             "staff": staff,
             "manage": hw_manage(user),
             "level": user.hardware,
             "cards": gpu.cards(db),
-            "devices": gpu.devices_view(db) if staff else [],
-            "queue": gpu.queue_view(db, user_id=user.id, staff=staff),
+            "devices": devices,
+            "queue": queue,
             "live": live.SLOTS.view(),
         })
     finally:
         db.close()
+
+
+def _describe(db, items):
+    """Подписи броней для людей: что за работа, чья, в каком проекте.
+    «Агент разметки» в title одинаков у всех — различает агент, версия и таска."""
+    ids = lambda key: {_uuid(i[key]) for i in items if i.get(key)} or {None}
+    people = {str(u.id): u.display_name for u in db.execute(select(User).where(User.id.in_(ids("user_id")))).scalars()}
+    projects = {str(p.id): p.name for p in db.execute(select(Project).where(Project.id.in_(ids("project_id")))).scalars()}
+    refs = ids("ref_id")
+    agents = {str(r.id): r for r in db.execute(select(AgentRun).where(AgentRun.id.in_(refs))).scalars()}
+    trains = {str(r.id): r for r in db.execute(select(TrainRun).where(TrainRun.id.in_(refs))).scalars()}
+    for item in items:
+        item["user"] = people.get(item.get("user_id"))
+        item["project"] = projects.get(item.get("project_id"))
+        item["what"], item["detail"] = item.get("title"), None
+        run = agents.get(item.get("ref_id"))
+        if run is not None:
+            graph = db.get(AugGraph, run.graph_id) if run.graph_id else None
+            version = db.get(AugGraphVersion, run.version_id) if run.version_id else None
+            task = db.get(Task, run.task_id) if run.task_id else None
+            item["what"] = f"агент «{graph.name if graph else 'удалён'}»" + (f" v{version.version}" if version else "")
+            item["detail"] = f"таска «{task.name}»" if task else None
+        train = trains.get(item.get("ref_id"))
+        if train is not None:
+            item["what"] = f"обучение №{train.number}"
+            item["detail"] = train.base_model
 
 
 def _access_row(u):
@@ -215,8 +245,10 @@ def kill_lease(lease_id):
     if err:
         return err
     try:
-        if not hw_manage(user):
-            return jsonify({"error": "Снимать задачи может обслуживание."}), 403
+        lease = db.get(GpuLease, _uuid(lease_id))
+        # Свою задачу человек отменяет сам — «Снять» чужую может только управление.
+        if not hw_manage(user) and (lease is None or lease.user_id != user.id):
+            return jsonify({"error": "Снимать чужие задачи может управление оборудованием."}), 403
         if not gpu.kill(db, _uuid(lease_id)):
             return jsonify({"error": "Задача не найдена."}), 404
         return jsonify({"ok": True})

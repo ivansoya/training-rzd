@@ -180,3 +180,26 @@ def test_права_на_оборудование(db):
     me = boss.get(f"{BASE_URL}/api/gpu/access").json()["granted"]
     boss_id = next(u["id"] for u in me if u["level"] == "manage" and u["login"] == _login_of(db, boss))
     assert boss.put(f"{BASE_URL}/api/gpu/access/{boss_id}", json={"level": None}).status_code == 409
+
+
+def test_свою_задачу_отменяет_сам_чужую_нет(db):
+    owner, stranger = agent_data.session(db), agent_data.session(db)
+    lease_id = str(uuid.uuid4())
+    with db.cursor() as cur:
+        cur.execute(
+            """insert into gpu_leases (id, holder, kind, user_id, want_mb, status, title, created_at)
+               select %s, 'training', 'agent', u.id, 999999, 'queued', 'проба', now() from users u where u.login = %s""",
+            (lease_id, _login_of(db, owner)))
+    try:
+        state = owner.get(f"{BASE_URL}/api/gpu").json()
+        assert all(d["holders"] == [] for d in state["devices"]), "держатели — только с правом"
+        [mine] = [q for q in state["queue"]["mine"] if q["id"] == lease_id]
+        assert mine["what"] == "проба"
+        assert stranger.post(f"{BASE_URL}/api/gpu/leases/{lease_id}/kill").status_code == 403
+        assert owner.post(f"{BASE_URL}/api/gpu/leases/{lease_id}/kill").status_code == 200
+        with db.cursor() as cur:
+            cur.execute("select status from gpu_leases where id = %s", (lease_id,))
+            assert cur.fetchone()[0] == "cancelled"
+    finally:
+        with db.cursor() as cur:
+            cur.execute("delete from gpu_leases where id = %s", (lease_id,))

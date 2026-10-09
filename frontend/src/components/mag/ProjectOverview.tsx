@@ -10,7 +10,7 @@ import {
   Spark, StackBar,
 } from "../../ui";
 import { ago, count, pct, ru } from "../ru";
-import { deviceParts, gb, useGpuState } from "../shell/useGpuState";
+import { deviceParts, gb, liveDevices, useGpuState } from "../shell/useGpuState";
 import ExportModal from "./ExportModal";
 import { ProjectMenu } from "./ProjectMenu";
 import { useProject } from "./ProjectShell";
@@ -347,20 +347,14 @@ function GpuCard() {
       <Link to="/hardware">{waiting ? count(waiting, "задача ждёт", "задачи ждут", "задач ждут") : "никто не ждёт"}</Link>
     </div>
   );
-  if (!state.staff) {
-    return (
-      <Card title="Видеокарта" desc="Подробности по картам видит обслуживание">
-        {queueLine}
-      </Card>
-    );
-  }
-  if (state.devices.length === 0) {
+  const devices = liveDevices(state);
+  if (devices.length === 0) {
     return <Card title="Видеокарта"><Empty compact icon="cpu" title="Видеокарт на сервере нет" /></Card>;
   }
   return (
-    <Card title="Видеокарта" desc={state.devices.map((d) => `${d.name} · ${gb(d.total_mb)} ГБ`).join(", ")}>
+    <Card title="Видеокарта" desc={devices.map((d) => `${d.name} · ${gb(d.total_mb)} ГБ`).join(", ")}>
       <div className="stack-v ov-gpu">
-        {state.devices.map((d) => {
+        {devices.map((d) => {
           const parts = deviceParts(d, true);
           return (
             <div key={d.id} className="stack-v">
