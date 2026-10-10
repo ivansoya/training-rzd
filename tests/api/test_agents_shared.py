@@ -203,3 +203,24 @@ def test_свою_задачу_отменяет_сам_чужую_нет(db):
     finally:
         with db.cursor() as cur:
             cur.execute("delete from gpu_leases where id = %s", (lease_id,))
+
+
+def test_настройка_sam3_ужимать_меняет_только_управление(db):
+    boss, other = agent_data.session(db), agent_data.session(db)
+    with db.cursor() as cur:
+        cur.execute("delete from server_settings where key = 'sam3_cpu_half'")
+        cur.execute("UPDATE users SET hardware = 'manage' WHERE login = %s", (_login_of(db, boss),))
+        cur.execute("UPDATE users SET hardware = 'view' WHERE login = %s", (_login_of(db, other),))
+    try:
+        seen = other.get(f"{BASE_URL}/api/gpu").json()["settings"]["sam3_cpu_half"]
+        assert seen["value"] is True and seen["default"] is True and seen["updated_at"] is None
+        assert other.put(f"{BASE_URL}/api/gpu/settings/sam3_cpu_half", json={"value": False}).status_code == 403
+        assert boss.put(f"{BASE_URL}/api/gpu/settings/sam3_cpu_half", json={"value": "нет"}).status_code == 400
+        assert boss.put(f"{BASE_URL}/api/gpu/settings/nope", json={"value": True}).status_code == 404
+        got = boss.put(f"{BASE_URL}/api/gpu/settings/sam3_cpu_half", json={"value": False})
+        assert got.status_code == 200 and got.json()["sam3_cpu_half"]["value"] is False
+        seen = other.get(f"{BASE_URL}/api/gpu").json()["settings"]["sam3_cpu_half"]
+        assert seen["value"] is False and seen["updated_by"]
+    finally:
+        with db.cursor() as cur:
+            cur.execute("delete from server_settings where key = 'sam3_cpu_half'")

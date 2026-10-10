@@ -10,7 +10,7 @@ import uuid
 from flask import Blueprint, Response, jsonify, request, send_file
 from sqlalchemy import func, select
 
-from common import config, gpu, live
+from common import config, gpu, live, settings
 from common.auth import (
     HARDWARE_LEVELS, current_user, has_role, hw_manage, hw_view, may_manage, project_by_code, role_in,
 )
@@ -127,7 +127,37 @@ def gpu_state():
             "devices": devices,
             "queue": queue,
             "live": live.SLOTS.view(),
+            "settings": _settings_view(db) if staff else {},
         })
+    finally:
+        db.close()
+
+
+def _settings_view(db):
+    out = settings.view(db)
+    ids = {_uuid(v["updated_by"]) for v in out.values() if v["updated_by"]} or {None}
+    names = {str(u.id): u.display_name for u in db.execute(select(User).where(User.id.in_(ids))).scalars()}
+    for v in out.values():
+        v["updated_by"] = names.get(v["updated_by"])
+    return out
+
+
+@bp.put("/api/gpu/settings/<key>")
+def set_server_setting(key):
+    """Настройка сервера из карточки «Модели»: `{value}`. Только «Управление»."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        if not hw_manage(user):
+            return jsonify({"error": "Настройки оборудования меняет управление."}), 403
+        if key not in settings.DEFAULTS:
+            return jsonify({"error": "Такой настройки нет."}), 404
+        try:
+            settings.put(db, key, json_body().get("value"), user.id)
+        except ValueError as exc:
+            raise InputError(str(exc), "value")
+        return jsonify(_settings_view(db))
     finally:
         db.close()
 

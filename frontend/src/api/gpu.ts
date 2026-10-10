@@ -78,7 +78,19 @@ export interface GpuState {
     queue: QueueRow[];
   };
   live: { used: number; soft: number; hard: number; peak: number };
+  /** Настройки сервера — с «Просмотра»; меняет «Управление». */
+  settings: Partial<Record<SettingKey, ServerSetting>>;
 }
+
+export type SettingKey = "sam3_cpu_half";
+export interface ServerSetting {
+  value: boolean;
+  default: boolean;
+  updated_at: string | null;
+  updated_by: string | null;
+}
+export const setSetting = (key: SettingKey, value: boolean) =>
+  put<Record<SettingKey, ServerSetting>>(`gpu/settings/${key}`, { value });
 
 export const gpuState = () => get<GpuState>("gpu");
 

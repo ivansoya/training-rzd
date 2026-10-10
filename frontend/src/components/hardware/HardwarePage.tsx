@@ -100,6 +100,11 @@ export default function HardwarePage() {
           onLimit={(data) => act(() => api.setLimits(d.id, data))} onKill={(id) => act(() => api.killLease(id))} />
       ))}
 
+      {state.staff && state.settings.sam3_cpu_half && (
+        <ModelsCard sam3={state.settings.sam3_cpu_half} manage={state.manage}
+          onSam3={(v) => act(() => api.setSetting("sam3_cpu_half", v))} />
+      )}
+
       <Card flush className="hw-q" title={state.staff ? "Очередь" : "Ваши задачи в очереди"}
         desc={state.staff ? (queue.length ? count(queue.length, "задача ждёт", "задачи ждут", "задач ждут") : "никто не ждёт")
           : `${queue.length ? `${queue.length} из ${state.queue.total}` : "ваших задач нет"}${state.queue.total ? ` · всего в очереди ${state.queue.total}` : ""}`}>
@@ -223,6 +228,31 @@ function DeviceCard({ device: d, state, onLimit, onKill }: {
         </footer>
       )}
     </section>
+  );
+}
+
+/** Как модели грузятся на карты — для всех агентов, превью и прогонов сразу. */
+function ModelsCard({ sam3, manage, onSam3 }: { sam3: api.ServerSetting; manage: boolean; onSam3: (v: boolean) => void }) {
+  const who = sam3.updated_at
+    ? `изменено: ${[sam3.updated_by, new Date(sam3.updated_at).toLocaleDateString("ru-RU")].filter(Boolean).join(" · ")}`
+    : "по умолчанию";
+  return (
+    <Card flush className="hw-models" title="Модели" desc="Как модели грузятся на карты — для всех агентов, превью и прогонов">
+      <div className="hw-set">
+        <div className="hw-set-t">
+          <b>SAM 3: ужимать до переноса на карту</b>
+          <span>Модель становится fp16 ещё на процессоре — на карту не едет полная копия. Пик загрузки 3,2 → 1,6 ГБ,
+            находки и скорость те же (замер 10.10.2026). Действует со следующей загрузки модели.</span>
+        </div>
+        <span className="t-xs t-faint hw-set-who">{who}</span>
+        {manage ? (
+          <span className="row hw-sw-l">
+            <Switch checked={sam3.value} label="SAM 3: ужимать до переноса на карту" onChange={onSam3} />
+            {sam3.value ? "включено" : "выключено"}
+          </span>
+        ) : <span className="hw-set-v">{sam3.value ? "включено" : "выключено"}</span>}
+      </div>
+    </Card>
   );
 }
 

@@ -603,12 +603,10 @@ def load_text(node, device, sets=None, shared=None):
     if model == "sam3":
         if not config.sam3_ready():
             raise RuntimeError(f"Нет весов SAM 3: положите sam3.pt в {config.SAM3_WEIGHTS}.")
-        from ultralytics.models.sam import SAM3SemanticPredictor
-
         side = agent_graph.sam3_side(params)
         predictor = (shared or {}).get(side)
         if predictor is None:
-            predictor = SAM3SemanticPredictor(overrides=dict(
+            predictor = sam3_predictor_class()(overrides=dict(
                 task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
                 imgsz=side, quantize=16, device=device))
             if shared is not None:
@@ -642,6 +640,23 @@ def load_text(node, device, sets=None, shared=None):
             vectors.append(text[names[-1]])
     yoloe.set_classes(names, torch.stack(vectors)[None])
     return yoloe
+
+
+def sam3_predictor_class():
+    """Предиктор SAM 3: с настройкой «ужимать до карты» модель становится fp16 ещё на
+    процессоре — иначе ultralytics везёт на карту fp32-копию (пик 3,24 ГБ вместо 1,64)."""
+    from ultralytics.models.sam import SAM3SemanticPredictor
+
+    from common import settings
+
+    if not settings.get_fresh(settings.SAM3_CPU_HALF):
+        return SAM3SemanticPredictor
+
+    class CpuHalf(SAM3SemanticPredictor):
+        def get_model(self):
+            return super().get_model().half()
+
+    return CpuHalf
 
 
 def text_key(node):

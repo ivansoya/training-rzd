@@ -1024,6 +1024,24 @@ class GpuUsageHint(Base):
     )
 
 
+class ServerSetting(Base):
+    """Настройка сервера целиком — меняет «Управление» оборудованием.
+
+    Нет строки — действует умолчание из кода (`common.settings`): новую
+    настройку не нужно заводить миграцией данных."""
+
+    __tablename__ = "server_settings"
+
+    key: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
+    value: Mapped[dict | list | str | int | bool | None] = mapped_column(JsonCol)
+    updated_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    updated_by: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 # =========================================================================== #
 # Графы аугментаций: принадлежат человеку, подключаются к проекту ссылкой
 # =========================================================================== #

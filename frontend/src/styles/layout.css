@@ -1016,3 +1016,11 @@ a.pcard:hover { border-color: var(--input); }
 .hw-at span { font-size: 12px; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hw-sub { font-size: 12px; font-weight: 500; color: var(--muted-fg); }
 .hw-acc code { font-size: 11.5px; }
+.hw-models > .ui-card-b { padding: 0; }
+.hw-models > .ui-card-h { padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.hw-set { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 16px 24px; padding: 14px 16px; }
+.hw-set-t { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.hw-set-t b { font-size: 13px; font-weight: 500; }
+.hw-set-t span { font-size: 12.5px; line-height: 1.45; color: var(--muted-fg); max-width: 72ch; }
+.hw-set-who { white-space: nowrap; }
+.hw-set-v { font-size: 13px; color: var(--fg); white-space: nowrap; }

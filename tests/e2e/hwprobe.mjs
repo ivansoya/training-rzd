@@ -28,5 +28,12 @@ if (await page.locator(".hw-acc").count()) {
   await page.waitForTimeout(800);
   console.log(`[${TAG}] доступ:`, await text(".hw-acc"));
 }
+console.log(`[${TAG}] модели:`, await text(".hw-models"));
+if (process.env.TOGGLE && await page.getByRole("switch", { name: "SAM 3: ужимать до переноса на карту" }).count()) {
+  await page.getByRole("switch", { name: "SAM 3: ужимать до переноса на карту" }).click();
+  await page.waitForTimeout(1200);
+  console.log(`[${TAG}] после щелчка:`, await text(".hw-models"));
+}
+await page.locator(".hw-models").screenshot({ path: `${OUT}/hw-${TAG}-models.png` }).catch(() => undefined);
 await page.screenshot({ path: `${OUT}/hw-${TAG}.png`, fullPage: true });
 await browser.close();
