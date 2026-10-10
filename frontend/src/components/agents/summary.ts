@@ -3,7 +3,7 @@
 
 import type { PreviewDet } from "../../api/agents";
 import {
-  SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, frameCalls, sam3Side, textModel, tileSide, viewCount, type AgentClass,
+  SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, frameCalls, sam3Side, textHalf, textModel, tileSide, viewCount, type AgentClass,
 } from "./agentDoc";
 import type { AgentKind } from "./look";
 
@@ -57,7 +57,7 @@ function modelOf(n: SummaryNode): string {
   if (n.kind === "net") return n.weights ? `${n.weights.name} · ${num(p.imgsz) ?? n.weights.imgsz ?? 640}` : "веса не выбраны";
   if (n.kind === "text") {
     const m = textModel(p);
-    return m === "sam3" ? `SAM 3 · ${sam3Side(p)}` : `YOLOE-26 ${m} · ${num(p.imgsz) ?? TEXT_IMGSZ}`;
+    return m === "sam3" ? `SAM 3 · ${sam3Side(p)}` : `YOLOE-26 ${m} · ${num(p.imgsz) ?? TEXT_IMGSZ}${textHalf(p) ? " · fp16" : ""}`;
   }
   if (n.kind === "sam") {
     const id = String(p.model ?? SAM_DEFAULTS.model);

@@ -24,10 +24,11 @@ PROMPTS = [{"prompt": "person", "agent": PERSON, "on": True},
            {"prompt": "лопата", "agent": "Инструмент", "on": False}]
 
 
-def _doc(model):
+def _doc(model, half=None):
+    params = {"model": model, "prompts": PROMPTS, **({} if half is None else {"half": half})}
     return {"v": 1, "nodes": [
         {"id": "frame", "type": "frame", "params": {}},
-        {"id": "text", "type": "text", "params": {"model": model, "prompts": PROMPTS}},
+        {"id": "text", "type": "text", "params": params},
         {"id": "nms", "type": "nms", "params": {"iou": 0.6}},
         {"id": "out", "type": "output", "params": {}}],
         "edges": [{"from": "frame", "out": "out", "to": "text", "in": "in"},
@@ -61,10 +62,10 @@ def setup(owner, clip, db):
             owner.delete(f"{BASE_URL}/api/aug/graphs/{graph['id']}")
 
 
-def _agent(owner, setup, model):
+def _agent(owner, setup, model, half=None):
     graph = owner.post(f"{BASE_URL}/api/aug/graphs", json={"name": tag(), "kind": "agent"}).json()
-    setup["graphs"][model] = graph
-    res = owner.post(f"{BASE_URL}/api/aug/graphs/{graph['id']}/versions", json={"doc": _doc(model)})
+    setup["graphs"][model + ("-fp16" if half else "")] = graph
+    res = owner.post(f"{BASE_URL}/api/aug/graphs/{graph['id']}/versions", json={"doc": _doc(model, half)})
     assert res.status_code in (200, 201), res.text
     return graph
 
@@ -107,8 +108,11 @@ def test_версия_с_повтором_промта_не_сохраняетс
     assert res.status_code == 400 and "повторяется" in res.json()["error"], res.text
 
 
-def test_разведка_yoloe_находит_человека_по_слову(owner, setup):
-    run = _run(owner, setup, _agent(owner, setup, "l"), mode="scout", gap=0.5)
+# fp16 — тумблер узла (10.10.2026): у ultralytics 8.4 YOLOE-seg в half падает без заплатки
+# `agent_runner._half_masks` — этот случай ловит поломку при обновлении.
+@pytest.mark.parametrize("half", [None, True], ids=["fp32", "fp16"])
+def test_разведка_yoloe_находит_человека_по_слову(owner, setup, half):
+    run = _run(owner, setup, _agent(owner, setup, "l", half), mode="scout", gap=0.5)
     assert run["stats"]["videos"] == 1
     scouts = owner.get(f"{BASE_URL}/api/agents/tasks/{setup['task']['id']}/scouts").json()["scouts"]
     people = scouts[setup["video"]["id"]]["segments"].get(PERSON, [])

@@ -455,15 +455,23 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
             # превращал её в умолчание (замер: 0 давал те же 15 рамок, что 0,25).
             conf = agent_graph.num(params.get("conf"), 0.25)
 
+        half = text and agent_graph.text_half(params)
+
         def infer(views):
             # IoU не передаём: встроенный NMS у yolo11 и v8 работает со своим
             # мягким 0,7, у yolo26 его нет вовсе. Строже — узел «NMS» в графе.
             # Тайл другого размера ultralytics сам растянет или ужмёт до входа.
-            results = models[node["id"]].predict(
-                [crop(v) for v in views], verbose=False, device=device, conf=conf,
-                # ultralytics требует кратность шагу сети — 32.
-                imgsz=max(32, round(side / 32) * 32),
-            )
+            try:
+                results = models[node["id"]].predict(
+                    [crop(v) for v in views], verbose=False, device=device, conf=conf,
+                    # ultralytics требует кратность шагу сети — 32.
+                    imgsz=max(32, round(side / 32) * 32), **({"quantize": 16} if half else {}),
+                )
+            except RuntimeError as e:
+                if half and ("Half" in str(e) or "dtype" in str(e)):
+                    raise RuntimeError(f"{agent_graph.title(node)}: YOLOE в fp16 не работает с этой версией "
+                                       f"ultralytics — переключите «Точность» узла на fp32.") from e
+                raise
             return [
                 [(c, p, x1, y1, x2 - x1, y2 - y1) for c, p, (x1, y1, x2, y2) in zip(
                     r.boxes.cls.tolist(), r.boxes.conf.tolist(), r.boxes.xyxy.tolist())]
@@ -618,6 +626,8 @@ def load_text(node, device, sets=None, shared=None):
     from ultralytics import YOLOE
     from ultralytics.nn.text_model import MobileCLIPTS
 
+    if agent_graph.text_half(params):
+        _half_masks()
     yoloe = YOLOE(os.path.join(YOLOE_DIR, f"yoloe-26{model}-seg.pt"))
     rows = agent_graph.text_rows(node)
     words = [str(r["prompt"]).strip() for _, r in rows if not agent_graph.is_examples(r)]
@@ -643,6 +653,22 @@ def load_text(node, device, sets=None, shared=None):
     return yoloe
 
 
+def _half_masks():
+    """Заплатка ultralytics 8.4: у YOLOE-seg в fp16 протомаски float, а коэффициенты half —
+    matmul в `process_mask` падает. Переименуют функцию — fp16-узел упадёт с понятным текстом."""
+    from ultralytics.utils import ops
+
+    original = getattr(ops, "process_mask", None)
+    if original is None or getattr(original, "half_safe", False):
+        return
+
+    def process_mask(protos, masks_in, *args, **kwargs):
+        return original(protos.float(), masks_in.float(), *args, **kwargs)
+
+    process_mask.half_safe = True
+    ops.process_mask = process_mask
+
+
 def sam3_predictor_class():
     """Предиктор SAM 3: с настройкой «ужимать до карты» модель становится fp16 ещё на
     процессоре — иначе ultralytics везёт на карту fp32-копию (пик 3,24 ГБ вместо 1,64)."""
@@ -666,7 +692,7 @@ def text_key(node):
     sets = tuple(s for _, s in agent_graph.text_sets(node))
     if model == "sam3":
         return (model, agent_graph.sam3_side(params), *sets)
-    return (model, *(p for _, p in agent_graph.text_prompts(node)), *sets)
+    return (model, agent_graph.text_half(params), *(p for _, p in agent_graph.text_prompts(node)), *sets)
 
 
 def _own_versions(db, version_id):

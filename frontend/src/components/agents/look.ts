@@ -4,7 +4,7 @@
 import type { IconName } from "../../ui";
 import type { PreviewDet } from "../../api/agents";
 import {
-  SAM_DEFAULTS, TEXT_IMGSZ, TEXT_MODEL, isExamples, mergeInputs, promptsOf, rowTarget, rowsOf, sam3Side, textConfDefault, textModel,
+  SAM_DEFAULTS, TEXT_IMGSZ, TEXT_MODEL, isExamples, mergeInputs, promptsOf, rowTarget, rowsOf, sam3Side, textConfDefault, textHalf, textModel,
   tileSide, viewCount,
 } from "./agentDoc";
 
@@ -51,7 +51,7 @@ export const PALETTE: PaletteGroup[] = [
 export function defaults(kind: Addable): Record<string, unknown> {
   switch (kind) {
     case "net": return { weights: null, classes: [], conf: 0.25 };
-    case "text": return { model: TEXT_MODEL, prompts: [], conf: textConfDefault(TEXT_MODEL), imgsz: TEXT_IMGSZ };
+    case "text": return { model: TEXT_MODEL, prompts: [], conf: textConfDefault(TEXT_MODEL), imgsz: TEXT_IMGSZ, half: true };
     case "merge": return { inputs: 2 };
     case "nms": return { iou: 0.6, agnostic: false };
     case "filter": return { classes: [], min_side: null, max_side: null };
@@ -98,7 +98,7 @@ export function textLine(p: Record<string, unknown>, sam3Missing: boolean, frame
   const ex = rows.filter(isExamples).length;
   const yolo = model !== "sam3";
   return [
-    yolo ? `YOLOE-26 ${model}` : `SAM 3 ${sam3Side(p)}`,
+    yolo ? `YOLOE-26 ${model}${textHalf(p) ? " fp16" : ""}` : `SAM 3 ${sam3Side(p)}`,
     ex ? `${rows.length - ex ? `${rows.length - ex} сл. + ` : ""}${ex} обр.` : rows.length ? `${rows.length} сл.` : null,
     `conf ${decimal(num(p.conf, textConfDefault(model)))}`,
     tileText("text", p, null, frame),

@@ -153,6 +153,7 @@ def test_подпись_различает_размер_yoloe_и_веса_сет
     s = am.signature({"nodes": [yoloe("s")]}, {})
     assert s != am.signature({"nodes": [yoloe("x")]}, {})
     assert s != am.signature({"nodes": [yoloe("s", tiles=True)]}, {})
+    assert s != am.signature({"nodes": [yoloe("s", half=True)]}, {})
     # Тумблер SAM 3 подпись YOLOE не трогает.
     assert s == am.signature({"nodes": [yoloe("s")]}, {}, sam3_cpu_half=False)
     assert am.signature({"nodes": [net("n", weights="a")]}, {}) != am.signature({"nodes": [net("n", weights="b")]}, {})

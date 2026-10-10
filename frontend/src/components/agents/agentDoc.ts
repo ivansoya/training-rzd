@@ -73,9 +73,14 @@ export function switchTextModel(p: Record<string, unknown>, next: TextModel) {
     conf: conf === was ? textConfDefault(next) : conf,
     // SAM 3 без входа — новый для узла: 1008 (сервер без поля берёт 644, как у старых версий).
     ...(next === "sam3" && !SAM3_SIDES.includes(p.side as Sam3Side) ? { side: SAM3_NEW_SIDE } : {}),
+    // YOLOE вместо SAM 3 — сразу fp16, как у нового узла; смена размера YOLOE точность не трогает.
+    ...(next !== "sam3" && textModel(p) === "sam3" && typeof p.half !== "boolean" ? { half: true } : {}),
     ...(prompts ? { prompts } : {}),
   };
 }
+
+/** YOLOE в fp16 — как agent_graph.text_half: без поля fp32 (сохранённые версии). */
+export const textHalf = (p: Record<string, unknown>) => textModel(p) !== "sam3" && p.half === true;
 
 export const promptsOf = (node: { params?: Record<string, unknown> }) =>
   ((node.params?.prompts as PromptRow[] | undefined) ?? []);

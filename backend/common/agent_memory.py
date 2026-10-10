@@ -109,7 +109,7 @@ def fix_words(doc, words):
 def signature(doc, words, sequential=False, scout=False, sam3_cpu_half=True) -> str:
     """Отпечаток расхода для замера диспетчера (`gpu_usage_hints`).
 
-    В подписи всё, от чего зависит пик: веса и вход сети, размер и вход YOLOE, тайлы,
+    В подписи всё, от чего зависит пик: веса и вход сети, размер, вход и точность YOLOE, тайлы,
     вход и порция слов SAM 3 с тумблером сервера, модели SAM2, режим. Хэшем — поле в базе 64 знака.
     Приставка `agent2` отрезала замеры до 10.10.2026: они не видели пика внутри кадра."""
     parts = []
@@ -122,7 +122,8 @@ def signature(doc, words, sequential=False, scout=False, sam3_cpu_half=True) -> 
             fp32 = "" if sam3_cpu_half else "f"
             parts.append(f"sam3{fp32}@{agent_graph.sam3_side(p)}w{words.get(n['id'])}:{len(agent_graph.text_sets(n))}s{tiles}")
         elif n["type"] == "text":
-            parts.append(f"yoloe-{agent_graph.text_model(p)}@{agent_graph.num(p.get('imgsz'), agent_graph.TEXT_IMGSZ)}"
+            half = "h" if agent_graph.text_half(p) else ""
+            parts.append(f"yoloe-{agent_graph.text_model(p)}{half}@{agent_graph.num(p.get('imgsz'), agent_graph.TEXT_IMGSZ)}"
                          f":{len(agent_graph.text_rows(n))}c{tiles}")
         elif n["type"] == "sam" and not scout:
             parts.append(f"sam2:{p.get('model') or agent_graph.SAM_DEFAULTS['model']}")

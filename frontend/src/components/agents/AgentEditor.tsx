@@ -26,7 +26,7 @@ import { keep, load } from "../aug/NodePreview";
 import { DRAWER_DEFAULT, clampDrawer } from "../aug/look";
 import {
   agentClasses, bindRows, carryClasses, exampleConfDefault, findOrCreate, foldName, frameCalls, isExamples, keepWired, promptsOf,
-  rowTarget, rowsOf, sam3Side, textModel, tileSide, unfinished, upgradeDoc, upstream, withConf, type ClassDef, type FilterRow,
+  rowTarget, rowsOf, sam3Side, textHalf, textModel, tileSide, unfinished, upgradeDoc, upstream, withConf, type ClassDef, type FilterRow,
   type NetRow, type PromptRow,
 } from "./agentDoc";
 import { sameName, shapeBox } from "./examplePick";
@@ -445,7 +445,8 @@ function Editor() {
         const calls = frameCalls(kind, p, result.image.width, result.image.height, tileSide(kind, p, weightsOf(p)?.imgsz),
           (s) => sets.get(s)?.items.length);
         const per = ms / Math.max(1, calls);
-        const key = JSON.stringify([p.weights, p.model, p.imgsz, kind === "text" && textModel(p) === "sam3" ? sam3Side(p) : null]);
+        const key = JSON.stringify([p.weights, p.model, p.imgsz, kind === "text" && textModel(p) === "sam3" ? sam3Side(p) : null,
+          kind === "text" && textHalf(p)]);
         const old = next.get(n.id);
         next.set(n.id, { key, ms: old?.key === key ? Math.min(old.ms, per) : per });
       }

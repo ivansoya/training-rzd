@@ -8,7 +8,8 @@ import type { PromptRow } from "./agentDoc";
 describe("«Сеть по тексту»", () => {
   it("порог на умолчании переходит к умолчанию новой модели, правленый остаётся", () => {
     expect(switchTextModel({ model: "l", conf: 0.25 }, "sam3")).toEqual({ model: "sam3", conf: 0.4, side: 1008 });
-    expect(switchTextModel({ model: "sam3", conf: 0.4 }, "m")).toEqual({ model: "m", conf: 0.25 });
+    expect(switchTextModel({ model: "sam3", conf: 0.4 }, "m")).toEqual({ model: "m", conf: 0.25, half: true });
+    expect(switchTextModel({ model: "sam3", conf: 0.4, half: false }, "m")).toEqual({ model: "m", conf: 0.25 });
     expect(switchTextModel({ model: "l", conf: 0.3 }, "sam3")).toEqual({ model: "sam3", conf: 0.3, side: 1008 });
     expect(switchTextModel({}, "sam3")).toEqual({ model: "sam3", conf: 0.4, side: 1008 });
     expect(switchTextModel({ model: "s", conf: 0.25 }, "x")).toEqual({ model: "x", conf: 0.25 });

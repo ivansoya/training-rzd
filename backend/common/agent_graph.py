@@ -163,6 +163,8 @@ SAM3_MAX_ROWS = 16
 # Пик YOLOE-26 на карте, МБ: (своё постоянное, один вид на входе 1280). Сетка 10.10.2026
 # (tests/bench/agent_memory_grid.py): цена вида растёт с квадратом входа.
 YOLOE_PEAK = {"s": (110, 275), "m": (160, 520), "l": (180, 520), "x": (360, 770)}
+# То же в fp16 (тумблер узла «Точность»), та же сетка.
+YOLOE_PEAK_HALF = {"s": (60, 160), "m": (70, 310), "l": (75, 310), "x": (190, 455)}
 # Вход SAM 3: 644 — как было, 1008 — родной (замер 07.10: F1 0,63 → 0,70, вызов вдвое дольше).
 SAM3_SIDES = (644, 1008)
 # Пик SAM 3 в работе по входу: (модель с кадром, цена слова в вызове), сетка 10.10.2026.
@@ -223,7 +225,7 @@ def text_vram_mb(node, cap_mb=None, cpu_half=True) -> int:
     """Сколько видеопамяти просить под узел «Сети по тексту»."""
     params = node.get("params")
     if text_model(params) != "sam3":
-        fixed, per_view = YOLOE_PEAK[text_model(params)]
+        fixed, per_view = (YOLOE_PEAK_HALF if text_half(params) else YOLOE_PEAK)[text_model(params)]
         return peak_mb(fixed, per_view, int(num((params or {}).get("imgsz"), TEXT_IMGSZ)), views_per_call(params))
     words = len(text_prompts(node))
     per = sam3_words_per_call(params, words, cap_mb, cpu_half)
@@ -266,6 +268,11 @@ def min_conf(node):
 def text_model(params):
     model = (params or {}).get("model") or TEXT_MODEL
     return model if model in TEXT_MODELS else TEXT_MODEL
+
+
+def text_half(params):
+    """YOLOE в fp16. Нет поля — fp32: сохранённые версии считают как раньше."""
+    return text_model(params) != "sam3" and (params or {}).get("half") is True
 
 
 def text_conf(params):
@@ -556,6 +563,8 @@ def _check_text(node, sam3, examples):
     side = params.get("side")
     if text_model(params) == "sam3" and side not in (None, "") and num(side) not in SAM3_SIDES:
         raise AgentGraphError(f"{title(node)}: вход SAM 3 — 644 или 1008, сейчас {side!r}.")
+    if params.get("half") not in (None, True, False):
+        raise AgentGraphError(f"{title(node)}: «Точность» — fp16 или fp32, сейчас {params.get('half')!r}.")
     words = params.get("words")
     if words not in (None, "", "auto") and num(words) not in SAM3_WORDS:
         raise AgentGraphError(f"{title(node)}: «Слов за проход» — авто, 1, 2, 4, 8 или 16, сейчас {words!r}.")

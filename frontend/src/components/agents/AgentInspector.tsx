@@ -11,7 +11,7 @@ import { Badge, Button, Empty, Field, Icon, Popover, Seg, Select, Switch } from 
 import { NumInput } from "../NumInput";
 import {
   LIMITS, MAX_PASSES, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, TILE_OVERLAP, TITLES, frameCalls, inputSide, mergeInputs,
-  isExamples, offLimits, promptsOf, rowTarget, rowsOf, SAM3_WORDS, sam3DefaultWords, sam3Mb, sam3Side, sam3Words, switchTextModel,
+  isExamples, offLimits, promptsOf, rowTarget, rowsOf, SAM3_WORDS, sam3DefaultWords, sam3Mb, sam3Side, sam3Words, switchTextModel, textHalf,
   textConfDefault,
   textModel, tileSide, viewCount,
   type AgentClass, type FilterRow,
@@ -301,6 +301,15 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
                 )}
               </div>
               {memoryRow}
+              {!sam3 && (
+                <div className="ae-panel-row">
+                  <span className="ae-panel-l">Точность</span>
+                  <span className="ae-panel-v t-ell">
+                    {textHalf(p) ? "fp16 — вдвое меньше памяти и быстрее, рамки почти те же" : "fp32 — полная, памяти вдвое больше"}
+                  </span>
+                  <Switch checked={textHalf(p)} label="Половинная точность (fp16)" disabled={readOnly} onChange={(v) => onChange({ half: v })} />
+                </div>
+              )}
               {sam3 && (
                 <div className="ae-panel-row">
                   <span className="ae-panel-l">Контур</span>

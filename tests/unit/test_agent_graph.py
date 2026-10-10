@@ -593,6 +593,18 @@ def test_yoloe_бронь_растёт_с_тайлами_и_входом():
     assert ag.text_vram_mb(_text("t", rows, model="x", tiles=True)) > ag.text_vram_mb(_text("t", rows, model="s", tiles=True))
 
 
+def test_yoloe_в_fp16_по_своей_сетке_и_только_с_полем():
+    rows = [("w", "Класс", True)]
+    # Сетка 10.10.2026: YOLOE-l fp16, тайлы 1280 — пик 2545 МБ против 4317 в fp32.
+    half = ag.text_vram_mb(_text("t", rows, model="l", tiles=True, half=True))
+    assert 2545 <= half < ag.text_vram_mb(_text("t", rows, model="l", tiles=True))
+    assert ag.text_half({"model": "l", "half": True})
+    # Без поля — fp32, как у сохранённых версий; у SAM 3 флаг ничего не значит.
+    assert not ag.text_half({"model": "l"})
+    assert not ag.text_half({"model": "sam3", "half": True})
+    with pytest.raises(ag.AgentGraphError, match="Точность"):
+        ag.check(_text_doc(_text("t", rows, half="да")))
+
 
 def test_sam3_на_1008_слова_порциями_и_бронь_по_порции():
     many = [(f"w{i}", f"Класс {i}", True) for i in range(10)]
