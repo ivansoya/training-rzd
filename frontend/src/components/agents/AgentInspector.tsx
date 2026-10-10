@@ -282,6 +282,18 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
                   </Field>
                 ) : number("imgsz", "Размер входа", num(p.imgsz, TEXT_IMGSZ), 32)}
                 {number("conf", "Порог узла", num(p.conf, textConfDefault(model)), 0.05)}
+                {!sam3 && (
+                  <Field label="Точность">
+                    {(id) => (
+                      <Select size="sm" id={id} label="Точность" value={textHalf(p) ? "fp16" : "fp32"} disabled={readOnly}
+                        onChange={(v) => onChange({ half: v === "fp16" })}
+                        options={[
+                          { value: "fp16", label: "fp16", hint: "Вдвое меньше памяти и быстрее, рамки почти те же" },
+                          { value: "fp32", label: "fp32", hint: "Полная точность, памяти вдвое больше" },
+                        ]} />
+                    )}
+                  </Field>
+                )}
                 {/* У SAM 3 всегда: без описаний поле видно, но выключено — порцию нечем делить */}
                 {sam3 && (
                   <Field label="Слов за проход" aside={words > 0 ? wordsOption(sam3Words(p) ?? autoWords) : undefined}
@@ -301,15 +313,6 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
                 )}
               </div>
               {memoryRow}
-              {!sam3 && (
-                <div className="ae-panel-row">
-                  <span className="ae-panel-l">Точность</span>
-                  <span className="ae-panel-v t-ell">
-                    {textHalf(p) ? "fp16 — вдвое меньше памяти и быстрее, рамки почти те же" : "fp32 — полная, памяти вдвое больше"}
-                  </span>
-                  <Switch checked={textHalf(p)} label="Половинная точность (fp16)" disabled={readOnly} onChange={(v) => onChange({ half: v })} />
-                </div>
-              )}
               {sam3 && (
                 <div className="ae-panel-row">
                   <span className="ae-panel-l">Контур</span>
