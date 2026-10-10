@@ -51,10 +51,11 @@ def net_mb(params, info=None) -> int:
                                side, agent_graph.views_per_call(params))
 
 
-def plan(doc, cap_mb=None, scout=False, nets=None):
+def plan(doc, cap_mb=None, scout=False, nets=None, sam3_cpu_half=True):
     """Блоки памяти агента. `cap_mb` — потолок самой большой карты: по нему
     «Авто» у SAM 3 выбирает порцию слов. `scout` — разведка, SAM2 не грузится.
     `nets` — {id узла «Сеть»: вес файла, задача, вход} с полки (`net_info`).
+    `sam3_cpu_half` — тумблер сервера: без него SAM 3 при загрузке везёт на карту fp32.
 
     {units: [{key, kind, label, mb, nodes}], total_mb, heaviest: блок,
      nodes: {id узла: МБ}, words: {id узла SAM 3: слов за проход}}"""
@@ -69,8 +70,8 @@ def plan(doc, cap_mb=None, scout=False, nets=None):
                           "mb": mb, "nodes": [node["id"]]})
         elif kind == "text" and agent_graph.text_model(params) == "sam3":
             total = len(agent_graph.text_prompts(node))
-            words[node["id"]] = agent_graph.sam3_words_per_call(params, total, cap_mb)
-            mb = agent_graph.text_vram_mb(node, cap_mb)
+            words[node["id"]] = agent_graph.sam3_words_per_call(params, total, cap_mb, sam3_cpu_half)
+            mb = agent_graph.text_vram_mb(node, cap_mb, sam3_cpu_half)
             nodes[node["id"]] = mb
             side = agent_graph.sam3_side(params)
             unit = sam3.setdefault(side, {"key": f"sam3@{side}", "kind": "sam3", "label": f"SAM 3 · вход {side}",
@@ -105,11 +106,11 @@ def fix_words(doc, words):
     return doc
 
 
-def signature(doc, words, sequential=False, scout=False) -> str:
+def signature(doc, words, sequential=False, scout=False, sam3_cpu_half=True) -> str:
     """Отпечаток расхода для замера диспетчера (`gpu_usage_hints`).
 
     В подписи всё, от чего зависит пик: веса и вход сети, размер и вход YOLOE, тайлы,
-    вход и порция слов SAM 3, модели SAM2, режим. Хэшем — поле в базе 64 знака.
+    вход и порция слов SAM 3 с тумблером сервера, модели SAM2, режим. Хэшем — поле в базе 64 знака.
     Приставка `agent2` отрезала замеры до 10.10.2026: они не видели пика внутри кадра."""
     parts = []
     for n in sorted(doc.get("nodes") or [], key=lambda n: str(n.get("id"))):
@@ -118,7 +119,8 @@ def signature(doc, words, sequential=False, scout=False) -> str:
         if n["type"] == "net":
             parts.append(f"net:{p.get('weights')}@{p.get('imgsz')}{tiles}")
         elif n["type"] == "text" and agent_graph.text_model(p) == "sam3":
-            parts.append(f"sam3@{agent_graph.sam3_side(p)}w{words.get(n['id'])}:{len(agent_graph.text_sets(n))}s{tiles}")
+            fp32 = "" if sam3_cpu_half else "f"
+            parts.append(f"sam3{fp32}@{agent_graph.sam3_side(p)}w{words.get(n['id'])}:{len(agent_graph.text_sets(n))}s{tiles}")
         elif n["type"] == "text":
             parts.append(f"yoloe-{agent_graph.text_model(p)}@{agent_graph.num(p.get('imgsz'), agent_graph.TEXT_IMGSZ)}"
                          f":{len(agent_graph.text_rows(n))}c{tiles}")

@@ -92,7 +92,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
   const cards = ctx?.resources.cards ?? [];
   const est = verdict && ctx ? {
     verdict, total_mb: verdict.state === "sequential" ? verdict.want_mb : verdict.want_mb, estimate_mb: verdict.want_mb,
-    measured: 0, units: [], heaviest: null, nodes: {}, words: {}, cards, queued: ctx.resources.queued,
+    measured: 0, units: [], heaviest: null, nodes: {}, words: {}, sam3_cpu_half: true, cards, queued: ctx.resources.queued,
   } as api.Estimate : null;
   const ordered = ctx ? [...ctx.agents].sort((a, b) => Number(a.group !== "project") - Number(b.group !== "project")) : [];
   const agentOptions = ordered.flatMap((a, i) => {

@@ -20,7 +20,7 @@ import time
 
 from sqlalchemy import select, update
 
-from common import agent_graph, agent_memory, config, gpu, video_frames
+from common import agent_graph, agent_memory, config, gpu, settings, video_frames
 from common.db import SessionLocal, engine
 from common.models import AgentPreview, AgentWeights, GpuLease, Image, TaskVideo
 from training_svc import agent_runner
@@ -163,7 +163,7 @@ def _answer(db, warm, row):
             weights[node["id"]] = got
     cards = gpu.cards(db)
     mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None,
-                            nets=agent_memory.net_info(weights))
+                            nets=agent_memory.net_info(weights), sam3_cpu_half=settings.get(db, settings.SAM3_CPU_HALF))
     verdict = agent_memory.verdict(mem["total_mb"], mem["heaviest"], cards)
     if verdict["state"] == agent_memory.NEVER:
         raise agent_graph.AgentGraphError(verdict["reason"])

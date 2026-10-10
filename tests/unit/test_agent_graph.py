@@ -579,7 +579,8 @@ def test_sam3_не_больше_16_строк_и_бронь_растёт_с_пр
         ag.check(_text_doc(_text("t", many, model="sam3")))
     ag.check(_text_doc(_text("t", many)))  # YOLOE — без потолка
     two = _text("t", many[:2], model="sam3")
-    assert ag.text_vram_mb(two) == ag.SAM3_BASE_MB + 2 * ag.SAM3_PER_PROMPT_MB
+    # Сетка 10.10.2026, вход 644: модель с кадром 1840 + 150 на слово
+    assert ag.text_vram_mb(two) == 1840 + 2 * 150
     # YOLOE-l на 1280 без тайлов: постоянное 180 + один вид 520 (сетка 10.10.2026)
     assert ag.text_vram_mb(_text("t", many[:2])) == 700
 
@@ -592,13 +593,14 @@ def test_yoloe_бронь_растёт_с_тайлами_и_входом():
     assert ag.text_vram_mb(_text("t", rows, model="x", tiles=True)) > ag.text_vram_mb(_text("t", rows, model="s", tiles=True))
 
 
+
 def test_sam3_на_1008_слова_порциями_и_бронь_по_порции():
     many = [(f"w{i}", f"Класс {i}", True) for i in range(10)]
     two = _text("t", many[:2], model="sam3", side=1008)
-    assert ag.text_vram_mb(two) == ag.SAM3_1008_BASE_MB + 2 * ag.SAM3_1008_PER_PROMPT_MB
+    assert ag.text_vram_mb(two) == 2070 + 2 * 845
     # больше порции бронь не растёт: слова идут в модель по SAM3_1008_WORDS
     ten = _text("t", many, model="sam3", side=1008)
-    assert ag.text_vram_mb(ten) == ag.SAM3_1008_BASE_MB + ag.SAM3_1008_WORDS * ag.SAM3_1008_PER_PROMPT_MB
+    assert ag.text_vram_mb(ten) == 2070 + ag.SAM3_1008_WORDS * 845
     assert ag.sam3_words_per_call({"side": 1008}) == ag.SAM3_1008_WORDS
     assert ag.calls(ten, 1000, 600) == 3              # 10 слов порциями по 4
 

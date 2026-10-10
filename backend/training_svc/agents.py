@@ -22,7 +22,7 @@ from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
 
 from common import (
-    agent_access, agent_graph, agent_memory, attribution, config, frame_sizes, gpu, live, shapes,
+    agent_access, agent_graph, agent_memory, attribution, config, frame_sizes, gpu, live, settings, shapes,
     task_frames,
 )
 from common import scout as scout_lib
@@ -1466,15 +1466,18 @@ def _verdict(db, doc, scout=False, cards=None):
     ids = {n["id"]: _uuid((n.get("params") or {}).get("weights"))
            for n in doc.get("nodes") or [] if n.get("type") == "net"}
     weights = {nid: db.get(AgentWeights, wid) for nid, wid in ids.items() if wid}
+    cpu_half = settings.get(db, settings.SAM3_CPU_HALF)
     mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout,
-                            nets=agent_memory.net_info(weights))
-    hint = db.get(GpuUsageHint, ("agent", agent_memory.signature(doc, mem["words"], scout=scout)))
+                            nets=agent_memory.net_info(weights), sam3_cpu_half=cpu_half)
+    hint = db.get(GpuUsageHint, ("agent", agent_memory.signature(doc, mem["words"], scout=scout,
+                                                                 sam3_cpu_half=cpu_half)))
     measured = int(hint.samples) if hint is not None and hint.samples else 0
     total = int(hint.high_mb) if measured else mem["total_mb"]
     return {
         "verdict": agent_memory.verdict(total, mem["heaviest"], cards),
         "total_mb": total, "estimate_mb": mem["total_mb"], "measured": measured,
         "units": mem["units"], "heaviest": mem["heaviest"], "nodes": mem["nodes"], "words": mem["words"],
+        "sam3_cpu_half": cpu_half,
     }
 
 

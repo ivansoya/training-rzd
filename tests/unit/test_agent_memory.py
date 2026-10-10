@@ -34,14 +34,25 @@ def test_авто_берёт_умолчание_входа_пока_влезае
 
 
 def test_авто_ужимает_порцию_под_потолок_карты():
-    # 1008: 3600 + 850·4 = 7000 > 6000 → 2 слова: 5300.
-    assert agent_graph.sam3_words_per_call(sam3("t", 8)["params"], 8, cap_mb=6000) == 2
+    # 1008: 2070 + 845·4 = 5450 > 5000 → 2 слова: 3760.
+    assert agent_graph.sam3_words_per_call(sam3("t", 8)["params"], 8, cap_mb=5000) == 2
 
 
 def test_ручная_порция_не_зависит_от_карты():
     node = sam3("t", 8, per=1)
     assert agent_graph.sam3_words_per_call(node["params"], 8, cap_mb=100_000) == 1
-    assert agent_graph.text_vram_mb(node) == 3600 + 850
+    assert agent_graph.text_vram_mb(node) == 2070 + 845
+
+
+def test_без_тумблера_сервера_sam3_упирается_во_всплеск_загрузки():
+    # 644, одно слово: работа 1990, а fp32-копия при загрузке — 3250.
+    params = sam3("t", 1, side=644)["params"]
+    assert agent_graph.sam3_mb(params, 1) == 1990
+    assert agent_graph.sam3_mb(params, 1, cpu_half=False) == 3250
+    # 1008, 4 слова: работа больше всплеска — тумблер не меняет пик.
+    assert agent_graph.sam3_mb(sam3("t", 4)["params"], 4, cpu_half=False) == 2070 + 4 * 845
+    doc = {"nodes": [sam3("t", 1, side=644)]}
+    assert am.plan(doc, sam3_cpu_half=False)["total_mb"] == 3250
 
 
 def test_порция_умножает_вызовы():
@@ -68,8 +79,8 @@ def test_узлы_sam3_делят_одну_модель():
     got = am.plan(doc)
     sam_units = [u for u in got["units"] if u["kind"] == "sam3"]
     assert len(sam_units) == 1
-    assert sam_units[0]["mb"] == 3600 + 850 * 4
-    assert got["total_mb"] == 3600 + 850 * 4
+    assert sam_units[0]["mb"] == 2070 + 845 * 4
+    assert got["total_mb"] == 2070 + 845 * 4
 
 
 def test_разные_входы_это_разные_модели():
@@ -87,7 +98,7 @@ def test_модели_sam2_один_блок_и_разведке_не_нужны
 def test_самый_тяжёлый_блок():
     got = am.plan({"nodes": [net("n"), sam3("t", 4)]})
     assert got["heaviest"]["key"] == "sam3@1008"
-    assert got["total_mb"] == am.net_mb({}) + 7000
+    assert got["total_mb"] == am.net_mb({}) + 2070 + 845 * 4
 
 
 def test_сеть_по_весу_файла_задаче_и_тайлам():
@@ -132,6 +143,8 @@ def test_подпись_различает_порцию_и_режим():
     doc = {"nodes": [sam3("t", 8)]}
     assert am.signature(doc, {"t": 4}) != am.signature(doc, {"t": 1})
     assert am.signature(doc, {"t": 4}) != am.signature(doc, {"t": 4}, sequential=True)
+    # Без тумблера сервера пик загрузки другой — замер с ним не годится.
+    assert am.signature(doc, {"t": 4}) != am.signature(doc, {"t": 4}, sam3_cpu_half=False)
 
 
 def test_подпись_различает_размер_yoloe_и_веса_сети_и_влезает_в_базу():
@@ -140,6 +153,8 @@ def test_подпись_различает_размер_yoloe_и_веса_сет
     s = am.signature({"nodes": [yoloe("s")]}, {})
     assert s != am.signature({"nodes": [yoloe("x")]}, {})
     assert s != am.signature({"nodes": [yoloe("s", tiles=True)]}, {})
+    # Тумблер SAM 3 подпись YOLOE не трогает.
+    assert s == am.signature({"nodes": [yoloe("s")]}, {}, sam3_cpu_half=False)
     assert am.signature({"nodes": [net("n", weights="a")]}, {}) != am.signature({"nodes": [net("n", weights="b")]}, {})
     assert s.startswith("agent2:") and len(s) <= 64
 

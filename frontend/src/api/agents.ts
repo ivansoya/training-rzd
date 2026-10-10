@@ -134,6 +134,8 @@ export interface Estimate {
   /** Память каждого узла и выбранная «Авто» порция слов SAM 3. */
   nodes: Record<string, number>;
   words: Record<string, number>;
+  /** Тумблер сервера «SAM 3: ужимать до переноса на карту» — от него всплеск загрузки. */
+  sam3_cpu_half: boolean;
   cards: GpuCard[];
   queued: number;
 }

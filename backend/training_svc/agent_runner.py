@@ -32,7 +32,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
 from common import (
-    agent_graph, agent_memory, config, gpu, gpu_peak, live, shapes, task_frames, video_frames, video_tracks,
+    agent_graph, agent_memory, config, gpu, gpu_peak, live, settings, shapes, task_frames, video_frames, video_tracks,
 )
 from common.db import SessionLocal
 from common.models import (
@@ -178,9 +178,10 @@ def execute(db, run):
     mode = run.params.get("mode") or "frames"
     scout = mode == "scout"
     cards = gpu.cards(db)
+    cpu_half = settings.get(db, settings.SAM3_CPU_HALF)
     mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout,
-                            nets=agent_memory.net_info(weights))
-    sig = agent_memory.signature(doc, mem["words"], scout=scout)
+                            nets=agent_memory.net_info(weights), sam3_cpu_half=cpu_half)
+    sig = agent_memory.signature(doc, mem["words"], scout=scout, sam3_cpu_half=cpu_half)
     total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
     verdict = agent_memory.verdict(total, mem["heaviest"], cards)
     if verdict["state"] == agent_memory.NEVER:
@@ -192,7 +193,7 @@ def execute(db, run):
     agent_memory.fix_words(doc, mem["words"])
     want = total
     if sequential:
-        sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout)
+        sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout, sam3_cpu_half=cpu_half)
         want, _ = gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])
     # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла время
     # ожидания, и защита от голодания (возраст брони) не срабатывала.
@@ -646,8 +647,6 @@ def sam3_predictor_class():
     """Предиктор SAM 3: с настройкой «ужимать до карты» модель становится fp16 ещё на
     процессоре — иначе ultralytics везёт на карту fp32-копию (пик 3,24 ГБ вместо 1,64)."""
     from ultralytics.models.sam import SAM3SemanticPredictor
-
-    from common import settings
 
     if not settings.get_fresh(settings.SAM3_CPU_HALF):
         return SAM3SemanticPredictor

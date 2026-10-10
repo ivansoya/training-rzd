@@ -344,9 +344,12 @@ export const sam3DefaultWords = (p: Record<string, unknown>) => (sam3Side(p) ===
 /** Слов за вызов — как sam3_words_per_call; `auto` — порция «Авто», выбранная сервером под карту. */
 export const sam3WordsPerCall = (p: Record<string, unknown>, auto?: number) =>
   sam3Words(p) ?? auto ?? sam3DefaultWords(p);
-/** Память SAM 3 при `atOnce` промтах в вызове — как agent_graph.sam3_mb (база + цена слова). */
-export const sam3Mb = (p: Record<string, unknown>, atOnce: number) =>
-  sam3Side(p) === 1008 ? 3600 + 850 * Math.max(1, atOnce) : 3000 + 150 * Math.max(1, atOnce);
+/** Пик SAM 3 — как agent_graph.SAM3_PEAK и SAM3_LOAD_MB: работа (база + цена слова) или всплеск загрузки. */
+const SAM3_PEAK: Record<Sam3Side, [number, number]> = { 644: [1840, 150], 1008: [2070, 845] };
+export const sam3Mb = (p: Record<string, unknown>, atOnce: number, cpuHalf = true) => {
+  const [base, per] = SAM3_PEAK[sam3Side(p)];
+  return Math.max(cpuHalf ? 1640 : 3250, base + per * Math.max(1, atOnce));
+};
 
 const fin = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
 

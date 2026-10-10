@@ -159,19 +159,17 @@ def net_classes(node):
     return out
 
 
-# SAM 3 держит на карте всё разом: ~150 МБ на промт сверх базы (замер: 1 промт —
-# 3,2 ГБ, 20 — 6,2, 40 — 10,6). Строк больше 16 — превью уходит за карту.
-SAM3_BASE_MB = 3000
-SAM3_PER_PROMPT_MB = 150
 SAM3_MAX_ROWS = 16
 # Пик YOLOE-26 на карте, МБ: (своё постоянное, один вид на входе 1280). Сетка 10.10.2026
 # (tests/bench/agent_memory_grid.py): цена вида растёт с квадратом входа.
 YOLOE_PEAK = {"s": (110, 275), "m": (160, 520), "l": (180, 520), "x": (360, 770)}
 # Вход SAM 3: 644 — как было, 1008 — родной (замер 07.10: F1 0,63 → 0,70, вызов вдвое дольше).
 SAM3_SIDES = (644, 1008)
-# На 1008 промт стоит ~850 МБ (маски в размере входа): слова идут в модель порциями.
-SAM3_1008_BASE_MB = 3600
-SAM3_1008_PER_PROMPT_MB = 850
+# Пик SAM 3 в работе по входу: (модель с кадром, цена слова в вызове), сетка 10.10.2026.
+# Вызов с образцами стоит как одно слово; на 1008 слово — 845 МБ, поэтому порциями.
+SAM3_PEAK = {644: (1840, 150), 1008: (2070, 845)}
+# Всплеск загрузки: с тумблером «ужимать до карты» — 1,64 ГБ, без него fp32-копия — 3,24.
+SAM3_LOAD_MB = {True: 1640, False: 3250}
 SAM3_1008_WORDS = 4
 
 
@@ -192,21 +190,21 @@ def sam3_words(params):
     return int(value) if value in SAM3_WORDS else None
 
 
-def sam3_mb(params, at_once) -> int:
-    """Память SAM 3 при `at_once` промтах в одном вызове (образцы — один)."""
-    if sam3_side(params) == 1008:
-        return SAM3_1008_BASE_MB + SAM3_1008_PER_PROMPT_MB * max(1, at_once)
-    return SAM3_BASE_MB + SAM3_PER_PROMPT_MB * max(1, at_once)
+def sam3_mb(params, at_once, cpu_half=True) -> int:
+    """Пик SAM 3 при `at_once` промтах в одном вызове (образцы — один): больший из
+    загрузки и работы. `cpu_half` — тумблер сервера «ужимать до переноса на карту»."""
+    base, per = SAM3_PEAK[sam3_side(params)]
+    return max(SAM3_LOAD_MB[bool(cpu_half)], base + per * max(1, at_once))
 
 
-def sam3_words_per_call(params, words=None, cap_mb=None):
+def sam3_words_per_call(params, words=None, cap_mb=None, cpu_half=True):
     """Слов в одном вызове. «Авто» — умолчание входа (4 на 1008, все на 644),
     а при известном потолке карты `cap_mb` — порция вдвое меньше, пока узел не влезет."""
     own = sam3_words(params)
     if own:
         return own
     per = SAM3_1008_WORDS if sam3_side(params) == 1008 else SAM3_MAX_ROWS
-    while cap_mb and per > 1 and sam3_mb(params, min(per, words or per)) > cap_mb:
+    while cap_mb and per > 1 and sam3_mb(params, min(per, words or per), cpu_half) > cap_mb:
         per //= 2
     return per
 
@@ -221,15 +219,15 @@ def peak_mb(fixed, per_view, side, views) -> int:
     return int(math.ceil(fixed + per_view * views * (side / 1280) ** 2))
 
 
-def text_vram_mb(node, cap_mb=None) -> int:
+def text_vram_mb(node, cap_mb=None, cpu_half=True) -> int:
     """Сколько видеопамяти просить под узел «Сети по тексту»."""
     params = node.get("params")
     if text_model(params) != "sam3":
         fixed, per_view = YOLOE_PEAK[text_model(params)]
         return peak_mb(fixed, per_view, int(num((params or {}).get("imgsz"), TEXT_IMGSZ)), views_per_call(params))
     words = len(text_prompts(node))
-    per = sam3_words_per_call(params, words, cap_mb)
-    return sam3_mb(params, min(per, words))
+    per = sam3_words_per_call(params, words, cap_mb, cpu_half)
+    return sam3_mb(params, min(per, words), cpu_half)
 
 
 def text_rows(node):

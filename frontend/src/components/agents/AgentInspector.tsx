@@ -110,7 +110,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
   const autoWords = est?.words[node.id] ?? sam3DefaultWords(p);
   // Цена порции: память агента целиком, если узел возьмёт её, и проходы описаний на вид кадра.
   const wordsOption = (per: number) => {
-    const mb = sam3Mb(p, Math.min(per, words));
+    const mb = sam3Mb(p, Math.min(per, words), est?.sam3_cpu_half ?? true);
     const total = est && nodeMb !== undefined ? est.estimate_mb - nodeMb + mb : mb;
     const passes = Math.max(1, Math.ceil(words / per));
     return `≈ ${gb(total)} ГБ · ${passes} ${plural(passes, "проход", "прохода", "проходов")}`;
