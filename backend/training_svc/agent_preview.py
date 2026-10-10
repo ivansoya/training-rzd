@@ -162,7 +162,8 @@ def _answer(db, warm, row):
                 raise agent_graph.AgentGraphError(f"{agent_graph.title(node)}: весов нет на полке.")
             weights[node["id"]] = got
     cards = gpu.cards(db)
-    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None)
+    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None,
+                            nets=agent_memory.net_info(weights))
     verdict = agent_memory.verdict(mem["total_mb"], mem["heaviest"], cards)
     if verdict["state"] == agent_memory.NEVER:
         raise agent_graph.AgentGraphError(verdict["reason"])

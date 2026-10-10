@@ -14,8 +14,8 @@ def sam3(nid, words, side=1008, per=None, sets=0):
     return {"id": nid, "type": "text", "params": params}
 
 
-def net(nid):
-    return {"id": nid, "type": "net", "params": {}}
+def net(nid, **params):
+    return {"id": nid, "type": "net", "params": params}
 
 
 def sam(nid, model="sam2.1_hiera_small"):
@@ -79,15 +79,27 @@ def test_разные_входы_это_разные_модели():
 
 def test_модели_sam2_один_блок_и_разведке_не_нужны():
     doc = {"nodes": [net("n"), sam("s1"), sam("s2", "sam2.1_hiera_large")]}
-    assert [u["mb"] for u in am.plan(doc)["units"] if u["kind"] == "sam"] == [2 * am.SAM_MB]
+    small, large = am.SAM2_PEAK["sam2.1_hiera_small"], am.SAM2_PEAK["sam2.1_hiera_large"]
+    assert [u["mb"] for u in am.plan(doc)["units"] if u["kind"] == "sam"] == [small + large]
     assert all(u["kind"] != "sam" for u in am.plan(doc, scout=True)["units"])
 
 
 def test_самый_тяжёлый_блок():
     got = am.plan({"nodes": [net("n"), sam3("t", 4)]})
     assert got["heaviest"]["key"] == "sam3@1008"
-    assert got["total_mb"] == am.NET_MB + 7000
+    assert got["total_mb"] == am.net_mb({}) + 7000
 
+
+def test_сеть_по_весу_файла_задаче_и_тайлам():
+    n11 = {"file_mb": 5.4, "task": "detect", "imgsz": 640}
+    seg = {"file_mb": 52.2, "task": "segment", "imgsz": 640}
+    # Сетка 10.10.2026: yolo11n на 640 — пик 34 МБ, yolo26m-seg на 1280 с 8 видами — 4313.
+    assert 30 <= am.net_mb({}, n11) <= 60
+    assert 4313 <= am.net_mb({"imgsz": 1280, "tiles": True}, seg) <= 4700
+    # Без строки полки — с запасом, не меньше настоящей сегментации на 50 МБ.
+    assert am.net_mb({"imgsz": 1280, "tiles": True}) >= 4200
+    plan = am.plan({"nodes": [net("a", imgsz=1280)]}, nets={"a": n11})
+    assert plan["nodes"]["a"] == am.net_mb({"imgsz": 1280}, n11)
 
 # ---- вердикт -----------------------------------------------------------------
 def test_влезает_на_ту_где_свободнее():
@@ -120,6 +132,16 @@ def test_подпись_различает_порцию_и_режим():
     doc = {"nodes": [sam3("t", 8)]}
     assert am.signature(doc, {"t": 4}) != am.signature(doc, {"t": 1})
     assert am.signature(doc, {"t": 4}) != am.signature(doc, {"t": 4}, sequential=True)
+
+
+def test_подпись_различает_размер_yoloe_и_веса_сети_и_влезает_в_базу():
+    def yoloe(model, **p):
+        return {"id": "y", "type": "text", "params": {"model": model, "prompts": [{"on": True, "agent": "a", "prompt": "w"}], **p}}
+    s = am.signature({"nodes": [yoloe("s")]}, {})
+    assert s != am.signature({"nodes": [yoloe("x")]}, {})
+    assert s != am.signature({"nodes": [yoloe("s", tiles=True)]}, {})
+    assert am.signature({"nodes": [net("n", weights="a")]}, {}) != am.signature({"nodes": [net("n", weights="b")]}, {})
+    assert s.startswith("agent2:") and len(s) <= 64
 
 
 # ---- NMS между агентами ------------------------------------------------------

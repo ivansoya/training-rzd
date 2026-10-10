@@ -1462,7 +1462,12 @@ def example_crop(set_id, uid):
 def _verdict(db, doc, scout=False, cards=None):
     doc = agent_graph.prepare(doc)
     cards = gpu.cards(db) if cards is None else cards
-    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout)
+    # Память сети считается по весу файла с полки — строки берём по id из узлов.
+    ids = {n["id"]: _uuid((n.get("params") or {}).get("weights"))
+           for n in doc.get("nodes") or [] if n.get("type") == "net"}
+    weights = {nid: db.get(AgentWeights, wid) for nid, wid in ids.items() if wid}
+    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout,
+                            nets=agent_memory.net_info(weights))
     hint = db.get(GpuUsageHint, ("agent", agent_memory.signature(doc, mem["words"], scout=scout)))
     measured = int(hint.samples) if hint is not None and hint.samples else 0
     total = int(hint.high_mb) if measured else mem["total_mb"]

@@ -32,7 +32,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import OperationalError
 
 from common import (
-    agent_graph, agent_memory, config, gpu, live, shapes, task_frames, video_frames, video_tracks,
+    agent_graph, agent_memory, config, gpu, gpu_peak, live, shapes, task_frames, video_frames, video_tracks,
 )
 from common.db import SessionLocal
 from common.models import (
@@ -178,7 +178,8 @@ def execute(db, run):
     mode = run.params.get("mode") or "frames"
     scout = mode == "scout"
     cards = gpu.cards(db)
-    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout)
+    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout,
+                            nets=agent_memory.net_info(weights))
     sig = agent_memory.signature(doc, mem["words"], scout=scout)
     total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
     verdict = agent_memory.verdict(total, mem["heaviest"], cards)
@@ -262,6 +263,8 @@ def execute(db, run):
                        f"просили {_gb(want)}. Следующий запуск попросит {_gb(peak)}.")
         _finish(db, run, "error", message)
     finally:
+        if tick is not None:
+            tick.close()
         if peak:
             gpu.remember(db, "agent", sig, peak)
         gpu.release(db, lease.id, peak_mb=peak or None)
@@ -711,13 +714,13 @@ def _write(db, run, image, found, mapping):
 def _ticker(db, run, lease_id, device=None, base=0, info=None):
     """Шаг хода: +1 кадр, статистика, отмена кнопкой, пульс брони и живой связи.
 
-    Заодно держит пик своей памяти: прирост `memory_allocated` от `base`.
+    Заодно держит пик своей памяти сверх `base` — см. `common.gpu_peak`.
     `info` — что прогон занял (карта, память, режим), лежит рядом в `stats.res`."""
     last = [0.0]
-    top = [0]
+    watch = gpu_peak.REGISTRY.watch(device, base)
 
     def measure():
-        top[0] = max(top[0], _allocated_mb(device) - base)
+        watch.measure()
 
     def check():
         # Поочерёдно модели грузятся минутами — отмена и пульс между блоками.
@@ -742,8 +745,9 @@ def _ticker(db, run, lease_id, device=None, base=0, info=None):
             last[0] = now
 
     # Запас 15 %: allocated не видит кэш распределителя.
-    tick.peak = lambda: int(top[0] * 1.15) if top[0] > 0 else 0
+    tick.peak = lambda: int(watch.top * 1.15) if watch.top > 0 else 0
     tick.measure = measure
+    tick.close = watch.close
     tick.check = check
     return tick
 
@@ -978,7 +982,6 @@ def _allocated_mb(device):
 
 
 def _free():
-    # Без reset_peak_memory_stats: общий на процесс сброс сбивал замер соседа.
     try:
         import torch
         if torch.cuda.is_available():

@@ -580,7 +580,16 @@ def test_sam3_не_больше_16_строк_и_бронь_растёт_с_пр
     ag.check(_text_doc(_text("t", many)))  # YOLOE — без потолка
     two = _text("t", many[:2], model="sam3")
     assert ag.text_vram_mb(two) == ag.SAM3_BASE_MB + 2 * ag.SAM3_PER_PROMPT_MB
-    assert ag.text_vram_mb(_text("t", many[:2])) == ag.YOLOE_MB
+    # YOLOE-l на 1280 без тайлов: постоянное 180 + один вид 520 (сетка 10.10.2026)
+    assert ag.text_vram_mb(_text("t", many[:2])) == 700
+
+
+def test_yoloe_бронь_растёт_с_тайлами_и_входом():
+    rows = [("w", "Класс", True)]
+    # Агент РСМ-2000: YOLOE-l, тайлы 1280 — замер 3,84 ГБ на 7 видах, оценка берёт 8.
+    assert ag.text_vram_mb(_text("t", rows, model="l", tiles=True)) == 180 + 8 * 520
+    assert ag.text_vram_mb(_text("t", rows, model="l", imgsz=640)) == 180 + 520 // 4
+    assert ag.text_vram_mb(_text("t", rows, model="x", tiles=True)) > ag.text_vram_mb(_text("t", rows, model="s", tiles=True))
 
 
 def test_sam3_на_1008_слова_порциями_и_бронь_по_порции():

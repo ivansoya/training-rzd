@@ -164,7 +164,9 @@ def net_classes(node):
 SAM3_BASE_MB = 3000
 SAM3_PER_PROMPT_MB = 150
 SAM3_MAX_ROWS = 16
-YOLOE_MB = 1500
+# Пик YOLOE-26 на карте, МБ: (своё постоянное, один вид на входе 1280). Сетка 10.10.2026
+# (tests/bench/agent_memory_grid.py): цена вида растёт с квадратом входа.
+YOLOE_PEAK = {"s": (110, 275), "m": (160, 520), "l": (180, 520), "x": (360, 770)}
 # Вход SAM 3: 644 — как было, 1008 — родной (замер 07.10: F1 0,63 → 0,70, вызов вдвое дольше).
 SAM3_SIDES = (644, 1008)
 # На 1008 промт стоит ~850 МБ (маски в размере входа): слова идут в модель порциями.
@@ -209,11 +211,22 @@ def sam3_words_per_call(params, words=None, cap_mb=None):
     return per
 
 
+def views_per_call(params) -> int:
+    """Сколько видов кадра уходит в один вызов модели: с тайлами — до `TILE_BATCH`."""
+    return TILE_BATCH if (params or {}).get("tiles") else 1
+
+
+def peak_mb(fixed, per_view, side, views) -> int:
+    """Пик сети на карте: постоянное плюс виды вызова, цена вида — с квадратом входа."""
+    return int(math.ceil(fixed + per_view * views * (side / 1280) ** 2))
+
+
 def text_vram_mb(node, cap_mb=None) -> int:
     """Сколько видеопамяти просить под узел «Сети по тексту»."""
     params = node.get("params")
     if text_model(params) != "sam3":
-        return YOLOE_MB
+        fixed, per_view = YOLOE_PEAK[text_model(params)]
+        return peak_mb(fixed, per_view, int(num((params or {}).get("imgsz"), TEXT_IMGSZ)), views_per_call(params))
     words = len(text_prompts(node))
     per = sam3_words_per_call(params, words, cap_mb)
     return sam3_mb(params, min(per, words))

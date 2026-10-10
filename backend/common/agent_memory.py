@@ -10,12 +10,21 @@
 графа. Целиком агент держит сумму блоков; поочерёдно — самый тяжёлый блок,
 модели грузятся по одной на пачку кадров.
 """
+import hashlib
+
 from common import agent_graph
 
-# Прикидка на одну сеть, пока нет замера: средний yolo11 на входе 1280 с запасом.
-NET_MB = 1500
-# SAM2 small на кадре 1920×1400 — около гигабайта; large вдвое больше.
-SAM_MB = 1500
+# Пики по сетке 10.10.2026 (tests/bench/agent_memory_grid.py), МБ.
+# Сеть со своими весами — по весу файла: постоянное ≈ 15 + 1,8·файл, вид на 1280 —
+# 80 + 5·файл у детекции и 110 + 8,2·файл у сегментации (yolo11n…yolo26m-seg).
+NET_FIXED = (15, 1.8)
+NET_VIEW = {"detect": (80, 5.0), "segment": (110, 8.2)}
+# Строки полки нет (черновик без весов) — как за сегментацию на 50 МБ: с запасом.
+NET_FILE_MB = 50
+# SAM2 по рамке: от размера кадра пик не зависит — кадр сжимается до 1024.
+SAM2_PEAK = {"sam2.1_hiera_tiny": 600, "sam2.1_hiera_small": 640,
+             "sam2.1_hiera_base_plus": 820, "sam2.1_hiera_large": 1480}
+SAM2_UNKNOWN = 1480
 # Поочерёдно кадры идут пачками: модель грузится раз на пачку, а не на кадр.
 SEQ_BATCH = 16
 
@@ -26,9 +35,26 @@ def _gb(mb) -> str:
     return f"{mb / 1024:.1f} ГБ".replace(".", ",")
 
 
-def plan(doc, cap_mb=None, scout=False):
+def net_info(weights):
+    """{id узла: строка полки} → то, по чему считается память сети."""
+    return {nid: {"file_mb": (row.size_bytes or 0) / (1 << 20), "task": row.task, "imgsz": row.imgsz}
+            for nid, row in (weights or {}).items() if row is not None}
+
+
+def net_mb(params, info=None) -> int:
+    """Пик узла «Сеть»: по весу файла, задаче и входу; вход — из узла или из весов."""
+    info = info or {}
+    file_mb = float(info.get("file_mb") or NET_FILE_MB)
+    base, slope = NET_VIEW["detect" if info.get("task") == "detect" else "segment"]
+    side = int(agent_graph.num((params or {}).get("imgsz"), info.get("imgsz") or 640))
+    return agent_graph.peak_mb(NET_FIXED[0] + NET_FIXED[1] * file_mb, base + slope * file_mb,
+                               side, agent_graph.views_per_call(params))
+
+
+def plan(doc, cap_mb=None, scout=False, nets=None):
     """Блоки памяти агента. `cap_mb` — потолок самой большой карты: по нему
     «Авто» у SAM 3 выбирает порцию слов. `scout` — разведка, SAM2 не грузится.
+    `nets` — {id узла «Сеть»: вес файла, задача, вход} с полки (`net_info`).
 
     {units: [{key, kind, label, mb, nodes}], total_mb, heaviest: блок,
      nodes: {id узла: МБ}, words: {id узла SAM 3: слов за проход}}"""
@@ -37,9 +63,10 @@ def plan(doc, cap_mb=None, scout=False):
     for node in doc.get("nodes") or []:
         kind, params = node.get("type"), node.get("params") or {}
         if kind == "net":
-            nodes[node["id"]] = NET_MB
+            mb = net_mb(params, (nets or {}).get(node["id"]))
+            nodes[node["id"]] = mb
             units.append({"key": f"net:{node['id']}", "kind": "net", "label": agent_graph.title(node),
-                          "mb": NET_MB, "nodes": [node["id"]]})
+                          "mb": mb, "nodes": [node["id"]]})
         elif kind == "text" and agent_graph.text_model(params) == "sam3":
             total = len(agent_graph.text_prompts(node))
             words[node["id"]] = agent_graph.sam3_words_per_call(params, total, cap_mb)
@@ -58,10 +85,11 @@ def plan(doc, cap_mb=None, scout=False):
         elif kind == "sam" and not scout:
             name = params.get("model") or agent_graph.SAM_DEFAULTS["model"]
             sams.setdefault(name, []).append(node["id"])
-            nodes[node["id"]] = SAM_MB
+            nodes[node["id"]] = SAM2_PEAK.get(name, SAM2_UNKNOWN)
     units += [sam3[side] for side in sorted(sam3)]
     if sams:
-        units.append({"key": "sam", "kind": "sam", "label": "Уточнение SAM", "mb": SAM_MB * len(sams),
+        units.append({"key": "sam", "kind": "sam", "label": "Уточнение SAM",
+                      "mb": sum(SAM2_PEAK.get(name, SAM2_UNKNOWN) for name in sams),
                       "nodes": [i for ids in sams.values() for i in ids]})
     heaviest = max(units, key=lambda u: u["mb"], default=None)
     return {"units": units, "total_mb": sum(u["mb"] for u in units), "heaviest": heaviest,
@@ -80,21 +108,24 @@ def fix_words(doc, words):
 def signature(doc, words, sequential=False, scout=False) -> str:
     """Отпечаток расхода для замера диспетчера (`gpu_usage_hints`).
 
-    Порция слов и режим — в подписи: замер SAM 3 по 4 слова не годится для
-    порции 1, а поочерёдный пик — это один блок, а не сумма."""
-    nodes = doc.get("nodes") or []
-    nets = [n for n in nodes if n["type"] == "net"]
-    texts = [n for n in nodes if n["type"] == "text"]
-    sams = sorted({(n.get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
-                   for n in nodes if n["type"] == "sam"}) if not scout else []
-    families = sorted(
-        f"sam3@{agent_graph.sam3_side(n.get('params'))}w{words.get(n['id'])}"
-        if agent_graph.text_model(n.get("params")) == "sam3" else "yoloe" for n in texts)
-    batch = max((agent_graph.TILE_BATCH if (n.get("params") or {}).get("tiles") else 1
-                 for n in nets + texts), default=1)
-    prompts = sorted(f"{len(agent_graph.text_prompts(n))}p{len(agent_graph.text_sets(n))}s" for n in texts)
-    return (f"agent:{len(nets)}:b{batch}:{','.join(sams)}:{','.join(families)}:{','.join(prompts)}"
-            f"{':seq' if sequential else ''}")
+    В подписи всё, от чего зависит пик: веса и вход сети, размер и вход YOLOE, тайлы,
+    вход и порция слов SAM 3, модели SAM2, режим. Хэшем — поле в базе 64 знака.
+    Приставка `agent2` отрезала замеры до 10.10.2026: они не видели пика внутри кадра."""
+    parts = []
+    for n in sorted(doc.get("nodes") or [], key=lambda n: str(n.get("id"))):
+        p = n.get("params") or {}
+        tiles = "t" if p.get("tiles") else ""
+        if n["type"] == "net":
+            parts.append(f"net:{p.get('weights')}@{p.get('imgsz')}{tiles}")
+        elif n["type"] == "text" and agent_graph.text_model(p) == "sam3":
+            parts.append(f"sam3@{agent_graph.sam3_side(p)}w{words.get(n['id'])}:{len(agent_graph.text_sets(n))}s{tiles}")
+        elif n["type"] == "text":
+            parts.append(f"yoloe-{agent_graph.text_model(p)}@{agent_graph.num(p.get('imgsz'), agent_graph.TEXT_IMGSZ)}"
+                         f":{len(agent_graph.text_rows(n))}c{tiles}")
+        elif n["type"] == "sam" and not scout:
+            parts.append(f"sam2:{p.get('model') or agent_graph.SAM_DEFAULTS['model']}")
+    full = ",".join(sorted(parts)) + (":seq" if sequential else "")
+    return "agent2:" + hashlib.sha1(full.encode("utf-8")).hexdigest()[:32]
 
 
 def verdict(total_mb, heaviest, cards):
