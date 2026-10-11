@@ -108,16 +108,26 @@ def fix_words(doc, words):
     return doc
 
 
-def signature(doc, words, sequential=False, scout=False, sam3_cpu_half=True) -> str:
+def frame_views(doc, width, height, nets=None) -> dict:
+    """{узел с тайлами: видов в одном вызове} на кадре такого размера. Пик растёт с видами
+    до `TILE_BATCH`, мелкий кадр даёт их меньше — его замер на крупные не переносится."""
+    return {n["id"]: min(agent_graph.TILE_BATCH,
+                         agent_graph.passes(n, width, height, ((nets or {}).get(n["id"]) or {}).get("imgsz")))
+            for n in doc.get("nodes") or [] if (n.get("params") or {}).get("tiles")}
+
+
+def signature(doc, words, sequential=False, scout=False, sam3_cpu_half=True, views=None) -> str:
     """Отпечаток расхода для замера диспетчера (`gpu_usage_hints`).
 
-    В подписи всё, от чего зависит пик: веса и вход сети, размер, вход и точность YOLOE, тайлы,
-    вход и порция слов SAM 3 с тумблером сервера, модели SAM2, режим. Хэшем — поле в базе 64 знака.
-    Приставка `agent2` отрезала замеры до 10.10.2026: они не видели пика внутри кадра."""
+    В подписи всё, от чего зависит пик: веса и вход сети, размер, вход и точность YOLOE, тайлы
+    с видами в вызове (`views` из `frame_views`; нет — худший случай, крупный кадр), вход и порция
+    слов SAM 3 с тумблером сервера, модели SAM2, режим. Хэшем — поле в базе 64 знака.
+    Приставка `agent2` отрезала замеры до 10.10.2026: они не видели пика внутри кадра;
+    виды в подписи (11.10.2026) отрезали замеры тайловых агентов — их могли снять на мелких кадрах."""
     parts = []
     for n in sorted(doc.get("nodes") or [], key=lambda n: str(n.get("id"))):
         p = n.get("params") or {}
-        tiles = "t" if p.get("tiles") else ""
+        tiles = f"t{(views or {}).get(n['id'], agent_graph.TILE_BATCH)}" if p.get("tiles") else ""
         if n["type"] == "net":
             parts.append(f"net:{p.get('weights')}@{p.get('imgsz')}{tiles}")
         elif n["type"] == "text" and agent_graph.text_model(p) == "sam3":

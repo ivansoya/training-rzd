@@ -28,7 +28,7 @@ import threading
 import time
 from contextlib import contextmanager
 
-from sqlalchemy import select, text
+from sqlalchemy import or_, select, text
 from sqlalchemy.exc import OperationalError
 
 from common import (
@@ -146,6 +146,22 @@ def frames(db, run):
     return [i for i in ids if not (i in seen or seen.add(i))]
 
 
+def _largest(db, run, mode):
+    """(ширина, высота) самого крупного кадра этого прогона или None — по нему виды тайлов в подписи
+    замера (решение 11.10.2026). Именно его кадров, а не всей таски: замер на мелких лёг бы под подпись крупных."""
+    if mode == "frames":
+        clauses = [task_frames.source_clause(run.task_id, s) for s in run.params.get("sources") or []]
+        q = select(Image.width, Image.height).where(Image.task_id == run.task_id, Image.task_status == "new",
+                                                   Image.width > 0, Image.height > 0)
+        if clauses and all(c is not None for c in clauses):  # «in» сравнивал бы выражения через ==
+            q = q.where(or_(*clauses))
+    else:
+        ids = [_uuid(v) for v in run.params.get("videos") or []]
+        q = select(TaskVideo.width, TaskVideo.height).where(TaskVideo.id.in_(ids), TaskVideo.width > 0,
+                                                           TaskVideo.height > 0)
+    return max(db.execute(q.distinct()).all(), key=lambda s: s[0] * s[1], default=None)
+
+
 def _finish(db, run, status, error=None):
     run.status = status
     run.error = error
@@ -200,7 +216,9 @@ def prepare(db, run):
     cpu_half = settings.get(db, settings.SAM3_CPU_HALF)
     mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout,
                             nets=agent_memory.net_info(weights), sam3_cpu_half=cpu_half)
-    sig = agent_memory.signature(doc, mem["words"], scout=scout, sam3_cpu_half=cpu_half)
+    size = _largest(db, run, mode) if any((n.get("params") or {}).get("tiles") for n in doc["nodes"]) else None
+    views = agent_memory.frame_views(doc, *size, agent_memory.net_info(weights)) if size else None
+    sig = agent_memory.signature(doc, mem["words"], scout=scout, sam3_cpu_half=cpu_half, views=views)
     total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
     verdict = agent_memory.verdict(total, mem["heaviest"], cards, mem["units"])
     if verdict["state"] == agent_memory.NEVER:
@@ -213,7 +231,8 @@ def prepare(db, run):
     agent_memory.fix_words(doc, mem["words"])
     parts = list(verdict["parts"]) if split else [total]
     if sequential:
-        sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout, sam3_cpu_half=cpu_half)
+        sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout, sam3_cpu_half=cpu_half,
+                                     views=views)
         parts = [gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])[0]]
     # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла бы место
     # в очереди и «сколько ждёт».

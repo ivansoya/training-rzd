@@ -38,10 +38,11 @@ def _doc():
 
 def _forget(cur):
     """Стереть замер этого агента: разведка на маленьком ролике меряет ≈ 0,9 ГБ (тайлов меньше
-    восьми), и со второго прогона вердикт по замеру — «влезает». Подпись у разведки и прикидки
-    одна: у агента без SAM2 они не различаются."""
-    cur.execute("delete from gpu_usage_hints where kind = 'agent' and signature = %s",
-                (agent_memory.signature(agent_graph.prepare(_doc()), {}),))
+    восьми), и со второго прогона вердикт по замеру — «влезает». В подписи виды тайлов на кадре
+    прогона (11.10.2026), окно же считает худший случай — стираем все варианты видов."""
+    doc = agent_graph.prepare(_doc())
+    sigs = [agent_memory.signature(doc, {}, views={"big": v, "mid": v}) for v in range(1, agent_graph.TILE_BATCH + 1)]
+    cur.execute("delete from gpu_usage_hints where kind = 'agent' and signature = any(%s)", (sigs,))
 
 
 @pytest.fixture(scope="module")

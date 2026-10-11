@@ -192,6 +192,21 @@ def test_подпись_различает_размер_yoloe_и_веса_сет
     assert s.startswith("agent2:") and len(s) <= 64
 
 
+def test_замер_мелкого_кадра_не_годится_крупному():
+    # Разведка на ролике 640×480 намерила 0,9 ГБ — прогон на 2688×1520 не должен взять это число.
+    tiled = {"nodes": [{**sam3("t", 4, side=644), "params": {**sam3("t", 4, side=644)["params"], "tiles": True}}]}
+    small = am.frame_views(tiled, 640, 480)
+    big = am.frame_views(tiled, 2688, 1520)
+    assert small == {"t": 1} and big == {"t": agent_graph.TILE_BATCH}
+    assert am.signature(tiled, {"t": 4}, views=small) != am.signature(tiled, {"t": 4}, views=big)
+    # Окно запуска кадров не знает — худший случай, тот же, что у крупного кадра.
+    assert am.signature(tiled, {"t": 4}) == am.signature(tiled, {"t": 4}, views=big)
+    # Без тайлов кадр сжимается до входа — размер в подпись не идёт.
+    flat = {"nodes": [sam3("t", 4, side=644)]}
+    assert am.frame_views(flat, 640, 480) == {}
+    assert am.signature(flat, {"t": 4}, views={}) == am.signature(flat, {"t": 4})
+
+
 # ---- NMS между агентами ------------------------------------------------------
 MAP = {"вагон": "c1", "болт": "c2"}
 
