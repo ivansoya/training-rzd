@@ -29,7 +29,7 @@ export default function CpuConfirm({ refusal, busy, onCpu, onCancel, onFit }: {
 }) {
   const fit = onFit ? refusal.fit : null;
   return (
-    <Dialog open onOpenChange={(v) => { if (!v) onCancel(); }} width={500} title="На карте не запустится"
+    <Dialog open onOpenChange={(v) => { if (!v) onCancel(); }} width={600} title="На карте не запустится"
       footer={<>
         <Button variant="ghost" onClick={onCancel}>Отменить</Button>
         <span className="grow" />
