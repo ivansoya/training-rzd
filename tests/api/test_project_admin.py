@@ -247,7 +247,8 @@ def test_название_проекта_меняет_только_админ(ap
     join(api, editor, project["code"], "editor")
     assert editor.patch(url, json={"name": "чужое"}).status_code == 403
     assert api.patch(url, json={"name": "строка\nвторая"}).status_code == 400
-    res = api.patch(url, json={"name": project["code"] + " новое", "description": "о проекте"})
+    # Новое имя — с приставкой test-: без неё уборка проект не находила, и он копился.
+    res = api.patch(url, json={"name": tag() + " новое", "description": "о проекте"})
     assert res.status_code == 200, res.text
     got = api.get(url).json()["project"]
     assert got["description"] == "о проекте"
