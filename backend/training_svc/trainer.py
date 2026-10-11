@@ -224,6 +224,42 @@ def vram_want(db, model_id, task, imgsz, batch, gpus):
     return want, source, sig
 
 
+def fit_hint(model_id, task, imgsz, batch, gpus, cap_mb, scale=1.0):
+    """Что поправить, чтобы обучение влезло на карту: {"batch": N}, {"imgsz": S, "batch": 1} или None.
+    По прикидке, растянутой замером (`scale` — во сколько раз замер больше прикидки)."""
+    need = lambda s, b: card_vram(model_id, task, s, b, gpus) * scale  # noqa: E731
+    for b in range(int(batch) - 1, 0, -1):
+        if need(imgsz, b) <= cap_mb:
+            return {"batch": b}
+    for s in range(int(imgsz) - 32, 63, -32):
+        if need(s, 1) <= cap_mb:
+            return {"imgsz": s, "batch": 1}
+    return None
+
+
+def card_gate(db, model_id, task, params):
+    """Почему обучение не стартует на карте — тело ответа 409 для окна «на процессоре или отменить»
+    (решение 11.10.2026) — или None. Карт нет вовсе — None: считает процессор, как раньше."""
+    from common import gpu
+
+    caps = gpu.capacities(db)
+    if not caps:
+        return {"code": "gpu_off", "error": "Видеокарты сервера выключены или не отвечают."} \
+            if gpu.known_devices(db) else None
+    imgsz, batch = int(params.get("imgsz") or 640), int(params.get("batch") or 16)
+    gpus = max(1, int(params.get("gpus") or 1))
+    want = vram_want(db, model_id, task, imgsz, batch, gpus)[0]
+    roomy = sum(1 for cap in caps if cap >= want)
+    if roomy >= gpus:
+        return None
+    cap = max(caps)
+    error = (f"Не поместится на карту: нужно {gpu._gb(want)}, а под задачи отдаётся {gpu._gb(cap)}." if gpus == 1
+             else f"Нужно карт: {gpus} по {gpu._gb(want)}, а таких на сервере {roomy}.")
+    scale = max(1.0, want / max(1, card_vram(model_id, task, imgsz, batch, gpus)))
+    return {"code": "gpu_never", "error": error, "need_mb": want, "cap_mb": cap,
+            "fit": fit_hint(model_id, task, imgsz, batch, gpus, cap, scale)}
+
+
 def is_available():
     try:
         import torch  # noqa: F401

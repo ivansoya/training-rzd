@@ -214,32 +214,39 @@ def prepare(db, run):
 
     mode = run.params.get("mode") or "frames"
     scout = mode == "scout"
-    cards = gpu.cards(db)
+    # Человек разрешил процессор в окне при запуске (решение 11.10.2026): ни вердикта, ни карты —
+    # прогон ждёт место процессора, считает в fp32 и замера памяти не пишет.
+    cpu = run.params.get("device") == "cpu"
+    cards = [] if cpu else gpu.cards(db)
     cpu_half = settings.get(db, settings.SAM3_CPU_HALF)
     mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout,
                             nets=agent_memory.net_info(weights), sam3_cpu_half=cpu_half)
-    size = _largest(db, run, mode) if any((n.get("params") or {}).get("tiles") for n in doc["nodes"]) else None
-    views = agent_memory.frame_views(doc, *size, agent_memory.net_info(weights)) if size else None
-    sig = agent_memory.signature(doc, mem["words"], scout=scout, sam3_cpu_half=cpu_half, views=views)
-    total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
-    verdict = agent_memory.verdict(total, mem["heaviest"], cards, mem["units"])
-    if verdict["state"] == agent_memory.NEVER:
-        if run.gpu_lease_id:
-            gpu.cancel(db, run.gpu_lease_id, verdict["reason"])
-        _finish(db, run, "error", verdict["reason"])
-        return None
-    sequential = verdict["state"] == agent_memory.SEQUENTIAL
-    split = verdict["state"] == agent_memory.SPLIT
+    if cpu:
+        sig, total, sequential, split, parts = None, 0, False, False, [0]
+    else:
+        size = _largest(db, run, mode) if any((n.get("params") or {}).get("tiles") for n in doc["nodes"]) else None
+        views = agent_memory.frame_views(doc, *size, agent_memory.net_info(weights)) if size else None
+        sig = agent_memory.signature(doc, mem["words"], scout=scout, sam3_cpu_half=cpu_half, views=views)
+        total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
+        verdict = agent_memory.verdict(total, mem["heaviest"], cards, mem["units"])
+        if verdict["state"] == agent_memory.NEVER:
+            if run.gpu_lease_id:
+                gpu.cancel(db, run.gpu_lease_id, verdict["reason"])
+            _finish(db, run, "error", verdict["reason"])
+            return None
+        sequential = verdict["state"] == agent_memory.SEQUENTIAL
+        split = verdict["state"] == agent_memory.SPLIT
+        parts = list(verdict["parts"]) if split else [total]
+        if sequential:
+            sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout, sam3_cpu_half=cpu_half,
+                                         views=views)
+            parts = [gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])[0]]
     agent_memory.fix_words(doc, mem["words"])
-    parts = list(verdict["parts"]) if split else [total]
-    if sequential:
-        sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout, sam3_cpu_half=cpu_half,
-                                     views=views)
-        parts = [gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])[0]]
     # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла бы место
     # в очереди и «сколько ждёт».
     lease = db.get(GpuLease, run.gpu_lease_id) if run.gpu_lease_id else None
-    same = lease is not None and [p.want_mb for p in gpu.group_of(db, lease)] == parts
+    same = (lease is not None and bool(lease.on_cpu) == cpu
+            and [p.want_mb for p in gpu.group_of(db, lease)] == parts)
     if lease is not None and lease.status == "queued" and same:
         gpu.beat(db, lease.id)
         gpu.try_grant(db, lease.id)
@@ -247,7 +254,10 @@ def prepare(db, run):
     elif lease is None or lease.status != "held" or not same:
         if lease is not None and lease.status in gpu.ACTIVE:
             gpu.cancel(db, lease.id, "Новая попытка")
-        if split:
+        if cpu:
+            lease = gpu.request_cpu(db, holder="training", kind="agent", ref_id=run.id, project_id=run.project_id,
+                                    user_id=run.created_by, priority=35, title="Агент разметки")
+        elif split:
             lease = gpu.request_group(
                 db, holder="training", kind="agent", parts=parts, spread=False,
                 labels=[u["label"] for u in mem["units"]], ref_id=run.id, project_id=run.project_id,
@@ -274,9 +284,9 @@ def prepare(db, run):
     indices = gpu.group_indices(db, lease)
     named = [db.get(GpuDevice, p.device_id) for p in held]
     # Что прогон занял — для журнала агентов проекта; ход пишет счётчики рядом.
-    info = {"card": named[0].name if named[0] else None, "want_mb": sum(parts), "sequential": sequential,
-            "words": mem["words"] or None, "waited_s": _waited(lease),
-            "cards": sorted({d.device_index for d in named if d is not None})}
+    info = {"card": "процессор" if cpu else named[0].name if named[0] else None, "want_mb": sum(parts),
+            "sequential": sequential, "words": mem["words"] or None, "waited_s": _waited(lease),
+            "cards": sorted({d.device_index for d in named if d is not None}), "cpu": cpu}
     run.status = "running"
     run.gpu_lease_id = lease.id
     run.queue_reason = None
@@ -289,7 +299,7 @@ def prepare(db, run):
             "lease_id": lease.id, "sequential": sequential, "mode": mode, "owner": owner, "info": info,
             "weights": {nid: row.id for nid, row in weights.items()},
             "unit_index": {u["key"]: indices[i if split else 0] for i, u in enumerate(mem["units"])},
-            "first": indices[0]}
+            "first": indices[0], "cpu": cpu}
 
 
 def run_held(db, run_id, ctx):
@@ -303,13 +313,14 @@ def run_held(db, run_id, ctx):
     try:
         weights = {nid: db.get(AgentWeights, wid) for nid, wid in ctx["weights"].items()}
         sets = examples.rows_for(db, ctx["owner"], doc)
-        devices = {key: _device(index) for key, index in ctx["unit_index"].items()}
-        _device(ctx["first"])  # текущая карта нити — первая из брони
+        cpu = ctx.get("cpu", False)
+        devices = {key: _device(index, cpu) for key, index in ctx["unit_index"].items()}
+        _device(ctx["first"], cpu)  # текущая карта нити — первая из брони
         ids = frames(db, run) if mode == "frames" else None
         plan = _video_plan(db, run, mode) if ids is None else None
         run.total = len(ids) if ids is not None else sum(len(f) for _, f in plan)
         db.commit()
-        tick = _ticker(db, run, ctx["lease_id"], sorted(set(devices.values()), key=str), info)
+        tick = _ticker(db, run, ctx["lease_id"], [] if cpu else sorted(set(devices.values()), key=str), info)
         work = _Work(doc, ctx["order"], ctx["units"], weights, sets, devices, ctx["lease_id"], ctx["sequential"], tick)
         mapping = run.params.get("mapping") or {}
         if ids is not None:
@@ -358,8 +369,8 @@ def _is_oom(exc):
     return type(exc).__name__ == "OutOfMemoryError" or "out of memory" in str(exc).lower()
 
 
-def _device(index):
-    """Карта брони для torch в этой нити.
+def _device(index, cpu=False):
+    """Карта брони для torch в этой нити; `cpu` — прогон, которому разрешили процессор.
 
     Только объектом `torch.device`: ultralytics 8.4 на строку «1» или «cuda:1»
     переписывает CUDA_VISIBLE_DEVICES на весь процесс и всё равно отдаёт
@@ -367,7 +378,9 @@ def _device(index):
     import torch
 
     if index is None:
-        raise RuntimeError("Бронь без видеокарты — агенты на процессоре не считают.")
+        if cpu:
+            return torch.device("cpu")
+        raise RuntimeError("Бронь без видеокарты: на процессоре агент считает, только если это разрешили при запуске.")
     torch.cuda.set_device(index)
     return torch.device(f"cuda:{index}")
 
@@ -532,7 +545,8 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
             # превращал её в умолчание (замер: 0 давал те же 15 рамок, что 0,25).
             conf = agent_graph.num(params.get("conf"), 0.25)
 
-        half = text and agent_graph.text_half(params)
+        # fp16 — только на карте: на процессоре половинная точность медленнее или не работает вовсе.
+        half = text and agent_graph.text_half(params) and getattr(on(node["id"]), "type", "cuda") != "cpu"
 
         def infer(views):
             # IoU не передаём: встроенный NMS у yolo11 и v8 работает со своим
@@ -692,9 +706,11 @@ def load_text(node, device, sets=None, shared=None):
         side = agent_graph.sam3_side(params)
         predictor = (shared or {}).get(side)
         if predictor is None:
-            predictor = sam3_predictor_class()(overrides=dict(
+            # На процессоре — fp32 и без ужимания: половинная точность там не работает.
+            on_cpu = getattr(device, "type", "cuda") == "cpu"
+            predictor = sam3_predictor_class(on_cpu)(overrides=dict(
                 task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
-                imgsz=side, quantize=16, device=device))
+                imgsz=side, quantize=32 if on_cpu else 16, device=device))
             with _SAM3_BUILD:
                 predictor.setup_model(verbose=False)  # сразу, а не на первом кадре: под замком
                 _trim()
@@ -749,12 +765,13 @@ def _half_masks():
     ops.process_mask = process_mask
 
 
-def sam3_predictor_class():
+def sam3_predictor_class(on_cpu=False):
     """Предиктор SAM 3: с настройкой «ужимать до карты» модель становится fp16 ещё на
-    процессоре — иначе ultralytics везёт на карту fp32-копию (пик 3,24 ГБ вместо 1,64)."""
+    процессоре — иначе ultralytics везёт на карту fp32-копию (пик 3,24 ГБ вместо 1,64).
+    `on_cpu` — прогон считает на процессоре: там модель остаётся fp32."""
     from ultralytics.models.sam import SAM3SemanticPredictor
 
-    if not settings.get_fresh(settings.SAM3_CPU_HALF):
+    if on_cpu or not settings.get_fresh(settings.SAM3_CPU_HALF):
         return SAM3SemanticPredictor
 
     class CpuHalf(SAM3SemanticPredictor):

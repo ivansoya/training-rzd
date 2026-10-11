@@ -288,7 +288,7 @@ function RunCard({ run, code }: { run: Overview["latest_run"]; code: string }) {
       </Card>
     );
   }
-  const [label, tone] = RUN_BADGE[run.status] ?? [run.status, ""];
+  const [label, tone] = run.cpu && run.status === "waiting_gpu" ? ["Ждёт процессор", ""] : RUN_BADGE[run.status] ?? [run.status, ""];
   return (
     <Card title={run.name}
       desc={<>{run.model}{run.imgsz ? ` · ${run.imgsz} px` : ""} · эпоха {run.epoch} из {run.epochs}</>}

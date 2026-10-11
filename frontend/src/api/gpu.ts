@@ -22,6 +22,8 @@ export interface Holder extends Described {
   label: string | null;
   /** Номера всех карт задачи — у задачи на нескольких картах, иначе null. */
   cards: number[] | null;
+  /** Держит процессор, а не карту — памяти карты не занимает. */
+  cpu?: boolean;
 }
 
 export interface Device {
@@ -55,6 +57,8 @@ export interface QueueRow extends Described {
   want_mb: number;
   /** МБ по частям у задачи на нескольких картах, иначе null. */
   parts: number[] | null;
+  /** Ждёт процессор, а не карту. */
+  on_cpu: boolean;
   waiting_seconds: number;
   reason: string | null;
   mine: boolean;
@@ -78,6 +82,8 @@ export interface GpuState {
   level: "view" | "manage" | null;
   cards: GpuCard[];
   devices: Device[];
+  /** Процессор сервера: задачи, которым разрешили считать на нём, — по одной разом. */
+  cpu: { slots: number; busy: number; holders: Holder[] };
   queue: {
     mine: QueueRow[];
     ahead: number;

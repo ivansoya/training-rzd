@@ -13,6 +13,10 @@ export const STATUS: Record<RunStatus, { label: string; tone: string; live?: boo
   error: { label: "Ошибка", tone: "var(--destructive)" },
 };
 
+/** Подпись состояния: обучение, которому разрешили процессор, ждёт его, а не карту (11.10.2026). */
+export const runStatus = (run: { status: RunStatus; params?: Record<string, unknown> }) =>
+  run.status === "waiting_gpu" && run.params?.device === "cpu" ? { ...STATUS.waiting_gpu, label: "Ждёт процессор" } : STATUS[run.status];
+
 export const FINISHED: RunStatus[] = ["done", "stopped", "error"];
 export const ACTIVE: RunStatus[] = ["preparing", "running", "stopping"];
 export const WAITING: RunStatus[] = ["queued", "waiting_gpu"];

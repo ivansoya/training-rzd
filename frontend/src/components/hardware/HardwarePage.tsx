@@ -113,6 +113,9 @@ export default function HardwarePage() {
                     onToggle={() => setOpen((s) => { const next = new Set(s); if (!next.delete(d.id)) next.add(d.id); return next; })}
                     onLimit={(data) => act(() => api.setLimits(d.id, data))} onKill={(id) => act(() => api.killLease(id))} />
                 ))}
+                {(state.cpu.busy > 0 || queue.some((q) => q.on_cpu)) && (
+                  <CpuRows state={state} onKill={(id) => act(() => api.killLease(id))} />
+                )}
               </tbody>
             </Table>
           )}
@@ -234,6 +237,39 @@ function DeviceRows({ device: d, state, many, open, onToggle, onLimit, onKill }:
   );
 }
 
+/** Процессор сервера: задачи, которым разрешили считать на нём, — по одной разом (решение 11.10.2026). */
+function CpuRows({ state, onKill }: { state: GpuState; onKill: (leaseId: string) => void }) {
+  const { busy, slots, holders } = state.cpu;
+  return (
+    <>
+      <tr className="hw-dev">
+        <td className="hw-chev" />
+        <td className="hw-i">—</td>
+        <td className="hw-name"><b>Процессор</b><span>{count(slots, "задача", "задачи", "задач")} разом</span></td>
+        <td className="hw-mem t-faint">—</td>
+        <td className="r">—</td>
+        <td>{busy || "—"}</td>
+        <td>{busy ? <span className="hw-st ok">работает</span> : <span className="hw-st">свободен</span>}</td>
+      </tr>
+      {state.staff && holders.length > 0 && (
+        <tr className="hw-det">
+          <td colSpan={7}>
+            <div className="hw-in">
+              <div className="hw-hold">
+                <table>
+                  <tbody>
+                    {holders.map((h) => <HolderRow key={h.id} holder={h} manage={state.manage} onKill={() => onKill(h.id)} />)}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
 /** Запас, потолок тяжёлых и включение карты: меняет «Управление», видит «Просмотр». */
 function CardSettings({ device: d, state, onLimit }: {
   device: Device; state: GpuState;
@@ -313,7 +349,7 @@ function HolderRow({ holder: h, manage, onKill }: { holder: Holder; manage: bool
         {tail && <span className="t-faint"> · {tail}</span>}</td>
       <td>{h.user ?? <span className="t-faint">—</span>}</td>
       <td>{h.project ?? <span className="t-faint">—</span>}</td>
-      <td className="r">{gb(h.granted_mb)}</td>
+      <td className="r">{h.cpu ? "—" : gb(h.granted_mb)}</td>
       <td className="r">{h.granted_at ? clock(h.granted_at) : "—"}</td>
       {manage && <td className="r"><Button size="sm" variant="ghost" className="hw-kill" onClick={onKill}>Снять</Button></td>}
     </tr>
@@ -333,7 +369,7 @@ function QueueLine({ row, staff, action, onKill }: { row: QueueRow; staff: boole
           {multi && <span className="hw-multi">{count(multi.length, "карта", "карты", "карт")}</span>}
           {row.mine && staff && <span className="hw-yours">ваша</span>}</b>
         {who && <span>{who}</span>}
-        <span>просит <b>{want} ГБ</b> · ждёт <b>{waited(row.waiting_seconds)}</b>{row.reason ? ` — ${row.reason}` : row.position > 1 ? ` — за задачей ${row.position - 1}` : ""}</span>
+        <span>{row.on_cpu ? <b>на процессоре</b> : <>просит <b>{want} ГБ</b></>} · ждёт <b>{waited(row.waiting_seconds)}</b>{row.reason ? ` — ${row.reason}` : row.position > 1 ? ` — за задачей ${row.position - 1}` : ""}</span>
       </div>
       {action && <Button size="sm" variant={action === "Снять" ? "ghost" : "outline"} className={action === "Снять" ? "hw-kill" : undefined} onClick={onKill}>{action}</Button>}
     </div>

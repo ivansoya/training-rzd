@@ -15,7 +15,7 @@ import { ClassesCard, ConfusionCard, CurvesCard, LossCard, MetricsCard } from ".
 import RunDialog, { seedOf } from "./RunDialog";
 import type { RunSeed } from "./RunDialog";
 import { isFinalCheck, left, progress, stageText, trainedEpochs } from "./runMath";
-import { ACTIVE, FINISHED, KPI, STATUS, WAITING, dec, delta, duration, paramGroups, yoloAugChips } from "./runs";
+import { ACTIVE, FINISHED, KPI, WAITING, dec, delta, duration, paramGroups, runStatus, yoloAugChips } from "./runs";
 
 export default function RunPage() {
   const { code = "", runId = "" } = useParams<{ code: string; runId: string }>();
@@ -65,7 +65,7 @@ export default function RunPage() {
   }
   if (!run) return <div className="page"><Empty compact title="Загружаю обучение…" /></div>;
 
-  const st = STATUS[run.status];
+  const st = runStatus(run);
   const manage = run.can_manage !== false && (detail.my_role === "admin" || detail.my_role === "editor");
   const active = ACTIVE.includes(run.status);
   const waiting = WAITING.includes(run.status);

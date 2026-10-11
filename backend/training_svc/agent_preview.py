@@ -311,7 +311,7 @@ def loop(stop):
                 warm.last = time.monotonic()
                 _trim(warm)
             idle = time.monotonic() - warm.last
-            if warm.lease_id and (idle > IDLE_RELEASE or idle > IDLE_YIELD and gpu.queued_count(db)):
+            if warm.lease_id and (idle > IDLE_RELEASE or idle > IDLE_YIELD and gpu.queued_count(db, gpu_only=True)):
                 warm.drop(db)
             elif warm.lease_id:
                 gpu.beat(db, warm.lease_id)

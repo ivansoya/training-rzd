@@ -6,6 +6,7 @@ import type { ModelRow, ParamSpec, ParamValue, Run } from "../../../api/runs";
 import * as setsApi from "../../../api/trainsets";
 import type { TrainSet } from "../../../api/trainsets";
 import { Button, Check, Dialog, Field, Icon, Input, Notice, Seg, Select, Switch } from "../../../ui";
+import CpuConfirm, { refusalOf, type CardRefusal } from "../../hardware/CpuConfirm";
 import { count, ru } from "../../ru";
 import { gb, useGpuState } from "../../shell/useGpuState";
 import { AUG_KEYS } from "./runs";
@@ -52,6 +53,8 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
   const [fine, setFine] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Карта не вмещает обучение или выключена — окно «на процессоре или отменить».
+  const [refusal, setRefusal] = useState<CardRefusal | null>(null);
 
   useEffect(() => {
     setsApi.listSets(code).then((got) => {
@@ -114,7 +117,7 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
     return () => window.clearTimeout(t);
   }, [model, task, imgsz, batch, gpus, live]);
 
-  const start = async () => {
+  const start = async (device?: "cpu") => {
     if (!set) return;
     setBusy(true);
     setError(null);
@@ -126,10 +129,13 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
         params[key] = value;
       }
       if ("gpus" in params) params.gpus = gpus;
-      const run = await runsApi.startRun(code, { set_id: set.id, model, name: name.trim(), params });
+      const run = await runsApi.startRun(code, { set_id: set.id, model, name: name.trim(), params, ...(device ? { device } : {}) });
+      setRefusal(null);
       onStarted(run);
     } catch (e) {
-      setError((e as Error).message);
+      const why = refusalOf(e);
+      if (why) setRefusal(why);
+      else setError((e as Error).message);
       setBusy(false);
     }
   };
@@ -173,12 +179,19 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
       desc="Обучение встанет в очередь и начнётся, когда освободится карта"
       footer={<>
         <Button variant="ghost" onClick={onClose}>Отмена</Button>
-        <Button variant="primary" icon="play" disabled={busy || !model || !set} onClick={start}>
+        <Button variant="primary" icon="play" disabled={busy || !model || !set} onClick={() => void start()}>
           {busy ? "Ставлю в очередь…" : "Запустить"}
         </Button>
       </>}>
       <div className="rn-form">
         {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+        {refusal && (
+          <CpuConfirm refusal={refusal} busy={busy} onCancel={() => setRefusal(null)} onCpu={() => void start("cpu")}
+            onFit={(fit) => {
+              setValues((v) => ({ ...v, ...(fit.imgsz ? { imgsz: fit.imgsz, batch: 1 } : { batch: fit.batch ?? 1 }) }));
+              setRefusal(null);
+            }} />
+        )}
         {empty ? (
           <Notice tone="warn">Готовых наборов нет — учиться не на чем. Соберите набор в разделе «Наборы».</Notice>
         ) : (

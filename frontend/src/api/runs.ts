@@ -177,6 +177,8 @@ export const startRun = (
     model?: string;
     name?: string;
     params?: Record<string, unknown>;
+    /** Согласие из окна «на карте не запустится» (components/hardware/CpuConfirm). */
+    device?: "cpu";
   }
 ) => post<Run>(`projects/${code}/runs`, body);
 

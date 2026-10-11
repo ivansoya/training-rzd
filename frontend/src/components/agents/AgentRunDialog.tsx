@@ -15,6 +15,7 @@ import { Badge, Button, Check, Dialog, Empty, Field, Icon, LinkButton, Notice, P
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
 import ClassMap, { guess, useAutoMapped } from "./ClassMap";
+import CpuConfirm, { refusalOf, type CardRefusal } from "../hardware/CpuConfirm";
 import { VerdictChip, gb, short, verdictLook } from "./GpuVerdict";
 import ScoutOverview from "./ScoutOverview";
 import { sampledCount } from "./scoutMath";
@@ -45,6 +46,8 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Агент больше карты или карты выключены — окно «на процессоре или отменить» (11.10.2026).
+  const [refusal, setRefusal] = useState<CardRefusal | null>(null);
 
   useEffect(() => {
     api.runContext(taskId).then((got) => {
@@ -115,16 +118,19 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
     }];
   });
 
-  const start = async () => {
+  const start = async (device?: "cpu") => {
     if (!agent || !version) return;
     setBusy(true);
     setError(null);
     try {
       onStarted(await api.startRun(taskId, {
         graph_id: agent.id, version_id: version.id, mode, sources: [...sources], videos: chosen.map((v) => v.id), step, gap, mapping,
+        ...(device ? { device } : {}),
       }));
     } catch (e) {
-      setError((e as Error).message);
+      const why = refusalOf(e);
+      if (why) setRefusal(why);
+      else setError((e as Error).message);
       setBusy(false);
     }
   };
@@ -158,15 +164,18 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
         <span className="grow" />
         <Button variant="ghost" onClick={onClose}>Отмена</Button>
         {ready && (
-          <Button variant="agent" icon="sparkle" onClick={start}
-            disabled={busy || never || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
-            title={never ? verdict?.reason : mode !== "scout" && mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}>
+          <Button variant="agent" icon="sparkle" onClick={() => void start()}
+            disabled={busy || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
+            title={mode !== "scout" && mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}>
             {startText}{verdict?.state === "wait" || (verdict?.state === "split" && !verdict.ready) ? " · в очередь" : ""}
           </Button>
         )}
       </>}>
       <div className="ar">
         {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+        {refusal && (
+          <CpuConfirm refusal={refusal} busy={busy} onCancel={() => setRefusal(null)} onCpu={() => void start("cpu")} />
+        )}
         {!ctx && !error && <p className="t-sm t-muted">Загружаю…</p>}
         {ctx && !ctx.can_run && <Notice tone="warn">Запускать агента можно в своей таске: исполнителю или администратору проекта.</Notice>}
         {ctx && ctx.agents.length === 0 && (
@@ -261,7 +270,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
               <div className="ar-why no">
                 <Icon name="ban" size={16} />
                 <div>
-                  <p><b>Не поместится ни на одну карту.</b> {verdict.reason} Поочерёдно не поможет: узел не делится, а на процессоре агенты не считают.</p>
+                  <p><b>Не поместится ни на одну карту.</b> {verdict.reason} Поочерёдно не поможет: узел не делится. Запуск предложит процессор.</p>
                   <p className="t-xs t-muted">
                     Что сделать в агенте: уменьшить «Слов за проход» у SAM 3, взять вход 644 вместо 1008 или выключить тайлинг.
                   </p>
@@ -321,7 +330,7 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
     <div className="ar-bar" role="status">
       <Badge icon="sparkle" tone="var(--agent)">{run.agent ?? "агент"} v{run.version}</Badge>
       <span className="ui-mono t-sm">{ru(run.processed)} / {run.total == null ? "—" : ru(run.total)}</span>
-      <span className="t-sm">{run.status === "running" && run.mode === "scout" ? "разведывает" : STATUS[run.status]}</span>
+      <span className="t-sm">{run.status === "running" && run.mode === "scout" ? "разведывает" : run.cpu && run.status === "waiting_gpu" ? "ждёт процессор" : STATUS[run.status]}</span>
       {result && <span className="t-sm t-muted">{result}</span>}
       {run.error && <span className="t-sm ge-warn">{run.error}</span>}
       {stopError && <span className="t-sm ge-warn">Не остановился: {stopError}</span>}

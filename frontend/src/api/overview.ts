@@ -36,6 +36,8 @@ export interface Overview {
     model: string;
     imgsz: number | null;
     status: string;
+    /** Разрешили процессор: «Ждёт процессор», а не «Ждёт карту». */
+    cpu?: boolean;
     epoch: number;
     epochs: number;
     map50: (number | null)[];

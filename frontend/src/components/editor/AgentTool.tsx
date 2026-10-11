@@ -58,14 +58,14 @@ export function useAgentTool(taskId: string) {
   }, [taskId, agent, version]);
 
   /** Прогон по блоку из меню: сопоставление — запомненное, окна нет. */
-  const start = useCallback(async (body: { mode: api.RunMode; sources?: string[]; videos?: string[]; step: number }) => {
+  const start = useCallback(async (body: { mode: api.RunMode; sources?: string[]; videos?: string[]; step: number; device?: "cpu" }) => {
     if (!ctx || !agent || !version) throw new Error("Агентов с сохранённой версией нет.");
     const saved = ctx.mappings[agent.id];
     const mapping: Record<string, string | null> = {};
     for (const c of version.classes) mapping[c.id] = c.lock ?? saved?.[c.id] ?? saved?.[c.name] ?? null;
     return api.startRun(taskId, {
       graph_id: agent.id, version_id: version.id, mode: body.mode, sources: body.sources ?? [],
-      videos: body.videos ?? [], step: body.step, gap: 2, mapping,
+      videos: body.videos ?? [], step: body.step, gap: 2, mapping, ...(body.device ? { device: body.device } : {}),
     });
   }, [ctx, agent, version, taskId]);
 

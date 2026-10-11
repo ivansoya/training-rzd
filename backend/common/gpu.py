@@ -25,7 +25,7 @@ import socket
 import subprocess
 from datetime import timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.exc import IntegrityError
 
 # Правила допуска зовут как gpu.fits и gpu.signature — снаружи диспетчер один,
@@ -300,6 +300,65 @@ def request_group(db, *, holder, kind, parts, spread, labels=None, ref_id=None,
     return leases[0]
 
 
+# Процессор сервера — ещё одно место в очереди: задача, которой человек разрешил считать на нём
+# (карта не вмещает её или выключена), ждёт его как карту. Разом — одна (решение 11.10.2026):
+# SAM 3 на процессоре — это 8 ГБ памяти хоста, обучение — все ядра.
+CPU_SLOTS = 1
+_CPU_LOCK = 7_011_000  # pg_advisory_xact_lock: две выдачи процессора разом не пройдут
+
+
+def request_cpu(db, *, holder, kind, ref_id=None, project_id=None, user_id=None, priority=50, title=None):
+    """Встать в очередь к процессору. Возвращает бронь — выданную или ждущую."""
+    lease = GpuLease(
+        holder=holder, kind=kind, ref_id=ref_id, project_id=project_id, user_id=user_id,
+        want_mb=0, queue_priority=priority, title=title, status="queued", on_cpu=True,
+        lease_until=utcnow() + timedelta(seconds=LEASE_SECONDS),
+    )
+    db.add(lease)
+    db.commit()
+    try_grant(db, lease.id)
+    db.refresh(lease)
+    return lease
+
+
+def _grant_cpu(db, lease):
+    db.execute(text("select pg_advisory_xact_lock(:k)"), {"k": _CPU_LOCK})
+    db.refresh(lease)
+    now = utcnow()
+    abandoned = lease.lease_until is not None and _aware(lease.lease_until) < now
+    if lease.status != "queued" or abandoned:
+        db.commit()
+        return False
+    busy = db.execute(select(GpuLease).where(GpuLease.on_cpu, GpuLease.status == "held")
+                      .order_by(GpuLease.granted_at)).scalars().all()
+    if len(busy) >= CPU_SLOTS:
+        lease.reason = f"процессор занят: {busy[0].title or 'другая задача'}"[:200]
+        db.commit()
+        return False
+    lease.status, lease.granted_mb, lease.granted_at, lease.reason = "held", 0, now, None
+    lease.lease_until = now + timedelta(seconds=LEASE_SECONDS)
+    db.commit()
+    return True
+
+
+def cpu_view(db, holders=True):
+    """Процессор для «Оборудования»: кто на нём считает (с правом — подробно) и сколько ждут."""
+    held = db.execute(select(GpuLease).where(GpuLease.on_cpu, GpuLease.status == "held")
+                      .order_by(GpuLease.granted_at)).scalars().all()
+    return {
+        "slots": CPU_SLOTS,
+        "busy": len(held),
+        "holders": [{
+            "id": str(r.id), "kind": r.kind, "title": r.title, "granted_mb": 0, "peak_mb": None,
+            "user_id": str(r.user_id) if r.user_id else None,
+            "project_id": str(r.project_id) if r.project_id else None,
+            "ref_id": str(r.ref_id) if r.ref_id else None,
+            "granted_at": r.granted_at.isoformat() if r.granted_at else None,
+            "label": None, "cards": None, "cpu": True,
+        } for r in held] if holders else [],
+    }
+
+
 def known_devices(db) -> bool:
     """Карты на этой машине есть, даже если сейчас выключены или молчат."""
     since = utcnow() - timedelta(seconds=KNOWN_SECONDS)
@@ -355,12 +414,13 @@ def capacities(db) -> list[int]:
     return [for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb) for d in devices]
 
 
-def queued_count(db) -> int:
-    """Сколько задач ждёт: группа — одна задача."""
-    return int(db.execute(
-        select(func.count(GpuLease.id)).where(
-            GpuLease.status == "queued", (GpuLease.group_id.is_(None)) | (GpuLease.part == 0))
-    ).scalar() or 0)
+def queued_count(db, gpu_only=False) -> int:
+    """Сколько задач ждёт: группа — одна задача. `gpu_only` — без ждущих процессор."""
+    query = select(func.count(GpuLease.id)).where(
+        GpuLease.status == "queued", (GpuLease.group_id.is_(None)) | (GpuLease.part == 0))
+    if gpu_only:
+        query = query.where(GpuLease.on_cpu.is_(False))
+    return int(db.execute(query).scalar() or 0)
 
 
 def group_indices(db, lease):
@@ -448,6 +508,8 @@ def try_grant(db, lease_id) -> bool:
     lease = db.get(GpuLease, lease_id)
     if lease is None or lease.status != "queued":
         return False
+    if lease.on_cpu:
+        return _grant_cpu(db, lease)
 
     devices, held, heavy, busy = _load_state(db)
     # Карты заперты — выдаёт один. Части читаем уже под замком: прочитанные до него
@@ -694,6 +756,7 @@ def queue_view(db, *, user_id=None, staff=False):
             "title": r.title,
             "want_mb": sum(parts[r.group_id]) if r.group_id else r.want_mb,
             "parts": parts[r.group_id] if r.group_id else None,
+            "on_cpu": bool(r.on_cpu),
             "waiting_seconds": int((now - _aware(r.created_at)).total_seconds()),
             "reason": r.reason,
             "mine": bool(user_id and r.user_id == user_id),

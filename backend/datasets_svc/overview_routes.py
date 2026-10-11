@@ -161,6 +161,7 @@ def overview(code):
             latest = {
                 "id": str(r.id), "name": r.name, "model": r.base_model,
                 "imgsz": (r.params or {}).get("imgsz"), "status": r.status,
+                "cpu": (r.params or {}).get("device") == "cpu",
                 "epoch": r.current_epoch, "epochs": r.epochs,
                 "map50": [m.get(MAP50) for _, m in rows],
                 "map95": [m.get(MAP95) for _, m in rows],

@@ -16,6 +16,7 @@ import { Button, Notice, Progress, Sheet, hasLayer } from "../../../ui";
 import { count, plural } from "../../ru";
 import AgentRunDialog, { AgentRunBar } from "../../agents/AgentRunDialog";
 import AgentSetupDialog from "../../agents/AgentSetupDialog";
+import CpuConfirm, { refusalOf, type CardRefusal } from "../../hardware/CpuConfirm";
 import { useAgentTool } from "../../editor/AgentTool";
 import ScoutOverview from "../../agents/ScoutOverview";
 import { useScouts } from "../../agents/scout";
@@ -99,6 +100,8 @@ export default function TaskPage() {
   const [setupOpen, setSetupOpen] = useState(false);
   const agentTool = useAgentTool(taskId || "");
   const [agentRun, setAgentRun] = useState<RunView | null>(null);
+  // Быстрый запуск из меню блока упёрся в карту — окно «на процессоре или отменить».
+  const [cpuAsk, setCpuAsk] = useState<{ refusal: CardRefusal; body: Parameters<AgentHooks["start"]>[0] } | null>(null);
   const scouted = Object.keys(useScouts(taskId || "")).length > 0;
   const [overviewOpen, setOverviewOpen] = useState(false);
 
@@ -389,8 +392,13 @@ export default function TaskPage() {
   const agent: AgentHooks = {
     tool: agentTool, busy: busy || agentBusy, onSetup: () => setSetupOpen(true),
     start: (body) => void guard(async () => {
-      const run = await agentTool.start(body);
-      setAgentRun(run);
+      try {
+        setAgentRun(await agentTool.start(body));
+      } catch (e) {
+        const why = refusalOf(e);
+        if (!why) throw e;
+        setCpuAsk({ refusal: why, body });
+      }
     }),
     dialog: (ask) => { setAgentAsk(ask); setAgentOpen(true); },
   };
@@ -477,6 +485,13 @@ export default function TaskPage() {
       {agentOpen && (
         <AgentRunDialog taskId={task.id} initial={agentAsk} onClose={() => { setAgentOpen(false); agentTool.reload(); }}
           onStarted={(run) => { setAgentOpen(false); setAgentRun(run); agentTool.reload(); }} />
+      )}
+      {cpuAsk && (
+        <CpuConfirm refusal={cpuAsk.refusal} busy={busy} onCancel={() => setCpuAsk(null)}
+          onCpu={() => void guard(async () => {
+            setAgentRun(await agentTool.start({ ...cpuAsk.body, device: "cpu" }));
+            setCpuAsk(null);
+          })} />
       )}
       {picked && (
         <UploadImagesModal code={task.project.code} tags={tags} files={picked}

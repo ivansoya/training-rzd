@@ -185,27 +185,33 @@ def start_run(db, run) -> bool:
     params = run.params or {}
     imgsz, batch = params.get("imgsz", 640), params.get("batch", 16)
     gpus = max(1, int(params.get("gpus") or 1))
-    want, source, sig = trainer.vram_want(db, run.base_model, run.task, imgsz, batch, gpus)
-    problem = None
-    # Больше, чем карты отдают под задачи в принципе. Очередь такое не
-    # рассосёт: она освобождает чужую память, а не поднимает потолок карты.
-    # Раньше ран уходил в ожидание и возвращался сюда снова и снова.
-    caps = gpu.capacities(db)
-    roomy = sum(1 for cap in caps if cap >= want)
-    if caps and gpus == 1 and not roomy:
-        problem = (f"Не поместится на карту: нужно {gpu._gb(want)}, а под задачи отдаётся "
-                   f"{gpu._gb(max(caps))}. Уменьшите батч или размер входа.")
-    elif caps and roomy < gpus:
-        problem = (f"Нужно карт: {gpus} по {gpu._gb(want)}, а таких на сервере {roomy}. "
-                   "Уменьшите число карт, батч или размер входа.")
-    if problem:
-        return _fail(db, run, problem)
+    # Человек разрешил процессор в окне при запуске (решение 11.10.2026): карту не просим.
+    cpu = params.get("device") == "cpu"
+    if cpu:
+        want, source, sig, gpus = 0, "процессор", None, 1
+    else:
+        want, source, sig = trainer.vram_want(db, run.base_model, run.task, imgsz, batch, gpus)
+        problem = None
+        # Больше, чем карты отдают под задачи в принципе. Очередь такое не
+        # рассосёт: она освобождает чужую память, а не поднимает потолок карты.
+        # Раньше ран уходил в ожидание и возвращался сюда снова и снова.
+        caps = gpu.capacities(db)
+        roomy = sum(1 for cap in caps if cap >= want)
+        if caps and gpus == 1 and not roomy:
+            problem = (f"Не поместится на карту: нужно {gpu._gb(want)}, а под задачи отдаётся "
+                       f"{gpu._gb(max(caps))}. Уменьшите батч или размер входа.")
+        elif caps and roomy < gpus:
+            problem = (f"Нужно карт: {gpus} по {gpu._gb(want)}, а таких на сервере {roomy}. "
+                       "Уменьшите число карт, батч или размер входа.")
+        if problem:
+            return _fail(db, run, problem)
 
     # Бронь из очереди переиспользуем: новая каждую секунду обнуляла бы место в
     # очереди и «сколько ждёт». Выданную фоновой накачкой — просто берём.
     parts = [want] * gpus
     lease = db.get(GpuLease, run.gpu_lease_id) if run.gpu_lease_id else None
-    same = lease is not None and [p.want_mb for p in gpu.group_of(db, lease)] == parts
+    same = (lease is not None and bool(lease.on_cpu) == cpu
+            and [p.want_mb for p in gpu.group_of(db, lease)] == parts)
     if lease is not None and lease.status == "queued" and same:
         gpu.beat(db, lease.id)
         gpu.try_grant(db, lease.id)
@@ -214,7 +220,10 @@ def start_run(db, run) -> bool:
         if lease is not None and lease.status in gpu.ACTIVE:
             gpu.cancel(db, lease.id, "Новая попытка")
         title = f"Обучение «{run.name}»"
-        if gpus > 1:
+        if cpu:
+            lease = gpu.request_cpu(db, holder="training", kind="train", ref_id=run.id, project_id=run.project_id,
+                                    user_id=run.created_by, priority=40, title=title)
+        elif gpus > 1:
             lease = gpu.request_group(
                 db, holder="training", kind="train", parts=parts, spread=True,
                 labels=[f"батч {batch} на карту"] * gpus, ref_id=run.id,
@@ -305,7 +314,7 @@ def watch_run(run_id, proc, lease_id, sig):
                 trainer.adopt_weights(run)
                 run.finished_at = utcnow()
                 db.commit()
-            if run.peak_vram_mb:
+            if run.peak_vram_mb and sig:
                 gpu.remember(db, "train", sig, run.peak_vram_mb)
             live.notify(db, "run", run.id, run.project_id, s=run.status)
         gpu.release(db, lease_id)

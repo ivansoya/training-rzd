@@ -75,6 +75,8 @@ export interface RunView {
   sources: string[];
   mode: RunMode;
   videos: string[];
+  /** Считает на процессоре — разрешили в окне при запуске: ждёт процессор, а не карту. */
+  cpu?: boolean;
   created_at: string;
   finished_at: string | null;
 }
@@ -195,6 +197,8 @@ export const startRun = (
     step: number;
     gap: number;
     mapping: Record<string, string | null>;
+    /** Согласие из окна «на карте не запустится» (components/hardware/CpuConfirm). */
+    device?: "cpu";
   }
 ) => post<RunView>(`agents/tasks/${taskId}/runs`, body);
 

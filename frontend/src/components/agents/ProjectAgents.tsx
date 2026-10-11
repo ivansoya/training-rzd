@@ -372,7 +372,7 @@ function Reveal({ open, children }: { open: boolean; children: ReactNode }) {
 function JournalRow({ run: r, many, open, arrived, onToggle }: {
   run: api.JournalRun; many: boolean; open: boolean; arrived?: "land" | "in"; onToggle: () => void;
 }) {
-  const st = STATUS[r.status];
+  const st = r.cpu && r.status === "waiting_gpu" ? { ...STATUS.waiting_gpu, word: "ждёт процессор" } : STATUS[r.status];
   const why = r.status === "error" ? r.error : r.status === "waiting_gpu" || r.status === "queued" ? r.queue_reason : null;
   const over = r.peak_mb && r.want_mb && r.peak_mb > r.want_mb;
   return (

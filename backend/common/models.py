@@ -1001,6 +1001,10 @@ class GpuLease(Base):
     )
     # Что из задачи лежит в этой части: «SAM 3 · вход 1008».
     label: Mapped[str | None] = mapped_column(sa.String(80))
+    # Бронь процессора: человек разрешил задаче считать на нём (решение 11.10.2026), карты нет.
+    on_cpu: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, default=utcnow
     )

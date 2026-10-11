@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Run } from "../../../api/runs";
 import {
-  confusionView, curveLabel, dayLabel, delta, duration, etaText, filterRuns, groupByDay, paramGroups, topConfusions,
-  yoloAugChips,
+  confusionView, curveLabel, dayLabel, delta, duration, etaText, filterRuns, groupByDay, paramGroups, runStatus,
+  topConfusions, yoloAugChips,
 } from "./runs";
 
 const run = (over: Partial<Run>): Run => ({
@@ -87,6 +87,8 @@ describe("страница прогона", () => {
     expect(yoloAugChips(r.params)).toEqual(["Мозаика", "Отражение"]);
     expect(yoloAugChips({ augment_mode: "off", mosaic: 1 })).toEqual([]);
     const ddp = paramGroups(run({ params: { batch: 16, gpus: 2 }, device: "2,5" }), null);
+    expect(runStatus(run({ status: "waiting_gpu", params: { device: "cpu" } })).label).toBe("Ждёт процессор");
+    expect(runStatus(run({ status: "waiting_gpu", params: {} })).label).toBe("Ждёт карту");
     const rows = (title: string) => ddp.find((x) => x.title === title)!.rows;
     expect(rows("Обучение")).toContainEqual(["Батч", "16 на карту · общий 32"]);
     expect(rows("Железо")).toContainEqual(["Устройство", "карты 2,5"]);

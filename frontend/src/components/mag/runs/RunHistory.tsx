@@ -14,7 +14,7 @@ import { useConfirm } from "../tasks/Confirm";
 import RunDialog, { seedOf } from "./RunDialog";
 import type { RunSeed } from "./RunDialog";
 import { progress, stageText } from "./runMath";
-import { ACTIVE, FINISHED, STATUS, WAITING, clock, dec, duration, etaText, filterRuns, groupByDay } from "./runs";
+import { ACTIVE, FINISHED, WAITING, clock, dec, duration, etaText, filterRuns, groupByDay, runStatus } from "./runs";
 import type { RunFilter } from "./runs";
 
 const PAGE = 20;
@@ -154,7 +154,7 @@ export default function RunHistory() {
 function NowCard({ run, first, canEdit, onOpen, onStop }: {
   run: Run; first: boolean; canEdit: boolean; onOpen: () => void; onStop: () => void;
 }) {
-  const st = STATUS[run.status];
+  const st = runStatus(run);
   const waiting = WAITING.includes(run.status);
   const map50 = run.best_metrics["metrics/mAP50(B)"];
   return (
@@ -182,7 +182,7 @@ function HistoryRow({ run, canEdit, weights, onOpen, onResume, onRepeat, onDelet
   run: Run; canEdit: boolean; weights: string;
   onOpen: () => void; onResume: () => void; onRepeat: () => void; onDelete: () => void;
 }) {
-  const st = STATUS[run.status];
+  const st = runStatus(run);
   const m50 = run.best_metrics["metrics/mAP50(B)"];
   const m95 = run.best_metrics["metrics/mAP50-95(B)"];
   const live = ACTIVE.includes(run.status);

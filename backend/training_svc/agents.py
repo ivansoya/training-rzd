@@ -377,6 +377,7 @@ def _run_view(db, run):
         "sources": run.params.get("sources") or [],
         "mode": run.params.get("mode") or "frames",
         "videos": run.params.get("videos") or [],
+        "cpu": run.params.get("device") == "cpu",
         "created_at": run.created_at.isoformat(),
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
     }
@@ -590,9 +591,17 @@ def start_agent_run(task_id):
                               inputs={str(w.id): w.imgsz for w in shelf})
         except agent_graph.AgentGraphError as exc:
             return jsonify({"error": str(exc)}), 400
-        verdict = _verdict(db, version.doc, scout=mode == "scout")["verdict"]
-        if verdict["state"] == agent_memory.NEVER:
-            return jsonify({"error": verdict["reason"], "verdict": verdict}), 409
+        # На карте не стартует — окно «на процессоре или отменить» (решение 11.10.2026); согласие — `device: cpu`.
+        cpu = data.get("device") == "cpu"
+        if not cpu:
+            cards = gpu.cards(db)
+            if not cards:
+                return jsonify({"code": "gpu_off", "error": "Видеокарты сервера выключены или не отвечают."
+                                if gpu.known_devices(db) else "На сервере нет видеокарт."}), 409
+            verdict = _verdict(db, version.doc, scout=mode == "scout", cards=cards)["verdict"]
+            if verdict["state"] == agent_memory.NEVER:
+                return jsonify({"code": "gpu_never", "error": verdict["reason"], "verdict": verdict,
+                                "need_mb": verdict["want_mb"], "cap_mb": max(c["cap_mb"] for c in cards)}), 409
 
         total = None
         if mode == "frames":
@@ -621,7 +630,7 @@ def start_agent_run(task_id):
             project_id=project.id, task_id=task.id, graph_id=graph.id,
             version_id=version.id,
             params={"mode": mode, "sources": sources, "videos": videos, "step": step,
-                    "gap": gap, "mapping": mapping},
+                    "gap": gap, "mapping": mapping, **({"device": "cpu"} if cpu else {})},
             total=total, created_by=user.id,
         )
         db.add(run)

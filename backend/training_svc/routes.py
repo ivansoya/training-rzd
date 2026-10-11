@@ -136,14 +136,16 @@ def gpu_state():
         staff = hw_view(user)
         # Карты видят все, держателей — только с правом: занято показывается суммой.
         devices = gpu.devices_view(db, holders=staff)
+        cpu = gpu.cpu_view(db, holders=staff)
         queue = gpu.queue_view(db, user_id=user.id, staff=staff)
-        _describe(db, [h for d in devices for h in d["holders"]] + queue["queue"] + queue["mine"])
+        _describe(db, [h for d in devices for h in d["holders"]] + cpu["holders"] + queue["queue"] + queue["mine"])
         return jsonify({
             "staff": staff,
             "manage": hw_manage(user),
             "level": user.hardware,
             "cards": gpu.cards(db),
             "devices": devices,
+            "cpu": cpu,
             "queue": queue,
             "live": live.SLOTS.view(),
             "settings": _settings_view(db) if staff else {},
@@ -565,6 +567,14 @@ def start_run(code):
                 return jsonify({"error": f"На сервере работает карт: {live_cards}, а просили {gpus}."}), 400
         else:
             params.pop("gpus", None)
+        # На карте не стартует — окно «на процессоре или отменить»; человек согласился — `device: cpu`.
+        if data.get("device") == "cpu":
+            params["device"] = "cpu"
+            params.pop("gpus", None)
+        else:
+            gate = trainer.card_gate(db, model_id, task, params)
+            if gate:
+                return jsonify(gate), 409
 
         # Набор из графа уже аугментирован на диске — встроенные аугментации
         # YOLO к нему не применяются, что бы ни пришло в запросе. Режим
