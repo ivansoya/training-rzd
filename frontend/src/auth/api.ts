@@ -1521,6 +1521,18 @@ export async function dropVideoFrames(
   return asJson(await del(`tasks/${taskId}/videos/${videoId}/frames`));
 }
 
+/** Где чистить: блоки кадров (как у прогона агента) и размечаемые ролики. */
+export interface AgentClearScope { sources?: string[]; videos?: string[] }
+
+/** «Очистить непроверенное агентов»; `dry` — только счёт тем же отбором, для окна подтверждения. */
+export async function clearAgentUnchecked(
+  taskId: string,
+  scope: AgentClearScope,
+  dry = false
+): Promise<{ boxes: number; frames: number }> {
+  return asJson(await post(`tasks/${taskId}/agent-clear`, { ...scope, dry }));
+}
+
 /** Пометить кадр фоновым. Занятый кадр сервер отклонит: «фоновый» и «на нём
  *  объект» — противоречие, и разрешать его при выгрузке значило бы решать за
  *  человека. Возвращает список пометок целиком. */

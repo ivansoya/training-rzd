@@ -65,6 +65,13 @@ export function describeTaskEvent(kind: string, payload: Record<string, unknown>
           {p.kept ? `, оставлено принятых: ${p.kept}` : ""}
         </>
       );
+    case "agent_cleared":
+      return (
+        <>
+          Очищено непроверенное агентов: <b>{count(n("boxes"), "рамка", "рамки", "рамок")}</b> на{" "}
+          {count(n("frames"), "кадре", "кадрах", "кадрах")}{p.place ? ` — ${p.place}` : ""}
+        </>
+      );
     case "accepted":
       return (
         <>

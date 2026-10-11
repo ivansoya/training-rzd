@@ -1,8 +1,9 @@
-// Меню «⋯» блока и ролика на странице таски: агент сразу, без окна, и удаление.
+// Меню «⋯» блока и ролика на странице таски: агент сразу, без окна, очистка и удаление.
 //
 // Решения владельца (2026-10-07): пункт запускает разметку или разведку агентом по
 // умолчанию («Агент таски», шестерёнка в шапке меню); шаг кадров — полем прямо
-// здесь, по умолчанию 25; «Удалить» переехало сюда из корзины.
+// здесь, по умолчанию 25; «Удалить» переехало сюда из корзины. 2026-10-11 —
+// «Очистить непроверенное агентов» в охвате меню, от всех агентов разом.
 
 import { useState } from "react";
 import { Button, Icon, MenuItem, Popover } from "../../../ui";
@@ -19,7 +20,15 @@ export interface AgentAction {
   run: (step: number) => void;
 }
 
-export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup, deleteLabel, onDelete, label }: {
+/** «Очистить непроверенное агентов» в охвате меню; агент в шапке ему не нужен — чистит всех. */
+export interface AgentClear {
+  /** Сколько кадров с непроверенным, если странице это известно. */
+  hint?: string;
+  off?: string | false;
+  run: () => void;
+}
+
+export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup, clear, deleteLabel, onDelete, label }: {
   tool: AgentToolState;
   actions: AgentAction[];
   /** Поле «каждый N-й кадр» — там, где есть ролики. */
@@ -27,10 +36,12 @@ export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup
   /** Агент уже идёт по таске: на таску один прогон. */
   busy?: boolean;
   onSetup: () => void;
+  clear?: AgentClear;
   deleteLabel?: string;
   onDelete?: () => void;
   label: string;
 }) {
+  const clearOff = busy ? "агент уже идёт по таске" : clear?.off;
   const [step, setStep] = useState(25);
   const name = tool.agent ? `${tool.agent.name}` : null;
   return (
@@ -61,11 +72,13 @@ export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup
                 aria-label="Каждый N-й кадр" onValue={(v) => v !== undefined && setStep(v)} />
             </label>
           )}
+          {(clear || onDelete) && <div className="ui-pop-sep" />}
+          {clear && (
+            <MenuItem icon="trash" danger disabled={!!clearOff} hint={clearOff || clear.hint}
+              onSelect={() => { close(); clear.run(); }}>Очистить непроверенное агентов</MenuItem>
+          )}
           {onDelete && (
-            <>
-              <div className="ui-pop-sep" />
-              <MenuItem icon="trash" danger onSelect={() => { close(); onDelete(); }}>{deleteLabel ?? "Удалить"}</MenuItem>
-            </>
+            <MenuItem icon="trash" danger onSelect={() => { close(); onDelete(); }}>{deleteLabel ?? "Удалить"}</MenuItem>
           )}
         </>
       )}

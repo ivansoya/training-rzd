@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  assignTask, closeVideoAnnotation, deleteTaskVideo, dropVideoFrames, getProject, getTask,
+  assignTask, clearAgentUnchecked, closeVideoAnnotation, deleteTaskVideo, dropVideoFrames, getProject, getTask,
   getTaskEvents, getTaskImages, reopenVideoAnnotation, setTaskStatus, uploadTaskImages, uploadTaskVideo,
 } from "../../../auth/api";
-import type { ProjectMemberInfo, TaskDetail, TaskEventItem, TaskImage, TaskStatus, TaskVideoItem } from "../../../auth/api";
+import type {
+  AgentClearScope, ProjectMemberInfo, TaskDetail, TaskEventItem, TaskImage, TaskStatus, TaskVideoItem,
+} from "../../../auth/api";
 import { pollJob } from "../../../api/jobs";
 import { setImageTags, setVideoTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
@@ -356,6 +358,32 @@ export default function TaskPage() {
     });
   }
 
+  /** «Очистить непроверенное агентов»: число в окне — с сервера, тем же отбором, что удалит. */
+  async function clearAgents(scope: AgentClearScope) {
+    if (!taskId) return;
+    let plan: { boxes: number; frames: number };
+    try {
+      plan = await clearAgentUnchecked(taskId, scope, true);
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    }
+    if (!plan.boxes) { setNotice("Непроверенного от агентов здесь нет."); return; }
+    const ok = await confirm({
+      title: "Очистить непроверенное агентов?",
+      desc: `${plural(plan.boxes, "Уйдёт", "Уйдут", "Уйдут")} ${count(plan.boxes, "рамка", "рамки", "рамок")} `
+        + `на ${count(plan.frames, "кадре", "кадрах", "кадрах")}. Проверенное человеком останется.`,
+      ok: "Очистить", icon: "trash", danger: true,
+    });
+    if (!ok) return;
+    await guard(async () => {
+      const res = await clearAgentUnchecked(taskId, scope);
+      setNotice(`${plural(res.boxes, "Убрана", "Убраны", "Убрано")} ${count(res.boxes, "рамка", "рамки", "рамок")} `
+        + `агентов с ${count(res.frames, "кадра", "кадров", "кадров")}.`);
+      await load();
+    });
+  }
+
   const closeVideo = (video: TaskVideoItem) => guard(async () => {
     if (!taskId) return;
     const { job_id } = await closeVideoAnnotation(taskId, video.id);
@@ -401,6 +429,7 @@ export default function TaskPage() {
       }
     }),
     dialog: (ask) => { setAgentAsk(ask); setAgentOpen(true); },
+    clear: (scope) => void clearAgents(scope),
   };
   const cards = [
     ...sources.filter((b) => b.kind !== "annotate").map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (

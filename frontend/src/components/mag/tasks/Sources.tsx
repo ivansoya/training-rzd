@@ -2,14 +2,14 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
-import type { PendingObject, PendingVideo, TaskDetail, TaskVideoItem, VideoPrepare } from "../../../auth/api";
+import type { AgentClearScope, PendingObject, PendingVideo, TaskDetail, TaskVideoItem, VideoPrepare } from "../../../auth/api";
 import type { Tag } from "../../../api/tags";
 import { Badge, Button, Card, Icon, Legend, MenuItem, Popover, StackBar, Swatch, cx } from "../../../ui";
 import { count, plural, ru } from "../../ru";
 import type { RunMode, RunView } from "../../../api/agents";
 import type { AgentToolState } from "../../editor/AgentTool";
 import AgentMenu from "./AgentMenu";
-import type { AgentAction } from "./AgentMenu";
+import type { AgentAction, AgentClear } from "./AgentMenu";
 import TagPicker from "../TagPicker";
 import VideoStrip from "../VideoStrip";
 import { fmtBytes, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
@@ -105,7 +105,14 @@ export interface AgentHooks {
   start: (body: { mode: RunMode; sources?: string[]; videos?: string[]; step: number }) => void;
   /** Полное окно запуска, настроенное на блок. */
   dialog: (ask: { mode: RunMode; videos?: string[]; sources?: string[]; modes: RunMode[]; within?: string[] }) => void;
+  /** «Очистить непроверенное агентов» — окно с числом от сервера, потом удаление. */
+  clear: (scope: AgentClearScope) => void;
 }
+
+/** Пункт очистки; число кадров — где странице оно известно, точное спросит окно. */
+const clearOf = (agent: AgentHooks, scope: AgentClearScope, frames?: number, off?: string | false): AgentClear => ({
+  hint: frames ? count(frames, "кадр", "кадра", "кадров") : undefined, off, run: () => agent.clear(scope),
+});
 
 /** Кнопка «Агент» в шапке блока: окно запуска со всеми режимами этого блока. */
 function AgentButton({ agent, ask }: { agent: AgentHooks; ask: Parameters<AgentHooks["dialog"]>[0] }) {
@@ -181,7 +188,8 @@ export function FramesCard({ block, editable, run, agent, onAnnotate, onReview }
         )}
         {editable && (
           <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Агент: ${block.title}`}
-            actions={[framesAction(agent, block.key, block.counts.new || 0)]} />
+            actions={[framesAction(agent, block.key, block.counts.new || 0)]}
+            clear={clearOf(agent, { sources: [block.key] }, block.counts.agent)} />
         )}
       </>}>
       <AgentLine run={run} />
@@ -250,7 +258,8 @@ export function CutCard({ block, taskId, code, tags, editable, run, agent, onAnn
         {editable && (
           <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label="Агент: ролики на нарезку" step
             actions={[framesAction(agent, block.key, block.counts.new || 0, "Разметить нарезанные кадры"),
-              scoutAction(agent, videos, "Разведать все ролики")]} />
+              scoutAction(agent, videos, "Разведать все ролики")]}
+            clear={clearOf(agent, { sources: [block.key] }, block.counts.agent)} />
         )}
       </>}>
       <AgentLine run={run} />
@@ -267,7 +276,7 @@ export function CutCard({ block, taskId, code, tags, editable, run, agent, onAnn
           <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={editable}
             menu={editable && (
               <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
-                actions={[scoutAction(agent, [v], "Разведать ролик")]}
+                actions={[scoutAction(agent, [v], "Разведать ролик")]} clear={clearOf(agent, { sources: [v.id] })}
                 deleteLabel="Удалить ролик и его кадры" onDelete={() => onDelete(v)} />
             )}
             onCut={() => onCut(v)}
@@ -372,17 +381,20 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
   onVideoTags: (v: TaskVideoItem, ids: string[]) => void;
   onTagCreated: (t: Tag) => void;
 }) {
+  const open = videos.filter((v) => !v.annotation_closed_at);
+  const unchecked = pending.filter((p) => open.some((v) => v.id === p.video_id)).reduce((s, p) => s + (p.unchecked || 0), 0);
   return (
     <Card className="tp-src" flush
       title={<><Icon name="film" />Ролики на разметку<Badge variant="secondary">{videos.length}</Badge></>}
       desc="размечаются треками, кадрами становятся при закрытии разметки"
       actions={editable && <>
-        <AgentButton agent={agent} ask={{ mode: "annotate", videos: videos.filter((v) => !v.annotation_closed_at).map((v) => v.id),
+        <AgentButton agent={agent} ask={{ mode: "annotate", videos: open.map((v) => v.id),
           within: videos.map((v) => v.id), modes: ["annotate", "scout"] }} />
         <Button size="sm" icon="plus" onClick={onAdd}>Видео на разметку</Button>
         <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label="Агент: ролики на разметку" step
-          actions={[annotateAction(agent, videos.filter((v) => !v.annotation_closed_at), "Разметить все ролики"),
-            scoutAction(agent, videos, "Разведать все ролики")]} />
+          actions={[annotateAction(agent, open, "Разметить все ролики"),
+            scoutAction(agent, videos, "Разведать все ролики")]}
+          clear={clearOf(agent, { videos: open.map((v) => v.id) }, unchecked, open.length === 0 && "открытых роликов нет")} />
       </>}>
       {run && <div className="tp-agent-w"><AgentLine run={run} /></div>}
       {videos.map((v) => {
@@ -419,6 +431,7 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
                   <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
                     actions={[{ ...annotateAction(agent, closed ? [] : [v], "Разметить ролик"), off: closed ? "разметка ролика закрыта" : annotateAction(agent, [v], "").off },
                       scoutAction(agent, [v], "Разведать ролик")]}
+                    clear={clearOf(agent, { videos: [v.id] }, p?.unchecked, closed && "разметка ролика закрыта")}
                     deleteLabel="Удалить ролик и всё, что из него вышло" onDelete={() => onDelete(v)} />
                 )}
               </div>

@@ -18,13 +18,14 @@ import threading
 
 from flask import Blueprint, jsonify, request, send_file
 from PIL import Image as PilImage
-from sqlalchemy import select
+from sqlalchemy import or_, select, update
 
-from common import attribution, config, jobs
+from common import attribution, config, jobs, task_frames
 from common import scout as scout_lib
 from common.db import SessionLocal
 from common.models import (
     AgentRun,
+    Annotation,
     Image,
     VideoScout,
     LabelClass,
@@ -1520,5 +1521,84 @@ def drop_video_frames(task_id, video_id):
              file=video.file_name, removed=removed, kept=kept)
         db.commit()
         return jsonify({"removed": removed, "kept_accepted": kept})
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Очистка непроверенного агентов
+# --------------------------------------------------------------------------- #
+SOURCE_WORDS = {"files": "изображения", "videos": "ролики на нарезку"}
+
+
+@bp.post("/api/tasks/<task_id>/agent-clear")
+def clear_agents(task_id):
+    """«Очистить непроверенное агентов» из меню «⋯»: рамки на проверке от любых агентов
+    в блоках кадров (`sources`, как у прогона) и размечаемых роликах (`videos`).
+
+    Проверенное человеком не трогаем. `dry` — только счёт для окна подтверждения,
+    тем же отбором, что удалит.
+    """
+    db, task, project, user, role, err = _resolve_task(task_id, "editor")
+    if err:
+        return err
+    try:
+        if not _may_work(task, user, role):
+            return jsonify({"error": "Это не ваша таска."}), 403
+        if task.status == "closed":
+            return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
+        data = json_body()
+        sources = [str(s) for s in data.get("sources") or []]
+        if any(s not in task_frames.SOURCES and _uuid_or_none(s) is None for s in sources):
+            raise InputError("sources: блоки кадров таски.", "sources")
+        videos = []
+        for raw in data.get("videos") or []:
+            vid = _uuid_or_none(raw)
+            video = db.get(TaskVideo, vid) if vid else None
+            if video is None or video.task_id != task.id:
+                return jsonify({"error": "Видео не найдено."}), 404
+            denied = _writable(task, user, role, video)
+            if denied:
+                return denied
+            videos.append(video)
+        # Идущий прогон дописывал бы рамки следом за очисткой.
+        if db.execute(select(AgentRun.id).where(
+                AgentRun.task_id == task.id, AgentRun.status.in_(("queued", "waiting_gpu", "running")))).first():
+            return jsonify({"error": "По таске идёт агент — дождитесь его конца или остановите.",
+                            "code": "agent_running"}), 409
+
+        dry = bool(data.get("dry"))
+        images, singles = [], []  # кадр каждой рамки: id изображения или (ролик, номер кадра)
+        if sources:
+            on = (Annotation.pending.is_(True), Annotation.image_id.in_(select(Image.id).where(
+                Image.task_id == task.id, or_(*(task_frames.source_clause(task.id, s) for s in sources)))))
+            images = db.execute(
+                select(Annotation.image_id).where(*on) if dry
+                else Annotation.__table__.delete().where(*on).returning(Annotation.image_id)
+            ).scalars().all()
+        if videos:
+            on = (VideoAnnotation.pending.is_(True), VideoAnnotation.track_id.is_(None),
+                  VideoAnnotation.video_id.in_([v.id for v in videos]))
+            cols = (VideoAnnotation.video_id, VideoAnnotation.frame_no)
+            singles = [tuple(r) for r in db.execute(
+                select(*cols).where(*on) if dry
+                else VideoAnnotation.__table__.delete().where(*on).returning(*cols)
+            )]
+        got = {"boxes": len(images) + len(singles), "frames": len(set(images)) + len(set(singles))}
+        if dry or not got["boxes"]:
+            db.rollback()
+            return jsonify(got)
+        touched = list(set(images))
+        if touched:
+            # Открытый редактор этих кадров получит «stale», а не запишет стёртое обратно.
+            db.execute(update(Image).where(Image.id.in_(touched))
+                       .values(annotations_rev=Image.annotations_rev + 1))
+            task_frames.settle_status(db, touched)
+        names = {str(v.id): v.file_name for v in db.execute(
+            select(TaskVideo).where(TaskVideo.task_id == task.id)).scalars()}
+        place = [SOURCE_WORDS.get(s) or f"«{names.get(s, s)}»" for s in sources]
+        _log(db, task, user, "agent_cleared", place=", ".join(place + [f"«{v.file_name}»" for v in videos]), **got)
+        db.commit()
+        return jsonify(got)
     finally:
         db.close()
