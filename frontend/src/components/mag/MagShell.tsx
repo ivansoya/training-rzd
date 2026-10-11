@@ -6,9 +6,9 @@ import ErrorBoundary from "../ErrorBoundary";
 import { LiveProvider } from "../../live/LiveProvider";
 import { Avatar, Empty, Icon, LinkButton, MenuItem, Popover, RailsMark, cx } from "../../ui";
 import Bell from "../shell/Bell";
-import GpuMeter from "../shell/GpuMeter";
 import MeMenu from "../shell/MeMenu";
 import SearchBox from "../shell/SearchBox";
+import { useGpuState } from "../shell/useGpuState";
 import { PROJECT_GROUPS, hrefOf, sectionOf } from "../shell/nav";
 import type { NavItem } from "../shell/nav";
 
@@ -43,6 +43,8 @@ export default function MagShell({ children, railBelow }: { children: ReactNode;
   const { me, refresh } = useAuth();
   const { pathname, search } = useLocation();
   const navigate = useNavigate();
+  // Своих задач в очереди к картам — число на пункте «Оборудование»; сами карты — на его странице.
+  const queued = useGpuState()?.queue.mine.length ?? 0;
   // Текущий проект — только тот, где мы участник, без учёта регистра кода.
   const rawCode = matchPath("/projects/:code/*", pathname)?.params.code;
   const current = rawCode
@@ -136,12 +138,12 @@ export default function MagShell({ children, railBelow }: { children: ReactNode;
         </nav>
 
         <div className="sb-f">
-          {!rail && <GpuMeter />}
           {/* Всем, а не только обслуживанию: свою очередь к картам видит каждый. */}
           <Link to="/hardware" className={cx("nv", active === "hardware" && "on")}
             aria-current={active === "hardware" ? "page" : undefined} {...tip("Оборудование")}>
             <Icon name="cpu" />
             {!rail && <span>Оборудование</span>}
+            {queued > 0 && <span className="sb-q" title="Ваших задач в очереди к картам">{queued}</span>}
           </Link>
           <Link to="/account" className={cx("sb-me", active === "account" && "on")}
             title={rail ? `${me.user.display_name} — личный кабинет` : "Личный кабинет"}>

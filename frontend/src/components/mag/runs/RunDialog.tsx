@@ -1,12 +1,13 @@
 // Окно запуска обучения: набор, модель, параметры. Умолчания и пределы — с сервера, своих чисел нет.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as runsApi from "../../../api/runs";
 import type { ModelRow, ParamSpec, ParamValue, Run } from "../../../api/runs";
 import * as setsApi from "../../../api/trainsets";
 import type { TrainSet } from "../../../api/trainsets";
-import { Button, Check, Dialog, Field, Icon, Input, Notice, Select, Switch } from "../../../ui";
-import { ru } from "../../ru";
+import { Button, Check, Dialog, Field, Icon, Input, Notice, Seg, Select, Switch } from "../../../ui";
+import { count, ru } from "../../ru";
+import { gb, useGpuState } from "../../shell/useGpuState";
 import { AUG_KEYS } from "./runs";
 
 const TASK_OF: Record<string, "detect" | "segment"> = { bbox: "detect", polygon: "segment" };
@@ -93,6 +94,26 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
   const setValue = (key: string, value: ParamValue) => setValues((v) => ({ ...v, [key]: value }));
   const augChanged = AUG_KEYS.some((k) => values[k] !== undefined && values[k] !== augDefaults[k]);
 
+  // Несколько карт на одно обучение (решения 10.10.2026): по выбору, по умолчанию одна; батч общий,
+  // как в ultralytics, — каждой карте достаётся батч / число карт, ждёт все карты сразу.
+  const live = useGpuState()?.cards.length ?? 0;
+  const gpus = Math.min(Math.max(1, Number(values.gpus ?? 1)), Math.max(1, live));
+  const batch = Number(values.batch ?? 16);
+  const imgsz = Number(values.imgsz ?? 640);
+  const even = batch % gpus === 0;
+  const [vram, setVram] = useState<{ want_mb: number; source: string } | null>(null);
+  const seq = useRef(0);
+  useEffect(() => {
+    if (!model || !task || live < 2) return;
+    const n = ++seq.current;
+    const t = window.setTimeout(() => {
+      runsApi.modelVram({ model, task, imgsz, batch, gpus })
+        .then((got) => { if (n === seq.current) setVram(got); })
+        .catch(() => { if (n === seq.current) setVram(null); });
+    }, 250);
+    return () => window.clearTimeout(t);
+  }, [model, task, imgsz, batch, gpus, live]);
+
   const start = async () => {
     if (!set) return;
     setBusy(true);
@@ -104,6 +125,7 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
         if (value === "" || value === null || value === undefined) continue;
         params[key] = value;
       }
+      if ("gpus" in params) params.gpus = gpus;
       const run = await runsApi.startRun(code, { set_id: set.id, model, name: name.trim(), params });
       onStarted(run);
     } catch (e) {
@@ -151,7 +173,7 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
       desc="Обучение встанет в очередь и начнётся, когда освободится карта"
       footer={<>
         <Button variant="ghost" onClick={onClose}>Отмена</Button>
-        <Button variant="primary" icon="play" disabled={busy || !model || !set} onClick={start}>
+        <Button variant="primary" icon="play" disabled={busy || !model || !set || !even} onClick={start}>
           {busy ? "Ставлю в очередь…" : "Запустить"}
         </Button>
       </>}>
@@ -186,6 +208,23 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
               <h4>Сколько учить</h4>
               <div className="rn-form-4">{MAIN.map(field)}</div>
             </section>
+
+            {live > 1 && (
+              <section className="rn-form-g">
+                <h4>Видеокарты</h4>
+                <div className="rn-gpu">
+                  <Seg size="sm" label="Карт на обучение" value={String(gpus)} onChange={(v) => setValue("gpus", Number(v))}
+                    options={Array.from({ length: live }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))} />
+                  <span className="rn-gpu-l">
+                    {gpus === 1 ? "одна карта" : <>батч {batch} — <b>по {even ? batch / gpus : "?"} на карту</b> · ждёт <b>{count(gpus, "карту", "карты", "карт")} сразу</b></>}
+                    {vram && <> · <b>≈ {gb(vram.want_mb)} ГБ</b>{gpus > 1 ? " на карту" : ""}</>}
+                  </span>
+                </div>
+                {!even && (
+                  <Notice tone="warn">Батч {batch} не делится на число карт ({gpus}) — поставьте {Math.floor(batch / gpus) * gpus || gpus} или {Math.ceil(batch / gpus) * gpus}.</Notice>
+                )}
+              </section>
+            )}
 
             <section className="rn-form-g">
               <h4>Аугментации</h4>

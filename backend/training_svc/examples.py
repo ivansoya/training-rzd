@@ -339,9 +339,10 @@ def _answer(db, row):
 
     lease = db.get(GpuLease, _waiting.get(row.id)) if row.id in _waiting else None
     if lease is not None and lease.status == "queued":
+        gpu.beat(db, lease.id)
         gpu.try_grant(db, lease.id)
         db.refresh(lease)
-    else:
+    elif lease is None or lease.status != "held":
         lease = gpu.request(db, holder="training", kind="agent-examples", want_mb=VRAM_MB,
                             priority=20, allow_cpu=False, title="Образцы агента")
     if lease.status == "denied":

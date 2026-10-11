@@ -1474,7 +1474,7 @@ def _verdict(db, doc, scout=False, cards=None):
     measured = int(hint.samples) if hint is not None and hint.samples else 0
     total = int(hint.high_mb) if measured else mem["total_mb"]
     return {
-        "verdict": agent_memory.verdict(total, mem["heaviest"], cards),
+        "verdict": agent_memory.verdict(total, mem["heaviest"], cards, mem["units"]),
         "total_mb": total, "estimate_mb": mem["total_mb"], "measured": measured,
         "units": mem["units"], "heaviest": mem["heaviest"], "nodes": mem["nodes"], "words": mem["words"],
         "sam3_cpu_half": cpu_half,
@@ -1729,6 +1729,8 @@ def agent_journal(code):
                 "started_at": r.started_at.isoformat() if r.started_at else None,
                 "seconds": int((end - r.started_at).total_seconds()) if end and r.started_at else None,
                 "card": res.get("card") or (cards.get(lease.device_id) if lease else None),
+                # Номера карт: у агента, поделённого по картам, их несколько.
+                "cards": res.get("cards"),
                 "want_mb": res.get("want_mb") or (lease.want_mb if lease else None),
                 "peak_mb": lease.peak_mb if lease else None,
                 "waited_s": res.get("waited_s"),

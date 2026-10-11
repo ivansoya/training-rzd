@@ -11,8 +11,10 @@
 модели грузятся по одной на пачку кадров.
 """
 import hashlib
+import math
 
 from common import agent_graph
+from common.gpu_rules import place
 
 # Пики по сетке 10.10.2026 (tests/bench/agent_memory_grid.py), МБ.
 # Сеть со своими весами — по весу файла: постоянное ≈ 15 + 1,8·файл, вид на 1280 —
@@ -28,7 +30,7 @@ SAM2_UNKNOWN = 1480
 # Поочерёдно кадры идут пачками: модель грузится раз на пачку, а не на кадр.
 SEQ_BATCH = 16
 
-FITS, WAIT, SEQUENTIAL, NEVER = "fits", "wait", "sequential", "never"
+FITS, WAIT, SPLIT, SEQUENTIAL, NEVER = "fits", "wait", "split", "sequential", "never"
 
 
 def _gb(mb) -> str:
@@ -131,12 +133,35 @@ def signature(doc, words, sequential=False, scout=False, sam3_cpu_half=True) -> 
     return "agent2:" + hashlib.sha1(full.encode("utf-8")).hexdigest()[:32]
 
 
-def verdict(total_mb, heaviest, cards):
-    """Влезет ли агент. `cards` — живые карты [{name, cap_mb, free_mb}]
-    (`gpu.cards`), `heaviest` — блок из `plan`.
+def scaled(units, total_mb):
+    """Блоки под замер: прогон мерил всего агента больше прикидки — блоки растут в той же доле.
+    Делёж по картам знает только сумму замера, а просить надо по блокам."""
+    est = sum(u["mb"] for u in units)
+    k = max(1.0, total_mb / est) if est else 1.0
+    return [int(math.ceil(u["mb"] * k)) for u in units]
+
+
+def _slots(cards, now):
+    """Карты для `gpu_rules.place`: потолок — по `cap_mb`, занятое — сейчас или ноль."""
+    return [{"id": i, "index": c.get("index", i), "total": c["cap_mb"], "reserved": 0, "sam2": 0,
+             "held": c["cap_mb"] - c["free_mb"] if now else 0, "heavy": 0,
+             "max_heavy": 1, "busy": 0} for i, c in enumerate(cards)]
+
+
+def _cards_word(n):
+    return "карту" if n % 10 == 1 and n % 100 != 11 else (
+        "карты" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "карт")
+
+
+def verdict(total_mb, heaviest, cards, units=None):
+    """Влезет ли агент. `cards` — живые карты [{index, name, cap_mb, free_mb}]
+    (`gpu.cards`), `heaviest` — блок из `plan`, `units` — все его блоки.
 
     {state, want_mb, card, reason}: `want_mb` — сколько просить у диспетчера
-    (поочерёдно — самый тяжёлый блок), `card` — где влезает сейчас."""
+    (поочерёдно — самый тяжёлый блок), `card` — где влезает сейчас. Целиком на одну
+    не влезает, а блоками по картам да — `split` (решения 10.10.2026): `parts` — МБ по
+    блокам, `ready` — свободно ли сейчас, `placement` — какой блок на какую карту ляжет;
+    карты заняты — прогон ждёт их, поочерёдно на одной не уходит."""
     top = heaviest["mb"] if heaviest else 0
     if not cards:
         return {"state": NEVER, "want_mb": total_mb, "card": None,
@@ -151,6 +176,20 @@ def verdict(total_mb, heaviest, cards):
         free = max(c["free_mb"] for c in cards)
         return {"state": WAIT, "want_mb": total_mb, "card": None,
                 "reason": f"Придётся ждать: свободно {_gb(free)} из нужных {_gb(total_mb)}."}
+    parts = scaled(units, total_mb) if units and len(units) > 1 else None
+    by_cap = place(parts, _slots(cards, False), spread=False, heavy_request=False, busy_kind=True)[0] if parts else None
+    if by_cap is not None:
+        right_now = place(parts, _slots(cards, True), spread=False, heavy_request=False, busy_kind=True)[0]
+        chosen = right_now or by_cap
+        n = len(set(chosen))
+        placement = [{"card": cards[i]["name"], "index": cards[i].get("index", i),
+                      "units": [{"label": u["label"], "mb": mb} for u, mb, at in zip(units, parts, chosen) if at == i]}
+                     for i in sorted(set(chosen), key=chosen.index)]
+        head = f"Целиком нужно {_gb(total_mb)}, а одна карта отдаёт не больше {_gb(cap)}"
+        return {"state": SPLIT, "want_mb": total_mb, "card": None, "parts": parts, "ready": right_now is not None,
+                "cards": n, "placement": placement,
+                "reason": f"{head}: блоки разойдутся по {n} картам." if right_now is not None
+                else f"{head}: ждёт {n} {_cards_word(n)} сразу под все блоки."}
     if top <= cap:
         return {"state": SEQUENTIAL, "want_mb": top, "card": None,
                 "reason": f"Целиком нужно {_gb(total_mb)}, а карта отдаёт не больше {_gb(cap)}: "

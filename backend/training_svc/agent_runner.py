@@ -71,26 +71,40 @@ _taken: set = set()
 _taken_lock = threading.Lock()
 
 
-def claim(db, worker_id):
+def candidates(db):
+    """Прогоны, которым пора идти, — все по очереди, а не два самых ранних:
+    пока те ждали карту, третий не пробовался и при свободной третьей карте."""
     with _taken_lock:
-        q = (select(AgentRun)
-             .where(AgentRun.status.in_(("queued", "waiting_gpu")))
-             .order_by(AgentRun.created_at)
-             .limit(1)
-             .with_for_update(skip_locked=True))
-        if _taken:
-            q = q.where(AgentRun.id.not_in(_taken))
-        run = db.execute(q).scalar_one_or_none()
-        if run is not None:
-            run.worker_id = worker_id
-            _taken.add(run.id)
-            db.commit()
+        taken = set(_taken)
+    ids = db.execute(select(AgentRun.id).where(AgentRun.status.in_(("queued", "waiting_gpu")))
+                     .order_by(AgentRun.created_at)).scalars().all()
+    return [i for i in ids if i not in taken]
+
+
+def claim(db, run_id, worker_id):
+    with _taken_lock:
+        if run_id in _taken:
+            return None
+        run = db.execute(select(AgentRun).where(
+            AgentRun.id == run_id, AgentRun.status.in_(("queued", "waiting_gpu")))
+            .with_for_update(skip_locked=True)).scalar_one_or_none()
+        if run is None:
+            db.rollback()
+            return None
+        run.worker_id = worker_id
+        _taken.add(run.id)
+        db.commit()
     return run
 
 
 def release(run_id):
     with _taken_lock:
         _taken.discard(run_id)
+
+
+def running():
+    with _taken_lock:
+        return len(_taken)
 
 
 ORPHAN_TEXT = "Прерван: воркер обучения перезапущен или не отвечал."
@@ -140,17 +154,21 @@ def _finish(db, run, status, error=None):
     live.notify(db, "agent", run.id, run.project_id, s=status)
 
 
-def execute(db, run):
-    """Прогнать. Возвращает False, если карта занята и прогон вернулся в очередь."""
+def prepare(db, run):
+    """Всё до карты: версия, проверка графа, вердикт и бронь — в нити очереди.
+
+    Возвращает то, что нужно нити прогона, — или None: прогон закончен (ошибка,
+    снят) или ждёт карту. Целиком на одну карту не влезает, а блоками по картам
+    да — блоки едут на разные карты одной группой броней (решения 10.10.2026)."""
     if run.cancel_requested:
         if run.gpu_lease_id:
             gpu.cancel(db, run.gpu_lease_id, "Снято автором")
         _finish(db, run, "stopped")
-        return True
+        return None
     version = db.get(AugGraphVersion, run.version_id) if run.version_id else None
     if version is None:
         _finish(db, run, "error", "Версии агента больше нет.")
-        return True
+        return None
     # `prepare` отдаёт копию: зажатые в пределы числа не уйдут обратно в версию.
     doc = agent_graph.prepare(version.doc)
     from training_svc import examples
@@ -158,21 +176,22 @@ def execute(db, run):
     # Образцы — с полки владельца агента: подключённого к проекту агента
     # запускает не только он. Владелец удалён — наборы ищутся просто по id.
     graph = db.get(AugGraph, version.graph_id)
-    sets = examples.rows_for(db, graph.owner_id if graph is not None else None, doc)
+    owner = graph.owner_id if graph is not None else None
+    sets = examples.rows_for(db, owner, doc)
     try:
         # Версия уже сохранена — старые числа вне пределов зажимаем, а не отвергаем.
         order = agent_graph.check(doc, sam3=config.sam3_ready(), clamp=True,
                                   examples={k: r.status == "ready" for k, r in sets.items()})
     except agent_graph.AgentGraphError as exc:
         _finish(db, run, "error", str(exc))
-        return True
+        return None
 
     weights = {}
     for node in (n for n in doc["nodes"] if n["type"] == "net"):
         row = db.get(AgentWeights, _uuid(node["params"].get("weights")))
         if row is None:
             _finish(db, run, "error", f"{agent_graph.title(node)}: весов нет на полке.")
-            return True
+            return None
         weights[node["id"]] = row
 
     mode = run.params.get("mode") or "frames"
@@ -183,47 +202,60 @@ def execute(db, run):
                             nets=agent_memory.net_info(weights), sam3_cpu_half=cpu_half)
     sig = agent_memory.signature(doc, mem["words"], scout=scout, sam3_cpu_half=cpu_half)
     total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
-    verdict = agent_memory.verdict(total, mem["heaviest"], cards)
+    verdict = agent_memory.verdict(total, mem["heaviest"], cards, mem["units"])
     if verdict["state"] == agent_memory.NEVER:
         if run.gpu_lease_id:
             gpu.cancel(db, run.gpu_lease_id, verdict["reason"])
         _finish(db, run, "error", verdict["reason"])
-        return True
+        return None
     sequential = verdict["state"] == agent_memory.SEQUENTIAL
+    split = verdict["state"] == agent_memory.SPLIT
     agent_memory.fix_words(doc, mem["words"])
-    want = total
+    parts = list(verdict["parts"]) if split else [total]
     if sequential:
         sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout, sam3_cpu_half=cpu_half)
-        want, _ = gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])
-    # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла время
-    # ожидания, и защита от голодания (возраст брони) не срабатывала.
+        parts = [gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])[0]]
+    # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла бы место
+    # в очереди и «сколько ждёт».
     lease = db.get(GpuLease, run.gpu_lease_id) if run.gpu_lease_id else None
-    if lease is not None and lease.status == "queued" and lease.want_mb == want:
+    same = lease is not None and [p.want_mb for p in gpu.group_of(db, lease)] == parts
+    if lease is not None and lease.status == "queued" and same:
+        gpu.beat(db, lease.id)
         gpu.try_grant(db, lease.id)
         db.refresh(lease)
-    elif lease is None or lease.status != "held" or lease.want_mb != want:
+    elif lease is None or lease.status != "held" or not same:
         if lease is not None and lease.status in gpu.ACTIVE:
             gpu.cancel(db, lease.id, "Новая попытка")
-        lease = gpu.request(
-            db, holder="training", kind="agent", want_mb=want, ref_id=run.id,
-            project_id=run.project_id, user_id=run.created_by, priority=35,
-            allow_cpu=False, title="Агент разметки",
-        )
+        if split:
+            lease = gpu.request_group(
+                db, holder="training", kind="agent", parts=parts, spread=False,
+                labels=[u["label"] for u in mem["units"]], ref_id=run.id, project_id=run.project_id,
+                user_id=run.created_by, priority=35, title="Агент разметки")
+        else:
+            lease = gpu.request(
+                db, holder="training", kind="agent", want_mb=parts[0], ref_id=run.id,
+                project_id=run.project_id, user_id=run.created_by, priority=35,
+                allow_cpu=False, title="Агент разметки")
     if lease.status == "denied":
         _finish(db, run, "error", lease.reason or "Видеокарту не дали.")
-        return True
+        return None
     if lease.status != "held":
+        changed = run.status != "waiting_gpu" or run.queue_reason != lease.reason
         run.status = "waiting_gpu"
         run.queue_reason = lease.reason
         run.gpu_lease_id = lease.id
         db.commit()
-        live.notify(db, "agent", run.id, run.project_id, s="waiting_gpu")
-        return False
+        if changed:
+            live.notify(db, "agent", run.id, run.project_id, s="waiting_gpu")
+        return None
 
-    card = db.get(GpuDevice, lease.device_id)
+    held = gpu.group_of(db, lease)
+    indices = gpu.group_indices(db, lease)
+    named = [db.get(GpuDevice, p.device_id) for p in held]
     # Что прогон занял — для журнала агентов проекта; ход пишет счётчики рядом.
-    info = {"card": card.name if card else None, "want_mb": want, "sequential": sequential,
-            "words": mem["words"] or None, "waited_s": _waited(lease)}
+    info = {"card": named[0].name if named[0] else None, "want_mb": sum(parts), "sequential": sequential,
+            "words": mem["words"] or None, "waited_s": _waited(lease),
+            "cards": sorted({d.device_index for d in named if d is not None})}
     run.status = "running"
     run.gpu_lease_id = lease.id
     run.queue_reason = None
@@ -231,19 +263,33 @@ def execute(db, run):
     run.stats = {"res": info}
     db.commit()
     live.notify(db, "agent", run.id, run.project_id, s="running")
+    # Блок → карта: при дележе — карта его части, иначе все на одной.
+    return {"doc": doc, "order": order, "units": mem["units"], "sig": sig, "want": sum(parts),
+            "lease_id": lease.id, "sequential": sequential, "mode": mode, "owner": owner, "info": info,
+            "weights": {nid: row.id for nid, row in weights.items()},
+            "unit_index": {u["key"]: indices[i if split else 0] for i, u in enumerate(mem["units"])},
+            "first": indices[0]}
+
+
+def run_held(db, run_id, ctx):
+    """Прогон на выданных картах — в своей нити и со своей сессией."""
+    from training_svc import examples
+
+    run = db.get(AgentRun, run_id)
+    doc, mode, info, want = ctx["doc"], ctx["mode"], ctx["info"], ctx["want"]
     peak = 0
     tick = None
     try:
-        device = _device(gpu.torch_index(db, lease))
+        weights = {nid: db.get(AgentWeights, wid) for nid, wid in ctx["weights"].items()}
+        sets = examples.rows_for(db, ctx["owner"], doc)
+        devices = {key: _device(index) for key, index in ctx["unit_index"].items()}
+        _device(ctx["first"])  # текущая карта нити — первая из брони
         ids = frames(db, run) if mode == "frames" else None
         plan = _video_plan(db, run, mode) if ids is None else None
         run.total = len(ids) if ids is not None else sum(len(f) for _, f in plan)
         db.commit()
-        # Своя память — прирост от этого уровня: соседний прогон или превью в
-        # том же процессе не должны попадать в замер (раньше 6740 вместо 3900).
-        base = _allocated_mb(device)
-        tick = _ticker(db, run, lease.id, device, base, info)
-        work = _Work(doc, order, mem["units"], weights, sets, device, lease.id, sequential, tick)
+        tick = _ticker(db, run, ctx["lease_id"], sorted(set(devices.values()), key=str), info)
+        work = _Work(doc, ctx["order"], ctx["units"], weights, sets, devices, ctx["lease_id"], ctx["sequential"], tick)
         mapping = run.params.get("mapping") or {}
         if ids is not None:
             _frames(db, run, ids, work, mapping, tick)
@@ -254,7 +300,7 @@ def execute(db, run):
     except Stopped:
         _finish(db, run, "stopped")
     except Exception as exc:  # noqa: BLE001 — человеку нужен текст, а не трасса
-        log.exception("прогон агента %s не удался", run.id)
+        log.exception("прогон агента %s не удался", run_id)
         db.rollback()
         message = str(exc)[:500]
         if _is_oom(exc):
@@ -267,10 +313,9 @@ def execute(db, run):
         if tick is not None:
             tick.close()
         if peak:
-            gpu.remember(db, "agent", sig, peak)
-        gpu.release(db, lease.id, peak_mb=peak or None)
+            gpu.remember(db, "agent", ctx["sig"], peak)
+        gpu.release(db, ctx["lease_id"], peak_mb=peak or None)
         _free()
-    return True
 
 
 def _gb(mb):
@@ -304,11 +349,15 @@ def _device(index):
 
 class _Work:
     """Как прогон считает кадры: целиком — все модели в памяти, — или поочерёдно:
-    кадры копятся пачкой, и модели грузятся по одному блоку `agent_memory` на пачку."""
+    кадры копятся пачкой, и модели грузятся по одному блоку `agent_memory` на пачку.
+    `devices` — карта или {ключ блока: карта}: поделённый агент держит блоки на разных картах."""
 
-    def __init__(self, doc, order, units, weights, sets, device, lease_id, sequential, tick):
+    def __init__(self, doc, order, units, weights, sets, devices, lease_id, sequential, tick):
         self.doc, self.order, self.units = doc, order, units
-        self.weights, self.sets, self.device = weights, sets, device
+        self.weights, self.sets = weights, sets
+        self.devices = devices if isinstance(devices, dict) else {u["key"]: devices for u in units}
+        # По узлу — карта его блока: между блоками по проводам идут числа, а не тензоры.
+        self.device = {nid: self.devices[u["key"]] for u in units for nid in u["nodes"]}
         self.lease_id, self.sequential, self.tick = lease_id, sequential, tick
         self.byid = {n["id"]: n for n in doc["nodes"]}
         self.buffer = []
@@ -363,17 +412,18 @@ class _Work:
         out = {}
         with _beating(self.lease_id):
             for unit in units:
+                device = self.devices[unit["key"]]
                 if unit["kind"] == "net":
                     out.update(_load({nid: self.weights[nid] for nid in unit["nodes"]}))
                 elif unit["kind"] in ("yoloe", "sam3"):
                     shared = {}
                     for nid in unit["nodes"]:
-                        out[nid] = load_text(self.byid[nid], self.device, self.sets, shared)
+                        out[nid] = load_text(self.byid[nid], device, self.sets, shared)
                 elif unit["kind"] == "sam":
                     for nid in unit["nodes"]:
                         name = (self.byid[nid].get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
                         if name not in out:
-                            out[name] = _load_sam(name, self.device)
+                            out[name] = _load_sam(name, device)
         self.tick.measure()
         return out
 
@@ -416,8 +466,10 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
     в разметку. `models` — {узел сети или «Сети по тексту»: модель, имя SAM:
     предиктор}, `weights` — {узел сети: строка полки}. `picture` — кадр ролика,
     уже распакованный декодером (PIL, RGB); тогда `path` не читается.
-    `contour=False` — разведка: контур SAM 3 ей не нужен, отдаём только рамку по маске."""
+    `contour=False` — разведка: контур SAM 3 ей не нужен, отдаём только рамку по маске.
+    `device` — карта или {узел: карта} у агента, поделённого по картам."""
     frame = []
+    on = device.get if isinstance(device, dict) else (lambda _nid: device)
 
     def predict(node):
         import cv2
@@ -463,7 +515,7 @@ def frame_fns(path, file_name, models, weights, device, picture=None, contour=Tr
             # Тайл другого размера ultralytics сам растянет или ужмёт до входа.
             try:
                 results = models[node["id"]].predict(
-                    [crop(v) for v in views], verbose=False, device=device, conf=conf,
+                    [crop(v) for v in views], verbose=False, device=on(node["id"]), conf=conf,
                     # ultralytics требует кратность шагу сети — 32.
                     imgsz=max(32, round(side / 32) * 32), **({"quantize": 16} if half else {}),
                 )
@@ -751,16 +803,19 @@ def _write(db, run, image, found, mapping):
     return put
 
 
-def _ticker(db, run, lease_id, device=None, base=0, info=None):
+def _ticker(db, run, lease_id, devices=(), info=None):
     """Шаг хода: +1 кадр, статистика, отмена кнопкой, пульс брони и живой связи.
 
-    Заодно держит пик своей памяти сверх `base` — см. `common.gpu_peak`.
-    `info` — что прогон занял (карта, память, режим), лежит рядом в `stats.res`."""
+    Заодно держит пик своей памяти на каждой карте прогона — см. `common.gpu_peak`.
+    `info` — что прогон занял (карты, память, режим), лежит рядом в `stats.res`."""
     last = [0.0]
-    watch = gpu_peak.REGISTRY.watch(device, base)
+    # Своя память — прирост от этого уровня: соседний прогон или превью в
+    # том же процессе не должны попадать в замер (раньше 6740 вместо 3900).
+    watches = [gpu_peak.REGISTRY.watch(d, _allocated_mb(d)) for d in devices]
 
     def measure():
-        watch.measure()
+        for watch in watches:
+            watch.measure()
 
     def check():
         # Поочерёдно модели грузятся минутами — отмена и пульс между блоками.
@@ -784,10 +839,15 @@ def _ticker(db, run, lease_id, device=None, base=0, info=None):
             live.notify(db, "agent", run.id, run.project_id, n=run.processed)
             last[0] = now
 
-    # Запас 15 %: allocated не видит кэш распределителя.
-    tick.peak = lambda: int(watch.top * 1.15) if watch.top > 0 else 0
+    def close():
+        for watch in watches:
+            watch.close()
+
+    # Запас 15 %: allocated не видит кэш распределителя. Блоки на разных картах —
+    # сумма: столько же агент держал бы на одной.
+    tick.peak = lambda: int(sum(w.top for w in watches) * 1.15)
     tick.measure = measure
-    tick.close = watch.close
+    tick.close = close
     tick.check = check
     return tick
 

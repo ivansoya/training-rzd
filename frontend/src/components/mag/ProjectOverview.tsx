@@ -10,7 +10,7 @@ import {
   Spark, StackBar,
 } from "../../ui";
 import { ago, count, pct, ru } from "../ru";
-import { deviceParts, gb, liveDevices, useGpuState } from "../shell/useGpuState";
+import { gb, liveDevices, serverParts, shortName, useGpuState } from "../shell/useGpuState";
 import ExportModal from "./ExportModal";
 import { ProjectMenu } from "./ProjectMenu";
 import { useProject } from "./ProjectShell";
@@ -351,18 +351,16 @@ function GpuCard() {
   if (devices.length === 0) {
     return <Card title="Видеокарта"><Empty compact icon="cpu" title="Видеокарт на сервере нет" /></Card>;
   }
+  // Одна полоса на весь сервер — сумма по работающим картам; подробности по картам — на «Оборудовании».
+  const parts = serverParts(devices);
+  const total = devices.reduce((s, d) => s + d.total_mb, 0);
+  const many = devices.length > 1;
   return (
-    <Card title="Видеокарта" desc={devices.map((d) => `${d.name} · ${gb(d.total_mb)} ГБ`).join(", ")}>
+    <Card title={many ? "Видеокарты" : "Видеокарта"}
+      desc={many ? `${count(devices.length, "карта", "карты", "карт")} в работе · ${gb(total)} ГБ` : `${shortName(devices[0].name)} · ${gb(total)} ГБ`}>
       <div className="stack-v ov-gpu">
-        {devices.map((d) => {
-          const parts = deviceParts(d, true);
-          return (
-            <div key={d.id} className="stack-v">
-              <StackBar parts={parts} height={10} />
-              <Legend items={parts.map((p) => ({ label: p.label, color: p.color }))} />
-            </div>
-          );
-        })}
+        <StackBar parts={parts} height={12} label="Память видеокарт" />
+        <Legend items={parts.map((p) => ({ label: <>{p.label} <b>{gb(p.value)}</b></>, color: p.color }))} />
         <hr className="ov-sep" />
         {queueLine}
       </div>

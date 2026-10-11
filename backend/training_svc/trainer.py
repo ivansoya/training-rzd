@@ -96,6 +96,11 @@ PARAM_SPEC = {
              "group": "misc"},
     "workers": {"type": "int", "min": 0, "max": 16, "default": None,
                 "group": "misc"},
+    # --- карты ---
+    # Обучение на нескольких картах (решения 10.10.2026): батч общий, как в
+    # ultralytics, каждой карте достаётся батч / число карт.
+    "gpus": {"type": "int", "min": 1, "max": 16, "default": 1, "group": "gpu",
+             "ultralytics": False},
     # --- аугментации YOLO ---
     "augment_mode": {"type": "str", "default": "yolo", "group": "aug",
                      "choices": ["yolo", "off"], "ultralytics": False},
@@ -188,6 +193,41 @@ def estimate_vram(model_id, task, imgsz, batch):
     base = FALLBACK_VRAM_MB.get((task, letter), 6000)
     area = (float(imgsz or 640) / 640.0) ** 2
     return int(base * area * (float(batch or 16) / 16.0))
+
+
+# Сверх оценки на каждую карту обучения на нескольких картах: у каждой свой процесс
+# со своим контекстом CUDA и буферами обмена градиентами.
+DDP_EXTRA_MB = 1024
+
+
+def card_vram(model_id, task, imgsz, batch, gpus):
+    """Сколько просить на каждую карту: батч делится между картами поровну."""
+    gpus = max(1, int(gpus or 1))
+    per = estimate_vram(model_id, task, imgsz, max(1, int(batch or 16) // gpus))
+    return per + (DDP_EXTRA_MB if gpus > 1 else 0)
+
+
+def vram_want(db, model_id, task, imgsz, batch, gpus):
+    """Сколько просить на каждую карту и откуда число — (МБ, «по опыту»/«прикидка», подпись).
+    Одна функция на запуск и на окно обучения: число в окне и бронь не расходятся.
+    Подпись одной карты прежняя — накопленные замеры не теряются; у нескольких своя:
+    на каждой меньше батч и есть обмен градиентами."""
+    from common import gpu
+
+    gpus = max(1, int(gpus or 1))
+    sig = gpu.signature("train", model=model_id, task=task, imgsz=imgsz, batch=batch,
+                        **({"gpus": gpus} if gpus > 1 else {}))
+    want, source = gpu.estimate(db, "train", sig, card_vram(model_id, task, imgsz, batch, gpus))
+    return want, source, sig
+
+
+def gpus_problem(batch, gpus):
+    """Почему обучение не поделить на столько карт — или None."""
+    gpus, batch = int(gpus or 1), int(batch or 16)
+    if gpus > 1 and batch % gpus:
+        low, high = batch // gpus * gpus, -(-batch // gpus) * gpus
+        return f"Батч {batch} не делится на число карт ({gpus}) — поставьте {low or gpus} или {high}."
+    return None
 
 
 def is_available():

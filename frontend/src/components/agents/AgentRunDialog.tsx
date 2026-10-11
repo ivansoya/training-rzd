@@ -15,7 +15,7 @@ import { Badge, Button, Check, Dialog, Empty, Field, Icon, LinkButton, Notice, P
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
 import ClassMap, { guess, useAutoMapped } from "./ClassMap";
-import { VERDICT, VerdictChip, gb, short } from "./GpuVerdict";
+import { VerdictChip, gb, short, verdictLook } from "./GpuVerdict";
 import ScoutOverview from "./ScoutOverview";
 import { sampledCount } from "./scoutMath";
 
@@ -100,7 +100,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
       ? [{ value: `group:${a.group}`, disabled: true,
         label: <span className="ar-grp">{a.group === "project" ? "Подключённые к проекту" : "Мои, не подключённые"}</span> }]
       : [];
-    const look = VERDICT[a.verdict.state];
+    const look = verdictLook(a.verdict);
     const ver = a.versions.find((v) => v.id === a.head)?.version;
     const who = a.group === "project" ? `${a.mine ? "мой" : a.owner ?? "владелец удалён"} · v${ver}` : `v${ver} · запуск не подключает агента к проекту`;
     return [...head, {
@@ -161,7 +161,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
           <Button variant="agent" icon="sparkle" onClick={start}
             disabled={busy || never || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
             title={never ? verdict?.reason : mode !== "scout" && mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}>
-            {startText}{verdict?.state === "wait" ? " · в очередь" : ""}
+            {startText}{verdict?.state === "wait" || (verdict?.state === "split" && !verdict.ready) ? " · в очередь" : ""}
           </Button>
         )}
       </>}>
@@ -239,6 +239,15 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
                   {cards.map((c) => `${gb(c.free_mb)} из ${gb(c.cap_mb)} на ${short(c.name)}`).join(", ")}
                   {ctx.resources.queued ? `, впереди ${count(ctx.resources.queued, "работа", "работы", "работ")}` : ""}.
                   Процессор не используется: прогон дождётся карты и начнётся сам.
+                </span>
+              </div>
+            )}
+            {verdict?.state === "split" && (
+              <div className={`ar-why ${verdict.ready ? "split" : "wait"}`}>
+                <Icon name={verdict.ready ? "split" : "clock"} size={16} />
+                <span>
+                  <b>{verdict.ready ? `Пойдёт ${verdictLook(verdict).word}.` : "Встанет в очередь."}</b>{" "}
+                  {(verdict.placement ?? []).map((p) => `карта ${p.index} — ${p.units.map((u) => `${u.label} ${gb(u.mb)} ГБ`).join(", ")}`).join("; ")}.
                 </span>
               </div>
             )}

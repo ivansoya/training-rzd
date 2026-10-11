@@ -40,6 +40,9 @@ DISCOVER_EVERY = float(os.environ.get("GPU_DISCOVER", "60"))
 RUNNER = os.path.join(os.path.dirname(__file__), "runner.py")
 
 _stop = threading.Event()
+# Карты перечислены хотя бы раз. До этого после перезапуска они выглядят молчащими,
+# и обучение упало бы с «карты не отвечают», не дождавшись первой переклички.
+_discovered = threading.Event()
 _devices = []
 
 
@@ -62,6 +65,7 @@ def discover_loop():
             log.exception("не удалось перечислить карты")
         finally:
             db.close()
+            _discovered.set()
         _stop.wait(DISCOVER_EVERY)
 
 
@@ -110,27 +114,50 @@ def reaper():
 # --------------------------------------------------------------------------- #
 # Обучение
 # --------------------------------------------------------------------------- #
-def claim_run(db):
-    """Взять ран, которому пора идти.
+def waiting_runs(db):
+    """Раны, которым пора идти, — все по очереди, а не один головной.
+
+    Раньше брался только самый ранний: пока он ждал карту, следующие не
+    становились даже в очередь диспетчера, и свободная вторая карта стояла."""
+    return db.execute(
+        select(TrainRun.id).where(TrainRun.status.in_(("queued", "waiting_gpu")))
+        .order_by(TrainRun.queued_at)
+    ).scalars().all()
+
+
+def claim_run(db, run_id):
+    """Взять ран, если его не держит другой воркер.
 
     Берём и ``queued``, и ``waiting_gpu``: второй уже пробовал взять карту и не
-    смог, и пробовать снова должен он же, а не человек.
+    смог, и пробовать снова должен он же, а не человек. Ждущий остаётся
+    ждущим — иначе каждую секунду мигал бы «готовлю ↔ жду карту».
     """
     run = db.execute(
         select(TrainRun)
-        .where(TrainRun.status.in_(("queued", "waiting_gpu")))
-        .order_by(TrainRun.queued_at)
-        .limit(1)
+        .where(TrainRun.id == run_id, TrainRun.status.in_(("queued", "waiting_gpu")))
         .with_for_update(skip_locked=True)
     ).scalar_one_or_none()
     if run is None:
+        db.rollback()
         return None
-    run.status = "preparing"
+    if run.status == "queued":
+        run.status = "preparing"
     run.worker_id = me()
     # Первый пульс: иначе ран, долго ждавший в очереди, сразу выглядит сиротой.
     run.lease_until = utcnow()
     db.commit()
     return run
+
+
+def _fail(db, run, text):
+    run.status = "error"
+    run.error = text
+    run.finished_at = utcnow()
+    if run.gpu_lease_id:
+        gpu.cancel(db, run.gpu_lease_id, text)
+    db.commit()
+    live.notify(db, "run", run.id, run.project_id, s="error")
+    return False
 
 
 def start_run(db, run) -> bool:
@@ -156,67 +183,80 @@ def start_run(db, run) -> bool:
         return False
 
     params = run.params or {}
-    sig = gpu.signature(
-        "train", model=run.base_model, task=run.task,
-        imgsz=params.get("imgsz", 640), batch=params.get("batch", 16),
-    )
-    want, source = gpu.estimate(
-        db, "train", sig,
-        trainer.estimate_vram(
-            run.base_model, run.task,
-            params.get("imgsz", 640), params.get("batch", 16),
-        ),
-    )
-    # Больше, чем карта отдаёт под задачи в принципе. Очередь такое не
+    imgsz, batch = params.get("imgsz", 640), params.get("batch", 16)
+    gpus = max(1, int(params.get("gpus") or 1))
+    want, source, sig = trainer.vram_want(db, run.base_model, run.task, imgsz, batch, gpus)
+    problem = trainer.gpus_problem(batch, gpus)
+    # Больше, чем карты отдают под задачи в принципе. Очередь такое не
     # рассосёт: она освобождает чужую память, а не поднимает потолок карты.
     # Раньше ран уходил в ожидание и возвращался сюда снова и снова.
-    ceiling = gpu.capacity_mb(db)
-    if ceiling and want > ceiling:
-        run.status = "error"
-        run.error = (
-            f"Не поместится на карту: нужно {gpu._gb(want)}, "
-            f"а под задачи отдаётся {gpu._gb(ceiling)}. "
-            "Уменьшите батч или размер входа."
-        )
-        run.finished_at = utcnow()
-        db.commit()
-        live.notify(db, "run", run.id, run.project_id, s="error")
-        return False
+    caps = gpu.capacities(db)
+    roomy = sum(1 for cap in caps if cap >= want)
+    if problem is None and caps and gpus == 1 and not roomy:
+        problem = (f"Не поместится на карту: нужно {gpu._gb(want)}, а под задачи отдаётся "
+                   f"{gpu._gb(max(caps))}. Уменьшите батч или размер входа.")
+    elif problem is None and caps and roomy < gpus:
+        problem = (f"Нужно карт: {gpus} по {gpu._gb(want)}, а таких на сервере {roomy}. "
+                   "Уменьшите число карт, батч или размер входа.")
+    if problem:
+        return _fail(db, run, problem)
 
-    # Бронь из очереди переиспользуем: новая каждую секунду обнуляла время
-    # ожидания, и защита от голодания (она смотрит на возраст брони) не
-    # срабатывала никогда. Выданную фоновой накачкой — просто берём.
+    # Бронь из очереди переиспользуем: новая каждую секунду обнуляла бы место в
+    # очереди и «сколько ждёт». Выданную фоновой накачкой — просто берём.
+    parts = [want] * gpus
     lease = db.get(GpuLease, run.gpu_lease_id) if run.gpu_lease_id else None
-    if lease is not None and lease.status == "queued" and lease.want_mb == want:
+    same = lease is not None and [p.want_mb for p in gpu.group_of(db, lease)] == parts
+    if lease is not None and lease.status == "queued" and same:
+        gpu.beat(db, lease.id)
         gpu.try_grant(db, lease.id)
         db.refresh(lease)
-    elif lease is None or lease.status != "held" or lease.want_mb != want:
+    elif lease is None or lease.status != "held" or not same:
         if lease is not None and lease.status in gpu.ACTIVE:
             gpu.cancel(db, lease.id, "Новая попытка")
-        lease = gpu.request(
-            db, holder="training", kind="train", want_mb=want, ref_id=run.id,
-            project_id=run.project_id, user_id=run.created_by, priority=40,
-            allow_cpu=True, title=f"Обучение «{run.name}»",
-        )
+        title = f"Обучение «{run.name}»"
+        if gpus > 1:
+            lease = gpu.request_group(
+                db, holder="training", kind="train", parts=parts, spread=True,
+                labels=[f"батч {batch // gpus} на карту"] * gpus, ref_id=run.id,
+                project_id=run.project_id, user_id=run.created_by, priority=40, title=title)
+        else:
+            lease = gpu.request(
+                db, holder="training", kind="train", want_mb=want, ref_id=run.id,
+                project_id=run.project_id, user_id=run.created_by, priority=40,
+                allow_cpu=True, title=title)
+    if lease.status == "denied":
+        # Карты есть, но выключены или молчат: ждать некого (решение 10.10.2026).
+        run.gpu_lease_id = lease.id
+        return _fail(db, run, lease.reason or "Видеокарту не дали.")
     if lease.status != "held":
+        changed = run.status != "waiting_gpu" or run.queue_reason != lease.reason
         run.status = "waiting_gpu"
         run.queue_reason = lease.reason
         run.gpu_lease_id = lease.id
         db.commit()
-        live.notify(db, "run", run.id, run.project_id, s="waiting_gpu")
+        if changed:
+            live.notify(db, "run", run.id, run.project_id, s="waiting_gpu")
         return False
 
     run.gpu_lease_id = lease.id
-    # Подпроцессу видна только карта брони, и внутри она — cuda:0. Строкой
-    # «cuda:N» нельзя: ultralytics 8.4 переписывает CUDA_VISIBLE_DEVICES и всё
-    # равно берёт cuda:0 — раньше любое обучение шло на первую карту.
-    index = gpu.torch_index(db, lease)
-    env = {**os.environ, "CUDA_VISIBLE_DEVICES": "" if index is None else str(index)}
-    run.device = "cpu" if index is None else "cuda:0"
+    # Подпроцессу видны только карты брони. Одна карта внутри — cuda:0: строкой
+    # «cuda:N» нельзя, ultralytics 8.4 переписывает CUDA_VISIBLE_DEVICES и всё
+    # равно берёт cuda:0 — раньше любое обучение шло на первую карту. Несколько —
+    # настоящими номерами «2,5»: тот же ultralytics кладёт строку в переменную для
+    # дочерних процессов, и «0,1» посадило бы их на чужие карты.
+    indices = gpu.group_indices(db, lease)
+    visible = "" if None in indices else ",".join(str(i) for i in indices)
+    env = {**os.environ, "CUDA_VISIBLE_DEVICES": visible, "MAG_RUN_ID": str(run.id)}
+    run.device = "cpu" if not visible else ("cuda:0" if gpus == 1 else visible)
     run.queue_reason = None
+    # Из ожидания — в «готовлю» до запуска: ждущий цикл взял бы ран снова и завёл второй процесс.
+    waited = run.status == "waiting_gpu"
+    run.status = "preparing"
     db.commit()
-    log.info("ран %s: просим %s МБ (%s), карта %s",
-             run.id, want, source, "процессор" if index is None else index)
+    if waited:
+        live.notify(db, "run", run.id, run.project_id, s="preparing")
+    log.info("ран %s: просим %s МБ (%s), карты %s",
+             run.id, want, source, visible or "процессор")
 
     proc = subprocess.Popen(
         [sys.executable, RUNNER, "--run-id", str(run.id)],
@@ -296,25 +336,28 @@ def _terminate(proc, hard_after=10):
 
 
 def runs_loop():
+    _discovered.wait()
     while not _stop.is_set():
+        started = False
         db = SessionLocal()
         try:
-            run = claim_run(db)
-            if run is None:
-                db.close()
-                _stop.wait(IDLE_SLEEP)
-                continue
-            # Процесс не завёлся — ран ждёт карту. Ждать ему в том же темпе,
-            # что и простою: без паузы цикл перебирал его сотни раз в секунду
-            # и на каждом круге заводил новую бронь.
-            if not start_run(db, run):
-                db.close()
-                _stop.wait(IDLE_SLEEP)
-                continue
+            for run_id in waiting_runs(db):
+                # Сбой одного рана не должен стопорить остальных.
+                try:
+                    run = claim_run(db, run_id)
+                    if run is not None and start_run(db, run):
+                        started = True
+                except Exception:
+                    log.exception("не удалось запустить обучение %s", run_id)
+                    db.rollback()
         except Exception:
-            log.exception("не удалось запустить обучение")
+            log.exception("не удалось прочитать очередь обучений")
         finally:
             db.close()
+        # Никто не завёлся — все ждут карту. Ждать в темпе простоя: без паузы цикл
+        # перебирал бы ждущих сотни раз в секунду.
+        if not started:
+            _stop.wait(IDLE_SLEEP)
 
 
 # --------------------------------------------------------------------------- #
@@ -336,9 +379,20 @@ def do_embed(db, job):
         ref_id=job.id, project_id=job.project_id, user_id=job.created_by,
         priority=30, allow_cpu=True, title="Признаки кадров",
     )
+    # Карта занята — ждём в очереди, как все задачи, а не жжём попытки (решение 11.10.2026).
+    while lease.status == "queued" and not _stop.is_set():
+        if not prep_queue.beat(db, job, stage="gpu",
+                               stage_text=f"Ждёт карту: {lease.reason or 'карта занята'}"[:160]):
+            break
+        _stop.wait(IDLE_SLEEP)
+        gpu.beat(db, lease.id)
+        gpu.try_grant(db, lease.id)
+        db.refresh(lease)
     if lease.status != "held":
-        # Карта занята — работа возвращается в очередь и придёт снова.
-        raise RuntimeError(lease.reason or "Видеокарта занята.")
+        # Сняли или отказали: брошенную бронь накачка выдала бы никому.
+        gpu.cancel(db, lease.id, "Признаки больше не ждут")
+        raise RuntimeError("Счёт признаков сняли." if job.cancel_requested
+                           else lease.reason or "Видеокарту не дали.")
 
     index = gpu.torch_index(db, lease)
     device = "cpu"
@@ -414,34 +468,61 @@ class _pulse:
         return False
 
 
-# Сколько прогонов агентов идёт разом. Один на стенд — и часовой ролик соседа
-# держал всех; память делит диспетчер GPU, как и у остальных задач.
-AGENT_WORKERS = max(1, int(os.environ.get("AGENT_WORKERS", "2")))
+# Сколько прогонов агентов идёт разом, решает память карт — диспетчер. Раньше это
+# решали две нити на любой сервер: на восьми картах шли два прогона. Потолок —
+# страховка оперативной памяти контейнера: каждый прогон держит свои модели.
+AGENT_MAX = max(1, int(os.environ.get("AGENT_MAX", "8")))
 
 
 def agents_loop():
-    """Прогоны агентов. Своя нить: прогон по тысяче кадров не должен держать
-    ни обучение, ни счёт признаков — у каждого своя очередь к карте."""
+    """Очередь прогонов агентов: каждый ждущий пробует взять карту по очереди,
+    кому дали — уходит в свою нить. Прогон по тысяче кадров не держит ни
+    обучение, ни счёт признаков: у каждого своя очередь к карте."""
+    _discovered.wait()
     while not _stop.is_set():
+        started = False
         db = SessionLocal()
-        run = None
         try:
-            run = agent_runner.claim(db, me())
-            if run is None or not agent_runner.execute(db, run):
-                # Нет работы или карта занята — ждём в темпе простоя, иначе
-                # цикл перебирал бы ждущий прогон сотни раз в секунду.
-                db.close()
-                _stop.wait(IDLE_SLEEP)
-                continue
+            for run_id in agent_runner.candidates(db):
+                if agent_runner.running() >= AGENT_MAX:
+                    break
+                ctx = None
+                try:
+                    run = agent_runner.claim(db, run_id, me())
+                    if run is not None:
+                        ctx = agent_runner.prepare(db, run)
+                except Exception:
+                    log.exception("прогон агента %s не завёлся", run_id)
+                    db.rollback()
+                if ctx is None:
+                    agent_runner.release(run_id)
+                    continue
+                threading.Thread(target=_agent_run, args=(run_id, ctx),
+                                 name=f"agent-{str(run_id)[:8]}", daemon=True).start()
+                started = True
         except Exception:
-            log.exception("прогон агента не удался")
+            log.exception("не удалось прочитать очередь агентов")
         finally:
-            if run is not None:
-                agent_runner.release(run.id)
             db.close()
+        # Никто не завёлся — ждём в темпе простоя, иначе цикл перебирал бы
+        # ждущие прогоны сотни раз в секунду.
+        if not started:
+            _stop.wait(IDLE_SLEEP)
+
+
+def _agent_run(run_id, ctx):
+    db = SessionLocal()
+    try:
+        agent_runner.run_held(db, run_id, ctx)
+    except Exception:
+        log.exception("прогон агента %s не удался", run_id)
+    finally:
+        agent_runner.release(run_id)
+        db.close()
 
 
 def prep_loop():
+    _discovered.wait()
     while not _stop.is_set():
         db = SessionLocal()
         job = None
@@ -457,7 +538,13 @@ def prep_loop():
             log.exception("работа с признаками не удалась")
             if job is not None:
                 try:
-                    prep_queue.release(db, job, exc)
+                    db.rollback()
+                    db.refresh(job)
+                    if job.cancel_requested:
+                        # Сняли («Снять» на «Оборудовании») — новая попытка была бы против воли.
+                        prep_queue.finish(db, job, cancelled=True)
+                    else:
+                        prep_queue.release(db, job, exc)
                 except Exception:
                     log.exception("не удалось вернуть работу в очередь")
                 _stop.wait(PREP_RETRY_PAUSE)
@@ -489,8 +576,7 @@ def main():
         threading.Thread(target=reaper, name="reaper", daemon=True),
         threading.Thread(target=runs_loop, name="runs", daemon=True),
         threading.Thread(target=prep_loop, name="embed", daemon=True),
-        *(threading.Thread(target=agents_loop, name=f"agents-{i}", daemon=True)
-          for i in range(AGENT_WORKERS)),
+        threading.Thread(target=agents_loop, name="agents", daemon=True),
         threading.Thread(target=agent_preview.loop, args=(_stop,), name="agent-preview", daemon=True),
         threading.Thread(target=examples.loop, args=(_stop,), name="agent-examples", daemon=True),
     ]

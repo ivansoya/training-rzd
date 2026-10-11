@@ -11,13 +11,12 @@ BIG = dict(total_mb=24564, reserved_mb=2048, sam2_mb=4096, max_heavy=1)
 SMALL = dict(total_mb=12288, reserved_mb=1024, sam2_mb=0, max_heavy=1)
 
 
-def ask(card, *, held=0, pledged=0, heavy=0, want, heavy_request=True):
+def ask(card, *, held=0, heavy=0, want, heavy_request=True):
     return fits(
         total_mb=card["total_mb"],
         reserved_mb=card["reserved_mb"],
         sam2_mb=card["sam2_mb"],
         held_mb=held,
-        pledged_mb=pledged,
         heavy=heavy,
         max_heavy=card["max_heavy"],
         want_mb=want,
@@ -63,17 +62,6 @@ def test_невозможное_называется_невозможным():
     assert why is not None
     assert "никогда" not in why
     assert "свободно" in why
-
-
-def test_придержанное_место_не_отдаётся_обгоняющему():
-    """Без этого крупное обучение не стартует никогда: мелкие работы будут
-    пролезать вперёд бесконечно, и каждая по отдельности будет права."""
-    # Место есть, но оно обещано тому, кто ждёт дольше.
-    why = ask(BIG, pledged=9200, want=12000, heavy_request=False)
-    assert why is not None
-    assert "придержано" in why
-    # А то, что помещается рядом с придержанным, проходит.
-    assert ask(BIG, pledged=9200, want=9000, heavy_request=False) is None
 
 
 def test_причина_написана_для_человека():
@@ -134,3 +122,51 @@ def test_лёгкое_укладывается_плотно():
 def test_ничья_и_пустой_список():
     assert pick_device([("a", 5000, 0), ("b", 5000, 0)], heavy_request=True) == "a"
     assert pick_device([], heavy_request=False) is None
+
+
+# --------------------------------------------------------------------------- #
+# Задача на нескольких картах: все части разом или никуда (решения 10.10.2026)
+# --------------------------------------------------------------------------- #
+from common.gpu_rules import place  # noqa: E402
+
+
+def card(i, total=24564, held=0, heavy=0, busy=0, max_heavy=1, reserved=1024, sam2=0):
+    return dict(id=f"c{i}", index=i, total=total, reserved=reserved, sam2=sam2, held=held,
+                heavy=heavy, max_heavy=max_heavy, busy=busy)
+
+
+def test_одиночная_бронь_выбирает_как_раньше():
+    # Одна часть — тот же выбор, что у pick_device: тяжёлое на наименее загруженную.
+    got, why = place([4000], [card(0, held=8000, busy=2), card(1)], spread=False,
+                     heavy_request=True, busy_kind=True)
+    assert got == ["c1"] and why is None
+
+
+def test_обучение_на_двух_картах_ложится_на_разные():
+    got, why = place([6000, 6000], [card(0), card(1), card(2)], spread=True,
+                     heavy_request=True, busy_kind=True)
+    assert why is None and len(set(got)) == 2
+
+
+def test_обучение_на_двух_картах_не_ляжет_на_одну():
+    # Свободная карта одна, на второй уже идёт обучение (потолок тяжёлых 1) — ждём обе.
+    got, why = place([6000, 6000], [card(0), card(1, held=5000, heavy=1, busy=1)], spread=True,
+                     heavy_request=True, busy_kind=True)
+    assert got is None
+    assert "2 карты сразу" in why
+
+
+def test_всё_или_ничего():
+    # Первая часть влезла бы — но без второй не выдаётся ни одна.
+    got, _ = place([15000, 9000], [card(0), card(1, held=20000, busy=1)], spread=False,
+                   heavy_request=False, busy_kind=True)
+    assert got is None
+
+
+def test_агент_по_блокам_занимает_меньше_карт():
+    # SAM 3 15,6 ГБ, YOLOE-x 6,5 и SAM2 1,5 — вместе больше карты в 23 ГБ:
+    # ложатся на две карты, а не на три.
+    got, why = place([15960, 6650, 1480], [card(0), card(1), card(2)], spread=False,
+                     heavy_request=False, busy_kind=True)
+    assert why is None
+    assert len(set(got)) == 2

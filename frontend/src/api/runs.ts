@@ -163,6 +163,10 @@ export const listModels = (task?: "detect" | "segment") =>
     aug_defaults: Record<string, number>;
   }>(`models${task ? `?task=${task}` : ""}`);
 
+/** Сколько обучение попросит на каждую карту: замер таких же обучений или прикидка — как при запуске. */
+export const modelVram = (q: { model: string; task: "detect" | "segment"; imgsz: number; batch: number; gpus: number }) =>
+  get<{ want_mb: number; source: string }>(`models/vram?${new URLSearchParams(Object.entries(q).map(([k, v]) => [k, String(v)]))}`);
+
 export const listRuns = (code: string) =>
   get<{ runs: Run[]; role: string }>(`projects/${code}/runs`);
 

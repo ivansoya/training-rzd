@@ -36,19 +36,16 @@
 }
 .nv:hover { background: var(--hover); color: var(--fg); }
 .nv.on { background: var(--hover); color: var(--fg); }
-.nv > span:not(.ui-count) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv > span:not(.ui-count, .sb-q) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nv .ui-count { margin-left: auto; }
+/* Своих задач в очереди к картам — на пункте «Оборудование» */
+.sb-q {
+  margin-left: auto; min-width: 18px; height: 18px; padding: 0 5px; border-radius: var(--r-full); display: inline-grid; place-items: center;
+  font: 500 11px var(--mono); color: var(--fg); background: color-mix(in srgb, var(--c1) 28%, var(--card));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c1) 45%, transparent);
+}
 
 .sb-f { margin-top: auto; display: flex; flex-direction: column; gap: 8px; padding-top: 12px; }
-.sb-gpu {
-  border: 1px solid var(--border); border-radius: var(--r-md); padding: 10px; display: flex; flex-direction: column; gap: 7px;
-  background: var(--card); color: var(--fg); text-decoration: none; font-size: 12px;
-}
-.sb-gpu:hover { border-color: var(--input); }
-.sb-gpu-h { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.sb-gpu-h .ui-mono { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
-.sb-gpu-n { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sb-gpu .ui-legend { font-size: 11px; gap: 4px 10px; }
 .sb-me { display: flex; align-items: center; gap: 10px; padding: 6px; border-radius: var(--r-md); color: var(--fg); text-decoration: none; }
 .sb-me:hover, .sb-me.on { background: var(--hover); }
 .sb-me .ui-av { border-color: var(--sidebar); }
@@ -62,7 +59,8 @@
 .shell.rail .sb { align-items: center; padding: 10px 0; scrollbar-width: none; scrollbar-gutter: auto; }
 .shell.rail .sb-proj { width: auto; padding: 4px; }
 .shell.rail .sb-nav, .shell.rail .sb-f { align-items: center; }
-.shell.rail .nv { width: 36px; height: 36px; padding: 0; justify-content: center; }
+.shell.rail .nv { width: 36px; height: 36px; padding: 0; justify-content: center; position: relative; }
+.shell.rail .sb-q { position: absolute; top: -2px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; font-size: 10px; }
 .shell.rail .sb-me { padding: 4px; }
 .sb-sep { width: 24px; margin: 6px 0; border: 0; border-top: 1px solid var(--border); flex: none; }
 
@@ -152,6 +150,7 @@
 .ov-task-n { font-size: 13px; font-weight: 500; color: var(--fg); text-decoration: none; min-width: 0; }
 .ov-task-n:hover { text-decoration: underline; }
 .ov-sep { height: 1px; border: 0; margin: 4px 0; background: var(--border); }
+.ov-gpu .ui-legend b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
 
 .feed { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .feed li { display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 13px; align-items: start; }
@@ -695,6 +694,9 @@ a.pcard:hover { border-color: var(--input); }
 .rn-form-g { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; border-top: 1px solid var(--border); }
 .rn-form-g h4 { margin: 0; font-size: 12.5px; font-weight: 600; }
 .rn-switch { gap: 10px; font-size: 13px; }
+.rn-gpu { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.rn-gpu-l { font-size: 12.5px; color: var(--muted-fg); }
+.rn-gpu-l b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
 .rn-push { margin-left: auto; }
 .rn-fold {
   display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; border: 0; background: none; padding: 0;
@@ -960,28 +962,59 @@ a.pcard:hover { border-color: var(--input); }
 .hw > :nth-child(3) { animation-delay: .06s; }
 .hw > :nth-child(4) { animation-delay: .12s; }
 .hw > :nth-child(n+5) { animation-delay: .18s; }
-.hw-card { overflow: hidden; transition: opacity .2s var(--ease); }
-.hw-card.off { opacity: .72; }
-.hw-h { display: flex; align-items: center; gap: 10px; min-height: 50px; padding: 0 16px; border-bottom: 1px solid var(--border); }
-.hw-h > .ui-ic { color: var(--muted-fg); }
-.hw-h > b { font-size: 14px; font-weight: 600; white-space: nowrap; }
-.hw-sum { font-size: 12.5px; color: var(--muted-fg); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.hw-warn { color: var(--st-del); }
-.hw-b { display: flex; flex-direction: column; gap: 10px; padding: 14px 16px; }
-.hw-b .ui-stack { border-radius: var(--r-sm); background: var(--muted); }
-.hw-b .ui-stack > i { transition: width .5s var(--ease); }
-.hw-b .ui-legend { font-size: 12.5px; }
-.hw-b .ui-legend b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
+/* Сводка сверху, карты таблицей слева, очередь справа, «Модели»/«Доступ» ниже (макет 10.10.2026) */
+.hw-total { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 28px; padding: 2px 2px 0; font-size: 13px; color: var(--muted-fg); }
+.hw-total b { margin-right: 4px; font-size: 15px; font-weight: 600; color: var(--fg); font-variant-numeric: tabular-nums; }
+.hw-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+.hw-low { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+@media (max-width: 1180px) { .hw-grid, .hw-low { grid-template-columns: minmax(0, 1fr); } }
+.hw-cards > .ui-card-h { padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.hw-cards > .ui-card-b.flush { padding: 0; }
 .hw-none { margin: 0; padding: 14px 16px; font-size: 12.5px; color: var(--muted-fg); }
-.hw-tbl { border-top: 1px solid var(--border); }
-.hw-tbl th:first-child, .hw-tbl td:first-child { width: 28px; padding-right: 0; padding-left: 16px; }
-.hw-tbl td { height: 44px; }
-.hw-tbl .r { width: 84px; }
-.hw-tbl tr.hw-res td { color: var(--muted-fg); }
+
+.hw-tbl td { height: 48px; }
+.hw-tbl .hw-chev { width: 36px; padding-left: 14px; padding-right: 0; color: var(--faint); }
+.hw-tbl .hw-i { width: 36px; font: 500 12px var(--mono); color: var(--faint); }
+.hw-tbl tbody tr:hover td { background: none; }
+.hw-dev.click { cursor: pointer; }
+.hw-dev.click:hover td { background: color-mix(in srgb, var(--hover) 45%, transparent); }
+.hw-dev.open td { background: color-mix(in srgb, var(--hover) 70%, transparent); border-bottom-color: transparent; }
+.hw-dev:not(.click).open td { background: none; }
+.hw-dev .hw-chev .ui-ic { transition: transform .2s var(--ease); }
+.hw-dev.open .hw-chev .ui-ic { transform: rotate(90deg); color: var(--fg); }
+.hw-dev.off td { color: var(--faint); }
+.hw-name { white-space: nowrap; }
+.hw-name b { font-weight: 500; }
+.hw-name span { display: block; font-size: 11.5px; color: var(--faint); }
+.hw-mem { width: 34%; min-width: 180px; }
+.hw-mem .ui-stack { border-radius: var(--r-full); background: var(--muted); }
+.hw-mem .ui-stack > i { transition: width .5s var(--ease); }
+.hw-kinds { display: inline-flex; align-items: center; gap: 4px; font-variant-numeric: tabular-nums; }
+.hw-kinds > i { width: 8px; height: 8px; border-radius: 2px; }
+.hw-kinds > i:first-of-type { margin-left: 4px; }
+.hw-st, .hw-multi { display: inline-flex; align-items: center; height: 20px; padding: 0 7px; border-radius: var(--r-full); font-size: 11.5px; font-weight: 400; white-space: nowrap;
+  background: var(--hover); color: var(--muted-fg); }
+.hw-st.ok { background: color-mix(in srgb, var(--st-done) 15%, transparent); color: color-mix(in srgb, var(--st-done) 85%, var(--fg)); }
+.hw-st.bad { background: color-mix(in srgb, var(--st-del) 16%, transparent); color: color-mix(in srgb, var(--st-del) 85%, var(--fg)); }
+/* Задача на нескольких картах — «карты 0–1» у держателя, «2 карты» в очереди */
+.hw-multi { margin-left: 8px; vertical-align: 1px; background: color-mix(in srgb, var(--c4) 16%, transparent); color: color-mix(in srgb, var(--c4) 90%, var(--fg)); }
+
+.hw-det > td { height: auto; padding: 0 0 4px; background: color-mix(in srgb, var(--hover) 30%, transparent); }
+.hw-in { display: flex; flex-direction: column; gap: 12px; padding: 4px 16px 14px 50px; }
+.hw-in .ui-legend { font-size: 12.5px; }
+.hw-in .ui-legend b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
+.hw-in .hw-none { padding: 0; }
+.hw-hold { overflow-x: auto; }
+.hw-hold table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13px; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-md); }
+.hw-hold td { height: 42px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.hw-hold tr:last-child td { border-bottom: 0; }
+.hw-hold .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.hw-hold tr.hw-res td { color: var(--muted-fg); }
+.hw-hold .hw-sw-c { width: 28px; padding-right: 0; }
 .hw-sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; vertical-align: middle; }
-.hw-what { max-width: 0; width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hw-what { max-width: 0; width: 44%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hw-kill { color: var(--destructive); }
-.hw-cfg { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 16px 24px; padding: 12px 16px 14px; border-top: 1px solid var(--border); }
+.hw-cfg { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 16px 24px; }
 .hw-cfg.ro { align-items: center; font-size: 12.5px; color: var(--muted-fg); }
 .hw-cfg.ro b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
 .hw-f { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted-fg); }
@@ -991,14 +1024,16 @@ a.pcard:hover { border-color: var(--input); }
 
 .hw-q > .ui-card-b { padding: 0; }
 .hw-q > .ui-card-h { padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-.hw-qr { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 58px; padding: 8px 16px;
+.hw-qr { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; align-items: start; gap: 10px; min-height: 58px; padding: 12px 16px;
   border-top: 1px solid var(--border); transition: background-color .2s var(--ease); }
+.hw-qr > .ui-btn { margin-top: -4px; }
 .hw-qr:first-child { border-top: 0; }
 .hw-qr.mine { background: color-mix(in srgb, var(--primary) 6%, transparent); }
 .hw-n { font-weight: 600; font-size: 13px; color: var(--faint); font-variant-numeric: tabular-nums; }
 .hw-qr.mine .hw-n { color: var(--ring); }
 .hw-qt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.hw-qt > b { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Колонка очереди узкая — имя задачи переносится, метки «2 карты» и «ваша» не обрезаются */
+.hw-qt > b { font-size: 13px; font-weight: 500; overflow-wrap: anywhere; }
 .hw-qt > span { font-size: 12.5px; color: var(--muted-fg); }
 .hw-qt > span b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
 .hw-yours { display: inline-flex; align-items: center; height: 18px; margin-left: 8px; padding: 0 6px; border-radius: var(--r-sm); font-size: 11px; font-weight: 500;
@@ -1009,7 +1044,10 @@ a.pcard:hover { border-color: var(--input); }
 .hw-acc > .ui-card-b { display: flex; flex-direction: column; gap: 12px; }
 .hw-acc .ui-input { max-width: 420px; }
 .hw-list { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg); animation: ui-fade .2s var(--ease) both; }
-.hw-ar { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto 150px; align-items: center; gap: 12px; min-height: 52px; padding: 6px 12px; }
+/* Карточка в половину ширины — подсказка «свои права не снять» строкой под именем, а не своей колонкой */
+.hw-ar { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 4px 12px; min-height: 52px; padding: 6px 12px; }
+.hw-ar > .hw-self { grid-column: 2 / -1; }
+.hw-ar > .hw-self:empty { display: none; }
 .hw-ar + .hw-ar { border-top: 1px solid var(--border); }
 .hw-at { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
 .hw-at b { font-size: 13px; font-weight: 500; }

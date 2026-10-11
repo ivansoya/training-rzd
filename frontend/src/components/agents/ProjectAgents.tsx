@@ -14,7 +14,8 @@ import {
 import { ago, count, ru } from "../ru";
 import { useConfirm } from "../mag/tasks/Confirm";
 import { clock, dayLabel, duration } from "../mag/runs/runs";
-import { VERDICT, gb, short, verdictDetail } from "./GpuVerdict";
+import { gb, short, verdictDetail, verdictLook } from "./GpuVerdict";
+import { cardList } from "../shell/useGpuState";
 
 const MODE: Record<api.RunMode, string> = { frames: "кадры", annotate: "ролик", scout: "разведка" };
 const STATUS: Record<api.RunView["status"], { word: string; tone: string; live?: boolean }> = {
@@ -26,10 +27,6 @@ const STATUS: Record<api.RunView["status"], { word: string; tone: string; live?:
   stopped: { word: "остановлен", tone: "var(--faint)" },
 };
 const ALL = "all";
-// Цвет вердикта — те же токены, что у плашки в редакторе (.ae-vd.*).
-const TONE: Record<api.VerdictState, string> = {
-  fits: "var(--st-done)", wait: "var(--st-skip)", sequential: "var(--c4)", never: "var(--destructive)",
-};
 const FILTER_STATUS = [
   { value: ALL, label: "" },
   { value: "active", label: "идут и ждут" },
@@ -156,7 +153,7 @@ export default function ProjectAgents() {
         </Card>
       )}
 
-      {data !== null && <RunJournal code={code} onChange={refresh} />}
+      {data !== null && <RunJournal code={code} onChange={refresh} many={data.cards.length > 1} />}
       {confirmNode}
     </div>
   );
@@ -166,7 +163,7 @@ function AgentRow({ agent: a, cards, queued, canCopy, canUnlink, working, onOpen
   agent: api.ProjectAgent; cards: api.GpuCard[]; queued: number; canCopy: boolean; canUnlink: boolean; working: boolean;
   onOpen: () => void; onCopy: () => void; onUnlink: () => void;
 }) {
-  const look = a.verdict ? VERDICT[a.verdict.state] : null;
+  const look = a.verdict ? verdictLook(a.verdict) : null;
   const detail = a.verdict && a.total_mb !== null
     ? verdictDetail({ verdict: a.verdict, cards, queued, heaviest: a.heaviest, total_mb: a.total_mb }) : "";
   const last = a.last_status ? STATUS[a.last_status] : null;
@@ -181,7 +178,7 @@ function AgentRow({ agent: a, cards, queued, canCopy, canUnlink, working, onOpen
       <td>{a.version ? <span className="ui-mono">v{a.version}</span> : <span className="t-xs t-faint">без версии</span>}</td>
       <td>
         {look && a.total_mb !== null ? (
-          <span className="pa-mem" style={{ color: TONE[a.verdict!.state] }} title={`${look.word}: ${detail}`}>
+          <span className="pa-mem" style={{ color: look.color }} title={`${look.word}: ${detail}`}>
             <Icon name={look.icon} size={14} />{gb(a.total_mb)} ГБ<em>{look.word}</em>
           </span>
         ) : <span className="t-faint">—</span>}
@@ -207,7 +204,7 @@ function AgentRow({ agent: a, cards, queued, canCopy, canUnlink, working, onOpen
   );
 }
 
-function RunJournal({ code, onChange }: { code: string; onChange: () => void }) {
+function RunJournal({ code, onChange, many }: { code: string; onChange: () => void; many: boolean }) {
   const [filter, setFilter] = useState<api.JournalFilter>({});
   const [page, setPage] = useState<api.Journal | null>(null);
   const [rows, setRows] = useState<api.JournalRun[]>([]);
@@ -317,7 +314,7 @@ function RunJournal({ code, onChange }: { code: string; onChange: () => void }) 
           <thead>
             <tr>
               <th className="pa-chev-c" /><th>Время</th><th>Агент</th><th>Таска</th><th>Режим</th><th>Кто</th><th>Статус</th>
-              <th>Карта</th><th className="r" title="Сколько просил у карты / сколько занял на пике">Память, ГБ</th>
+              <th>{many ? "Карты" : "Карта"}</th><th className="r" title="Сколько просил у карты / сколько занял на пике">Память, ГБ</th>
               <th className="r">Ожидание</th><th className="r">Длит.</th><th className="r">Кадров / рамок</th>
             </tr>
           </thead>
@@ -327,9 +324,9 @@ function RunJournal({ code, onChange }: { code: string; onChange: () => void }) 
                 <tr className="pa-day"><td colSpan={COLS}>{d.label}</td></tr>
                 {d.runs.map((r) => (
                   <Fragment key={r.id}>
-                    <JournalRow run={r} open={open === r.id} arrived={arrived.get(r.id)}
+                    <JournalRow run={r} many={many} open={open === r.id} arrived={arrived.get(r.id)}
                       onToggle={() => setOpen((o) => (o === r.id ? null : r.id))} />
-                    <Reveal open={open === r.id}><JournalDetail run={r} /></Reveal>
+                    <Reveal open={open === r.id}><JournalDetail run={r} many={many} /></Reveal>
                   </Fragment>
                 ))}
               </Fragment>
@@ -372,8 +369,8 @@ function Reveal({ open, children }: { open: boolean; children: ReactNode }) {
   );
 }
 
-function JournalRow({ run: r, open, arrived, onToggle }: {
-  run: api.JournalRun; open: boolean; arrived?: "land" | "in"; onToggle: () => void;
+function JournalRow({ run: r, many, open, arrived, onToggle }: {
+  run: api.JournalRun; many: boolean; open: boolean; arrived?: "land" | "in"; onToggle: () => void;
 }) {
   const st = STATUS[r.status];
   const why = r.status === "error" ? r.error : r.status === "waiting_gpu" || r.status === "queued" ? r.queue_reason : null;
@@ -397,7 +394,9 @@ function JournalRow({ run: r, open, arrived, onToggle }: {
         {r.status === "running" && r.total ? <Progress value={r.processed} max={r.total} label="Ход прогона" color="var(--agent)" /> : null}
         {why && <span className="pa-why">{why}</span>}
       </td>
-      <td>{r.card ? short(r.card).replace(/^RTX\s+/i, "") : <span className="t-faint">—</span>}</td>
+      {/* Карт несколько — номера: поделённый агент на «2–3», а имена у карт сервера часто одинаковые. */}
+      <td>{many ? (r.cards?.length ? cardList(r.cards) : <span className="t-faint">—</span>)
+        : r.card ? short(r.card).replace(/^RTX\s+/i, "") : <span className="t-faint">—</span>}</td>
       <td className="r">{num(r.want_mb)} / <span className={over ? "pa-bad" : r.peak_mb ? undefined : "t-faint"}>{num(r.peak_mb)}</span></td>
       <td className="r">{r.waited_s ? duration(r.waited_s) : r.started_at ? "сразу" : "—"}</td>
       <td className="r">{r.seconds ? duration(r.seconds) : "—"}</td>
@@ -406,7 +405,7 @@ function JournalRow({ run: r, open, arrived, onToggle }: {
   );
 }
 
-function JournalDetail({ run: r }: { run: api.JournalRun }) {
+function JournalDetail({ run: r, many }: { run: api.JournalRun; many: boolean }) {
   const words = r.words ? Object.values(r.words) : [];
   const params = [
     ["Версия", r.version ? `v${r.version}` : "—"],
@@ -420,7 +419,8 @@ function JournalDetail({ run: r }: { run: api.JournalRun }) {
   ].filter(Boolean) as [string, string][];
   const memory: [string, ReactNode][] = [
     ["Режим", r.sequential ? "поочерёдно — медленнее, сумма не влезала в карту" : "целиком"],
-    ["Карта", r.card ? short(r.card) : "—"],
+    many ? ["Карты", r.cards?.length ? `${cardList(r.cards)}${r.card ? ` · ${short(r.card)}` : ""}` : "—"]
+      : ["Карта", r.card ? short(r.card) : "—"],
     ["Память", `просили ${num(r.want_mb)} ГБ · ${r.peak_mb ? `пик ${gb(r.peak_mb)} ГБ` : "пик не записан"}`],
     ["Ожидание", `${r.waited_s ? duration(r.waited_s) : "без ожидания"}${r.queue_reason ? ` — ${r.queue_reason}` : ""}`],
   ];

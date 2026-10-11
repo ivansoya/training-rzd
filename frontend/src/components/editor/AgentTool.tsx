@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../../api/agents";
 import { Button, Field, Select } from "../../ui";
 import { count } from "../ru";
-import { VERDICT } from "../agents/GpuVerdict";
+import { verdictLook } from "../agents/GpuVerdict";
 import { ToolButton, ToolMenu } from "./Chrome";
 
 const keyOf = (taskId: string) => `mag.agent.tool.${taskId}`;
@@ -105,7 +105,7 @@ export function AgentTool({ tool, disabled, onRun, onMap }: {
               <Field label="Агент">
                 {(id) => <Select id={id} full size="sm" value={agent.id} onChange={(v) => tool.choose(v)}
                   options={ctx.agents.map((a) => ({ value: a.id, label: a.name,
-                    hint: `${a.group === "project" ? "подключён к проекту" : "мой"} · ${VERDICT[a.verdict.state].word}` }))} />}
+                    hint: `${a.group === "project" ? "подключён к проекту" : "мой"} · ${verdictLook(a.verdict).word}` }))} />}
               </Field>
               <Field label="Версия">
                 {(id) => <Select id={id} full size="sm" value={version.id} onChange={(v) => tool.choose(agent.id, v)}

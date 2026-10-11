@@ -26,30 +26,11 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl")
 from common import config, gpu, live  # noqa: E402
 from common.db import SessionLocal  # noqa: E402
 from common.models import (  # noqa: E402
-    TrainEpoch, TrainRun, TrainSet, TrainSetFeed, utcnow,
+    TrainRun, TrainSet, TrainSetFeed, utcnow,
 )
 from training_svc import metrics as metrics_lib, trainer  # noqa: E402
 
 HOT_EVERY = 0.8
-
-
-def _peak_mb(device):
-    """Сколько видеопамяти держит этот процесс.
-
-    Берём резерв аллокатора, а не выделенное: соседу по карте мешает именно
-    резерв. И берём у torch, а не у nvidia-smi: в контейнере тот показывает
-    всю карту вместе с чужими задачами, и приписывать чужое своей — вернейший
-    способ раздуть оценку до полной карты и заблокировать её навсегда.
-    """
-    if str(device) == "cpu":
-        return None
-    try:
-        import torch
-
-        idx = int(str(device).split(":")[-1]) if ":" in str(device) else 0
-        return int(torch.cuda.max_memory_reserved(idx) // (1024 * 1024))
-    except Exception:
-        return None
 
 
 def _final_metrics(model, data_yaml, device, overrides, out_dir):
@@ -131,10 +112,13 @@ def main():
         trainer.pin_memory_policy()
         device = run.device
         is_cpu = str(device) == "cpu"
+        # Несколько карт: «2,5» — настоящие номера карт брони, ultralytics поднимет
+        # по процессу на карту (см. training_svc/progress.py).
+        ddp = "," in str(device)
         if not is_cpu:
             import torch
 
-            # CUDA — до ultralytics: воркер оставил видимой одну карту брони, а
+            # CUDA — до ultralytics: воркер оставил видимыми только карты брони, а
             # select_device перепишет CUDA_VISIBLE_DEVICES на «0». После первой
             # инициализации переменную уже никто не читает.
             torch.cuda.set_device(0)
@@ -166,133 +150,11 @@ def main():
             )
             model = YOLO(spec)
 
-        hot = {"last": 0.0, "epoch_started": time.time()}
-        # Эпохи кончились — дальше идёт итоговая проверка ultralytics. Она
-        # зовёт тот же `on_fit_epoch_end` с номером N+1, и раньше это
-        # становилось ещё одной «эпохой»: лишняя точка на графике, «эпоха 3
-        # из 2» и полоса в полтора раза шире. Флаг ставим по `trainer.stop`:
-        # он поднимается перед обработчиком последней настоящей эпохи — и
-        # по сроку, и по ранней остановке.
-        final = {"on": False}
+        # Ход вешает класс тренера (training_svc/progress.py): так он доезжает и
+        # до дочерних процессов обучения на нескольких картах.
+        from training_svc import progress as progress_lib
 
-        def loss_items(trn):
-            out = {}
-            try:
-                tloss = getattr(trn, "tloss", None)
-                if tloss is not None:
-                    for k, v in trn.label_loss_items(tloss).items():
-                        out[k.split("/")[-1]] = float(v)
-            except Exception:
-                pass
-            return out
-
-        def hot_write(**fields):
-            """Короткий UPDATE по горячему пути. Возвращает «нас не сняли?»."""
-            now = time.time()
-            if now - hot["last"] < HOT_EVERY:
-                return True
-            hot["last"] = now
-            for key, value in fields.items():
-                setattr(run, key, value)
-            run.lease_until = utcnow()
-            db.commit()
-            db.refresh(run)
-            return not run.cancel_requested
-
-        def epoch_start(trn):
-            run.current_epoch = int(getattr(trn, "epoch", 0)) + 1
-            try:
-                run.total_batches = len(trn.train_loader)
-            except Exception:
-                run.total_batches = None
-            run.phase = "train"
-            run.current_batch = 0
-            run.batch_metrics = {}
-            hot["epoch_started"] = time.time()
-            hot["last"] = 0.0
-            db.commit()
-
-        def batch_end(trn):
-            run.current_batch = int(run.current_batch or 0) + 1
-            got = loss_items(trn)
-            alive = hot_write(
-                batch_metrics=got or run.batch_metrics, phase="train"
-            )
-            if not alive:
-                raise KeyboardInterrupt("Обучение сняли.")
-
-        def val_start(validator):
-            run.phase = "final" if final["on"] else "val"
-            run.val_batch = 0
-            try:
-                run.val_total = len(validator.dataloader)
-            except Exception:
-                run.val_total = None
-            hot["last"] = 0.0
-            db.commit()
-
-        def val_batch_end(validator):
-            run.val_batch = int(run.val_batch or 0) + 1
-            hot_write(phase=run.phase)
-
-        def fit_epoch_end(trn):
-            if final["on"]:
-                # Итоговая проверка ultralytics: её числа — лучшие веса, а
-                # не эпоха. Свою итоговую проверку мы делаем ниже сами.
-                return
-            epoch = int(getattr(trn, "epoch", 0)) + 1
-            raw = getattr(trn, "metrics", None) or {}
-            metrics = {
-                k: float(v) for k, v in raw.items()
-                if isinstance(v, (int, float))
-            }
-            metrics.update(loss_items(trn))
-            # Пригодность ultralytics выкидывает из словаря метрик и держит
-            # отдельно — по ней выбран best.pt. Кладём в строку эпохи: без
-            # неё «лучшая эпоха» не находилась ни у одного рана.
-            try:
-                fit = float(getattr(trn, "fitness", None))
-            except (TypeError, ValueError):
-                fit = None
-            if fit is None or fit != fit:  # нет или NaN
-                fit = metrics_lib.fitness_of(metrics, run.task)
-            if fit is not None:
-                metrics["fitness"] = fit
-            row = db.get(TrainEpoch, (run.id, epoch))
-            seconds = time.time() - hot["epoch_started"]
-            if row is None:
-                db.add(TrainEpoch(
-                    run_id=run.id, epoch=epoch, metrics=metrics,
-                    lr=float(getattr(trn, "lr", {}).get("lr/pg0", 0) or 0)
-                    if isinstance(getattr(trn, "lr", None), dict) else None,
-                    seconds=seconds,
-                ))
-            else:
-                row.metrics = metrics
-                row.seconds = seconds
-            run.current_epoch = epoch
-            run.peak_vram_mb = _peak_mb(device) or run.peak_vram_mb
-            fitness = metrics.get("fitness")
-            if fitness is not None and (
-                run.best_fitness is None or fitness > run.best_fitness
-            ):
-                run.best_fitness = fitness
-                run.best_epoch = epoch
-            db.commit()
-            # Уведомление говорит, ЧТО изменилось; состояние вкладка дочитает
-            # сама. У NOTIFY предел восемь тысяч байт, и класть в него метрики
-            # значило бы однажды уронить транзакцию посреди эпохи.
-            live.notify(db, "run", run.id, run.project_id, e=epoch)
-            if run.gpu_lease_id:
-                gpu.beat(db, run.gpu_lease_id, run.peak_vram_mb)
-            if getattr(trn, "stop", False):
-                final["on"] = True
-
-        model.add_callback("on_train_epoch_start", epoch_start)
-        model.add_callback("on_train_batch_end", batch_end)
-        model.add_callback("on_val_start", val_start)
-        model.add_callback("on_val_batch_end", val_batch_end)
-        model.add_callback("on_fit_epoch_end", fit_epoch_end)
+        progress = progress_lib.CURRENT = progress_lib.Progress(db, run)
 
         # Загрузчиков по умолчанию: на видеокарте меньше — при закреплённой
         # памяти их избыток вызывает нехватку памяти в потоке закрепления.
@@ -312,7 +174,9 @@ def main():
         )
         if resume:
             overrides["resume"] = True
-        results = model.train(**overrides)
+        results = model.train(trainer=progress_lib.trainer_for(run.task), **overrides)
+        # На нескольких картах ход писали дочерние процессы — свои числа бегун дочитывает.
+        db.refresh(run)
 
         best = os.path.join(out_dir, "train", "weights", "best.pt")
         if os.path.isfile(best):
@@ -329,13 +193,11 @@ def main():
         # Сколько эпох прошло на самом деле: ранняя остановка по `patience`
         # заканчивает раньше, и «30 из 100» на экране без объяснения
         # выглядит как обрыв.
-        try:
-            done = int(getattr(model.trainer, "epoch", -1)) + 1
-            if done > 0:
-                run.summary = dict(run.summary or {}, epochs_done=done,
-                                   stopped_early=int(done < run.epochs))
-        except Exception:
-            pass
+        # Номер последней пройденной эпохи пишет ход: у тренера бегуна на нескольких
+        # картах эпох не было — учились дочерние процессы.
+        done = int(run.current_epoch or 0)
+        if done > 0:
+            run.summary = dict(run.summary or {}, epochs_done=done, stopped_early=int(done < run.epochs))
         run.params = dict(run.params or {}, augment_mode=aug_mode,
                           weights=os.path.basename(str(spec)))
 
@@ -345,7 +207,12 @@ def main():
         run.phase = "final"
         run.val_batch = 0
         db.commit()
-        final["on"] = True
+        # Ход итоговой проверки уже висит на модели: тренер вешал его в её же словарь обработчиков.
+        progress.final = True
+        if ddp:
+            # Проверка идёт одним процессом на первой карте брони — с батчем одной карты.
+            device = "cuda:0"
+            overrides["batch"] = max(1, int(overrides.get("batch", 16)) // len(run.device.split(",")))
         got = _final_metrics(model, data_yaml, device, overrides, out_dir)
         if got.get("error"):
             run.per_class = {"rows": [], "totals": None, "error": got["error"]}
@@ -358,7 +225,8 @@ def main():
                 # была ли ранняя остановка — знает только обучение.
                 run.summary = dict(run.summary or {}, **got["summary"])
 
-        run.peak_vram_mb = _peak_mb(device) or run.peak_vram_mb
+        # Максимум: на нескольких картах пик обучения записал ход, а здесь — только проверка.
+        run.peak_vram_mb = max(run.peak_vram_mb or 0, progress_lib.peak_mb(device) or 0) or None
         run.status = "done"
         run.finished_at = utcnow()
         db.commit()
@@ -371,13 +239,20 @@ def main():
         db.commit()
         live.notify(db, "run", run.id, run.project_id, s="stopped")
     except Exception as exc:  # noqa: BLE001
-        run.status = "error"
-        run.error = str(exc)[:2000]
+        db.rollback()
+        db.refresh(run)
+        # На нескольких картах «Остановить» роняет дочерние процессы, и сюда
+        # приходит их падение, а не KeyboardInterrupt.
+        stopped = bool(run.cancel_requested)
+        run.status = "stopped" if stopped else "error"
+        # Причину процесса карты (progress._note_failure) не затираем кодом выхода.
+        run.error = None if stopped else (run.error or str(exc))[:2000]
         trainer.adopt_weights(run)
         run.finished_at = utcnow()
         db.commit()
-        live.notify(db, "run", run.id, run.project_id, s="error")
-        raise
+        live.notify(db, "run", run.id, run.project_id, s=run.status)
+        if not stopped:
+            raise
     finally:
         db.close()
 

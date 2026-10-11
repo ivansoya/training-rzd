@@ -92,15 +92,27 @@ export interface TaskVideoRow {
 
 // --- влезет ли агент на карту (решения 09.10.2026) --------------------------
 
-export type VerdictState = "fits" | "wait" | "sequential" | "never";
+export type VerdictState = "fits" | "wait" | "split" | "sequential" | "never";
+
+/** Какой блок агента на какую карту ляжет при дележе. */
+export interface Placement {
+  card: string;
+  index: number;
+  units: { label: string; mb: number }[];
+}
 
 /** Вердикт сервера: `want_mb` — сколько просить (поочерёдно — самый тяжёлый блок),
- *  `card` — где влезает сейчас, `reason` — готовая к показу строка. */
+ *  `card` — где влезает сейчас, `reason` — готовая к показу строка. Целиком на одну карту
+ *  не влезает, а блоками по картам да — `split` (решения 10.10.2026): `ready` — карты свободны сейчас. */
 export interface Verdict {
   state: VerdictState;
   want_mb: number;
   card: string | null;
   reason: string;
+  parts?: number[];
+  ready?: boolean;
+  cards?: number;
+  placement?: Placement[];
 }
 
 /** Карта без держателей — видит каждый (`gpu.cards`). */
@@ -501,6 +513,8 @@ export interface JournalRun extends RunView {
   started_at: string | null;
   seconds: number | null;
   card: string | null;
+  /** Номера карт прогона; у агента, поделённого по картам, их несколько. */
+  cards: number[] | null;
   want_mb: number | null;
   peak_mb: number | null;
   waited_s: number | null;

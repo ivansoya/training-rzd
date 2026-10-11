@@ -38,23 +38,26 @@ class Waiting(Exception):
 
 
 class _Warm:
-    """Тёплые модели и бронь карты под них."""
+    """Тёплые модели и бронь карт под них: одна карта под весь агент или блоки
+    по картам, как у прогона (решения 10.10.2026). Модель помнит свою карту в
+    ключе: ultralytics садит модель на карту при первом вызове и больше не переносит."""
 
     def __init__(self):
         self.lease_id = None
-        self.device = None
-        self.nets = {}     # id весов -> YOLO
-        self.sams = {}     # имя SAM -> предиктор
-        self.texts = {}    # agent_runner.text_key -> YOLOE с промтами или SAM 3
-        self.sam3 = {}     # вход -> общий предиктор SAM 3 узлов
+        self.indices = []  # номера карт брони по частям
+        self.keys = None   # ключи блоков по частям, если агент поделён
+        self.parts = []    # сколько забронировано по частям
+        self.nets = {}     # (id весов, карта) -> YOLO
+        self.sams = {}     # (имя SAM, карта) -> предиктор
+        self.texts = {}    # (agent_runner.text_key, карта) -> YOLOE с промтами или SAM 3
+        self.sam3 = {}     # (вход, карта) -> общий предиктор SAM 3 узлов
         self.last = 0.0
-        self.want = 0      # сколько забронировано
         self.queued = None  # бронь, стоящая в очереди: следующий запрос ждёт её, а не новую
 
     def drop(self, db):
         if self.lease_id:
             gpu.release(db, self.lease_id)
-        self.lease_id, self.device = None, None
+        self.lease_id, self.indices, self.keys, self.parts = None, [], None, []
         self.nets, self.sams, self.texts, self.sam3 = {}, {}, {}, {}
         agent_runner._free()
 
@@ -63,60 +66,80 @@ class _Warm:
             gpu.cancel(db, self.queued, "Превью больше не ждут")
             self.queued = None
 
-    def ensure_device(self, db, want):
-        """Карта под `want` МБ или `Waiting` с причиной — процессора нет."""
-        if self.lease_id and self.want >= want:
+    def ensure(self, db, verdict, units):
+        """Карты под превью по вердикту или `Waiting` с причиной — процессора нет."""
+        split = verdict["state"] == agent_memory.SPLIT
+        parts = list(verdict["parts"]) if split else [verdict["want_mb"]]
+        keys = [u["key"] for u in units] if split else None
+        if self.lease_id and keys == self.keys and len(parts) == len(self.parts) \
+                and all(have >= need for have, need in zip(self.parts, parts)):
             gpu.beat(db, self.lease_id)
             return
         if self.lease_id:
-            # Граф стал прожорливее брони (SAM 3 с новыми промтами) — перебронируем.
+            # Граф стал прожорливее брони (SAM 3 с новыми промтами) или блоки другие — перебронируем.
             self.drop(db)
         lease = db.get(GpuLease, self.queued) if self.queued else None
-        if lease is not None and lease.status == "queued" and lease.want_mb == want:
+        same = lease is not None and [p.want_mb for p in gpu.group_of(db, lease)] == parts
+        if same and lease.status in gpu.ACTIVE:
+            # Ждущую отмечаем и пробуем; выданную накачкой берём — раньше её отменяли,
+            # и запрос вставал в хвост очереди заново.
+            gpu.beat(db, lease.id)
             gpu.try_grant(db, lease.id)
             db.refresh(lease)
         else:
             self.unqueue(db)
-            lease = gpu.request(db, holder="training", kind="agent-preview", want_mb=want,
-                                priority=20, allow_cpu=False, title="Превью агента")
+            if split:
+                lease = gpu.request_group(db, holder="training", kind="agent-preview", parts=parts, spread=False,
+                                          labels=[u["label"] for u in units], priority=20, title="Превью агента")
+            else:
+                lease = gpu.request(db, holder="training", kind="agent-preview", want_mb=parts[0],
+                                    priority=20, allow_cpu=False, title="Превью агента")
         if lease.status == "denied":
             raise agent_graph.AgentGraphError(lease.reason or "Видеокарту не дали.")
         if lease.status != "held":
             self.queued = lease.id
             raise Waiting(lease.reason or "карта занята")
         self.queued = None
-        self.lease_id, self.want = lease.id, want
-        device = agent_runner._device(gpu.torch_index(db, lease))
-        if device != self.device:
-            self.nets, self.sams, self.texts, self.sam3 = {}, {}, {}, {}
-        self.device = device
+        self.lease_id, self.parts, self.keys = lease.id, parts, keys
+        self.indices = gpu.group_indices(db, lease)
 
-    def models(self, doc, weights, sets):
+    def unit_devices(self, units):
+        """{ключ блока: карта}: поделённый агент — по частям брони, иначе всё на одной."""
+        at = {key: i for i, key in enumerate(self.keys or [])}
+        return {u["key"]: agent_runner._device(self.indices[at.get(u["key"], 0)]) for u in units}
+
+    def models(self, doc, weights, sets, on):
+        """Модели узлов на их картах; `on` — {узел: карта}."""
         out = {}
         # Каждая правка промта — новая YOLOE; держим только те, что в графе
         # сейчас, иначе за вечер правок карта забилась бы старыми.
-        keys = {agent_runner.text_key(n): n for n in doc["nodes"] if n["type"] == "text"}
+        keys = {(agent_runner.text_key(n), on[n["id"]]): n for n in doc["nodes"] if n["type"] == "text"}
         self.texts = {k: m for k, m in self.texts.items() if k in keys}
-        sides = {agent_graph.sam3_side(n.get("params")) for n in keys.values()
+        sides = {(agent_graph.sam3_side(n.get("params")), dev) for (_k, dev), n in keys.items()
                  if agent_graph.text_model(n.get("params")) == "sam3"}
         self.sam3 = {k: p for k, p in self.sam3.items() if k in sides}
         for key, node in keys.items():
             if key not in self.texts:
-                self.texts[key] = agent_runner.load_text(node, self.device, sets, self.sam3)
+                dev = key[1]
+                shared = {side: p for (side, d), p in self.sam3.items() if d == dev}
+                self.texts[key] = agent_runner.load_text(node, dev, sets, shared)
+                self.sam3.update({(side, dev): p for side, p in shared.items()})
         for node in doc["nodes"]:
+            nid = node["id"]
             if node["type"] == "text":
-                out[node["id"]] = self.texts[agent_runner.text_key(node)]
+                out[nid] = self.texts[(agent_runner.text_key(node), on[nid])]
             elif node["type"] == "net":
-                row = weights[node["id"]]
-                if row.id not in self.nets:
+                key = (weights[nid].id, on[nid])
+                if key not in self.nets:
                     from ultralytics import YOLO
-                    self.nets[row.id] = YOLO(os.path.join(config.DATA_DIR, row.file_path))
-                out[node["id"]] = self.nets[row.id]
+                    self.nets[key] = YOLO(os.path.join(config.DATA_DIR, weights[nid].file_path))
+                out[nid] = self.nets[key]
             elif node["type"] == "sam":
                 name = (node.get("params") or {}).get("model") or agent_graph.SAM_DEFAULTS["model"]
-                if name not in self.sams:
-                    self.sams[name] = agent_runner._load_sam(name, self.device)
-                out[name] = self.sams[name]
+                key = (name, on[nid])
+                if key not in self.sams:
+                    self.sams[key] = agent_runner._load_sam(name, on[nid])
+                out[name] = self.sams[key]
         return out
 
 
@@ -164,12 +187,15 @@ def _answer(db, warm, row):
     cards = gpu.cards(db)
     mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None,
                             nets=agent_memory.net_info(weights), sam3_cpu_half=settings.get(db, settings.SAM3_CPU_HALF))
-    verdict = agent_memory.verdict(mem["total_mb"], mem["heaviest"], cards)
+    verdict = agent_memory.verdict(mem["total_mb"], mem["heaviest"], cards, mem["units"])
     if verdict["state"] == agent_memory.NEVER:
         raise agent_graph.AgentGraphError(verdict["reason"])
     agent_memory.fix_words(doc, mem["words"])
     sequential = verdict["state"] == agent_memory.SEQUENTIAL
-    warm.ensure_device(db, verdict["want_mb"])
+    warm.ensure(db, verdict, mem["units"])
+    devices = warm.unit_devices(mem["units"])
+    on = {nid: devices[u["key"]] for u in mem["units"] for nid in u["nodes"]}
+    agent_runner._device(warm.indices[0])  # текущая карта нити — первая из брони
     started = time.monotonic()
     if sequential:
         # Целиком не влезает — тёплых моделей нет: блоки грузятся по очереди на каждый ответ.
@@ -177,18 +203,20 @@ def _answer(db, warm, row):
         agent_runner._free()
         models = None
     else:
-        models = warm.models(doc, weights, sets)
+        # SAM 3 грузится десятки секунд — бронь продлевает своя нить, иначе истекла бы под загрузкой.
+        with agent_runner._beating(warm.lease_id):
+            models = warm.models(doc, weights, sets, on)
 
     def frames_out(items):
         """[(путь, картинка, имя)] → [(находки, трасса)] — целиком или поочерёдно."""
         got = [None] * len(items)
         if models is not None:
             for i, (path, picture, name) in enumerate(items):
-                predict, segment = agent_runner.frame_fns(path, name, models, weights, warm.device, picture=picture)
+                predict, segment = agent_runner.frame_fns(path, name, models, weights, on, picture=picture)
                 trace = {}
                 got[i] = (agent_graph.run(doc, predict, order, segment, trace), trace)
             return got
-        work = agent_runner._Work(doc, order, mem["units"], weights, sets, warm.device, warm.lease_id, True, _NoTick())
+        work = agent_runner._Work(doc, order, mem["units"], weights, sets, devices, warm.lease_id, True, _NoTick())
         for i, (path, picture, name) in enumerate(items):
             trace = {}
             work.frame(i, path, picture, name, True,
@@ -236,11 +264,12 @@ def _answer(db, warm, row):
 def _trim(warm):
     """После ответа кэш распределителя сверх брони отдаём: превью SAM 3 на 80
     промтов оставляло занятыми 15 ГБ из 16 при брони в 3."""
-    if warm.device in (None, "cpu"):
+    if not warm.indices:
         return
     try:
         import torch
-        if torch.cuda.memory_reserved(warm.device) / (1 << 20) > warm.want:
+        reserved = sum(torch.cuda.memory_reserved(i) for i in set(warm.indices)) / (1 << 20)
+        if reserved > sum(warm.parts):
             torch.cuda.empty_cache()
     except Exception:  # noqa: BLE001
         pass

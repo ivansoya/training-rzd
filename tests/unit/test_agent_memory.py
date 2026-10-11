@@ -139,6 +139,38 @@ def test_без_карт_не_запустится():
     assert am.verdict(100, {"mb": 100, "label": "x"}, [])["state"] == am.NEVER
 
 
+# ---- делёж по картам (решения 10.10.2026) ------------------------------------
+UNITS = [{"label": "SAM 3 · вход 1008", "mb": 8830}, {"label": "YOLOE-l", "mb": 4340},
+         {"label": "Уточнение SAM", "mb": 640}]
+
+
+def test_целиком_не_влезает_блоки_по_двум_картам():
+    # 13,8 ГБ на картах по 11 ГБ: SAM 3 на одну, YOLOE и SAM2 на другую.
+    got = am.verdict(13810, UNITS[0], [card("A", cap=11263), card("B", cap=11263)], UNITS)
+    assert got["state"] == am.SPLIT and got["ready"] and got["cards"] == 2
+    assert got["parts"] == [8830, 4340, 640]
+    assert [u["label"] for u in got["placement"][0]["units"]] == ["SAM 3 · вход 1008"]
+
+
+def test_карты_под_делёж_заняты_значит_ждать_их():
+    # Решение владельца: ждать карты под делёж, а не уходить поочерёдно на одну.
+    got = am.verdict(13810, UNITS[0], [card("A", cap=11263, free=3000), card("B", cap=11263, free=3000)], UNITS)
+    assert got["state"] == am.SPLIT and not got["ready"]
+    assert "ждёт 2 карты" in got["reason"]
+
+
+def test_одна_карта_делёж_невозможен_поочерёдно():
+    got = am.verdict(13810, UNITS[0], [card("A", cap=11263)], UNITS)
+    assert got["state"] == am.SEQUENTIAL
+
+
+def test_замер_растит_блоки_в_той_же_доле():
+    # Прогон намерил 20 ГБ против прикидки 13,8 — каждый блок просится больше.
+    got = am.verdict(20000, UNITS[0], [card("A", cap=15000), card("B", cap=15000)], UNITS)
+    assert got["state"] == am.SPLIT
+    assert sum(got["parts"]) >= 20000 and got["parts"][0] > 8830
+
+
 def test_подпись_различает_порцию_и_режим():
     doc = {"nodes": [sam3("t", 8)]}
     assert am.signature(doc, {"t": 4}) != am.signature(doc, {"t": 1})

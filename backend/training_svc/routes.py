@@ -98,6 +98,25 @@ def list_models():
     })
 
 
+@bp.get("/api/models/vram")
+def model_vram():
+    """«≈ X ГБ на карту» в окне обучения — та же оценка, что у запуска (`trainer.vram_want`)."""
+    db, _user, err = _me()
+    if err:
+        return err
+    try:
+        args = request.args
+        try:
+            imgsz, batch, gpus = (int(args.get(k) or d) for k, d in (("imgsz", 640), ("batch", 16), ("gpus", 1)))
+        except ValueError:
+            return jsonify({"error": "Размер входа, батч и число карт — целые числа."}), 400
+        want, source, _sig = trainer.vram_want(db, args.get("model") or "", args.get("task") or "detect",
+                                               imgsz, batch, gpus)
+        return jsonify({"want_mb": want, "source": source})
+    finally:
+        db.close()
+
+
 # --------------------------------------------------------------------------- #
 # Железо
 # --------------------------------------------------------------------------- #
@@ -538,6 +557,16 @@ def start_run(code):
         params = trainer.filter_params(data.get("params") or {})
         for key in ("epochs", "imgsz", "batch", "patience"):
             params.setdefault(key, trainer.PARAM_SPEC[key]["default"])
+        # Карт больше, чем работает на сервере, обучение не дождётся никогда.
+        gpus = int(params.get("gpus") or 1)
+        if gpus > 1:
+            live_cards = len(gpu.capacities(db))
+            problem = trainer.gpus_problem(params["batch"], gpus) or (
+                f"На сервере работает карт: {live_cards}, а просили {gpus}." if gpus > live_cards else None)
+            if problem:
+                return jsonify({"error": problem}), 400
+        else:
+            params.pop("gpus", None)
 
         # Набор из графа уже аугментирован на диске — встроенные аугментации
         # YOLO к нему не применяются, что бы ни пришло в запросе. Режим

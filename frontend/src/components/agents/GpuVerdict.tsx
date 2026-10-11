@@ -7,15 +7,29 @@ import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes } fr
 import * as api from "../../api/agents";
 import { Icon, cx, type IconName } from "../../ui";
 import { count } from "../ru";
+import { cardList } from "../shell/useGpuState";
 
 export const gb = (mb: number) => (mb / 1024).toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
-export const VERDICT: Record<api.VerdictState, { icon: IconName; word: string; tone: string }> = {
-  fits: { icon: "ok", word: "влезает", tone: "ok" },
-  wait: { icon: "clock", word: "придётся ждать", tone: "wait" },
-  sequential: { icon: "layers", word: "только поочерёдно", tone: "seq" },
-  never: { icon: "ban", word: "не запустится", tone: "no" },
+interface Look { icon: IconName; word: string; tone: string; color: string }
+
+export const VERDICT: Record<api.VerdictState, Look> = {
+  fits: { icon: "ok", word: "влезает", tone: "ok", color: "var(--st-done)" },
+  wait: { icon: "clock", word: "придётся ждать", tone: "wait", color: "var(--st-skip)" },
+  split: { icon: "split", word: "по картам", tone: "split", color: "var(--c4)" },
+  sequential: { icon: "layers", word: "только поочерёдно", tone: "seq", color: "var(--c1)" },
+  never: { icon: "ban", word: "не запустится", tone: "no", color: "var(--destructive)" },
 };
+
+/** Вид вердикта. Делёж по картам (решения 10.10.2026) — с числом карт; заняты — «ждёт», а не «по картам»:
+ *  поочерёдно на одной такой прогон не уходит. */
+export function verdictLook(v: api.Verdict): Look {
+  if (v.state !== "split") return VERDICT[v.state];
+  const n = v.cards ?? v.placement?.length ?? 2;
+  return v.ready
+    ? { ...VERDICT.split, word: `на ${n} ${n % 10 === 1 && n % 100 !== 11 ? "карте" : "картах"}` }
+    : { ...VERDICT.wait, word: `ждёт ${count(n, "карту", "карты", "карт")}` };
+}
 
 /** Подробность вердикта одной строкой: где влезает, сколько свободно, что мешает. */
 export function verdictDetail(est: Pick<api.Estimate, "verdict" | "cards" | "queued" | "heaviest" | "total_mb">): string {
@@ -29,6 +43,9 @@ export function verdictDetail(est: Pick<api.Estimate, "verdict" | "cards" | "que
   }
   if (v.state === "wait") {
     return `свободно ${gb(free)} из ${gb(cap)}${est.queued ? `, впереди ${count(est.queued, "работа", "работы", "работ")}` : ""}`;
+  }
+  if (v.state === "split") {
+    return v.ready ? `блоки на картах ${cardList((v.placement ?? []).map((p) => p.index))}` : "карты заняты, ждёт их все сразу";
   }
   if (v.state === "sequential") return `самый тяжёлый узел ${gb(est.heaviest?.mb ?? 0)} из ${gb(cap)}, медленнее`;
   return `${est.heaviest?.label ?? "узел"} один ${gb(est.heaviest?.mb ?? est.total_mb)} — больше ${gb(cap)}`;
@@ -53,7 +70,7 @@ export const VerdictChip = forwardRef<HTMLButtonElement, {
       <span className="ae-vd idle"><Icon name="cpu" size={15} /><span>{busy ? "считаю память…" : "память — после правки"}</span></span>
     );
   }
-  const look = VERDICT[est.verdict.state];
+  const look = verdictLook(est.verdict);
   const tail = source ? (est.measured ? `замер, ${count(est.measured, "запуск", "запуска", "запусков")}` : "прикидка")
     : verdictDetail(est);
   const body = (
@@ -75,6 +92,7 @@ export const VerdictChip = forwardRef<HTMLButtonElement, {
 /** Окно «Ресурсы»: карты и память по узлам; самый тяжёлый узел — цветом числа. */
 export function ResourcesPanel({ est }: { est: api.Estimate }) {
   const sum = est.units.map((u) => gb(u.mb)).join(" + ");
+  const split = est.verdict.state === "split";
   return (
     <div className="ae-res">
       <div className="ae-res-h">
@@ -85,20 +103,28 @@ export function ResourcesPanel({ est }: { est: api.Estimate }) {
       <section>
         <div className="ae-res-l"><span>Карты</span><em>считает сервер, без имён держателей</em></div>
         {est.cards.length === 0 && <p className="t-xs t-muted">На сервере нет видеокарт — агенты не запустятся.</p>}
+        {split && <p className="t-xs t-muted">{est.verdict.reason}</p>}
         {est.cards.map((c) => {
           const used = c.cap_mb - c.free_mb;
+          // Делёж: у карты — только её блоки; иначе весь агент просится на любую.
+          const placed = split ? est.verdict.placement?.find((p) => p.index === c.index) : undefined;
+          const need = split ? (placed?.units.reduce((s, u) => s + u.mb, 0) ?? 0) : est.verdict.want_mb;
           return (
             <div key={c.id} className="ae-res-card">
-              <div className="ae-res-r"><b>{short(c.name)}</b><span className="t-xs t-muted">под задачи {gb(c.cap_mb)} ГБ</span></div>
+              <div className="ae-res-r"><b>{est.cards.length > 1 ? `Карта ${c.index} · ` : ""}{short(c.name)}</b>
+                <span className="t-xs t-muted">под задачи {gb(c.cap_mb)} ГБ</span></div>
               <div className="ae-res-bar" aria-hidden="true">
                 <i style={{ width: `${(used / Math.max(1, c.cap_mb)) * 100}%` }} />
                 <s style={{ left: `${Math.min(100, (used / Math.max(1, c.cap_mb)) * 100)}%`,
-                  width: `${Math.min(100 - (used / Math.max(1, c.cap_mb)) * 100, (est.verdict.want_mb / Math.max(1, c.cap_mb)) * 100)}%` }} />
+                  width: `${Math.min(100 - (used / Math.max(1, c.cap_mb)) * 100, (need / Math.max(1, c.cap_mb)) * 100)}%` }} />
               </div>
               <div className="t-xs t-muted">
-                свободно {gb(c.free_mb)} из {gb(c.cap_mb)} · агенту нужно {gb(est.verdict.want_mb)}
+                свободно {gb(c.free_mb)} из {gb(c.cap_mb)}{need ? ` · ${split ? "ляжет" : "агенту нужно"} ${gb(need)}` : ""}
                 {est.queued ? ` · в очереди ${count(est.queued, "работа", "работы", "работ")}` : ""}
               </div>
+              {placed?.units.map((u) => (
+                <div key={u.label} className="ae-res-u"><span className="t-ell">{u.label}</span><b>{gb(u.mb)} ГБ</b></div>
+              ))}
             </div>
           );
         })}

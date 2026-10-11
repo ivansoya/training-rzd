@@ -57,6 +57,31 @@ def test_призраки_это_старые_записи_той_же_карт�
     assert got == [ghost1, ghost2]
 
 
+def test_uuid_torch_27_без_приставки_узнаёт_запись_от_nvidia_smi():
+    # 11.10.2026: torch 2.7 дал «0cc67fd8-…», запись хранила «GPU-0cc67fd8-…» — карта
+    # подхватила выключенного призрака без UUID, и живая карта оказалась выключенной.
+    real = Row("old", 0, "RTX 3060", uuid="GPU-0cc67fd8-fb04-d70a-3165-56a21c973d01", seen=NOW)
+    ghost = Row("older", 0, "RTX 3060", seen=NOW - timedelta(days=9), enabled=False)
+    item = dict(CARD, uuid="0cc67fd8-fb04-d70a-3165-56a21c973d01")
+    assert gpu.choose_row([ghost, real], item, "new") is real
+
+
+def test_из_двойников_по_uuid_берётся_включённый():
+    on = Row("a", 0, "RTX 3060", uuid="GPU-abc", seen=NOW - timedelta(days=1))
+    off = Row("b", 0, "RTX 3060", uuid="abc", seen=NOW, enabled=False)
+    assert gpu.choose_row([off, on], CARD, "c") is on
+    # Включённый двойник, который не выбран, — призрак той же карты.
+    assert gpu.ghosts_of([on, Row("d", 0, "RTX 3060", uuid="ABC", seen=NOW)], on, CARD)[0].host == "d"
+
+
+def test_текст_ошибки_nvml_вместо_uuid_это_отсутствие_uuid():
+    # Так на voran запись хранила «Failed to initialize NVML: Unknown Error» вместо UUID.
+    assert gpu.norm_uuid("Failed to initialize NVML: Unknown Error") is None
+    assert gpu.norm_uuid("GPU-9C68DAA8-84e8") == gpu.norm_uuid("9c68daa8-84e8") == "9c68daa8-84e8"
+    broken = Row("c1", 0, "RTX 3060", uuid="Failed to initialize NVML: Unknown Error", seen=NOW)
+    assert gpu.choose_row([broken], dict(CARD, uuid="GPU-new"), "c2") is broken
+
+
 def test_карта_которую_давно_не_видели_не_считается_живой():
     assert gpu.fresh_enough(NOW - timedelta(seconds=299), NOW, 300)
     assert not gpu.fresh_enough(NOW - timedelta(seconds=301), NOW, 300)

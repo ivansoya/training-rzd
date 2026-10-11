@@ -747,7 +747,7 @@ button.acl-sw:focus-visible { outline: 2px solid var(--ring); outline-offset: 2p
 .ar-prog { flex: 0 1 220px; min-width: 120px; }
 
 /* Влезет ли агент на карту: плашка вердикта и окно «Ресурсы» (GpuVerdict.tsx).
-   Цвет — по вердикту: зелёный влезает, жёлтый ждать, сиреневый поочерёдно, красный не запустится. */
+   Цвет — по вердикту: зелёный влезает, жёлтый ждать, сиреневый по картам, синий поочерёдно, красный не запустится. */
 .ae-vd {
   --vd: var(--faint);
   display: inline-flex; align-items: center; gap: 7px; min-width: 0; max-width: 460px; height: 28px; padding: 0 10px 0 8px;
@@ -762,7 +762,8 @@ button.ae-vd:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px
 .ae-vd > b { font: 600 12.5px var(--mono); font-variant-numeric: tabular-nums; }
 .ae-vd.ok { --vd: var(--st-done); }
 .ae-vd.wait { --vd: var(--st-skip); }
-.ae-vd.seq { --vd: var(--c4); }
+.ae-vd.split { --vd: var(--c4); }
+.ae-vd.seq { --vd: var(--c1); }
 .ae-vd.no { --vd: var(--destructive); }
 .ae-vd.idle { color: var(--muted-fg); }
 .ae-vd.busy { opacity: .75; }
@@ -783,6 +784,9 @@ button.ae-vd:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px
 .ae-res-u { display: grid; grid-template-columns: minmax(0, 1fr) 64px; align-items: center; gap: 12px; min-height: 30px; font-size: 13px; }
 .ae-res-u > b { font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 .ae-res-u.sum { border-top: 1px solid var(--border); padding-top: 6px; font-weight: 500; }
+/* Делёж по картам: блоки этой карты — под её полосой, мельче, чем «По узлам» */
+.ae-res-card > .ae-res-u { min-height: 22px; padding-left: 12px; font-size: 12.5px; color: var(--muted-fg); }
+.ae-res-card > .ae-res-u > b { font-weight: 500; color: var(--fg); }
 .ae-res-u.sum > span { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
 .ae-res-u.sum em { font-style: normal; font-weight: 400; font-size: 12px; color: var(--faint); font-variant-numeric: tabular-nums; }
 /* Самый тяжёлый узел — цветом числа, без слов */
@@ -798,7 +802,8 @@ button.ae-vd:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px
 .ar-opt-v > .ui-ic { color: var(--vd); }
 .ar-opt-v.ok { --vd: var(--st-done); }
 .ar-opt-v.wait { --vd: var(--st-skip); }
-.ar-opt-v.seq { --vd: var(--c4); }
+.ar-opt-v.split { --vd: var(--c4); }
+.ar-opt-v.seq { --vd: var(--c1); }
 .ar-opt-v.no { --vd: var(--destructive); }
 .ar-vd { max-width: 300px; }
 .ar-why {
@@ -810,7 +815,8 @@ button.ae-vd:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px
 .ar-why b { color: var(--fg); font-weight: 500; }
 .ar-why p { margin: 0 0 6px; }
 .ar-why.wait { --vd: var(--st-skip); }
-.ar-why.seq { --vd: var(--c4); }
+.ar-why.split { --vd: var(--c4); }
+.ar-why.seq { --vd: var(--c1); }
 .ar-why.no { --vd: var(--destructive); border-color: color-mix(in srgb, var(--destructive) 45%, var(--border)); background: color-mix(in srgb, var(--destructive) 7%, var(--bg)); }
 
 /* «Агенты» проекта: таблица подключённых как в «Аугментациях», журнал как в «Участниках» и «Обучениях». */

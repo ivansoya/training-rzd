@@ -955,6 +955,7 @@ class GpuLease(Base):
         sa.Index("ix_gpu_leases_held", "device_id", "status"),
         sa.Index("ix_gpu_leases_queue", "queue_priority", "created_at"),
         sa.Index("ix_gpu_leases_ref", "ref_id"),
+        sa.Index("ix_gpu_leases_group", "group_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
@@ -990,6 +991,16 @@ class GpuLease(Base):
     reason: Mapped[str | None] = mapped_column(sa.String(200))
     # Подпись задачи для чужих глаз в очереди: «Обучение «Вагоны · ночь v3»».
     title: Mapped[str | None] = mapped_column(sa.String(160))
+    # Задача на нескольких картах (решения 10.10.2026): по броне на часть, выдаются
+    # все разом или ни одна. `spread` — каждая часть на своей карте (обучение на
+    # нескольких картах); иначе части ложатся плотно (агент по блокам узлов).
+    group_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    part: Mapped[int | None] = mapped_column(sa.SmallInteger)
+    spread: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
+    # Что из задачи лежит в этой части: «SAM 3 · вход 1008».
+    label: Mapped[str | None] = mapped_column(sa.String(80))
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, default=utcnow
     )

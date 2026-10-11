@@ -26,26 +26,24 @@ import subprocess
 from datetime import timedelta, timezone
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 
 # Правила допуска зовут как gpu.fits и gpu.signature — снаружи диспетчер один,
 # а то, что его считающее ядро лежит отдельно, знают только тесты.
+import uuid
+
 from common.gpu_rules import (  # noqa: F401
-    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, pick_device, signature,
+    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, norm_uuid, pick_device, place, signature,
 )
 from common.models import (
-    AgentRun, GpuDevice, GpuLease, GpuUsageHint, ModelCheck, TrainRun, utcnow,
+    AgentRun, DataprepJob, GpuDevice, GpuLease, GpuUsageHint, ModelCheck, TrainRun, utcnow,
 )
 
 # Аренда и её продление. Аренда вчетверо длиннее удара сердца: одна пропущенная
-# отметка (заминка на томе, сборка мусора) не должна отнимать карту.
+# отметка (заминка на томе, сборка мусора) не должна отнимать карту. Ждущая бронь
+# отмечается тем же пульсом: без отметок дольше аренды очередь брошена.
 LEASE_SECONDS = int(os.environ.get("GPU_LEASE", "120"))
 BEAT_EVERY = float(os.environ.get("GPU_BEAT", "30"))
-# Брошенная очередь: вкладку закрыли, а бронь осталась стоять.
-QUEUE_TTL = int(os.environ.get("GPU_QUEUE_TTL", "3600"))
-# Сколько ждёт бронь, прежде чем начать придерживать место под себя. Без этого
-# крупное обучение не стартует никогда: мелкие работы будут пролезать вперёд
-# бесконечно, и каждая по отдельности будет права.
-STARVE_SECONDS = int(os.environ.get("GPU_STARVE", "600"))
 
 # Работы под потолком «сколько тяжёлых на карту». Обучение — да: два по памяти
 # влезут, но станут вдвое медленнее каждое, и оба человека решат, что сервер
@@ -60,6 +58,10 @@ BUSY_KINDS = ("train", "agent")
 # одна RTX 3060 значилась тремя, и диспетчер честно был готов пустить на неё
 # три обучения. Экран железа призраков показывает — с давностью.
 STALE_SECONDS = int(os.environ.get("GPU_STALE", "300"))
+# Карта, которую видели за эту неделю, известна: выключена она или молчит — обучение
+# падает с ошибкой, а не уходит на процессор (так voran считал на процессоре до 10.10.2026).
+# Старше — призрак чужой машины из дампа, машина без карт снова считает процессором.
+KNOWN_SECONDS = int(os.environ.get("GPU_FORGET", str(7 * 24 * 3600)))
 
 ACTIVE = ("queued", "held")
 
@@ -110,11 +112,20 @@ def discover(db, host=None):
     for item in found:
         rows = db.execute(select(GpuDevice)).scalars().all()
         row = choose_row(rows, item, host)
+        uuid_ = norm_uuid(item["uuid"])
+        # Двойник той же карты (UUID с приставкой и без) уступает UUID и выключается:
+        # уникальность не дала бы записать его выбранной, а включённая пара снова
+        # раздавала бы одну карту дважды.
+        for twin in rows:
+            if twin is not row and uuid_ and norm_uuid(twin.uuid_str) == uuid_:
+                twin.uuid_str = None
+                twin.enabled = False
+        db.flush()
         if row is None:
             row = GpuDevice(
                 host=host,
                 device_index=item["index"],
-                uuid_str=item["uuid"],
+                uuid_str=uuid_,
                 name=item["name"],
                 total_mb=item["total_mb"],
             )
@@ -126,8 +137,8 @@ def discover(db, host=None):
             row.device_index = item["index"]
             row.name = item["name"]
             row.total_mb = item["total_mb"]
-            if item["uuid"]:
-                row.uuid_str = item["uuid"]
+            if uuid_:
+                row.uuid_str = uuid_
         row.seen_at = utcnow()
         db.flush()
         ids.append(row.id)
@@ -147,7 +158,8 @@ def note_sam2(db, device_uuid, mb) -> bool:
     стенде — она и есть.
     """
     rows = db.execute(select(GpuDevice).where(GpuDevice.enabled.is_(True))).scalars().all()
-    row = next((r for r in rows if device_uuid and r.uuid_str == device_uuid), None)
+    want = norm_uuid(device_uuid)
+    row = next((r for r in rows if want and norm_uuid(r.uuid_str) == want), None)
     if row is None and len(rows) == 1:
         row = rows[0]
     if row is None:
@@ -207,7 +219,13 @@ def remember(db, kind, sig, peak_mb):
     hint.last_mb = peak_mb
     hint.high_mb = max(peak_mb, int(round(hint.high_mb * 0.95)))
     hint.updated_at = utcnow()
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # Первый замер той же подписи записал сосед — дописываем в его строку.
+        # Иначе падение здесь оставляло бронь держателя висеть до конца аренды.
+        db.rollback()
+        remember(db, kind, sig, peak_mb)
 
 
 # --------------------------------------------------------------------------- #
@@ -219,7 +237,7 @@ def request(db, *, holder, kind, want_mb, ref_id=None, project_id=None,
     lease = GpuLease(
         holder=holder, kind=kind, ref_id=ref_id, project_id=project_id,
         user_id=user_id, want_mb=int(want_mb), queue_priority=priority,
-        title=title, status="queued",
+        title=title, status="queued", lease_until=utcnow() + timedelta(seconds=LEASE_SECONDS),
     )
     db.add(lease)
     db.commit()
@@ -227,19 +245,74 @@ def request(db, *, holder, kind, want_mb, ref_id=None, project_id=None,
     if not _any_device(db):
         # Карт нет вовсе. Для работы, которая умеет на процессоре, это не
         # отказ, а разрешение: диспетчер просто ничего не ограничивает.
-        lease.status = "held" if allow_cpu else "denied"
+        # Карты есть, но выключены или молчат, — отказ: это поломка, а не машина без карт.
+        known = known_devices(db)
+        cpu = allow_cpu and not known
+        lease.status = "held" if cpu else "denied"
         lease.granted_mb = 0
-        lease.granted_at = utcnow() if allow_cpu else None
-        lease.lease_until = (
-            utcnow() + timedelta(seconds=LEASE_SECONDS) if allow_cpu else None
-        )
-        lease.reason = None if allow_cpu else "На сервере нет видеокарт."
+        lease.granted_at = utcnow() if cpu else None
+        lease.lease_until = utcnow() + timedelta(seconds=LEASE_SECONDS) if cpu else None
+        lease.reason = None if cpu else (
+            "Видеокарты сервера выключены или не отвечают." if known else "На сервере нет видеокарт.")
         db.commit()
         return lease
 
     try_grant(db, lease.id)
     db.refresh(lease)
     return lease
+
+
+def request_group(db, *, holder, kind, parts, spread, labels=None, ref_id=None,
+                  project_id=None, user_id=None, priority=50, title=None):
+    """Задача на нескольких картах: по броне на часть, выдаются все разом или ни одна.
+
+    Возвращает первую часть — дальше с ней обращаются как с обычной бронью:
+    пульс, отпуск и снятие действуют на всю группу. На процессоре такие задачи
+    не идут: без карт группа сразу отказана."""
+    if len(parts) == 1:
+        lease = request(db, holder=holder, kind=kind, want_mb=parts[0], ref_id=ref_id, project_id=project_id,
+                        user_id=user_id, priority=priority, allow_cpu=False, title=title)
+        if labels:
+            lease.label = labels[0][:80]
+            db.commit()
+        return lease
+    group, now = uuid.uuid4(), utcnow()
+    leases = [GpuLease(
+        holder=holder, kind=kind, ref_id=ref_id, project_id=project_id, user_id=user_id,
+        want_mb=int(want), queue_priority=priority, title=title, status="queued",
+        group_id=group, part=i, spread=spread, label=(labels[i][:80] if labels else None), created_at=now,
+        lease_until=now + timedelta(seconds=LEASE_SECONDS),
+    ) for i, want in enumerate(parts)]
+    db.add_all(leases)
+    db.commit()
+    if not _any_device(db):
+        reason = ("Видеокарты сервера выключены или не отвечают." if known_devices(db)
+                  else "На сервере нет видеокарт.")
+        for lease in leases:
+            lease.status, lease.reason = "denied", reason
+        db.commit()
+        return leases[0]
+    try_grant(db, leases[0].id)
+    db.refresh(leases[0])
+    return leases[0]
+
+
+def known_devices(db) -> bool:
+    """Карты на этой машине есть, даже если сейчас выключены или молчат."""
+    since = utcnow() - timedelta(seconds=KNOWN_SECONDS)
+    return db.execute(select(GpuDevice.id).where(GpuDevice.seen_at >= since).limit(1)).first() is not None
+
+
+def group_of(db, lease, lock=False):
+    """Все брони задачи по порядку частей; у одиночной — она сама.
+    `lock` — перечитать под замком строк: выдача видит отмену, сделанную после её чтения."""
+    if lease.group_id is None and not lock:
+        return [lease]
+    key = GpuLease.id == lease.id if lease.group_id is None else GpuLease.group_id == lease.group_id
+    query = select(GpuLease).where(key).order_by(GpuLease.part)
+    if lock:
+        query = query.with_for_update().execution_options(populate_existing=True)
+    return db.execute(query).scalars().all()
 
 
 def capacity_mb(db) -> int:
@@ -262,7 +335,7 @@ def capacity_mb(db) -> int:
 def cards(db):
     """Живые карты без имён держателей — это видит каждый, кто собирает агента:
     вердикт «влезет ли» без потолка и свободного места не объяснить.
-    [{id, index, name, cap_mb, free_mb}], свободное — без придержанного под ждущих."""
+    [{id, index, name, cap_mb, free_mb}]."""
     devices, held, _heavy, _busy = _load_state(db, lock=False)
     return [{
         "id": str(d.id),
@@ -273,10 +346,23 @@ def cards(db):
     } for d in devices]
 
 
+def capacities(db) -> list[int]:
+    """Потолки живых карт: влезет ли задача на нескольких картах в принципе."""
+    devices, _held, _heavy, _busy = _load_state(db, lock=False)
+    return [for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb) for d in devices]
+
+
 def queued_count(db) -> int:
+    """Сколько задач ждёт: группа — одна задача."""
     return int(db.execute(
-        select(func.count(GpuLease.id)).where(GpuLease.status == "queued")
+        select(func.count(GpuLease.id)).where(
+            GpuLease.status == "queued", (GpuLease.group_id.is_(None)) | (GpuLease.part == 0))
     ).scalar() or 0)
+
+
+def group_indices(db, lease):
+    """Номера карт для torch по частям задачи; у одиночной — один номер."""
+    return [torch_index(db, part) for part in group_of(db, lease)]
 
 
 def torch_index(db, lease):
@@ -292,9 +378,10 @@ def torch_index(db, lease):
         return None
     if dev.host == host_name():
         return dev.device_index
-    uuids = _smi_uuids()
-    if dev.uuid_str and dev.uuid_str in uuids:
-        return uuids.index(dev.uuid_str)
+    uuids = [norm_uuid(u) for u in _smi_uuids()]
+    want = norm_uuid(dev.uuid_str)
+    if want and want in uuids:
+        return uuids.index(want)
     return dev.device_index
 
 
@@ -344,76 +431,61 @@ def _load_state(db, lock=True, include_stale=False):
     return devices, held, heavy, busy
 
 
-def _pledged(db, lease):
-    """Память, придержанная под тех, кто ждёт дольше этой брони."""
-    cutoff = utcnow() - timedelta(seconds=STARVE_SECONDS)
-    rows = db.execute(
-        select(GpuLease).where(
-            GpuLease.status == "queued",
-            GpuLease.id != lease.id,
-            GpuLease.created_at <= cutoff,
-            GpuLease.created_at < lease.created_at,
-        )
-    ).scalars().all()
-    return sum(r.want_mb for r in rows)
+def _cards(devices, held, heavy, busy):
+    return [{
+        "id": d.id, "index": d.device_index, "total": d.total_mb, "reserved": d.reserved_mb,
+        "sam2": d.sam2_reserve_mb, "held": held.get(d.id, 0),
+        "heavy": heavy.get(d.id, 0), "max_heavy": d.max_heavy, "busy": busy.get(d.id, 0),
+    } for d in devices]
 
 
 def try_grant(db, lease_id) -> bool:
-    """Выдать бронь, если влезает. False — осталась в очереди, причина записана."""
+    """Выдать задачу, если влезает: все её брони разом или ни одну.
+    False — осталась в очереди, причина записана в каждую часть."""
     lease = db.get(GpuLease, lease_id)
     if lease is None or lease.status != "queued":
         return False
 
     devices, held, heavy, busy = _load_state(db)
-    if not devices:
+    # Карты заперты — выдаёт один. Части читаем уже под замком: прочитанные до него
+    # могли устареть, и две выдачи одной задачи посадили бы её на две карты.
+    parts = group_of(db, lease, lock=True)
+    now = utcnow()
+    # Ждущий давно не отмечался — он брошен: выданное ему простояло бы до конца аренды.
+    abandoned = parts[0].lease_until is not None and _aware(parts[0].lease_until) < now
+    if not devices or abandoned or any(p.status != "queued" for p in parts):
         db.commit()
         return False
 
-    pledged = _pledged(db, lease)
+    cards = _cards(devices, held, heavy, busy)
     heavy_request = lease.kind in HEAVY_KINDS
-    reasons, ok = [], []
-    for dev in devices:
-        why = fits(
-            total_mb=dev.total_mb,
-            reserved_mb=dev.reserved_mb,
-            sam2_mb=dev.sam2_reserve_mb,
-            held_mb=held.get(dev.id, 0),
-            pledged_mb=pledged,
-            heavy=heavy.get(dev.id, 0),
-            max_heavy=dev.max_heavy,
-            want_mb=lease.want_mb,
-            heavy_request=heavy_request,
-        )
-        if why is None:
-            free = for_tasks_mb(dev.total_mb, dev.reserved_mb, dev.sam2_reserve_mb) - held.get(dev.id, 0)
-            ok.append((dev.id, free - lease.want_mb, busy.get(dev.id, 0)))
-        else:
-            reasons.append(f"карта {dev.device_index}: {why}")
-    chosen = pick_device(ok, heavy_request or lease.kind in BUSY_KINDS)
-    if chosen is not None:
-        lease.device_id = chosen
-        lease.granted_mb = lease.want_mb
-        lease.status = "held"
-        lease.granted_at = utcnow()
-        lease.lease_until = utcnow() + timedelta(seconds=LEASE_SECONDS)
-        lease.reason = None
-        db.commit()
-        return True
-
-    lease.reason = "; ".join(reasons)[:200]
+    chosen, why = place([p.want_mb for p in parts], cards, spread=bool(lease.spread),
+                        heavy_request=heavy_request, busy_kind=heavy_request or lease.kind in BUSY_KINDS)
+    for part, device_id in zip(parts, chosen or [None] * len(parts)):
+        if device_id is None:
+            part.reason = why[:200]
+            continue
+        part.device_id = device_id
+        part.granted_mb = part.want_mb
+        part.status = "held"
+        part.granted_at = now
+        part.lease_until = now + timedelta(seconds=LEASE_SECONDS)
+        part.reason = None
     db.commit()
-    return False
+    return chosen is not None
 
 
 def pump(db, limit=32) -> int:
     """Раздать освободившееся место очереди.
 
-    Идём по очереди, но на неудаче не останавливаемся: мелкая работа должна
-    уехать на свободную вторую карту, а не стоять за крупной, которая ждёт
-    первую. От бесконечного обгона крупных защищает ``_pledged``.
+    Идём по очереди, но на неудаче не останавливаемся: что влезает, идёт сразу,
+    а не стоит за крупной задачей. Места под ждущих не придерживаем (решение
+    11.10.2026): застрявшую крупную выручает человек на «Оборудовании».
+    Задача на нескольких картах пробуется один раз — первой своей частью.
     """
     queued = db.execute(
-        select(GpuLease).where(GpuLease.status == "queued")
+        select(GpuLease).where(
+            GpuLease.status == "queued", (GpuLease.group_id.is_(None)) | (GpuLease.part == 0))
         .order_by(GpuLease.queue_priority, GpuLease.created_at)
         .limit(limit)
     ).scalars().all()
@@ -425,10 +497,15 @@ def pump(db, limit=32) -> int:
 
 
 def beat(db, lease_id, peak_mb=None):
+    """Продлить аренду — всей задаче: держатель один, и пульс у него один.
+    Ждущий отмечается так же — иначе его сочтут брошенным."""
     lease = db.get(GpuLease, lease_id)
-    if lease is None or lease.status != "held":
+    if lease is None or lease.status not in ACTIVE:
         return
-    lease.lease_until = utcnow() + timedelta(seconds=LEASE_SECONDS)
+    until = utcnow() + timedelta(seconds=LEASE_SECONDS)
+    for part in group_of(db, lease):
+        if part.status in ACTIVE:
+            part.lease_until = until
     if peak_mb is not None:
         lease.peak_mb = max(lease.peak_mb or 0, int(peak_mb))
     db.commit()
@@ -440,9 +517,12 @@ def release(db, lease_id, peak_mb=None):
         return
     if peak_mb is not None:
         lease.peak_mb = max(lease.peak_mb or 0, int(peak_mb))
-    lease.status = "released"
-    lease.released_at = utcnow()
-    lease.lease_until = None
+    now = utcnow()
+    for part in group_of(db, lease):
+        if part.status in ACTIVE:
+            part.status = "released"
+            part.released_at = now
+            part.lease_until = None
     db.commit()
     pump(db)
 
@@ -451,34 +531,43 @@ def cancel(db, lease_id, reason="Снято"):
     lease = db.get(GpuLease, lease_id)
     if lease is None or lease.status not in ACTIVE:
         return
-    lease.status = "cancelled"
-    lease.reason = reason[:200]
-    lease.released_at = utcnow()
-    lease.lease_until = None
+    now = utcnow()
+    for part in group_of(db, lease):
+        if part.status in ACTIVE:
+            part.status = "cancelled"
+            part.reason = reason[:200]
+            part.released_at = now
+            part.lease_until = None
     db.commit()
     pump(db)
 
 
 def reap(db) -> int:
-    """Вернуть память, которую держит призрак, и убрать брошенную очередь."""
+    """Вернуть память, которую держит призрак, и убрать брошенную очередь.
+    Часть задачи просрочена — держателя нет у всей задачи."""
     now = utcnow()
     freed = 0
     for lease in db.execute(
         select(GpuLease).where(GpuLease.status == "held")
-    ).scalars():
-        if lease.lease_until is not None and _aware(lease.lease_until) < now:
-            lease.status = "expired"
-            lease.released_at = now
-            lease.reason = "Держатель не отозвался в срок."
-            freed += 1
-    stale = now - timedelta(seconds=QUEUE_TTL)
+    ).scalars().all():
+        if lease.status == "held" and lease.lease_until is not None and _aware(lease.lease_until) < now:
+            for part in group_of(db, lease):
+                if part.status == "held":
+                    part.status = "expired"
+                    part.released_at = now
+                    part.reason = "Держатель не отозвался в срок."
+                    freed += 1
+    # Брошенная очередь: ждущий не отмечался дольше аренды (воркер упал, работу бросили).
+    # Не по возрасту: живой ждущий стоит сколько угодно, и «сколько ждёт» не сбрасывается.
     for lease in db.execute(
         select(GpuLease).where(
-            GpuLease.status == "queued", GpuLease.created_at < stale
+            GpuLease.status == "queued",
+            GpuLease.lease_until.is_(None) | (GpuLease.lease_until < now),
         )
-    ).scalars():
+    ).scalars().all():
         lease.status = "cancelled"
         lease.reason = "Никто не ждёт эту работу."
+        lease.released_at = now
         freed += 1
     if freed:
         db.commit()
@@ -494,6 +583,13 @@ def devices_view(db, holders=True):
     `holders=False` — без держателей, для тех, у кого нет права на оборудование."""
     _live, held, heavy, _busy = _load_state(db, lock=False, include_stale=True)
     devices = db.execute(select(GpuDevice).order_by(GpuDevice.device_index)).scalars().all()
+    index_of = {d.id: d.device_index for d in devices}
+    # Задача на нескольких картах: у каждой её части — номера всех её карт.
+    spans = {}
+    if holders:
+        for row in db.execute(select(GpuLease).where(
+                GpuLease.status == "held", GpuLease.group_id.isnot(None))).scalars():
+            spans.setdefault(row.group_id, []).append(index_of.get(row.device_id))
     now = utcnow()
     out = []
     for dev in devices:
@@ -532,6 +628,8 @@ def devices_view(db, holders=True):
                     "project_id": str(r.project_id) if r.project_id else None,
                     "ref_id": str(r.ref_id) if r.ref_id else None,
                     "granted_at": r.granted_at.isoformat() if r.granted_at else None,
+                    "label": r.label,
+                    "cards": sorted(i for i in spans.get(r.group_id, []) if i is not None) if r.group_id else None,
                 }
                 for r in rows
             ],
@@ -556,7 +654,8 @@ def position_of(db, lease_id):
         return None
     ahead = db.execute(
         select(func.count(GpuLease.id)).where(
-            GpuLease.status == "queued", _earlier_than(lease)
+            GpuLease.status == "queued", _earlier_than(lease),
+            (GpuLease.group_id.is_(None)) | (GpuLease.part == 0),
         )
     ).scalar()
     return int(ahead or 0) + 1
@@ -567,12 +666,18 @@ def queue_view(db, *, user_id=None, staff=False):
 
     Свои строки видит каждый — иначе ожидание необъяснимо. Чужие подробности
     видит только обслуживание: кто именно занял карту, обычному человеку знать
-    незачем, а вот «впереди двое» знать надо.
+    незачем, а вот «впереди двое» знать надо. Задача на нескольких картах —
+    одна строка с частями.
     """
-    rows = db.execute(
+    every = db.execute(
         select(GpuLease).where(GpuLease.status == "queued")
-        .order_by(GpuLease.queue_priority, GpuLease.created_at)
+        .order_by(GpuLease.queue_priority, GpuLease.created_at, GpuLease.part)
     ).scalars().all()
+    parts = {}
+    for r in every:
+        if r.group_id is not None:
+            parts.setdefault(r.group_id, []).append(r.want_mb)
+    rows = [r for r in every if r.group_id is None or r.part == 0]
     now = utcnow()
     mine, everything = [], []
     for i, r in enumerate(rows, 1):
@@ -581,7 +686,8 @@ def queue_view(db, *, user_id=None, staff=False):
             "position": i,
             "kind": r.kind,
             "title": r.title,
-            "want_mb": r.want_mb,
+            "want_mb": sum(parts[r.group_id]) if r.group_id else r.want_mb,
+            "parts": parts[r.group_id] if r.group_id else None,
             "waiting_seconds": int((now - _aware(r.created_at)).total_seconds()),
             "reason": r.reason,
             "mine": bool(user_id and r.user_id == user_id),
@@ -626,7 +732,8 @@ def kill(db, lease_id) -> bool:
     if lease is None:
         return False
     # Без прогона за бронью (превью, образцы) гасить некому — бронь просто отменяется.
-    for model in (TrainRun, ModelCheck, AgentRun) if lease.ref_id else ():
+    # Счёт признаков снимается своей работой: одна бронь гасла, а счёт шёл дальше мимо учёта.
+    for model in (TrainRun, ModelCheck, AgentRun, DataprepJob) if lease.ref_id else ():
         row = db.get(model, lease.ref_id)
         if row is not None:
             row.cancel_requested = True

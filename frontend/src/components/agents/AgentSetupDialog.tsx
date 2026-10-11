@@ -11,7 +11,7 @@ import { Button, Dialog, Empty, Field, LinkButton, Notice, Select } from "../../
 import { count } from "../ru";
 import type { AgentToolState } from "../editor/AgentTool";
 import ClassMap, { guess, useAutoMapped } from "./ClassMap";
-import { VERDICT } from "./GpuVerdict";
+import { verdictLook } from "./GpuVerdict";
 
 export default function AgentSetupDialog({ taskId, tool, onClose, onRunAll }: {
   taskId: string;
@@ -81,7 +81,7 @@ export default function AgentSetupDialog({ taskId, tool, onClose, onRunAll }: {
                   setAgentId(v);
                   setVersionId(ctx.agents.find((a) => a.id === v)?.head ?? "");
                 }} options={ctx.agents.map((a) => ({ value: a.id, label: a.name,
-                  hint: `${a.group === "project" ? "подключён к проекту" : "мой"} · ${VERDICT[a.verdict.state].word}` }))} />}
+                  hint: `${a.group === "project" ? "подключён к проекту" : "мой"} · ${verdictLook(a.verdict).word}` }))} />}
               </Field>
               <Field label="Версия">
                 {(id) => <Select id={id} full label="Версия" value={version.id} onChange={setVersionId}
