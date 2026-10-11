@@ -60,11 +60,12 @@ class _Warm:
         self.queued = None  # бронь, стоящая в очереди: следующий запрос ждёт её, а не новую
 
     def drop(self, db):
-        if self.lease_id:
-            gpu.release(db, self.lease_id)
+        lease = self.lease_id
         self.lease_id, self.indices, self.keys, self.parts = None, [], None, []
         self.nets, self.sams, self.texts, self.sam3 = {}, {}, {}, {}
-        agent_runner._free()
+        agent_runner._free()  # память — прежде брони: иначе её получит следующий, пока она ещё за нами
+        if lease:
+            gpu.release(db, lease)
 
     def unqueue(self, db):
         if self.queued:

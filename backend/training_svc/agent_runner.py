@@ -23,6 +23,7 @@
 человек мог открыть и сохранить кадр, пока агент шёл к нему.
 """
 import ctypes
+import gc
 import logging
 import os
 import threading
@@ -298,7 +299,7 @@ def run_held(db, run_id, ctx):
     run = db.get(AgentRun, run_id)
     doc, mode, info, want = ctx["doc"], ctx["mode"], ctx["info"], ctx["want"]
     peak = 0
-    tick = None
+    tick = work = None
     try:
         weights = {nid: db.get(AgentWeights, wid) for nid, wid in ctx["weights"].items()}
         sets = examples.rows_for(db, ctx["owner"], doc)
@@ -332,10 +333,13 @@ def run_held(db, run_id, ctx):
     finally:
         if tick is not None:
             tick.close()
+        # Модели прогона — до кэша torch и до брони: живыми они оставались за процессом (на voran 2,8 ГБ
+        # без единой брони), а бронь уже отдавала их память следующему (замер 11.10.2026).
+        work = None
+        _free()
         if peak:
             gpu.remember(db, "agent", ctx["sig"], peak)
         gpu.release(db, ctx["lease_id"], peak_mb=peak or None)
-        _free()
 
 
 def _gb(mb):
@@ -1105,6 +1109,7 @@ def _allocated_mb(device):
 
 
 def _free():
+    gc.collect()  # модели ultralytics сидят в циклах ссылок — без сборки кэш torch их блоки не отдаст
     try:
         import torch
         if torch.cuda.is_available():

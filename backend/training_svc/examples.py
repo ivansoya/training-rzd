@@ -360,8 +360,8 @@ def _answer(db, row):
         row.error = None
         build(db, row, device)
     finally:
+        agent_runner._free()  # память — прежде брони, как у прогона
         gpu.release(db, lease.id)
-        agent_runner._free()
     return True
 
 
