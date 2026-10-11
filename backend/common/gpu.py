@@ -33,7 +33,8 @@ from sqlalchemy.exc import IntegrityError
 import uuid
 
 from common.gpu_rules import (  # noqa: F401
-    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, norm_uuid, pick_device, place, signature,
+    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, norm_uuid, pick_device, place, settle_hint,
+    signature,
 )
 from common.models import (
     AgentRun, DataprepJob, GpuDevice, GpuLease, GpuUsageHint, ModelCheck, TrainRun, utcnow,
@@ -198,17 +199,19 @@ def estimate(db, kind, sig, fallback_mb):
     return int(fallback_mb), "прикидка"
 
 
-def remember(db, kind, sig, peak_mb):
+def remember(db, kind, sig, peak_mb, shared=False):
     """Запомнить фактический расход.
 
     Растёт мгновенно, оседает медленно, и асимметрия нарочная: недооценка
     стоит нехватки памяти посреди трёхчасового обучения, переоценка — минут
-    ожидания. Хвост дороже середины.
+    ожидания. Хвост дороже середины. `shared` — замер снят при соседе в том же
+    процессе и несёт его память: такой не ложится поверх одиночного (`settle_hint`).
     """
     peak_mb = int(peak_mb or 0)
     if peak_mb <= 0:
         return
     hint = db.get(GpuUsageHint, (kind, sig))
+    old = (None, False) if hint is None else (hint.high_mb, hint.shared)
     if hint is None:
         hint = GpuUsageHint(
             kind=kind, signature=sig, samples=0,
@@ -217,7 +220,7 @@ def remember(db, kind, sig, peak_mb):
         db.add(hint)
     hint.samples += 1
     hint.last_mb = peak_mb
-    hint.high_mb = max(peak_mb, int(round(hint.high_mb * 0.95)))
+    hint.high_mb, hint.shared = settle_hint(*old, peak_mb, bool(shared))
     hint.updated_at = utcnow()
     try:
         db.commit()
@@ -225,7 +228,7 @@ def remember(db, kind, sig, peak_mb):
         # Первый замер той же подписи записал сосед — дописываем в его строку.
         # Иначе падение здесь оставляло бронь держателя висеть до конца аренды.
         db.rollback()
-        remember(db, kind, sig, peak_mb)
+        remember(db, kind, sig, peak_mb, shared)
 
 
 # --------------------------------------------------------------------------- #

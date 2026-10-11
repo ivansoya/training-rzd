@@ -112,6 +112,21 @@ def place(parts, cards, *, spread, heavy_request, busy_kind):
     return chosen, None
 
 
+def settle_hint(old_mb, old_shared, new_mb, new_shared):
+    """Записанный замер после нового: (МБ, снят ли при соседе).
+
+    Вариант «А» (решение 11.10.2026): замер с соседом несёт и его память — поверх одиночного он не
+    ложится, а одиночный сменяет соседский сразу. Замеры одного рода — как прежде: вверх сразу,
+    вниз на 5 % за раз (недооценка роняет задачу, переоценка — лишь ожидание)."""
+    if old_mb is None:
+        return new_mb, new_shared
+    if new_shared and not old_shared:
+        return old_mb, old_shared
+    if old_shared and not new_shared:
+        return new_mb, False
+    return max(new_mb, int(round(old_mb * 0.95))), old_shared
+
+
 def signature(kind, **facts) -> str:
     """Отпечаток того, что определяет расход памяти.
 

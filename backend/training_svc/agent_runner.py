@@ -298,7 +298,7 @@ def run_held(db, run_id, ctx):
 
     run = db.get(AgentRun, run_id)
     doc, mode, info, want = ctx["doc"], ctx["mode"], ctx["info"], ctx["want"]
-    peak = 0
+    peak, shared = 0, False
     tick = work = None
     try:
         weights = {nid: db.get(AgentWeights, wid) for nid, wid in ctx["weights"].items()}
@@ -316,7 +316,7 @@ def run_held(db, run_id, ctx):
             _frames(db, run, ids, work, mapping, tick)
         else:
             _videos(db, run, mode, plan, work, mapping, tick)
-        peak = tick.peak()
+        peak, shared = tick.peak(), tick.shared()
         _finish(db, run, "done")
     except Stopped:
         _finish(db, run, "stopped")
@@ -338,7 +338,8 @@ def run_held(db, run_id, ctx):
         work = None
         _free()
         if peak:
-            gpu.remember(db, "agent", ctx["sig"], peak)
+            # После OOM `shared` ложно: подъём ×1,25 обязан лечь и поверх одиночного замера.
+            gpu.remember(db, "agent", ctx["sig"], peak, shared=shared)
         gpu.release(db, ctx["lease_id"], peak_mb=peak or None)
 
 
@@ -873,6 +874,7 @@ def _ticker(db, run, lease_id, devices=(), info=None):
     # Запас 15 %: allocated не видит кэш распределителя. Блоки на разных картах —
     # сумма: столько же агент держал бы на одной.
     tick.peak = lambda: int(sum(w.top for w in watches) * 1.15)
+    tick.shared = lambda: any(w.shared for w in watches)
     tick.measure = measure
     tick.close = close
     tick.check = check

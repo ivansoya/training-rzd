@@ -170,3 +170,14 @@ def test_агент_по_блокам_занимает_меньше_карт():
                      heavy_request=False, busy_kind=True)
     assert why is None
     assert len(set(got)) == 2
+
+
+# ---- замер с соседом и одиночный (вариант «А», 11.10.2026) --------------------------
+def test_замер_с_соседом_не_ложится_поверх_одиночного():
+    from common.gpu_rules import settle_hint
+    assert settle_hint(None, False, 2655, True) == (2655, True)      # первый замер — любой
+    assert settle_hint(700, False, 2655, True) == (700, False)       # 6 YOLOE разом не раздувают 700
+    assert settle_hint(2655, True, 700, False) == (700, False)       # одиночный сменяет сразу
+    assert settle_hint(700, False, 900, False) == (900, False)       # одного рода — вверх сразу
+    assert settle_hint(1000, False, 500, False) == (950, False)      # вниз — на 5 %
+    assert settle_hint(4000, True, 5000, True) == (5000, True)

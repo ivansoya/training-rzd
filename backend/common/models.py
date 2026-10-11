@@ -1030,6 +1030,8 @@ class GpuUsageHint(Base):
     )
     high_mb: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     last_mb: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    # `high_mb` снят при соседе в том же процессе — с его памятью; одиночный замер его сменит.
+    shared: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False, server_default=sa.false())
     updated_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), nullable=False, default=utcnow
     )

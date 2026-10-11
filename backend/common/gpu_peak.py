@@ -35,6 +35,8 @@ class Registry:
     def __init__(self, peak=_torch_peak, allocated=_torch_allocated, reset=_torch_reset):
         self.lock = threading.Lock()
         self.active: dict[str, int] = {}
+        # Сколько раз на карту приходили прогоны: пришедший после нашего сброса мог поднять вершину.
+        self.joins: dict[str, int] = {}
         self.peak, self.allocated, self.reset = peak, allocated, reset
 
     def watch(self, device, base):
@@ -48,24 +50,38 @@ class PeakWatch:
         self.reg, self.device, self.base, self.top = registry, device, base, 0
         self.key = None if device in (None, "cpu") else str(device)
         self.mark = 0
+        # `shared` — пик вырос, пока счётчик мог нести память соседа (вариант «А», 11.10.2026);
+        # `clean_at` — номер прихода на карту, после которого счётчик сброшен нами в одиночку.
+        self.shared, self.clean_at = False, None
         if self.key is None:
             return
         with self.reg.lock:
             self.reg.active[self.key] = self.reg.active.get(self.key, 0) + 1
-            self._safe(self.reg.reset) if self.reg.active[self.key] == 1 else None
+            self.reg.joins[self.key] = self.reg.joins.get(self.key, 0) + 1
+            if self.reg.active[self.key] == 1:
+                self._safe(self.reg.reset)
+                self.clean_at = self.reg.joins[self.key]
             self.mark = self._read(self.reg.peak)
 
     def measure(self):
         if self.key is None:
             return
         with self.reg.lock:
+            alone = self.reg.active.get(self.key) == 1
+            clean = alone and self.clean_at == self.reg.joins.get(self.key)
+            was = self.top
             high = self._read(self.reg.peak)
             if high > self.mark:
                 self.top = max(self.top, high - self.base)
             self.top = max(self.top, self._read(self.reg.allocated) - self.base)
-            if self.reg.active.get(self.key) == 1:
+            if self.top > was and not clean:
+                self.shared = True
+            if alone:
                 self._safe(self.reg.reset)
                 self.mark = self._read(self.reg.peak)
+                self.clean_at = self.reg.joins.get(self.key)
+            else:
+                self.clean_at = None
 
     def close(self):
         if self.key is None:

@@ -93,3 +93,47 @@ def test_закрытие_освобождает_карту():
     assert reg.active["cuda:0"] == 0
     reg.watch("cuda:0", base=0)
     assert reg.active["cuda:0"] == 1
+
+
+# ---- вариант «А» (11.10.2026): замер помнит, снят ли он при соседе ----------------
+def test_один_на_карте_замер_одиночный():
+    card = Card()
+    watch = card.reg().watch("cuda:0", base=0)
+    card.spike(3000)
+    watch.measure()
+    assert watch.top == 3000 and not watch.shared
+
+
+def test_вдвоём_оба_замера_при_соседе():
+    card = Card()
+    reg = card.reg()
+    first, second = reg.watch("cuda:0", base=0), reg.watch("cuda:0", base=0)
+    card.spike(2500)
+    first.measure()
+    second.measure()
+    assert first.shared and second.shared
+
+
+def test_сосед_пришёл_и_ушёл_между_замерами_вершина_его():
+    card = Card()
+    reg = card.reg()
+    mine = reg.watch("cuda:0", base=0)
+    mine.measure()          # одиночный, счётчик сброшен
+    other = reg.watch("cuda:0", base=0)
+    card.spike(6000)        # вершину поднял сосед
+    other.close()
+    mine.measure()          # мы снова одни, но счётчик ещё помнит его вершину
+    assert mine.top == 6000 and mine.shared
+
+
+def test_сосед_не_поднял_нашу_вершину_замер_остаётся_одиночным():
+    card = Card()
+    reg = card.reg()
+    mine = reg.watch("cuda:0", base=0)
+    card.spike(4000)
+    mine.measure()
+    other = reg.watch("cuda:0", base=0)
+    card.spike(1000)        # при соседе — ниже нашей вершины
+    mine.measure()
+    other.close()
+    assert mine.top == 4000 and not mine.shared
