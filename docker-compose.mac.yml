@@ -237,8 +237,9 @@ services:
     container_name: yolo-training-worker
     command: ["python", "-m", "training_svc.worker"]
     restart: unless-stopped
-    # Загрузчик данных обменивается батчами через /dev/shm.
-    shm_size: "2gb"
+    # Загрузчики обмениваются батчами через /dev/shm: обучение yolo11n b16 — до 1,25 ГБ (замер 11.10.2026), два в 2 ГБ
+    # падали с Bus error. Здесь обучения всех карт и ранги DDP; tmpfs берёт память по мере заполнения.
+    shm_size: "8gb"
     environment:
       - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
       # Веса сети признаков качаются один раз и живут на томе.
