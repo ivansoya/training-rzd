@@ -22,6 +22,7 @@
 Каждый кадр — своя транзакция, и статус кадра перечитывается под замком:
 человек мог открыть и сохранить кадр, пока агент шёл к нему.
 """
+import ctypes
 import logging
 import os
 import threading
@@ -689,6 +690,9 @@ def load_text(node, device, sets=None, shared=None):
             predictor = sam3_predictor_class()(overrides=dict(
                 task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
                 imgsz=side, quantize=16, device=device))
+            with _SAM3_BUILD:
+                predictor.setup_model(verbose=False)  # сразу, а не на первом кадре: под замком
+                _trim()
             if shared is not None:
                 shared[side] = predictor
         return Sam3Text(predictor, {s: examples.Crops(sets[s]) for _, s in agent_graph.text_sets(node)})
@@ -1106,6 +1110,21 @@ def _free():
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     except Exception:
+        pass
+    _trim()
+
+
+# SAM 3 собирается на процессоре: чекпойнт 3,45 ГБ читается целиком и модель строится в fp32 —
+# пик 7,3 ГБ памяти хоста на загрузку (замер 11.10.2026). Две разом — вдвое; собираем по одной.
+_SAM3_BUILD = threading.Lock()
+
+
+def _trim():
+    """Отдать системе освобождённое. glibc держит его в арене нити: после выгрузки SAM 3 процесс
+    оставался на 9 ГБ вместо 2, воркер рос до 13 ГБ и 11.10.2026 положил voran вместе с замером."""
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except OSError:
         pass
 
 
