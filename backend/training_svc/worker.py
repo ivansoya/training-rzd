@@ -186,16 +186,16 @@ def start_run(db, run) -> bool:
     imgsz, batch = params.get("imgsz", 640), params.get("batch", 16)
     gpus = max(1, int(params.get("gpus") or 1))
     want, source, sig = trainer.vram_want(db, run.base_model, run.task, imgsz, batch, gpus)
-    problem = trainer.gpus_problem(batch, gpus)
+    problem = None
     # Больше, чем карты отдают под задачи в принципе. Очередь такое не
     # рассосёт: она освобождает чужую память, а не поднимает потолок карты.
     # Раньше ран уходил в ожидание и возвращался сюда снова и снова.
     caps = gpu.capacities(db)
     roomy = sum(1 for cap in caps if cap >= want)
-    if problem is None and caps and gpus == 1 and not roomy:
+    if caps and gpus == 1 and not roomy:
         problem = (f"Не поместится на карту: нужно {gpu._gb(want)}, а под задачи отдаётся "
                    f"{gpu._gb(max(caps))}. Уменьшите батч или размер входа.")
-    elif problem is None and caps and roomy < gpus:
+    elif caps and roomy < gpus:
         problem = (f"Нужно карт: {gpus} по {gpu._gb(want)}, а таких на сервере {roomy}. "
                    "Уменьшите число карт, батч или размер входа.")
     if problem:
@@ -217,7 +217,7 @@ def start_run(db, run) -> bool:
         if gpus > 1:
             lease = gpu.request_group(
                 db, holder="training", kind="train", parts=parts, spread=True,
-                labels=[f"батч {batch // gpus} на карту"] * gpus, ref_id=run.id,
+                labels=[f"батч {batch} на карту"] * gpus, ref_id=run.id,
                 project_id=run.project_id, user_id=run.created_by, priority=40, title=title)
         else:
             lease = gpu.request(

@@ -169,7 +169,9 @@ export function paramGroups(run: Run, classes: number | null):
     ...(has("imgsz") ? [["Размер кадра", paramText("imgsz", p.imgsz)] as ParamRow] : []),
     ...(classes != null ? [["Классов", String(classes)] as ParamRow] : []),
   ];
-  const train: ParamRow[] = TRAIN_KEYS.filter(has).map((k) => [PARAM_LABEL[k] ?? k, paramText(k, p[k])]);
+  const cards = Number(p.gpus ?? 1);
+  const train: ParamRow[] = TRAIN_KEYS.filter(has).map((k) => [PARAM_LABEL[k] ?? k,
+    k === "batch" && cards > 1 ? `${paramText(k, p[k])} на карту · общий ${paramText(k, Number(p[k]) * cards)}` : paramText(k, p[k])]);
   const c = run.set?.counts;
   const data: ParamRow[] = run.set ? [
     ["Набор", run.set.name],
@@ -181,7 +183,7 @@ export function paramGroups(run: Run, classes: number | null):
     ? AUG_KEYS.filter(has).map((k) => [PARAM_LABEL[k] ?? k, paramText(k, p[k])]) : [];
   const gb = (mb: number) => `${(mb / 1024).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} ГБ`;
   const hw: ParamRow[] = [
-    ["Устройство", run.device == null ? "ещё не выбрано" : run.device === "cpu" ? "процессор" : `карта ${run.device}`],
+    ["Устройство", run.device == null ? "ещё не выбрано" : run.device === "cpu" ? "процессор" : `${run.device.includes(",") ? "карты" : "карта"} ${run.device}`],
     ...(run.peak_vram_mb != null ? [["Пик видеопамяти", gb(run.peak_vram_mb)] as ParamRow] : []),
     ["Время эпох", duration(run.train_seconds)],
   ];

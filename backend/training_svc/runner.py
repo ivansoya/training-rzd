@@ -172,6 +172,9 @@ def main():
             device=device, plots=False, verbose=False, augment=False,
             amp=not is_cpu, cache=False,
         )
+        card_batch = int(overrides.get("batch", 16))
+        if ddp:
+            overrides["batch"] = trainer.ultra_batch(card_batch, len(str(device).split(",")))
         if resume:
             overrides["resume"] = True
         results = model.train(trainer=progress_lib.trainer_for(run.task), **overrides)
@@ -212,7 +215,7 @@ def main():
         if ddp:
             # Проверка идёт одним процессом на первой карте брони — с батчем одной карты.
             device = "cuda:0"
-            overrides["batch"] = max(1, int(overrides.get("batch", 16)) // len(run.device.split(",")))
+            overrides["batch"] = card_batch
         got = _final_metrics(model, data_yaml, device, overrides, out_dir)
         if got.get("error"):
             run.per_class = {"rows": [], "totals": None, "error": got["error"]}

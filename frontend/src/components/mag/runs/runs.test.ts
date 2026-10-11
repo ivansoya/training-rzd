@@ -86,6 +86,10 @@ describe("страница прогона", () => {
     expect(paramGroups(run({ params: { augment_mode: "graph", mosaic: 1 } }), null).some((x) => x.title === "Аугментации YOLO")).toBe(false);
     expect(yoloAugChips(r.params)).toEqual(["Мозаика", "Отражение"]);
     expect(yoloAugChips({ augment_mode: "off", mosaic: 1 })).toEqual([]);
+    const ddp = paramGroups(run({ params: { batch: 16, gpus: 2 }, device: "2,5" }), null);
+    const rows = (title: string) => ddp.find((x) => x.title === title)!.rows;
+    expect(rows("Обучение")).toContainEqual(["Батч", "16 на карту · общий 32"]);
+    expect(rows("Железо")).toContainEqual(["Устройство", "карты 2,5"]);
   });
 
   it("подписи кривых по порогу", () => {

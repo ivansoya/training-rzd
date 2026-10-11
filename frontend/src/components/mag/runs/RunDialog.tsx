@@ -94,13 +94,13 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
   const setValue = (key: string, value: ParamValue) => setValues((v) => ({ ...v, [key]: value }));
   const augChanged = AUG_KEYS.some((k) => values[k] !== undefined && values[k] !== augDefaults[k]);
 
-  // Несколько карт на одно обучение (решения 10.10.2026): по выбору, по умолчанию одна; батч общий,
-  // как в ultralytics, — каждой карте достаётся батч / число карт, ждёт все карты сразу.
+  // Несколько карт на одно обучение: по выбору, по умолчанию одна, ждёт все карты сразу; батч — на каждую
+  // карту (решение 11.10.2026). Выше общего 64 ultralytics перестаёт копить шаги — учится иначе, чем на одной.
   const live = useGpuState()?.cards.length ?? 0;
   const gpus = Math.min(Math.max(1, Number(values.gpus ?? 1)), Math.max(1, live));
   const batch = Number(values.batch ?? 16);
   const imgsz = Number(values.imgsz ?? 640);
-  const even = batch % gpus === 0;
+  const total = batch * gpus;
   const [vram, setVram] = useState<{ want_mb: number; source: string } | null>(null);
   const seq = useRef(0);
   useEffect(() => {
@@ -173,7 +173,7 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
       desc="Обучение встанет в очередь и начнётся, когда освободится карта"
       footer={<>
         <Button variant="ghost" onClick={onClose}>Отмена</Button>
-        <Button variant="primary" icon="play" disabled={busy || !model || !set || !even} onClick={start}>
+        <Button variant="primary" icon="play" disabled={busy || !model || !set} onClick={start}>
           {busy ? "Ставлю в очередь…" : "Запустить"}
         </Button>
       </>}>
@@ -216,12 +216,13 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
                   <Seg size="sm" label="Карт на обучение" value={String(gpus)} onChange={(v) => setValue("gpus", Number(v))}
                     options={Array.from({ length: live }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))} />
                   <span className="rn-gpu-l">
-                    {gpus === 1 ? "одна карта" : <>батч {batch} — <b>по {even ? batch / gpus : "?"} на карту</b> · ждёт <b>{count(gpus, "карту", "карты", "карт")} сразу</b></>}
+                    {gpus === 1 ? "одна карта" : <><b>по {batch} на карту</b> · общий батч {total} · ждёт <b>{count(gpus, "карту", "карты", "карт")} сразу</b></>}
                     {vram && <> · <b>≈ {gb(vram.want_mb)} ГБ</b>{gpus > 1 ? " на карту" : ""}</>}
                   </span>
                 </div>
-                {!even && (
-                  <Notice tone="warn">Батч {batch} не делится на число карт ({gpus}) — поставьте {Math.floor(batch / gpus) * gpus || gpus} или {Math.ceil(batch / gpus) * gpus}.</Notice>
+                {total > 64 && (
+                  <Notice tone="warn">Общий батч {total} больше 64 — обучение пойдёт иначе, чем на одной карте.
+                    Как на одной — батч до {Math.max(1, Math.floor(64 / gpus))} на карту.</Notice>
                 )}
               </section>
             )}

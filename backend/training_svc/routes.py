@@ -561,10 +561,8 @@ def start_run(code):
         gpus = int(params.get("gpus") or 1)
         if gpus > 1:
             live_cards = len(gpu.capacities(db))
-            problem = trainer.gpus_problem(params["batch"], gpus) or (
-                f"На сервере работает карт: {live_cards}, а просили {gpus}." if gpus > live_cards else None)
-            if problem:
-                return jsonify({"error": problem}), 400
+            if gpus > live_cards:
+                return jsonify({"error": f"На сервере работает карт: {live_cards}, а просили {gpus}."}), 400
         else:
             params.pop("gpus", None)
 

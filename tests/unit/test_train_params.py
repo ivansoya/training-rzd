@@ -39,6 +39,16 @@ def test_прикидка_памяти_знает_yolo26():
     assert trainer.estimate_vram("yolo26m-seg", "segment", 640, 16) == 11000
 
 
+def test_батч_на_каждую_карту():
+    # Каждой карте — батч целиком плюс обмен градиентами; ultralytics делит общий на карты сам.
+    one = trainer.card_vram("yolo11n", "detect", 640, 16, 1)
+    assert one == trainer.estimate_vram("yolo11n", "detect", 640, 16)
+    assert trainer.card_vram("yolo11n", "detect", 640, 16, 2) == one + trainer.DDP_EXTRA_MB
+    assert trainer.ultra_batch(16, 2) == 32
+    assert trainer.ultra_batch(7, 3) == 21
+    assert trainer.ultra_batch(16, 1) == 16
+
+
 # --------------------------------------------------------------------------- #
 # Параметры
 # --------------------------------------------------------------------------- #
