@@ -28,17 +28,24 @@
 Рамка, пришедшая со своим `id`, сохраняет и сам `id`. Иначе после первого же
 сохранения у всех рамок кадра были бы новые номера, редактор слал бы старые,
 и второе сохранение того же кадра стирало бы авторство агента молча.
+
+Непроверенная рамка с `id`, которого в базе уже нет, не пишется: её стёрли
+очисткой или прогоном, а устаревший редактор вернул бы её проверенной.
 """
 
 
 def settle(existing, incoming, user_id, confirm=False):
     """`existing` — {id: {class_id, ann_type, geometry, source, created_by,
     agent_version_id, pending, reviewed_by}}; `incoming` — [{id, class_id, ann_type, geometry,
-    source}]. Возвращает строки для вставки: те же поля, что у `existing`."""
+    source}]. Возвращает строки для вставки по порядку `incoming`: те же поля, что у
+    `existing`, или None — рамку не писать."""
     used = set()
     rows = []
     for item in incoming:
         old = existing.get(item.get("id"))
+        if old is None and item.get("id") and item.get("pending") and not confirm:
+            rows.append(None)
+            continue
         if old is not None and item["id"] not in used:
             used.add(item["id"])
             same = (old["class_id"] == item["class_id"]

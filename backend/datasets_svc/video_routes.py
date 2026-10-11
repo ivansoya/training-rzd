@@ -1141,14 +1141,15 @@ def put_frame_boxes(task_id, video_id, frame_no):
         # проверку, а не в датасет. Прежде `source` брался у клиента, а версия
         # агента терялась на первом же сохранении кадра.
         # «Подтвердить кадр» идёт тем же сохранением: оставшиеся рамки агента проверены.
-        settled = attribution.settle(existing, fresh, user.id, confirm=bool(json_body().get("confirm")))
+        settled = [r for r in attribution.settle(existing, fresh, user.id,
+                                                  confirm=bool(json_body().get("confirm"))) if r]
         db.execute(VideoAnnotation.__table__.delete().where(*single))
         for row in settled:
             ann_id = _uuid_or_none(row.pop("id"))
             db.add(VideoAnnotation(video_id=video.id, track_id=None, frame_no=frame_no,
                                    **row, **({"id": ann_id} if ann_id else {})))
         db.commit()
-        return jsonify({"saved": len(fresh), "pending": sum(1 for r in settled if r["pending"])})
+        return jsonify({"saved": len(settled), "pending": sum(1 for r in settled if r["pending"])})
     finally:
         db.close()
 

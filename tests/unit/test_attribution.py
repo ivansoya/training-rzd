@@ -134,3 +134,26 @@ def test_нетронутая_на_проверке_никем_не_принят
 def test_своя_рамка_не_принимается():
     [row] = settle({}, [_in(None)], EDITOR)
     assert row["reviewed_by"] is None
+
+
+# --------------------------------------------------------------------------- #
+# Устаревший редактор (11.10.2026): рамку агента стёрли, пока кадр был открыт
+# --------------------------------------------------------------------------- #
+def test_стёртая_непроверенная_не_воскресает():
+    rows = settle({}, [_in("стёртая", pending=True), _in(None, pending=True)], EDITOR)
+    assert rows[0] is None
+    # без id — новая рамка, как прежде: флаг клиент не ставит
+    assert rows[1]["pending"] is False
+
+
+def test_стёртую_принял_или_поправил_человек_она_его():
+    [accepted] = settle({}, [_in("стёртая", pending=False)], EDITOR)
+    assert accepted["source"] == "human" and accepted["pending"] is False
+    [kept] = settle({}, [_in("стёртая", pending=True)], EDITOR, confirm=True)
+    assert kept is not None and kept["pending"] is False
+
+
+def test_копия_непроверенной_не_пропадает():
+    first, copy = settle({"a": _old(pending=True)}, [_in("a", pending=True), _in("a", pending=True)], EDITOR)
+    assert first["pending"] is True
+    assert copy is not None and copy["agent_version_id"] is None

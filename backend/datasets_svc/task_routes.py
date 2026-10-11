@@ -1537,20 +1537,22 @@ def _save_annotations(db, image_id):
         Annotation.__table__.delete().where(Annotation.image_id == image.id)
     )
     written = []
-    for item, row in zip(fresh, settled):
+    for pos, item, row in zip(positions, fresh, settled):
+        if row is None:
+            continue
         # Номер рамки прежний, если она пришла со своим: по нему редактор
         # узнаёт её при следующем сохранении.
         ann_id = _uuid_or_none(row.pop("id"))
         ann = Annotation(image_id=image.id, area=item["area"], **row,
                          **({"id": ann_id} if ann_id else {}))
         db.add(ann)
-        written.append(ann)
+        written.append((pos, ann))
 
     # Статус кадра идёт за проверенным содержимым: есть рамка человека или
     # проверенная агентова — размечен; стёрли всё — снова нетронутый, если его
     # не откладывали осознанно. Одно непроверенное агента кадр не размечает:
     # «размечен» — это решение человека. У забракованного статус не трогаем.
-    checked = any(not row["pending"] for row in settled)
+    checked = any(not ann.pending for _, ann in written)
     if image.task_id and image.task_status != "deleted":
         if checked:
             image.task_status = "annotated"
@@ -1565,9 +1567,9 @@ def _save_annotations(db, image_id):
     # id и автор — по порядку присланного (null — фигура отброшена): без id
     # клиента каждая запись считалась бы новой рамкой, и settle не работал.
     saved = [None] * len(data["boxes"])
-    for pos, ann in zip(positions, written):
+    for pos, ann in written:
         saved[pos] = {"id": str(ann.id), "source": ann.source, "pending": ann.pending}
-    return jsonify({"saved": len(fresh), "clamped": clamped, "shapes": saved,
+    return jsonify({"saved": len(written), "clamped": clamped, "shapes": saved,
                     "task_status": image.task_status, "rev": image.annotations_rev})
 
 
