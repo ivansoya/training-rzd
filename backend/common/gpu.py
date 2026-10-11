@@ -579,10 +579,14 @@ def reap(db) -> int:
 # Что видно снаружи
 # --------------------------------------------------------------------------- #
 def devices_view(db, holders=True):
-    """Все карты, и выключенные: иначе выключенную негде включить обратно.
+    """Все карты, и выключенные: иначе выключенную негде включить обратно. Кроме выключенных,
+    которых не видели дольше `GPU_FORGET`: это призраки старых записей (решение 11.10.2026).
     `holders=False` — без держателей, для тех, у кого нет права на оборудование."""
     _live, held, heavy, _busy = _load_state(db, lock=False, include_stale=True)
-    devices = db.execute(select(GpuDevice).order_by(GpuDevice.device_index)).scalars().all()
+    now = utcnow()
+    devices = db.execute(select(GpuDevice).where(
+        GpuDevice.enabled | (GpuDevice.seen_at >= now - timedelta(seconds=KNOWN_SECONDS))
+    ).order_by(GpuDevice.device_index)).scalars().all()
     index_of = {d.id: d.device_index for d in devices}
     # Задача на нескольких картах: у каждой её части — номера всех её карт.
     spans = {}
@@ -590,7 +594,6 @@ def devices_view(db, holders=True):
         for row in db.execute(select(GpuLease).where(
                 GpuLease.status == "held", GpuLease.group_id.isnot(None))).scalars():
             spans.setdefault(row.group_id, []).append(index_of.get(row.device_id))
-    now = utcnow()
     out = []
     for dev in devices:
         used = held.get(dev.id, 0)
