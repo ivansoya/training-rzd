@@ -48,8 +48,10 @@ from datasets_svc.materialize import collect, frame_is_free
 from datasets_svc.task_routes import (
     _clamp_box,
     _drop_files,
+    _can,
     _log,
-    _may_work,
+    _ping,
+    _refusal,
     _resolve_task,
     _uuid_or_none,
 )
@@ -93,28 +95,26 @@ def _resolve_track(track_id, needed="editor"):
     track = db.get(VideoTrack, tid) if tid else None
     if track is None:
         db.close()
-        return None, None, None, (jsonify({"error": "Трек не найден."}), 404)
+        return None, None, None, None, (jsonify({"error": "Трек не найден."}), 404)
     video = db.get(TaskVideo, track.video_id)
     db.close()
     if video is None:
-        return None, None, None, (jsonify({"error": "Видео не найдено."}), 404)
+        return None, None, None, None, (jsonify({"error": "Видео не найдено."}), 404)
     db, task, project, user, role, err = _resolve_task(str(video.task_id), needed)
     if err:
-        return None, None, None, err
-    if not _may_work(task, user, role):
+        return None, None, None, None, err
+    denied = _refusal(task, user, role)
+    if denied:
         db.close()
-        return None, None, None, (jsonify({"error": "Это не ваша таска."}), 403)
-    if task.status == "closed":
-        db.close()
-        return None, None, None, (jsonify({"error": "Таска закрыта, разметка заморожена."}), 409)
+        return None, None, None, None, denied
     if video.annotation_closed_at is not None:
         db.close()
-        return None, None, None, (jsonify({"error": CLOSED_VIDEO}), 409)
+        return None, None, None, None, (jsonify({"error": CLOSED_VIDEO}), 409)
     busy = video_busy.refusal(video.id)
     if busy:
         db.close()
-        return None, None, None, busy
-    return db, task, db.get(VideoTrack, tid), None
+        return None, None, None, None, busy
+    return db, task, db.get(VideoTrack, tid), user, None
 
 
 # Закрытая разметка ролика — событие, после которого правят уже кадры таски.
@@ -129,10 +129,9 @@ def _writable(task, user, role, video, edit=True):
     ``edit=False`` — для действий над самим закрытием (закрыть, открыть
     заново, убрать кадры): закрытый ролик им не помеха, а предмет работы.
     """
-    if not _may_work(task, user, role):
-        return jsonify({"error": "Это не ваша таска."}), 403
-    if task.status == "closed":
-        return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
+    denied = _refusal(task, user, role)
+    if denied:
+        return denied
     if video.mode != "annotate":
         return jsonify({"error": "Это видео загружено для нарезки на кадры."}), 409
     if edit and video.annotation_closed_at is not None:
@@ -596,6 +595,18 @@ def _class_index(db, project):
     ).all())
 
 
+def _frame_revs(db, video_id, lo=None, hi=None):
+    """Версия одиночной разметки кадров ролика: {кадр: «число.время последней записи»}.
+    Сохранение кадра вставляет строки заново, так что любая запись меняет время;
+    у кадра без фигур версии нет (None). Запись поверх чужой правки — 409 `stale`."""
+    A = VideoAnnotation
+    q = select(A.frame_no, func.count(A.id), func.max(A.created_at)).where(
+        A.video_id == video_id, A.track_id.is_(None))
+    if lo is not None:
+        q = q.where(A.frame_no >= lo, A.frame_no < hi)
+    return {f: f"{n}.{int(at.timestamp() * 1e6)}" for f, n, at in db.execute(q.group_by(A.frame_no))}
+
+
 def _singles_json(db, rows, by_index):
     """Одиночные фигуры ролика в виде редактора — общий вид для всей разметки и для куска."""
     agents = attribution.agent_names(db, {r.agent_version_id for r in rows if r.agent_version_id})
@@ -678,12 +689,13 @@ def video_annotations(task_id, video_id):
             "tracks": out,
             "materialized": {str(k): str(v) for k, v in materialized.items()},
             "empty_frames": sorted(int(f) for f in (video.empty_frames or [])),
-            "editable": _may_work(task, user, role) and task.status != "closed"
+            "editable": _can(task, user, role)
                         and video.mode == "annotate"
                         and video.annotation_closed_at is None,
         }
         if whole:
             data["singles"] = _singles_json(db, [r for r in rows if r.track_id is None], by_index)
+            data["revs"] = _frame_revs(db, video.id)
         else:
             # По сводке редактор режет ролик на куски и сразу знает кадры на проверке.
             A = VideoAnnotation
@@ -715,7 +727,8 @@ def video_singles(task_id, video_id):
             select(A).where(A.video_id == video.id, A.track_id.is_(None), A.frame_no >= lo, A.frame_no < hi)
             .order_by(A.frame_no)
         ).scalars().all()
-        return jsonify({"from": lo, "to": hi, "singles": _singles_json(db, rows, _class_index(db, project))})
+        return jsonify({"from": lo, "to": hi, "singles": _singles_json(db, rows, _class_index(db, project)),
+                        "revs": _frame_revs(db, video.id, lo, hi)})
     finally:
         db.close()
 
@@ -779,6 +792,7 @@ def create_track(task_id, video_id):
         )
         db.add(key)
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(video.id))
         track.class_index = cls.class_index
         return jsonify(_track_json(track, [key])), 201
     finally:
@@ -788,7 +802,7 @@ def create_track(task_id, video_id):
 @bp.patch("/api/video-tracks/<track_id>")
 def update_track(track_id):
     """Настройки трека: класс, интерполяция, шаг выгрузки, кадр исчезновения."""
-    db, task, track, err = _resolve_track(track_id)
+    db, task, track, user, err = _resolve_track(track_id)
     if err:
         return err
     try:
@@ -846,6 +860,7 @@ def update_track(track_id):
                     )
                 )
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(track.video_id))
 
         keys = db.execute(
             select(VideoAnnotation).where(VideoAnnotation.track_id == track.id)
@@ -861,12 +876,13 @@ def update_track(track_id):
 
 @bp.delete("/api/video-tracks/<track_id>")
 def delete_track(track_id):
-    db, task, track, err = _resolve_track(track_id)
+    db, task, track, user, err = _resolve_track(track_id)
     if err:
         return err
     try:
         db.delete(track)
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(track.video_id))
         return jsonify({"deleted": True})
     finally:
         db.close()
@@ -879,7 +895,7 @@ def put_key(track_id, frame_no):
     Он же переключает видимость: заслонённый объект остаётся в треке, но с
     этого кадра и до следующего ключевого в разметку не идёт.
     """
-    db, task, track, err = _resolve_track(track_id)
+    db, task, track, user, err = _resolve_track(track_id)
     if err:
         return err
     try:
@@ -962,6 +978,7 @@ def put_key(track_id, frame_no):
             if track.end_frame is not None:
                 track.end_frame = max(track.end_frame, frame_no)
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(track.video_id))
 
         keys = db.execute(
             select(VideoAnnotation).where(VideoAnnotation.track_id == track.id)
@@ -1010,7 +1027,7 @@ def hide_span(track_id):
     незачем. Четыре отдельных запроса оставляли бы на дорожке ключи без зоны
     при первом же обрыве связи.
     """
-    db, task, track, err = _resolve_track(track_id)
+    db, task, track, user, err = _resolve_track(track_id)
     if err:
         return err
     try:
@@ -1069,6 +1086,7 @@ def hide_span(track_id):
             (track.hidden_ranges or []) + [[frm, to]]
         )
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(track.video_id))
 
         keys = db.execute(
             select(VideoAnnotation).where(VideoAnnotation.track_id == track.id)
@@ -1084,7 +1102,7 @@ def hide_span(track_id):
 @bp.delete("/api/video-tracks/<track_id>/keys/<int:frame_no>")
 def drop_key(track_id, frame_no):
     """Снять ключевой кадр. Последний снять нельзя — трек остался бы пустым."""
-    db, task, track, err = _resolve_track(track_id)
+    db, task, track, user, err = _resolve_track(track_id)
     if err:
         return err
     try:
@@ -1106,6 +1124,7 @@ def drop_key(track_id, frame_no):
         track.start_frame = min(k.frame_no for k in rest)
         track.hidden_ranges = tracklib.drop_boundary(track.hidden_ranges or [], frame_no)
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(track.video_id))
         cls = db.get(LabelClass, track.class_id)
         track.class_index = cls.class_index if cls else None
         return jsonify(_track_json(track, rest))
@@ -1171,6 +1190,17 @@ def put_frame_boxes(task_id, video_id, frame_no):
         single = (VideoAnnotation.video_id == video.id,
                   VideoAnnotation.track_id.is_(None),
                   VideoAnnotation.frame_no == frame_no)
+        # Как у кадра таски: клиент шлёт версию, которую видел; без неё (агенты, тесты) — без сверки.
+        # Замок на строку ролика: две записи одного кадра иначе сверились бы с одной версией.
+        db.execute(select(TaskVideo.id).where(TaskVideo.id == video.id).with_for_update())
+        rev = _frame_revs(db, video.id, frame_no, frame_no + 1).get(frame_no)
+        if "rev" in json_body() and json_body()["rev"] != rev:
+            rows = db.execute(select(VideoAnnotation).where(*single)).scalars().all()
+            return jsonify({
+                "error": "Кадр уже изменили — правка поверх чужой стёрла бы её.",
+                "code": "stale", "rev": rev,
+                "singles": _singles_json(db, rows, _class_index(db, project)),
+            }), 409
         existing = {
             str(a.id): {
                 "class_id": a.class_id, "ann_type": a.ann_type,
@@ -1193,7 +1223,9 @@ def put_frame_boxes(task_id, video_id, frame_no):
             db.add(VideoAnnotation(video_id=video.id, track_id=None, frame_no=frame_no,
                                    **row, **({"id": ann_id} if ann_id else {})))
         db.commit()
-        return jsonify({"saved": len(settled), "pending": sum(1 for r in settled if r["pending"])})
+        _ping(db, task.id, task.project_id, user, v=str(video.id), f=frame_no)
+        return jsonify({"saved": len(settled), "pending": sum(1 for r in settled if r["pending"]),
+                        "rev": _frame_revs(db, video.id, frame_no, frame_no + 1).get(frame_no)})
     finally:
         db.close()
 
@@ -1255,6 +1287,7 @@ def take_scout(task_id, video_id):
             db.add(row)
             made.append((row, cls))
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(video.id), f=frame_no)
         return jsonify({"singles": [
             {"id": str(row.id), "frame_no": frame_no, "class_index": cls.class_index,
              "geometry": row.geometry, "shape": shapes.to_wire(row.ann_type, row.geometry),
@@ -1299,6 +1332,7 @@ def mark_empty_frame(task_id, video_id, frame_no):
             marks.add(frame_no)
             video.empty_frames = sorted(marks)
             db.commit()
+            _ping(db, task.id, task.project_id, user, v=str(video.id), f=frame_no)
         return jsonify({"empty_frames": sorted(marks)})
     finally:
         db.close()
@@ -1319,6 +1353,7 @@ def unmark_empty_frame(task_id, video_id, frame_no):
             marks.discard(frame_no)
             video.empty_frames = sorted(marks)
             db.commit()
+            _ping(db, task.id, task.project_id, user, v=str(video.id), f=frame_no)
         return jsonify({"empty_frames": sorted(marks)})
     finally:
         db.close()
@@ -1360,7 +1395,7 @@ def move_key(track_id, frame_no):
     Отдельный маршрут, а не «удалить и поставить»: между двумя запросами трек
     остался бы без ключа, и обрыв связи посередине потерял бы работу руками.
     """
-    db, task, track, err = _resolve_track(track_id)
+    db, task, track, user, err = _resolve_track(track_id)
     if err:
         return err
     try:
@@ -1398,6 +1433,7 @@ def move_key(track_id, frame_no):
             track.hidden_ranges or [], frame_no, target
         )
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(track.video_id))
 
         keys = db.execute(
             select(VideoAnnotation).where(VideoAnnotation.track_id == track.id)
@@ -1527,6 +1563,7 @@ def reopen_annotation(task_id, video_id):
         video.annotation_closed_at = None
         _log(db, task, user, "video_annotation_reopened", file=video.file_name)
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(video.id))
         return jsonify({"reopened": True})
     finally:
         db.close()
@@ -1563,6 +1600,7 @@ def drop_video_frames(task_id, video_id):
         _log(db, task, user, "video_frames_dropped",
              file=video.file_name, removed=removed, kept=kept)
         db.commit()
+        _ping(db, task.id, task.project_id, user, v=str(video.id))
         return jsonify({"removed": removed, "kept_accepted": kept})
     finally:
         db.close()
@@ -1586,10 +1624,9 @@ def clear_agents(task_id):
     if err:
         return err
     try:
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
+        denied = _refusal(task, user, role)
+        if denied:
+            return denied
         data = json_body()
         sources = [str(s) for s in data.get("sources") or []]
         if any(s not in task_frames.SOURCES and _uuid_or_none(s) is None for s in sources):
@@ -1642,6 +1679,7 @@ def clear_agents(task_id):
         place = [SOURCE_WORDS.get(s) or f"«{names.get(s, s)}»" for s in sources]
         _log(db, task, user, "agent_cleared", place=", ".join(place + [f"«{v.file_name}»" for v in videos]), **got)
         db.commit()
+        _ping(db, task.id, task.project_id, user)
         return jsonify(got)
     finally:
         db.close()

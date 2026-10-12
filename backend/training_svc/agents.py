@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 
 from common import (
     agent_access, agent_graph, agent_memory, attribution, config, frame_sizes, gpu, live, settings, shapes,
-    task_frames,
+    task_frames, task_rights,
 )
 from common import scout as scout_lib
 from common.auth import current_user, has_role, project_by_code, role_in
@@ -338,8 +338,11 @@ def _task(db, user, task_id):
 
 
 def _may_work(db, user, task, project):
-    role = role_in(db, user, project)
-    return has_role(role, "editor") and (role == "admin" or task.assignee_id == user.id)
+    """Агент — работа над кадрами: «в работе», исполнителям и админу (`common.task_rights`)."""
+    return task_rights.can_edit(task.status, role_in(db, user, project), user.id, {u.id for u in task.assignees})
+
+
+NOT_AT_WORK = "Агента зовут, когда таска в работе."
 
 
 def _queue_reason(db, run):
@@ -507,7 +510,7 @@ def run_context(task_id):
             "mappings": maps,
             "sources": _source_counts(db, task),
             "runs": [_run_view(db, r) for r in runs],
-            "can_run": _may_work(db, user, task, project) and task.status != "closed",
+            "can_run": _may_work(db, user, task, project),
             "resources": {"cards": cards, "queued": gpu.queued_count(db)},
         })
     finally:
@@ -523,8 +526,8 @@ def start_agent_run(task_id):
         task, project, err = _task(db, user, task_id)
         if err:
             return err
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта."}), 409
+        if task.status not in task_rights.WORK:
+            return jsonify({"error": NOT_AT_WORK}), 409
         if not _may_work(db, user, task, project):
             return jsonify({"error": "Запускать агента можно в своей таске."}), 403
         data = request.get_json(silent=True) or {}
@@ -937,8 +940,8 @@ def apply_agent(task_id):
         task, project, err = _task(db, user, task_id)
         if err:
             return err
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта."}), 409
+        if task.status not in task_rights.WORK:
+            return jsonify({"error": NOT_AT_WORK}), 409
         if not _may_work(db, user, task, project):
             return jsonify({"error": "Звать агента можно в своей таске."}), 403
         data = request.get_json(silent=True) or {}

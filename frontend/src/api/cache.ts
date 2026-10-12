@@ -2,13 +2,16 @@
 // Ключ — с пользователем: на общей машине чужие числа не всплывут.
 
 const PREFIX = "mag.cache.";
+// Форма ответов: сменилась — старый кеш не читаем (12.10.2026: исполнители списком и права таски)
+const SHAPE = 2;
 
 export interface Cached<T> { at: number; v: T }
 
 export function cached<T>(key: string): Cached<T> | null {
   try {
     const raw = window.localStorage.getItem(PREFIX + key);
-    return raw ? (JSON.parse(raw) as Cached<T>) : null;
+    const got = raw ? (JSON.parse(raw) as Cached<T> & { s?: number }) : null;
+    return got?.s === SHAPE ? got : null;
   } catch {
     return null;
   }
@@ -16,7 +19,7 @@ export function cached<T>(key: string): Cached<T> | null {
 
 export function remember<T>(key: string, v: T): void {
   try {
-    window.localStorage.setItem(PREFIX + key, JSON.stringify({ at: Date.now(), v }));
+    window.localStorage.setItem(PREFIX + key, JSON.stringify({ at: Date.now(), v, s: SHAPE }));
   } catch {
     // Хранилище полное или закрыто — живём без кеша
   }

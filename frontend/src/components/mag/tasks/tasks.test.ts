@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TaskCounts, TaskDetail, TaskLight, TaskStats } from "../../../auth/api";
-import { BOARD, boardColumns, buildSources, canMove, closePlan, closeText, dayOf, percentOf, requestOrder, sourceLine, waitingOf } from "./tasks";
+import { boardColumns, buildSources, closePlan, closeText, dayOf, percentOf, requestOrder, sourceLine, teamLine, waitingOf } from "./tasks";
 
 const video = (id: string, mode: string, created = "2026-10-01T10:00:00Z") =>
   ({ id, mode, file_name: `${id}.mp4`, created_at: created, segments: [] }) as never;
@@ -9,7 +9,7 @@ const counts = (c: Partial<TaskCounts>): TaskCounts =>
   ({ total: 0, new: 0, skipped: 0, annotated: 0, empty: 0, deleted: 0, accepted: 0, ...c });
 
 const card = (id: string, status: string, o: Partial<TaskLight> = {}) => ({
-  id, name: id, status, assignee: null, status_at: "2026-10-01T00:00:00Z", last_at: "2026-10-01T00:00:00Z", ...o,
+  id, name: id, status, assignees: [], status_at: "2026-10-01T00:00:00Z", last_at: "2026-10-01T00:00:00Z", ...o,
 }) as TaskLight;
 const stats = (c: Partial<TaskCounts>) => ({ counts: counts(c) }) as TaskStats;
 
@@ -67,7 +67,7 @@ describe("закрытие", () => {
 describe("доска", () => {
   it("раскладывает по состояниям, свежее сверху, фильтр «мои» и поиск", () => {
     const tasks = [
-      card("old", "in_progress", { last_at: "2026-09-01T00:00:00Z", assignee: { id: "me", display_name: "Я" } }),
+      card("old", "in_progress", { last_at: "2026-09-01T00:00:00Z", assignees: [{ id: "ты", display_name: "Ты" }, { id: "me", display_name: "Я" }] }),
       card("new", "in_progress", { last_at: "2026-10-03T00:00:00Z" }),
       card("arch", "closed"),
     ];
@@ -78,13 +78,9 @@ describe("доска", () => {
     expect(boardColumns(tasks, "ARC", null).cols.closed).toHaveLength(1);
   });
 
-  it("перетаскивание — только разрешённые переходы", () => {
-    expect(canMove("queued", "in_progress")).toBe(true);
-    expect(canMove("in_progress", "queued")).toBe(true);
-    expect(canMove("queued", "done")).toBe(false);
-    expect(canMove("done", "in_progress")).toBe(false);
-    expect(canMove("closed", "queued")).toBe(false);
-    expect(BOARD.filter((s) => s !== "closed").every((s) => canMove(s, "closed"))).toBe(true);
+  it("исполнители строкой, пустой состав — ничья", () => {
+    expect(teamLine([{ display_name: "Петров" }, { display_name: "Сидоров" }])).toBe("Петров, Сидоров");
+    expect(teamLine([])).toBe("ничья");
   });
 
   it("ждут решения — только незакрытые", () => {
@@ -97,10 +93,10 @@ describe("доска", () => {
     const me = { id: "me", display_name: "Я" };
     const tasks = [
       card("q1", "queued", { last_at: "2026-10-03T00:00:00Z" }),
-      card("arch", "closed", { assignee: me }),
+      card("arch", "closed", { assignees: [me] }),
       card("w1", "in_progress"),
-      card("d-mine", "done", { assignee: me }),
-      card("q-mine", "queued", { assignee: me, last_at: "2026-09-01T00:00:00Z" }),
+      card("d-mine", "done", { assignees: [me] }),
+      card("q-mine", "queued", { assignees: [me], last_at: "2026-09-01T00:00:00Z" }),
       card("upd", "updating"),
     ];
     expect(requestOrder(tasks, "me")).toEqual(["q-mine", "d-mine", "w1", "q1", "upd", "arch"]);

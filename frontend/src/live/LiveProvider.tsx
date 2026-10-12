@@ -28,6 +28,10 @@ export interface LiveEvent {
   s?: string;             // новое состояние, если оно уместилось
   e?: number;             // номер эпохи
   n?: number;             // сколько кадров прошёл прогон агента
+  u?: string;             // таска: кто правил
+  i?: string;             // таска: какой кадр
+  v?: string;             // таска: какой ролик…
+  f?: number;             // …и какой кадр в нём
 }
 
 type Listener = (event: LiveEvent) => void;

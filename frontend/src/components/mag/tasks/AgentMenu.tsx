@@ -42,6 +42,8 @@ export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup
   label: string;
 }) {
   const clearOff = busy ? "агент уже идёт по таске" : clear?.off;
+  // На очереди в меню только «Удалить»: агента туда не зовут
+  const agentPart = actions.length > 0;
   const [step, setStep] = useState(25);
   const name = tool.agent ? `${tool.agent.name}` : null;
   return (
@@ -49,7 +51,7 @@ export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup
       trigger={<Button variant="ghost" size="sm" icon="more" aria-label={label} title={label} />}>
       {(close) => (
         <>
-          <div className="am-h">
+          {agentPart && <div className="am-h">
             <Icon name="bot" size={14} />
             <span className="am-who t-ell">
               {name ? <>Агент: <b>{name}</b>{tool.version && <span className="ui-mono"> v{tool.version.version}</span>}</>
@@ -57,7 +59,7 @@ export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup
             </span>
             <Button variant="ghost" size="sm" icon="settings" aria-label="Агент таски и классы" title="Агент таски и классы"
               onClick={() => { close(); onSetup(); }} />
-          </div>
+          </div>}
           {actions.map((a) => {
             const why = busy ? "агент уже идёт по таске" : !tool.agent ? "выберите агента ⚙" : a.off;
             return (
@@ -65,14 +67,14 @@ export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup
                 onSelect={() => { close(); a.run(step); }}>{a.label}</MenuItem>
             );
           })}
-          {withStep && (
+          {agentPart && withStep && (
             <label className="am-step" onKeyDown={(e) => e.stopPropagation()}>
               <span>Каждый N-й кадр</span>
               <NumInput className="ui-input ui-ctl ui-mono" value={step} min={1} max={10000} integer
                 aria-label="Каждый N-й кадр" onValue={(v) => v !== undefined && setStep(v)} />
             </label>
           )}
-          {(clear || onDelete) && <div className="ui-pop-sep" />}
+          {agentPart && (clear || onDelete) && <div className="ui-pop-sep" />}
           {clear && (
             <MenuItem icon="trash" danger disabled={!!clearOff} hint={clearOff || clear.hint}
               onSelect={() => { close(); clear.run(); }}>Очистить непроверенное агентов</MenuItem>

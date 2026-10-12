@@ -1,6 +1,6 @@
 // Оболочка редакторов кадров и видео: шапка, плавающие панели, зум, запись, окно «Клавиши».
 
-import { useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactElement, ReactNode } from "react";
 import { Button, Dialog, Icon, Kbd, Popover, cx } from "../../ui";
 import type { IconName } from "../../ui";
@@ -135,19 +135,39 @@ const SAVE_TEXT: Record<SaveState, string> = {
   refused: "Не сохранено", stale: "Кадр изменил другой человек",
 };
 
-/** Состояние записи. Отказ и чужая правка предлагают выход: показать записанное. */
-export function SaveNote({ state, error, onDiscard }: {
-  state: SaveState; error?: string | null; onDiscard?: () => void;
+/** Состояние записи. Отказ предлагает выход — показать записанное; чужую правку редактор ставит сам.
+ *  `note` — короткая строка на несколько секунд поверх «Сохранено»: «Изменил Петров». */
+export interface EditNote { text: string; warn?: boolean }
+
+/** Строка у записи на несколько секунд: кадр поправил сосед или наша правка не легла. */
+export function useEditNote(ms = 4000) {
+  const [note, setNote] = useState<EditNote | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  const say = useCallback((next: EditNote) => {
+    setNote(next);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setNote(null), ms);
+  }, [ms]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return [note, say] as const;
+}
+
+/** Без рода: «Новая правка: Петров», а не «изменил». */
+export const editedBy = (name: string | null) => ({ text: `Новая правка: ${name ?? "другой человек"}` });
+export const lostTo = (name: string | null) =>
+  ({ text: `Правка не сохранена — кадр поправлен${name ? `: ${name}` : " другим"}`, warn: true });
+
+export function SaveNote({ state, error, onDiscard, note }: {
+  state: SaveState; error?: string | null; onDiscard?: () => void; note?: EditNote | null;
 }) {
-  const bad = state === "failed" || state === "refused" || state === "stale";
+  const shown = note && state === "saved" ? note : null;
+  const bad = state === "failed" || state === "refused" || state === "stale" || !!shown?.warn;
   return (
-    <span className={cx("ed-save", state)} role={bad ? "alert" : "status"} title={error || undefined}>
+    <span className={cx("ed-save", shown ? (shown.warn ? "warned" : "noted") : state)} role={bad ? "alert" : "status"} title={error || undefined}>
       <i className="ed-save-dot" />
-      {SAVE_TEXT[state]}{state === "refused" && error ? `: ${error}` : ""}
-      {onDiscard && (state === "refused" || state === "stale") && (
-        <Button variant="ghost" size="sm" onClick={onDiscard}>
-          {state === "stale" ? "Показать его версию" : "Отбросить правку"}
-        </Button>
+      {shown ? shown.text : SAVE_TEXT[state]}{state === "refused" && error ? `: ${error}` : ""}
+      {onDiscard && state === "refused" && (
+        <Button variant="ghost" size="sm" onClick={onDiscard}>Отбросить правку</Button>
       )}
     </span>
   );

@@ -21,8 +21,11 @@
 .ed-save { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted-fg); white-space: nowrap; }
 .ed-save-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--st-done); flex: none; }
 .ed-save.saving .ed-save-dot { background: var(--faint); animation: ed-blink 1s ease-in-out infinite; }
-.ed-save:is(.failed, .refused, .stale) { color: var(--destructive); }
-.ed-save:is(.failed, .refused, .stale) .ed-save-dot { background: var(--destructive); }
+.ed-save:is(.failed, .refused, .stale, .warned) { color: var(--destructive); }
+.ed-save:is(.failed, .refused, .stale, .warned) .ed-save-dot { background: var(--destructive); }
+/* Кадр поправил сосед — на несколько секунд */
+.ed-save.noted { color: var(--fg); }
+.ed-save.noted .ed-save-dot { background: var(--c1); }
 @keyframes ed-blink { 50% { opacity: .3; } }
 
 .ed-notes { flex: none; padding: 8px 12px 0; }

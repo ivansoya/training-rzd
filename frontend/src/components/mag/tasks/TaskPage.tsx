@@ -65,7 +65,9 @@ export default function TaskPage() {
   const { me } = useAuth();
   const page = useTaskPage(taskId || "", me.user.id);
   const { task, numbers, pending, events } = page;
-  const [workers, setWorkers] = useState<ProjectMemberInfo[]>([]);
+  // Участники проекта: имена соседей в редакторах и выбор исполнителей у админа
+  const [members, setMembers] = useState<ProjectMemberInfo[]>([]);
+  const workers = members.filter((m) => m.role !== "viewer");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -128,11 +130,11 @@ export default function TaskPage() {
   const taskTags = task?.tags;
   useEffect(() => { if (taskTags) setTags(taskTags); }, [taskTags]);
 
-  const adminOf = task?.is_admin ? task.project.code : null;
+  const projectCode = task?.project.code;
   useEffect(() => {
-    if (!adminOf) return;
-    getProject(adminOf).then((d) => setWorkers(d.members.filter((m) => m.role !== "viewer"))).catch(() => setWorkers([]));
-  }, [adminOf]);
+    if (!projectCode) return;
+    getProject(projectCode).then((d) => setMembers(d.members)).catch(() => setMembers([]));
+  }, [projectCode]);
 
   // Кадр в адресе, а редактор закрыт (ссылка, «Вперёд») — открываем на всех кадрах таски
   useEffect(() => {
@@ -184,7 +186,9 @@ export default function TaskPage() {
     try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }, []);
 
-  const editable = !!task && task.can_work && task.status !== "closed";
+  // Права считает сервер по состоянию таски: работа над кадрами — только «в работе», источники — и на очереди
+  const editable = !!task && task.rights.edit;
+  const fillable = !!task && task.rights.fill;
   const agentBusy = !!agentRun && ACTIVE_RUN.includes(agentRun.status);
   // Ждут закрытия — когда пришли сводки всех открытых роликов; до того заготовка
   const opened = task ? openVideos(task) : [];
@@ -279,9 +283,9 @@ export default function TaskPage() {
     });
   }
 
-  const reassign = (id: string | null) => guard(async () => {
+  const reassign = (ids: string[]) => guard(async () => {
     if (!task) return;
-    await assignTask(task.id, id);
+    await assignTask(task.id, ids);
     await load();
   });
 
@@ -456,7 +460,7 @@ export default function TaskPage() {
   };
   const cards = [
     ...sources.filter((b) => b.kind !== "annotate").map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (
-      <CutCard key={b.key} block={b} look={numbersLook} taskId={task.id} code={task.project.code} tags={tags} editable={editable}
+      <CutCard key={b.key} block={b} look={numbersLook} taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable}
         run={runOn(b.key, (b.videos || []).map((v) => v.id), ["frames", "scout"])} agent={agent}
         onAnnotate={() => openFiltered({ source: b.key })} onReview={() => review(b.key)}
         onCut={setCutting} onDelete={removeVideo} onVideoTags={saveVideoTags}
@@ -468,7 +472,7 @@ export default function TaskPage() {
     ...(annotateVideos.length ? [{ key: "annotate", born: Math.min(...annotateVideos.map((v) => Date.parse(v.created_at))), node: (
       <AnnotateCard key="annotate" videos={annotateVideos} pending={pending} fresh={page.fresh.videos} at={page.at}
         classes={numbers?.classes ?? []}
-        taskId={task.id} code={task.project.code} tags={tags} editable={editable} busy={busy}
+        taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable} busy={busy}
         run={runOn(null, annotateVideos.map((v) => v.id), ["annotate", "scout"])} agent={agent}
         onAdd={() => onAdd("annotate")} onOpen={(v) => openVideo(v)} onReview={(v) => openVideo(v, true)} onClose={closeVideo}
         onReopen={(v) => guard(async () => { await reopenVideoAnnotation(task.id, v.id); await load(); })}
@@ -510,14 +514,14 @@ export default function TaskPage() {
 
       <div className="tp-two">
         <div className="tp-main">
-          {editable && !empty && <div className="tp-add"><AddMenu onAdd={onAdd} /></div>}
-          {empty ? <TaskEmpty editable={editable} dataset={task.target_dataset?.name ?? null} onAdd={onAdd} />
+          {fillable && !empty && <div className="tp-add"><AddMenu onAdd={onAdd} /></div>}
+          {empty ? <TaskEmpty editable={fillable} dataset={task.target_dataset?.name ?? null} onAdd={onAdd} />
             : cards.map((c) => c.node)}
         </div>
         <TaskPassport task={task} numbers={numbers} numbersLook={numbersLook} pendingFrames={pendingFrames} pendingLook={pendingLook}
           events={events} workers={workers} busy={busy}
           onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
-          onAssign={(id) => void reassign(id)} onHistory={() => setHistory(true)} />
+          onAssign={(ids) => void reassign(ids)} onHistory={() => setHistory(true)} />
       </div>
 
       <input ref={fileRef} type="file" accept="image/*" multiple hidden
@@ -553,15 +557,15 @@ export default function TaskPage() {
           onSend={(perFile) => void sendFiles(picked, perFile)} />
       )}
       {cutting && (
-        <VideoCutModal taskId={task.id} video={cutting} editable={editable} onClose={() => setCutting(null)} onDone={load} />
+        <VideoCutModal taskId={task.id} video={cutting} editable={fillable} onClose={() => setCutting(null)} onDone={load} />
       )}
       {annotating && (
-        <VideoAnnotator code={code!} taskId={task.id} taskName={task.name} video={annotating} readOnly={!editable} review={reviewing}
+        <VideoAnnotator code={code!} taskId={task.id} taskName={task.name} video={annotating} readOnly={!editable} review={reviewing} people={members}
           onClose={() => { setAnnotating(null); void load(); }} onChanged={() => void load()} />
       )}
       {editing && editing.list[editing.index] && (
         <AnnotationEditor code={code!} taskId={task.id} taskName={task.name} images={editing.list} index={editing.index}
-          readOnly={!editable} canTag={task.can_work} tags={tags}
+          readOnly={!editable} canTag={task.rights.tag_frames} tags={tags} people={members}
           onTags={(imageId, ids) => void saveImageTags(imageId, ids)}
           onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
           onIndex={(i) => {

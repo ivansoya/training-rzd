@@ -191,10 +191,10 @@ def test_зритель_не_становится_исполнителем(api, 
     join(api, viewer, project["code"], "viewer")
     me = viewer.get(f"{BASE_URL}/api/auth/me").json()
     vid = (me.get("user") or me)["id"]
-    res = api.patch(f"{BASE_URL}/api/tasks/{task['id']}", json={"assignee_id": vid})
+    res = api.patch(f"{BASE_URL}/api/tasks/{task['id']}", json={"assignees": [vid]})
     assert res.status_code == 400, res.text
     res = api.post(f"{BASE_URL}/api/projects/{project['code']}/tasks",
-                   json={"name": tag(), "assignee_id": vid})
+                   json={"name": tag(), "assignees": [vid]})
     assert res.status_code == 400, res.text
 
 

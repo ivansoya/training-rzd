@@ -22,15 +22,13 @@ export const NEXT: Record<TaskStatus, { to: TaskStatus; label: string } | null> 
   closed: null,
 };
 
-/** Разрешённые переходы — копия ALLOWED в task_routes.py. */
-export const MOVES: Record<TaskStatus, TaskStatus[]> = {
-  queued: ["in_progress", "closed"],
-  in_progress: ["done", "queued", "closed"],
-  done: ["updating", "closed"],
-  updating: ["done", "closed"],
-  closed: [],
-};
-export const canMove = (from: TaskStatus, to: TaskStatus) => MOVES[from].includes(to);
+/** Я среди исполнителей. Куда можно перевести таску, считает сервер (`moves`). */
+export const isMine = (t: Pick<TaskLight, "assignees">, me: string | null) =>
+  !!me && t.assignees.some((p) => p.id === me);
+
+/** Исполнители одной строкой; пусто — ничья таска. */
+export const teamLine = (people: { display_name: string }[]) =>
+  people.length ? people.map((p) => p.display_name).join(", ") : "ничья";
 
 export type FrameState = "new" | "agent" | "skipped" | "annotated" | "empty" | "deleted";
 export const STATES: { key: FrameState; label: string; color: string }[] = [
@@ -82,7 +80,7 @@ export function sourceLine(s: TaskStats["sources"]): string {
 export function boardColumns(tasks: TaskLight[], query: string, mine: string | null) {
   const q = query.trim().toLowerCase();
   const shown = tasks.filter((t) =>
-    (!q || t.name.toLowerCase().includes(q)) && (!mine || t.assignee?.id === mine));
+    (!q || t.name.toLowerCase().includes(q)) && (!mine || isMine(t, mine)));
   const cols = Object.fromEntries(BOARD.map((s) => [s, [] as TaskLight[]])) as Record<TaskStatus, TaskLight[]>;
   for (const t of shown) cols[t.status].push(t);
   for (const s of BOARD) {
@@ -101,7 +99,7 @@ export const waitingOf = (tasks: TaskLight[], stats: Record<string, TaskStats | 
 export function requestOrder(tasks: TaskLight[], me: string | null): string[] {
   const { cols } = boardColumns(tasks, "", null);
   const board = BOARD.flatMap((s) => cols[s]);
-  const rank = (t: TaskLight) => (t.status === "closed" ? 3 : me && t.assignee?.id === me ? 0 : t.status === "in_progress" ? 1 : 2);
+  const rank = (t: TaskLight) => (t.status === "closed" ? 3 : isMine(t, me) ? 0 : t.status === "in_progress" ? 1 : 2);
   return board.map((t, i) => ({ t, i })).sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i).map((x) => x.t.id);
 }
 

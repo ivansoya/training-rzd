@@ -6,13 +6,13 @@ import { Link, useNavigate } from "react-router-dom";
 import { getTaskStats, setTaskStatus } from "../../../auth/api";
 import type { TaskLight, TaskStats, TaskStatus } from "../../../auth/api";
 import { cacheTime } from "../../../api/cache";
-import { Avatar, Badge, Button, Dot, Empty, Icon, Input, Notice, PageHeader, Seg, StackBar, cx } from "../../../ui";
+import { Avatars, Badge, Button, Dot, Empty, Icon, Input, Notice, PageHeader, Seg, StackBar, cx } from "../../../ui";
 import { useAuth } from "../../auth/AuthGate";
 import { ago, count, ru } from "../../ru";
 import { useProject } from "../ProjectShell";
 import { useConfirm } from "./Confirm";
 import { CreateTaskModal } from "./CreateTaskModal";
-import { BOARD, STATES, STATUS, boardColumns, canMove, closePlan, closeText, sourceLine, stateParts, waitingOf } from "./tasks";
+import { BOARD, STATES, STATUS, boardColumns, closePlan, closeText, sourceLine, stateParts, teamLine, waitingOf } from "./tasks";
 import { look, useTaskBoard } from "./useTaskBoard";
 import type { Fresh } from "./useTaskBoard";
 
@@ -40,7 +40,8 @@ export default function TaskBoard() {
   const [who, setWho] = useState<"all" | "mine">("all");
   const [allClosed, setAllClosed] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [drag, setDrag] = useState<{ id: string; from: TaskStatus } | null>(null);
+  // Куда тащить можно — переходы этой карточки, их считает сервер
+  const [drag, setDrag] = useState<{ id: string; from: TaskStatus; moves: TaskStatus[] } | null>(null);
   const [over, setOver] = useState<TaskStatus | null>(null);
   const [landed, setLanded] = useState<string | null>(null);
   const [confirm, confirmNode] = useConfirm();
@@ -66,7 +67,7 @@ export default function TaskBoard() {
     const d = drag;
     endDrag();
     const t = d && list.find((x) => x.id === d.id);
-    if (!d || !t || d.from === to || !canMove(d.from, to)) return;
+    if (!d || !t || d.from === to || !d.moves.includes(to)) return;
     // Окнам нужны числа таски — свежие, а не из кеша
     let s: TaskStats | undefined = stats[t.id];
     if (to === "closed" || to === "done") {
@@ -104,7 +105,7 @@ export default function TaskBoard() {
 
   const colProps = (s: TaskStatus) => ({
     onDragOver: (e: DragEvent) => {
-      if (!drag || !canMove(drag.from, s)) return;
+      if (!drag || !drag.moves.includes(s)) return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "move";
       if (over !== s) setOver(s);
@@ -139,7 +140,7 @@ export default function TaskBoard() {
         <div className={cx("tb", drag && "dragging")}>
           {BOARD.map((s) => {
             const items = s === "closed" && !allClosed ? cols[s].slice(0, CLOSED_SHOWN) : cols[s];
-            const can = drag && s !== drag.from && canMove(drag.from, s);
+            const can = drag && s !== drag.from && drag.moves.includes(s);
             return (
               <section key={s} aria-label={STATUS[s].label} {...colProps(s)}
                 className={cx("tb-col", drag && (s === drag.from ? "from" : can ? "can" : "no"), over === s && "over")}>
@@ -150,7 +151,7 @@ export default function TaskBoard() {
                 {items.map((t) => (
                   <TaskCard key={t.id} t={t} s={stats[t.id]} fresh={fresh[t.id]} at={at} code={code}
                     dragged={drag?.id === t.id} landed={landed === t.id}
-                    onDragStart={() => requestAnimationFrame(() => setDrag({ id: t.id, from: t.status }))}
+                    onDragStart={() => requestAnimationFrame(() => setDrag({ id: t.id, from: t.status, moves: t.moves }))}
                     onDragEnd={endDrag} />
                 ))}
                 {s === "closed" && cols[s].length > CLOSED_SHOWN && (
@@ -185,7 +186,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
   onDragEnd: () => void;
 }) {
   const to = `/projects/${code}/tasks/${t.id}`;
-  const movable = t.can_work && t.status !== "closed";
+  const movable = t.moves.length > 0;
   const dragProps = {
     draggable: movable,
     onDragStart: (e: DragEvent) => {
@@ -220,7 +221,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
     <Link to={to} className={cls} {...dragProps}>
       <div className="tb-card-h">
         <b className="tb-name">{t.name}</b>
-        {t.assignee && <Avatar name={t.assignee.display_name} />}
+        {t.assignees.length > 0 && <Avatars names={t.assignees.map((p) => p.display_name)} max={3} />}
       </div>
       <span className="tb-src t-xs t-muted" title={s ? sourceLine(s.sources) : undefined}>
         <Icon name={s && (s.sources.cut || s.sources.annotate) ? "film" : "images"} size={14} />
@@ -254,7 +255,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
         )}
       </span>
       <span className="tb-foot t-xs t-faint">
-        <span className="t-ell">{t.assignee?.display_name ?? "без исполнителя"}</span>
+        <span className="t-ell">{teamLine(t.assignees)}</span>
         <span className="t-ell">
           {recent && <Dot color="var(--st-done)" live />}
           {statusNote(t, s)}

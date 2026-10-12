@@ -15,6 +15,7 @@ import ExportModal from "./ExportModal";
 import { ProjectMenu } from "./ProjectMenu";
 import { useProject } from "./ProjectShell";
 import { CreateTaskModal } from "./tasks/CreateTaskModal";
+import { teamLine } from "./tasks/tasks";
 import { look, useTaskBoard } from "./tasks/useTaskBoard";
 import { describeTaskEvent } from "./taskEvents";
 
@@ -273,7 +274,7 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
                   <div className={cx("ov-task-z", v.stale && "stale", v.loading && "ui-shim")}>
                     {c ? <StackBar parts={STATE_PARTS.map(([k, label, color]) => ({ label, color, value: c[k] }))} /> : <i className="ui-sk bar" />}
                     <div className="row between t-xs t-muted">
-                      <span className="t-ell">{t.assignee?.display_name ?? "без исполнителя"}</span>
+                      <span className="t-ell">{teamLine(t.assignees)}</span>
                       {c ? <span className="ui-mono">{ru(c.annotated + c.empty)} из {ru(c.total)}</span> : <i className="ui-sk pill" style={{ width: 64 }} />}
                     </div>
                   </div>

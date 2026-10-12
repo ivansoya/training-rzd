@@ -55,7 +55,7 @@ export function TaskEmpty({ editable, dataset, onAdd }: { editable: boolean; dat
             </button>
           ))}
         </div>
-      ) : <p className="t-faint">Загружать кадры может исполнитель таски или администратор.</p>}
+      ) : null}
     </div>
   );
 }
@@ -228,14 +228,17 @@ export function Rail({ parts, tone }: { parts: [number, number][]; tone?: "track
 }
 
 /** Ролики на нарезку: общий счёт кадров и строка на каждый ролик со своим планом. */
-export function CutCard({ block, look, taskId, code, tags, editable, run, agent, onAnnotate, onReview,
+export function CutCard({ block, look, taskId, code, tags, editable, fillable, run, agent, onAnnotate, onReview,
   onCut, onDelete, onVideoTags, onTagCreated }: {
   block: SourceBlock;
   look: Look;
   taskId: string;
   code: string;
   tags: Tag[];
+  /** Работа над кадрами: агент, разметка. */
   editable: boolean;
+  /** Источники: нарезка, таги роликов, удаление — на очереди тоже. */
+  fillable: boolean;
   run?: RunView | null;
   agent: AgentHooks;
   onAnnotate: () => void;
@@ -278,7 +281,7 @@ export function CutCard({ block, look, taskId, code, tags, editable, run, agent,
       </>}>
       <AgentLine run={run} />
       {block.total > 0 && <Progress c={block.counts} known={block.known} look={look} />}
-      {editable && videos.length > 1 && (
+      {fillable && videos.length > 1 && (
         <div className="tp-tagall">
           <span className="t-xs t-muted">Таг на все {videos.length}</span>
           <TagPicker code={code} all={tags} value={common} compact placeholder="таг на все ролики"
@@ -287,11 +290,12 @@ export function CutCard({ block, look, taskId, code, tags, editable, run, agent,
       )}
       <div className="tp-reels">
         {videos.map((v) => (
-          <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={editable}
-            menu={editable && (
+          <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={fillable}
+            menu={(editable || fillable) && (
               <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
-                actions={[scoutAction(agent, [v], "Разведать ролик")]} clear={clearOf(agent, { sources: [v.id] })}
-                deleteLabel="Удалить ролик и его кадры" onDelete={() => onDelete(v)} />
+                actions={editable ? [scoutAction(agent, [v], "Разведать ролик")] : []}
+                clear={editable ? clearOf(agent, { sources: [v.id] }) : undefined}
+                deleteLabel="Удалить ролик и его кадры" onDelete={fillable ? () => onDelete(v) : undefined} />
             )}
             onCut={() => onCut(v)}
             onTags={(ids) => onVideoTags(v, ids)} onTagCreated={onTagCreated} />
@@ -306,6 +310,7 @@ function ReelRow({ v, taskId, code, tags, editable, menu, onCut, onTags, onTagCr
   taskId: string;
   code: string;
   tags: Tag[];
+  /** Нарезка и таги ролика — наполнение, а не работа над кадрами. */
   editable: boolean;
   /** Меню «⋯»: агент на ролик и удаление. */
   menu: ReactNode;
@@ -372,7 +377,7 @@ function classOf(classes: TaskClass[], o: PendingObject): { name: string; color:
 }
 
 /** Ролики на разметку: каждый со своей шкалой, объектами и закрытием. */
-export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code, tags, editable, busy, run, agent, onAdd, onOpen, onReview,
+export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code, tags, editable, fillable, busy, run, agent, onAdd, onOpen, onReview,
   onClose, onReopen, onDropFrames, onDelete, onVideoTags, onTagCreated }: {
   videos: TaskVideoItem[];
   /** Сводки открытых роликов по мере прихода; нет ключа — ещё в пути, null — закрывать нечего. */
@@ -383,7 +388,10 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
   taskId: string;
   code: string;
   tags: Tag[];
+  /** Работа над роликом: разметка, агент, закрытие разметки. */
   editable: boolean;
+  /** Источники: добавить, удалить, таги ролика — на очереди тоже. */
+  fillable: boolean;
   busy: boolean;
   run?: RunView | null;
   agent: AgentHooks;
@@ -404,14 +412,14 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
     <Card className="tp-src" flush
       title={<><Icon name="film" />Ролики на разметку<Badge variant="secondary">{videos.length}</Badge></>}
       desc="размечаются треками, кадрами становятся при закрытии разметки"
-      actions={editable && <>
-        <AgentButton agent={agent} ask={{ mode: "annotate", videos: open.map((v) => v.id),
-          within: videos.map((v) => v.id), modes: ["annotate", "scout"] }} />
-        <Button size="sm" icon="plus" onClick={onAdd}>Видео на разметку</Button>
-        <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label="Агент: ролики на разметку" step
+      actions={<>
+        {editable && <AgentButton agent={agent} ask={{ mode: "annotate", videos: open.map((v) => v.id),
+          within: videos.map((v) => v.id), modes: ["annotate", "scout"] }} />}
+        {fillable && <Button size="sm" icon="plus" onClick={onAdd}>Видео на разметку</Button>}
+        {editable && <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label="Агент: ролики на разметку" step
           actions={[annotateAction(agent, open, "Разметить все ролики"),
             scoutAction(agent, videos, "Разведать все ролики")]}
-          clear={clearOf(agent, { videos: open.map((v) => v.id) }, unchecked, open.length === 0 && "открытых роликов нет")} />
+          clear={clearOf(agent, { videos: open.map((v) => v.id) }, unchecked, open.length === 0 && "открытых роликов нет")} />}
       </>}>
       {run && <div className="tp-agent-w"><AgentLine run={run} /></div>}
       {videos.map((v) => {
@@ -451,12 +459,12 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
                   title={v.prepare?.ready ? undefined : "Ролик ещё готовится"} onClick={() => onOpen(v)}>
                   {editable && !closed ? "Размечать ролик" : "Смотреть"}
                 </Button>
-                {editable && (
+                {(editable || fillable) && (
                   <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
-                    actions={[{ ...annotateAction(agent, closed ? [] : [v], "Разметить ролик"), off: closed ? "разметка ролика закрыта" : annotateAction(agent, [v], "").off },
-                      scoutAction(agent, [v], "Разведать ролик")]}
-                    clear={clearOf(agent, { videos: [v.id] }, p?.unchecked, closed && "разметка ролика закрыта")}
-                    deleteLabel="Удалить ролик и всё, что из него вышло" onDelete={() => onDelete(v)} />
+                    actions={editable ? [{ ...annotateAction(agent, closed ? [] : [v], "Разметить ролик"), off: closed ? "разметка ролика закрыта" : annotateAction(agent, [v], "").off },
+                      scoutAction(agent, [v], "Разведать ролик")] : []}
+                    clear={editable ? clearOf(agent, { videos: [v.id] }, p?.unchecked, closed && "разметка ролика закрыта") : undefined}
+                    deleteLabel="Удалить ролик и всё, что из него вышло" onDelete={fillable ? () => onDelete(v) : undefined} />
                 )}
               </div>
               <span className="t-xs t-muted">
@@ -471,7 +479,7 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
                 <span><b>{ru(v.tracks)}</b>объектов ведётся</span>
                 <span><b>{v.frame_count ? ru(v.frame_count) : "—"}</b>кадров в ролике</span>
               </div>
-              <TagPicker code={code} all={tags} value={v.tag_ids || []} disabled={!editable || closed} compact
+              <TagPicker code={code} all={tags} value={v.tag_ids || []} disabled={!fillable || closed} compact
                 placeholder="таг ролика" onChange={(ids) => onVideoTags(v, ids)} onCreated={onTagCreated} />
               {editable && inTask > 0 && (
                 <p className="t-sm t-muted">

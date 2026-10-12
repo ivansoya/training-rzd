@@ -3,6 +3,7 @@ import {
   ensureClass,
   deleteImage,
   getClasses,
+  getTaskImages,
   saveAnnotations,
   setImageTaskStatus,
 } from "../../auth/api";
@@ -28,12 +29,13 @@ import { useAutoLabel } from "./useAutoLabel";
 import AutoStatus from "./AutoStatus";
 import { useLive } from "../../live/LiveProvider";
 import type { AutoRefine } from "../../auth/api";
-import type { TaskBox } from "../../auth/api";
+import type { TaskBox, TaskPerson } from "../../auth/api";
 import { Button, Notice, StackBar, Switch } from "../../ui";
 import { plural, ru } from "../ru";
 import AutoSettings from "../editor/AutoSettings";
 import ClassPicker from "../editor/ClassPicker";
-import { EditorHead, Float, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip } from "../editor/Chrome";
+import { EditorHead, Float, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip, editedBy, lostTo, useEditNote } from "../editor/Chrome";
+import { useAuth } from "../auth/AuthGate";
 import { AutoBar, FrameBar, FrameSide, Who, agentKeyOf } from "../editor/FramePanels";
 import { ReviewBar } from "../editor/ReviewBars";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
@@ -129,6 +131,7 @@ export default function AnnotationEditor({
   onTags,
   onTagCreated,
   canTag,
+  people,
 }: {
   code: string;
   /** Таска — для агента на кадре (G). */
@@ -137,10 +140,9 @@ export default function AnnotationEditor({
   images: TaskImage[];
   index: number;
   readOnly: boolean;
-  /** Можно ли править таги. Не то же, что `readOnly`: закрытая таска
-   *  останавливает разметку, но не таги — сервер их принимает (см.
-   *  set_image_tags), а таг — паспорт кадра, и ошибку в нём иначе нечем
-   *  исправить. */
+  /** Можно ли править таги. Не то же, что `readOnly`: в «Готово» и закрытой
+   *  таске админ правит таги (`rights.tag_frames`, см. set_image_tags) — таг
+   *  паспорт кадра, и ошибку в нём иначе нечем исправить. */
   canTag: boolean;
   /** Справочник тагов проекта. */
   tags: Tag[];
@@ -154,6 +156,8 @@ export default function AnnotationEditor({
    *  кадр ушёл в датасет, — и правят по одному кадру. */
   onTags: (imageId: string, tagIds: string[]) => void;
   onTagCreated: (tag: Tag) => void;
+  /** Участники проекта — имя соседа, чью правку подтянули. */
+  people: TaskPerson[];
 }) {
   const image = images[index];
 
@@ -494,6 +498,34 @@ export default function AnnotationEditor({
     settle(fresh?.rev ?? img?.rev);
     setReloadKey((k) => k + 1);
   }, [fresh, settle]);
+
+  // Совместная работа (решение 12.10.2026): чужая правка этого кадра встаёт на экран сразу.
+  const { me } = useAuth();
+  const nameOf = (id: string | null) => people.find((m) => m.id === id)?.display_name ?? null;
+  const [note, say] = useEditNote();
+  const by = useRef<string | null>(null);
+  // Наша запись упёрлась в чужую — без кнопки: на экране его версия, у записи строка
+  useEffect(() => {
+    if (saveState !== "stale" || !fresh) return;
+    discard();
+    say(lostTo(nameOf(by.current)));
+  }, [saveState, fresh]); // eslint-disable-line react-hooks/exhaustive-deps
+  const stateRef = useRef(saveState);
+  stateRef.current = saveState;
+  useLive("task", (e) => {
+    const img = live.current.image;
+    if (!img || e.i !== img.id || e.u === me.user.id) return;
+    by.current = e.u ?? null;
+    // Своя правка в пути — её запись получит «stale», и чужая версия встанет тем путём
+    if (dirty.current || stateRef.current !== "saved") return;
+    void getTaskImages(taskId, { image: img.id, limit: 1 }).then(({ images: [got] }) => {
+      if (!got || live.current.image?.id !== got.id || dirty.current) return;
+      live.current.onChanged(got.id, got);
+      settle(got.rev);
+      setReloadKey((k) => k + 1);
+      say(editedBy(nameOf(e.u ?? null)));
+    }).catch(() => undefined);
+  });
 
   // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет.
   const go = useCallback(
@@ -1155,7 +1187,7 @@ export default function AnnotationEditor({
           </div>
         }
       >
-        <SaveNote state={saveState} error={saveErr} onDiscard={discard} />
+        <SaveNote state={saveState} error={saveErr} onDiscard={discard} note={note} />
         <i className="ed-vsep" />
         <Button variant="ghost" size="sm" icon="keyboard" kbd="?" onClick={() => setKeysOpen(true)}>Клавиши</Button>
         <Button variant="ghost" size="sm" icon="sliders" kbd="Tab" aria-pressed={!panels}

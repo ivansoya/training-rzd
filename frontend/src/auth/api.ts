@@ -828,12 +828,33 @@ export interface TaskCounts {
   agent?: number;
 }
 
+export interface TaskPerson {
+  id: string;
+  display_name: string;
+}
+
+/** Что можно мне в этой таске — считает сервер (`common/task_rights.py`, решение 12.10.2026). */
+export interface TaskRights {
+  /** Работа над кадрами: разметка, состояния кадров, агенты. Только «в работе». */
+  edit: boolean;
+  /** Источники: загрузка, нарезка, удаление ролика, таги ролика, имя. На очереди тоже. */
+  fill: boolean;
+  /** Таги кадра: как edit, а админ — всегда. */
+  tag_frames: boolean;
+  /** Куда я могу перевести таску. */
+  moves: TaskStatus[];
+  /** Менять состав исполнителей. */
+  assign: boolean;
+}
+
 export interface TaskSummary {
   id: string;
   name: string;
   status: TaskStatus;
   status_label: string;
-  assignee: { id: string; display_name: string } | null;
+  /** Пусто — ничья: с очереди её возьмёт любой редактор. */
+  assignees: TaskPerson[];
+  rights: TaskRights;
   target_dataset: { id: string | null; name: string } | null;
   created_at: string;
   created_by: string | null;
@@ -843,12 +864,12 @@ export interface TaskSummary {
 }
 
 /** Карточка доски без счётчиков — лёгкий список проекта, приходит сразу. */
-export interface TaskLight extends Omit<TaskSummary, "counts"> {
+export interface TaskLight extends Omit<TaskSummary, "counts" | "rights"> {
   last_box_at: string | null;
   /** По нему колонки сортируются — потому он в лёгком списке, а не в счётчиках. */
   last_at: string;
-  /** Можно менять состояние: админ или исполнитель-редактор. */
-  can_work: boolean;
+  /** Куда карточку можно перетащить — те же переходы, что у кнопок таски. */
+  moves: TaskStatus[];
 }
 
 /** Счётчики карточки доски: по одному запросу на таску. */
@@ -952,7 +973,6 @@ export interface PendingVideo {
 /** Лёгкая часть страницы таски: шапка, паспорт без чисел, ролики, таги. Числа — `TaskNumbers`. */
 export interface TaskDetail extends Omit<TaskSummary, "counts"> {
   project: { code: string; name: string };
-  can_work: boolean;
   is_admin: boolean;
   videos: TaskVideoItem[];
   /** Какие блоки есть: кадров у источника всего (`total`, с бракованными), без брака (`frames`)
@@ -1066,7 +1086,8 @@ export async function createTask(
   code: string,
   body: {
     name: string;
-    assignee_id?: string | null;
+    /** Без поля — автор; пустой список — ничья таска. */
+    assignees?: string[];
     target_dataset_id?: string | null;
     target_dataset_name?: string | null;
   }
@@ -1094,21 +1115,22 @@ export async function setTaskStatus(
   return asJson(await post(`tasks/${id}/status`, { status }));
 }
 
-export async function assignTask(id: string, assignee_id: string | null): Promise<TaskSummary> {
+export async function assignTask(id: string, assignees: string[]): Promise<TaskSummary> {
   return asJson(
     await fetch(`/api/tasks/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ assignee_id }),
+      body: JSON.stringify({ assignees }),
     })
   );
 }
 
 export async function getTaskImages(
   id: string,
-  params: { status?: string; limit?: number; offset?: number; source?: string } = {}
+  params: { status?: string; limit?: number; offset?: number; source?: string; image?: string } = {}
 ): Promise<{ matched: number; counts: TaskCounts; images: TaskImage[] }> {
   const q = new URLSearchParams();
+  if (params.image) q.set("image", params.image);
   if (params.status) q.set("status", params.status);
   // «files» — загруженные файлами, иначе идентификатор ролика.
   if (params.source) q.set("source", params.source);
@@ -1400,10 +1422,11 @@ export async function getVideoSkeleton(taskId: string, videoId: string): Promise
   return asJson(await fetch(`/api/tasks/${taskId}/videos/${videoId}/annotations?singles=0`));
 }
 
-/** Одиночные фигуры ролика на кадрах [from, to). */
-export async function getVideoSingles(taskId: string, videoId: string, from: number, to: number): Promise<VideoSingleBox[]> {
+/** Одиночные фигуры ролика на кадрах [from, to) и версии этих кадров (у кадра без фигур версии нет). */
+export async function getVideoSingles(taskId: string, videoId: string, from: number, to: number):
+  Promise<{ singles: VideoSingleBox[]; revs: Record<string, string> }> {
   const url = `/api/tasks/${taskId}/videos/${videoId}/annotations/singles?from=${from}&to=${to}`;
-  return (await asJson<{ singles: VideoSingleBox[] }>(await fetch(url))).singles;
+  return asJson(await fetch(url));
 }
 
 export async function createTrack(
@@ -1507,10 +1530,12 @@ export async function saveFrameBoxes(
   taskId: string,
   videoId: string,
   frameNo: number,
-  boxes: SingleWire[]
-): Promise<{ saved: number }> {
+  boxes: SingleWire[],
+  /** Версия кадра, которую видели: запись поверх чужой правки получит 409 «stale» со свежими фигурами. */
+  rev?: string | null
+): Promise<{ saved: number; rev: string | null }> {
   return asJson(
-    await put(`tasks/${taskId}/videos/${videoId}/frames/${frameNo}/boxes`, { boxes })
+    await put(`tasks/${taskId}/videos/${videoId}/frames/${frameNo}/boxes`, rev === undefined ? { boxes } : { boxes, rev })
   );
 }
 

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getTask, getTaskEvents, getTaskNumbers, getVideoPending } from "../../../auth/api";
 import type { PendingVideo, TaskDetail, TaskEventItem, TaskNumbers } from "../../../auth/api";
 import { cached, remember } from "../../../api/cache";
+import { useLive } from "../../../live/LiveProvider";
 import type { Fresh } from "./useTaskBoard";
 
 interface Snapshot {
@@ -99,6 +100,21 @@ export function useTaskPage(taskId: string, me: string) {
     void load();
     return () => { round.current += 1; };
   }, [key, load]);
+
+  // Соседи правят таску: состояние и состав — сразу (от них права), правки кадров — пачкой раз в пару секунд
+  const timer = useRef<number | undefined>(undefined);
+  useLive("task", (e) => {
+    if (e.id !== taskId || e.u === me) return;
+    if (e.s) {
+      window.clearTimeout(timer.current);
+      timer.current = undefined;
+      void load();
+      return;
+    }
+    if (timer.current !== undefined) return;
+    timer.current = window.setTimeout(() => { timer.current = undefined; void load(); }, 2000);
+  });
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   /** Правка лёгкой части на месте (таги ролика) — без перезапроса. */
   const patchTask = useCallback((fn: (t: TaskDetail) => TaskDetail) => {

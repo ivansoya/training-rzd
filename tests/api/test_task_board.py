@@ -19,7 +19,8 @@ def test_карточка_доски_знает_источники_и_актив
     card = board(api, project)[task["id"]]
     # Лёгкий список — без счётчиков: их доска спрашивает по одной таске
     assert "counts" not in card and "sources" not in card
-    assert card["created_by"] and card["can_work"] is True
+    # Владелец проекта — админ: из «В работе» может всё, что вообще имеет смысл
+    assert card["created_by"] and card["moves"] == ["closed", "done", "queued"]
     # Когда трогали — в лёгком списке: по нему доска сортирует, карточки не прыгают
     assert card["last_box_at"] and card["last_at"] >= card["last_box_at"]
     s = summary(api, task["id"])

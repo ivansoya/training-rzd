@@ -26,11 +26,22 @@ const did = (n: number, one: string, many: string) => plural(n, one, many, many)
 export function describeTaskEvent(kind: string, payload: Record<string, unknown>): JSX.Element {
   const p = payload as Record<string, string | number>;
   const n = (k: string) => Number(p[k]) || 0;
+  const names = (k: string) => (Array.isArray(payload[k]) ? (payload[k] as string[]) : []);
   switch (kind) {
-    case "created":
-      return <>Таска создана{p.assignee ? <>, исполнитель — <b>{p.assignee}</b></> : null}</>;
+    case "created": {
+      // До 12.10.2026 исполнитель был один — старые события несут `assignee`
+      const team = names("assignees").length ? names("assignees").join(", ") : p.assignee;
+      return <>Таска создана{team ? <>, исполнители — <b>{team}</b></> : ", ничья"}</>;
+    }
     case "assigned":
       return <>Исполнитель — <b>{p.assignee ?? "снят"}</b></>;
+    case "assignees":
+      return (
+        <>
+          Исполнители:{" "}
+          {[...names("added").map((x) => `+ ${x}`), ...names("removed").map((x) => `− ${x}`)].join(", ")}
+        </>
+      );
     case "images_added":
       return (
         <>
@@ -101,7 +112,7 @@ export function describeTaskEvent(kind: string, payload: Record<string, unknown>
         </>
       );
     case "status":
-      return <>Состояние: <b>{STATUS_WORD[String(p.status)] ?? p.status}</b></>;
+      return <>Состояние: <b>{STATUS_WORD[String(p.status)] ?? p.status}</b>{p.joined ? <>, исполнитель — <b>{p.joined}</b></> : null}</>;
     case "agent_accepted":
       return <>Приняты рамки агента на <b>{count(n("count"), "кадре", "кадрах", "кадрах")}</b></>;
     case "run_created":

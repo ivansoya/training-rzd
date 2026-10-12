@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getTaskStats, listTasks } from "../../../auth/api";
 import type { TaskLight, TaskStats } from "../../../auth/api";
 import { cached, remember } from "../../../api/cache";
+import { useLive } from "../../../live/LiveProvider";
 import { requestOrder } from "./tasks";
 
 /** Счётчики таски в этом заходе: ждут очереди, в пути, пришли. */
@@ -36,7 +37,8 @@ export function useTaskBoard(code: string, me: string, pick?: (list: TaskLight[]
 
   /** `only` — спросить счётчики только этих таск (после перетаскивания), список — всегда. */
   const refresh = useCallback(async (only?: string[]) => {
-    const r = ++round.current;
+    // Карточка-другая не обрывает общий заход: иначе остальные остались бы без чисел
+    const r = only ? round.current : ++round.current;
     setListing(true);
     let list: TaskLight[];
     try {
@@ -84,6 +86,22 @@ export function useTaskBoard(code: string, me: string, pick?: (list: TaskLight[]
     void refresh();
     return () => { round.current += 1; };
   }, [key, refresh]);
+
+  // Соседи правят таски: их карточки перечитываем пачкой раз в пару секунд, а не на каждую рамку
+  const touched = useRef(new Set<string>());
+  const timer = useRef<number | undefined>(undefined);
+  useLive("task", (e) => {
+    if (e.u === me) return;
+    touched.current.add(e.id);
+    if (timer.current !== undefined) return;
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      const ids = [...touched.current];
+      touched.current.clear();
+      void refresh(ids);
+    }, 2000);
+  });
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   /** Карточка переезжает сразу; ответ сервера её поправит. */
   const patch = useCallback((id: string, fields: Partial<TaskLight>) => {

@@ -20,7 +20,7 @@ from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import OperationalError
 
-from common import attribution, config, images, jobs, tags, task_frames
+from common import attribution, config, images, jobs, live, tags, task_frames, task_rights
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
@@ -32,6 +32,7 @@ from common.models import (
     Project,
     ProjectMember,
     Task,
+    TaskAssignee,
     TaskEvent,
     TaskVideo,
     User,
@@ -50,14 +51,7 @@ from datasets_svc import video_queue as queue
 bp = Blueprint("tasks", __name__)
 
 IMAGE_EXTS = config.IMAGE_EXTENSIONS
-# Переходы, которые вообще имеют смысл. Всё остальное — ошибка в интерфейсе.
-ALLOWED = {
-    "queued": {"in_progress", "closed"},
-    "in_progress": {"done", "queued", "closed"},
-    "done": {"updating", "closed"},
-    "updating": {"done", "closed"},
-    "closed": set(),
-}
+ALLOWED = task_rights.MOVES
 STATUS_LABELS = {
     "queued": "на очереди",
     "in_progress": "в работе",
@@ -140,12 +134,62 @@ NAME_MAX = 255
 NOT_WORKER = "Исполнителем может быть редактор или администратор, зритель размечать не может."
 
 
-def _may_work(task, user, role):
-    """Админ может всё; исполнитель-редактор — всё в своей таске, кроме переназначения.
+def _team_from(db, project, raw):
+    """Состав исполнителей из запроса: ({user_id}, None) или (None, ответ-ошибка)."""
+    if not isinstance(raw, list):
+        return None, (jsonify({"error": "assignees: ожидается список людей."}), 400)
+    ids = {_uuid_or_none(r) for r in raw}
+    if None in ids:
+        return None, (jsonify({"error": "Исполнитель не состоит в проекте."}), 400)
+    roles = dict(db.execute(select(ProjectMember.user_id, ProjectMember.role).where(
+        ProjectMember.project_id == project.id, ProjectMember.user_id.in_(ids))).all()) if ids else {}
+    if ids - roles.keys():
+        return None, (jsonify({"error": "Исполнитель не состоит в проекте."}), 400)
+    if not all(has_role(r, "editor") for r in roles.values()):
+        return None, (jsonify({"error": NOT_WORKER}), 400)
+    return ids, None
 
-    Роль проверяется и здесь: зритель, ставший исполнителем раньше, получал
-    `can_work` и живые кнопки, каждая из которых отвечала 403."""
-    return role == "admin" or (task.assignee_id == user.id and has_role(role, "editor"))
+
+def _team(task):
+    return {u.id for u in task.assignees}
+
+
+def _can(task, user, role, what="edit"):
+    """edit — работа над кадрами, fill — источники, tag — таги кадра (см. `task_rights`)."""
+    team = _team(task)
+    if what == "fill":
+        return task_rights.can_fill(task.status, role, user.id, team, task.created_by)
+    if what == "tag":
+        return task_rights.can_tag_frame(task.status, role, user.id, team)
+    return task_rights.can_edit(task.status, role, user.id, team)
+
+
+# Не то состояние — 409 с кодом: редактор по нему пишет, почему правка не легла.
+STATE_REFUSAL = {
+    "queued": "Таска на очереди — сначала возьмите её в работу.",
+    "done": "Таска сдана — верните её к разметке, чтобы править.",
+    "closed": "Таска закрыта, разметка заморожена.",
+}
+
+
+def _refusal(task, user, role, what="edit"):
+    """None, если можно; иначе ответ: 403 — не ваша таска, 409 — не то состояние."""
+    if _can(task, user, role, what):
+        return None
+    if task.status in task_rights.WORK or (what == "fill" and task.status == "queued"):
+        return jsonify({"error": "Это не ваша таска.", "code": "not_yours"}), 403
+    return jsonify({"error": STATE_REFUSAL[task.status], "code": f"task_{task.status}"}), 409
+
+
+def _rights(task, user, role):
+    return task_rights.rights(task.status, role, user.id, _team(task), task.created_by)
+
+
+def _ping(db, task_id, project_id, user, **what):
+    """Живое событие таски: кто-то правил. Сосед перечитывает свой кадр, страница — числа.
+    i — кадр, v и f — ролик и номер кадра в нём, s — новое состояние или состав."""
+    if task_id:
+        live.notify(db, "task", task_id, project_id, u=str(user.id), **what)
 
 
 def _log(db, task, user, kind, **payload):
@@ -226,8 +270,16 @@ def _board_extra(db, task):
     }
 
 
-def _task_json(db, task, with_counts=True):
-    assignee = db.get(User, task.assignee_id) if task.assignee_id else None
+def _people(users):
+    return sorted(({"id": str(u.id), "display_name": u.display_name} for u in users),
+                  key=lambda p: p["display_name"].lower())
+
+
+def _names(users):
+    return [p["display_name"] for p in _people(users)]
+
+
+def _task_json(db, task, user, role, with_counts=True):
     author = db.get(User, task.created_by) if task.created_by else None
     dataset = db.get(Dataset, task.target_dataset_id) if task.target_dataset_id else None
     data = {
@@ -235,10 +287,8 @@ def _task_json(db, task, with_counts=True):
         "name": task.name,
         "status": task.status,
         "status_label": STATUS_LABELS.get(task.status, task.status),
-        "assignee": (
-            {"id": str(assignee.id), "display_name": assignee.display_name}
-            if assignee else None
-        ),
+        "assignees": _people(task.assignees),
+        "rights": _rights(task, user, role),
         "target_dataset": (
             {"id": str(dataset.id), "name": dataset.name} if dataset
             else ({"id": None, "name": task.target_dataset_name}
@@ -260,7 +310,12 @@ def _light_list(db, tasks, user, role):
     """Карточки без счётчиков, пакетом: люди, датасеты и смены состояний — по запросу на всех.
     Счётчики доска спрашивает потом по одной таске (`/summary`)."""
     ids = [t.id for t in tasks]
-    people = ({t.assignee_id for t in tasks} | {t.created_by for t in tasks}) - {None}
+    teams = {t.id: set() for t in tasks}
+    if ids:
+        for tid, uid in db.execute(select(TaskAssignee.task_id, TaskAssignee.user_id)
+                                   .where(TaskAssignee.task_id.in_(ids))):
+            teams[tid].add(uid)
+    people = (set().union(*teams.values()) | {t.created_by for t in tasks}) - {None}
     # display_name — свойство, не колонка: людей читаем целиком
     names = {u.id: u.display_name for u in db.execute(select(User).where(User.id.in_(people))).scalars()} if people else {}
     sets = {t.target_dataset_id for t in tasks} - {None}
@@ -290,7 +345,8 @@ def _light_list(db, tasks, user, role):
             "name": t.name,
             "status": t.status,
             "status_label": STATUS_LABELS.get(t.status, t.status),
-            "assignee": {"id": str(t.assignee_id), "display_name": names.get(t.assignee_id)} if t.assignee_id in names else None,
+            "assignees": sorted(({"id": str(u), "display_name": names[u]} for u in teams[t.id] if u in names),
+                                key=lambda p: p["display_name"].lower()),
             "target_dataset": (
                 {"id": str(t.target_dataset_id), "name": datasets[t.target_dataset_id]} if t.target_dataset_id in datasets
                 else ({"id": None, "name": t.target_dataset_name} if t.target_dataset_name else None)
@@ -300,8 +356,8 @@ def _light_list(db, tasks, user, role):
             "status_at": (moved.get(t.id) or t.created_at).isoformat(),
             "last_box_at": last_box.isoformat() if last_box else None,
             "last_at": last.isoformat(),
-            # can_work — можно ли тащить карточку по доске (те же права, что у кнопок таски)
-            "can_work": _may_work(t, user, role),
+            # Куда карточку можно перетащить по доске — те же переходы, что у кнопок таски.
+            "moves": sorted(task_rights.moves(t.status, role, user.id, teams[t.id])),
         })
     return out
 
@@ -352,25 +408,12 @@ def create_task(code):
             return jsonify({"error": f"Название длиннее {NAME_MAX} знаков."}), 400
 
         role = role_in(db, user, project)
-        assignee_id = user.id
-        raw = data.get("assignee_id")
-        if raw:
-            # Обычный участник назначает только себя; выбирать исполнителя
-            # из команды может администратор.
-            if role != "admin" and str(raw) != str(user.id):
-                return jsonify({"error": "Назначать других может администратор."}), 403
-            target = _uuid_or_none(raw)
-            member = db.execute(
-                select(ProjectMember).where(
-                    ProjectMember.project_id == project.id,
-                    ProjectMember.user_id == target,
-                )
-            ).scalar_one_or_none()
-            if member is None:
-                return jsonify({"error": "Исполнитель не состоит в проекте."}), 400
-            if not has_role(member.role, "editor"):
-                return jsonify({"error": NOT_WORKER}), 400
-            assignee_id = target
+        # Без поля — автор; пустой список — ничья таска, её возьмёт любой редактор.
+        team, err = _team_from(db, project, data.get("assignees", [str(user.id)]))
+        if err:
+            return err
+        if role != "admin" and team - {user.id}:
+            return jsonify({"error": "Назначать других может администратор."}), 403
 
         dataset_id = _uuid_or_none(data.get("target_dataset_id"))
         dataset_name = (data.get("target_dataset_name") or "").strip() or None
@@ -387,18 +430,16 @@ def create_task(code):
         task = Task(
             project_id=project.id,
             name=name,
-            assignee_id=assignee_id,
             target_dataset_id=dataset_id,
             target_dataset_name=None if dataset_id else dataset_name,
             created_by=user.id,
         )
+        task.assignees = [db.get(User, uid) for uid in team]
         db.add(task)
         db.flush()
-        assignee = db.get(User, assignee_id)
-        _log(db, task, user, "created",
-             assignee=assignee.display_name if assignee else None)
+        _log(db, task, user, "created", assignees=_names(task.assignees))
         db.commit()
-        return jsonify(_task_json(db, task)), 201
+        return jsonify(_task_json(db, task, user, role)), 201
     finally:
         db.close()
 
@@ -412,9 +453,8 @@ def get_task(task_id):
     if err:
         return err
     try:
-        data = _task_json(db, task, with_counts=False)
+        data = _task_json(db, task, user, role, with_counts=False)
         data["project"] = {"code": project.code, "name": project.name}
-        data["can_work"] = _may_work(task, user, role)
         data["is_admin"] = role == "admin"
         videos = db.execute(
             select(TaskVideo).where(TaskVideo.task_id == task.id)
@@ -573,28 +613,26 @@ def update_task(task_id):
         return err
     try:
         data = request.get_json(silent=True) or {}
-        if "assignee_id" in data:
+        moved = False
+        if "assignees" in data:
             if role != "admin":
                 return jsonify({"error": "Переназначать может администратор."}), 403
-            target = _uuid_or_none(data["assignee_id"])
-            if target is not None:
-                member = db.execute(
-                    select(ProjectMember).where(
-                        ProjectMember.project_id == project.id,
-                        ProjectMember.user_id == target,
-                    )
-                ).scalar_one_or_none()
-                if member is None:
-                    return jsonify({"error": "Исполнитель не состоит в проекте."}), 400
-                if not has_role(member.role, "editor"):
-                    return jsonify({"error": NOT_WORKER}), 400
-            task.assignee_id = target
-            who = db.get(User, target) if target else None
-            _log(db, task, user, "assigned",
-                 assignee=who.display_name if who else None)
+            if task.status == "closed":
+                return jsonify({"error": STATE_REFUSAL["closed"], "code": "task_closed"}), 409
+            team, err = _team_from(db, project, data["assignees"])
+            if err:
+                return err
+            was = {u.id: u for u in task.assignees}
+            if team != was.keys():
+                task.assignees = [was.get(uid) or db.get(User, uid) for uid in team]
+                _log(db, task, user, "assignees",
+                     added=_names(u for u in task.assignees if u.id not in was),
+                     removed=_names(u for uid, u in was.items() if uid not in team))
+                moved = True
         if "name" in data:
-            if not _may_work(task, user, role):
-                return jsonify({"error": "Это не ваша таска."}), 403
+            denied = _refusal(task, user, role, "fill")
+            if denied:
+                return denied
             name = (data.get("name") or "").strip()
             if not name:
                 return jsonify({"error": "Название не может быть пустым."}), 400
@@ -602,7 +640,10 @@ def update_task(task_id):
                 return jsonify({"error": f"Название длиннее {NAME_MAX} знаков."}), 400
             task.name = name
         db.commit()
-        return jsonify(_task_json(db, task))
+        if moved:
+            # Снятый исполнитель уходит в просмотр сразу, а не на первом отказе.
+            _ping(db, task.id, task.project_id, user, s=task.status)
+        return jsonify(_task_json(db, task, user, role))
     finally:
         db.close()
 
@@ -651,8 +692,6 @@ def set_status(task_id):
     if err:
         return err
     try:
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
         # Таска под замком: два «Готово» разом создавали два датасета или падали 500.
         task = db.execute(
             select(Task).where(Task.id == task.id).with_for_update()
@@ -666,6 +705,17 @@ def set_status(task_id):
                 "error": f"Из «{STATUS_LABELS[task.status]}» нельзя перейти "
                          f"в «{STATUS_LABELS[target]}»."
             }), 409
+        team = _team(task)
+        if target not in task_rights.moves(task.status, role, user.id, team):
+            if target == "closed":
+                return jsonify({"error": "Закрыть таску может администратор."}), 403
+            if task.status == "queued":
+                return jsonify({"error": "Таску назначили другим — взять её могут они."}), 403
+            return jsonify({"error": "Это не ваша таска."}), 403
+        # На «Готово» ничего не должно меняться; на очереди нарезка не мешает — там готовят материал.
+        blocked = (_agent_running(db, task) if target in ("done", "queued") else None)             or (_video_busy(db, task) if target == "done" else None)
+        if blocked:
+            return blocked
 
         result = {}
         if target == "done":
@@ -675,12 +725,16 @@ def set_status(task_id):
             if blocked:
                 return blocked
             result = _close(db, task, user)
+        elif task_rights.joins_on_take(task.status, target, team):
+            task.assignees.append(user)
+            _log(db, task, user, "status", status=target, joined=user.display_name)
         else:
             _log(db, task, user, "status", status=target)
 
         task.status = target
         db.commit()
-        payload = _task_json(db, task)
+        _ping(db, task.id, task.project_id, user, s=target)
+        payload = _task_json(db, task, user, role)
         payload.update(result)
         return jsonify(payload)
     finally:
@@ -781,20 +835,18 @@ def _drop_video_files(path):
             pass
 
 
-def _close_blockers(db, task):
-    """409, если закрытие уничтожило бы работу; иначе None.
-
-    Закрытие удаляет ролики вместе с их разметкой — треками, рамками, фоновыми
-    пометками. Незакрытая разметка ролика ещё не стала кадрами, и раньше она
-    пропадала молча. Выбросить её можно только явно — убрав ролик.
-    """
-    vids =db.execute(select(TaskVideo.id, TaskVideo.file_name).where(TaskVideo.task_id == task.id)).all()
+def _video_busy(db, task):
+    vids = db.execute(select(TaskVideo.id, TaskVideo.file_name).where(TaskVideo.task_id == task.id)).all()
     busy = [name for vid, name in vids if video_busy.current(vid)]
     if busy:
         return jsonify({
             "error": f"По ролику «{busy[0]}» идёт нарезка или закрытие разметки — дождитесь конца.",
             "code": "video_busy",
         }), 409
+    return None
+
+
+def _agent_running(db, task):
     agent = db.execute(
         select(AgentRun.id).where(AgentRun.task_id == task.id,
                                   AgentRun.status.in_(("queued", "waiting_gpu", "running")))
@@ -802,6 +854,19 @@ def _close_blockers(db, task):
     if agent:
         return jsonify({"error": "По таске идёт агент — дождитесь его конца или остановите.",
                         "code": "agent_running"}), 409
+    return None
+
+
+def _close_blockers(db, task):
+    """409, если закрытие уничтожило бы работу; иначе None.
+
+    Закрытие удаляет ролики вместе с их разметкой — треками, рамками, фоновыми
+    пометками. Незакрытая разметка ролика ещё не стала кадрами, и раньше она
+    пропадала молча. Выбросить её можно только явно — убрав ролик.
+    """
+    blocked = _video_busy(db, task) or _agent_running(db, task)
+    if blocked:
+        return blocked
     # Ролик, который уже дал кадры и открыт заново, не держит: его кадры в таске.
     open_work = [p for p in materialize.pending_summary(db, task)
                  if not p["frames_in_task"] and (p["frames"] or p.get("error"))]
@@ -945,8 +1010,9 @@ def delete_video(task_id, video_id):
     if err:
         return err
     try:
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
+        denied = _refusal(task, user, role, "fill")
+        if denied:
+            return denied
         vid = _uuid_or_none(video_id)
         row = db.get(TaskVideo, vid) if vid else None
         if row is None or row.task_id != task.id:
@@ -976,6 +1042,7 @@ def delete_video(task_id, video_id):
         # разметка ролика. Файлы — следом, когда база уже согласилась.
         db.delete(row)
         db.commit()
+        _ping(db, task.id, task.project_id, user)
         _drop_video_files(path)
         video_index.forget(vid)
         return jsonify({"removed": removed, "kept_accepted": kept, "file_name": name})
@@ -1028,10 +1095,9 @@ def upload_images(task_id):
     if err:
         return err
     try:
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта — загружать в неё нечего."}), 409
+        denied = _refusal(task, user, role, "fill")
+        if denied:
+            return denied
         full = upload.room_error(request.content_length or 0)
         if full:
             return jsonify({"error": full, "code": "no_space"}), 507
@@ -1065,6 +1131,7 @@ def upload_images(task_id):
             added += 1
         _log(db, task, user, "images_added", added=added, skipped=skipped)
         db.commit()
+        _ping(db, task.id, task.project_id, user)
         return jsonify({"added": added, "skipped": skipped,
                         "counts": _counts(db, task.id)}), 201
     finally:
@@ -1078,10 +1145,9 @@ def upload_video(task_id):
     if err:
         return err
     try:
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта — загружать в неё нельзя."}), 409
+        denied = _refusal(task, user, role, "fill")
+        if denied:
+            return denied
         full = upload.room_error(request.content_length or 0)
         if full:
             return jsonify({"error": full, "code": "no_space"}), 507
@@ -1127,6 +1193,7 @@ def upload_video(task_id):
         _log(db, task, user, "video_added", file=file.filename,
              duration_ms=meta.get("duration_ms"), mode=mode)
         db.commit()
+        _ping(db, task.id, task.project_id, user)
 
         # Дальше — только заявки в очередь. Раньше здесь строилась таблица
         # кадров и клеилась кинолента, и загрузка держала поток gunicorn всё
@@ -1357,10 +1424,9 @@ def cut_video(task_id, video_id):
     if err:
         return err
     try:
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта — резать в неё нельзя."}), 409
+        denied = _refusal(task, user, role, "fill")
+        if denied:
+            return denied
         vid = _uuid_or_none(video_id)
         row = db.get(TaskVideo, vid) if vid else None
         if row is None or row.task_id != task.id:
@@ -1436,6 +1502,9 @@ def task_images(task_id):
         limit = min(int(request.args.get("limit", 60)), 200)
         offset = int(request.args.get("offset", 0))
         q = select(Image).where(Image.task_id == task.id)
+        # Один кадр — редактор перечитывает его, когда кадр поправил сосед
+        if request.args.get("image"):
+            q = q.where(Image.id == _uuid_or_none(request.args["image"]))
         if status == "agent":
             q = q.where(task_frames.agent_pending())
         elif status:
@@ -1527,10 +1596,9 @@ def _save_annotations(db, image_id):
     # Принятый кадр — данные проекта: правит любой редактор, таска тут ни при чём.
     if image.task_id and image.dataset_id is None:
         task = db.get(Task, image.task_id)
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта, разметка заморожена."}), 409
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
+        denied = _refusal(task, user, role)
+        if denied:
+            return denied
 
     data = json_body()
     # Битое тело раньше читалось как «боксов нет» и стирало разметку кадра.
@@ -1649,6 +1717,7 @@ def _save_annotations(db, image_id):
             image.task_status = "empty" if image.dataset_id else "new"
     image.annotations_rev += 1
     db.commit()
+    _ping(db, image.task_id, image.project_id, user, i=str(image.id))
     # id и автор — по порядку присланного (null — фигура отброшена): без id
     # клиента каждая запись считалась бы новой рамкой, и settle не работал.
     saved = [None] * len(data["boxes"])
@@ -1691,10 +1760,9 @@ def set_image_status(image_id):
         project = db.get(Project, image.project_id)
         role = role_in(db, user, project)
         task = db.get(Task, image.task_id)
-        if not has_role(role, "editor") or not _may_work(task, user, role):
-            return jsonify({"error": "Недостаточно прав."}), 403
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта, кадры заморожены."}), 409
+        denied = _refusal(task, user, role)
+        if denied:
+            return denied
         status = json_body().get("status")
         if status not in ("new", "skipped", "annotated", "empty", "deleted"):
             return jsonify({"error": "Неизвестное состояние кадра."}), 400
@@ -1708,6 +1776,7 @@ def set_image_status(image_id):
         else:
             image.task_status = status
         db.commit()
+        _ping(db, task.id, task.project_id, user, i=str(image.id))
         return jsonify({"task_status": image.task_status, "counts": _counts(db, task.id)})
     finally:
         db.close()
@@ -1756,13 +1825,15 @@ def set_image_tags(image_id):
             return jsonify({"error": "Кадр не найден в таске."}), 404
         project = db.get(Project, image.project_id)
         role = role_in(db, user, project)
-        # Тот же круг, что у разметки и статуса кадра: исполнитель или админ.
-        # Закрытие таски тагам не помеха — это паспорт кадра, а не работа над ним.
-        if not _may_work(db.get(Task, image.task_id), user, role):
-            return jsonify({"error": "Недостаточно прав."}), 403
+        # Как разметка, но админ правит и в «Готово», и в закрытой: таг — паспорт кадра,
+        # и ошибку в нём иначе нечем исправить.
+        denied = _refusal(db.get(Task, image.task_id), user, role, "tag")
+        if denied:
+            return denied
         want = tags.valid_ids(db, project.id, json_body().get("tags"))
         tags.set_for(db, "image", image.id, want)
         db.commit()
+        _ping(db, image.task_id, image.project_id, user, i=str(image.id))
         return jsonify({"tags": [str(t) for t in want]})
     finally:
         db.close()
@@ -1777,10 +1848,9 @@ def set_video_tags(task_id, video_id):
     if err:
         return err
     try:
-        if not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
-        if task.status == "closed":
-            return jsonify({"error": "Таска закрыта — роликов в ней больше не режут."}), 409
+        denied = _refusal(task, user, role, "fill")
+        if denied:
+            return denied
         vid = _uuid_or_none(video_id)
         video = db.get(TaskVideo, vid) if vid else None
         if video is None or video.task_id != task.id:
@@ -1818,12 +1888,16 @@ def delete_image(image_id):
         if not has_role(role, "editor"):
             return jsonify({"error": "Недостаточно прав в проекте."}), 403
         task = db.get(Task, image.task_id) if image.task_id else None
-        if task is not None and not _may_work(task, user, role):
-            return jsonify({"error": "Это не ваша таска."}), 403
+        # Принятый кадр — данные проекта: как и его разметку, удаляет любой редактор.
+        if task is not None and image.dataset_id is None:
+            denied = _refusal(task, user, role)
+            if denied:
+                return denied
 
         if task is not None and task.status != "closed":
             _soft_delete(db, task, user, image)
             db.commit()
+            _ping(db, task.id, task.project_id, user, i=str(image.id))
             return jsonify({"ok": True, "soft": True,
                             "counts": _counts(db, task.id)})
 

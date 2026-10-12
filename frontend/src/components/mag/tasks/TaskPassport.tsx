@@ -2,11 +2,12 @@
 
 import { Link } from "react-router-dom";
 import type { ProjectMemberInfo, TaskDetail, TaskEventItem, TaskNumbers, TaskStatus } from "../../../auth/api";
-import { Avatar, Badge, Button, Icon, Ring, Select, Swatch, cx, useTween } from "../../../ui";
+import { Avatar, Badge, Button, Icon, Ring, Swatch, cx, useTween } from "../../../ui";
 import { ago, count, ru } from "../../ru";
 import { describeTaskEvent } from "../taskEvents";
 import type { FrameState } from "./tasks";
 import { NEXT, STATES, STATUS, dayOf, decidedOf, framesOf } from "./tasks";
+import { TeamEdit, TeamView } from "./Team";
 import type { Look } from "./useTaskBoard";
 import { openVideos } from "./useTaskPage";
 
@@ -27,7 +28,7 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
   onState: (s: FrameState) => void;
   onMove: (to: TaskStatus) => void;
   onClose: () => void;
-  onAssign: (id: string | null) => void;
+  onAssign: (ids: string[]) => void;
   onHistory: () => void;
 }) {
   const c = numbers?.counts;
@@ -36,14 +37,15 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
   const decided = c ? decidedOf(c) : 0;
   const st = STATUS[task.status];
   const closed = task.status === "closed";
-  const canMove = task.can_work && !closed;
+  const moves = task.rights.moves;
   const shownDecided = useTween(decided);
   const share = frames ? decided / frames : 0;
   const shownPct = useTween(Math.floor(share * 100));
   const toAccept = c ? Math.max(0, decided - c.accepted) : null;
   const objects = classes.reduce((s, x) => s + x.annotations, 0);
   const maxCls = Math.max(1, ...classes.map((x) => x.annotations));
-  const next = NEXT[task.status];
+  // Главный переход страницы — если он мне разрешён; закрытие отдельной кнопкой внизу
+  const next = NEXT[task.status] && moves.includes(NEXT[task.status]!.to) ? NEXT[task.status] : null;
   // Кольцо стоит, если в таске есть кадры или открытые ролики — это известно сразу, без чисел
   const hasWork = Object.values(task.sources || {}).some((s) => s.frames > 0) || openVideos(task).length > 0;
   const zone = (l: Look) => cx(l.stale && "tp-stale", l.loading && "ui-shim");
@@ -94,14 +96,12 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
         </section>
       )}
 
-      <section>
+      {(closed || next) && <section>
         {closed ? (
           <>
             <span className="t-sm">Таска закрыта{c?.accepted ? `: ${count(c.accepted, "кадр", "кадра", "кадров")} в датасете` : ""}.</span>
             <Link to={`/projects/${task.project.code}/datasets`} className="t-sm">Смотреть датасеты</Link>
           </>
-        ) : !task.can_work ? (
-          <span className="t-sm t-muted">Состояние меняет исполнитель таски или администратор.</span>
         ) : next?.to === "done" ? (
           <>
             <Button variant="primary" icon="tick" className="tp-wide" disabled={busy} onClick={() => onMove("done")}>Готово</Button>
@@ -120,21 +120,16 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
               className="tp-wide" disabled={busy} onClick={() => onMove(next.to)}>{next.label}</Button>
           </>
         ) : null}
-      </section>
+      </section>}
 
       <section>
         <h5>Паспорт</h5>
         <dl className="tp-kv">
-          <dt>Исполнитель</dt>
+          <dt>Исполнители</dt>
           <dd>
-            {task.is_admin && canMove && workers.length ? (
-              <Select size="sm" label="Исполнитель" value={task.assignee?.id ?? "none"} disabled={busy}
-                onChange={(v) => onAssign(v === "none" ? null : v)}
-                options={[{ value: "none", label: "без исполнителя" },
-                  ...workers.map((m) => ({ value: m.id, label: m.display_name, hint: m.role_label }))]} />
-            ) : task.assignee ? (
-              <span className="tp-who"><Avatar name={task.assignee.display_name} size={20} />{task.assignee.display_name}</span>
-            ) : <span className="t-faint">без исполнителя</span>}
+            {task.rights.assign && workers.length
+              ? <TeamEdit team={task.assignees} workers={workers} busy={busy} onSave={onAssign} />
+              : <TeamView people={task.assignees} />}
           </dd>
           <dt>Датасет</dt>
           <dd className="t-ell">
@@ -167,7 +162,7 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
         </section>
       )}
 
-      {canMove && (
+      {moves.includes("closed") && (
         <section>
           <Button variant="danger" icon="archive" className="tp-wide" disabled={busy} onClick={onClose}>Закрыть таску…</Button>
         </section>

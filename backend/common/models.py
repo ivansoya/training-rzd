@@ -462,8 +462,8 @@ class Task(Base, AuditMixin):
     """Долгоживущий пул кадров: загрузили, размечаем, готовое отдаём в проект.
 
     Целевой датасет выбирается один раз при создании, поэтому «готово» потом
-    работает одной кнопкой без вопросов. Исполнитель может стать пустым, если
-    человека убрали из проекта, — тогда таска ждёт нового.
+    работает одной кнопкой без вопросов. Исполнителей несколько или ни одного:
+    ничью таску с очереди берёт любой редактор (права — `common.task_rights`).
     """
 
     __tablename__ = "tasks"
@@ -477,9 +477,6 @@ class Task(Base, AuditMixin):
     status: Mapped[str] = mapped_column(
         TASK_STATUS_ENUM, nullable=False, default="queued", server_default="queued"
     )
-    assignee_id: Mapped[uuid.UUID | None] = mapped_column(
-        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
-    )
     # Куда уйдут принятые кадры. Пусто = создать датасет с именем таски при
     # первом «готово».
     target_dataset_id: Mapped[uuid.UUID | None] = mapped_column(
@@ -487,7 +484,21 @@ class Task(Base, AuditMixin):
     )
     target_dataset_name: Mapped[str | None] = mapped_column(sa.String(255))
 
-    assignee: Mapped[User | None] = relationship(foreign_keys=[assignee_id])
+    assignees: Mapped[list[User]] = relationship(secondary="task_assignees")
+
+
+class TaskAssignee(Base):
+    """Исполнитель таски. Состав меняет админ, и каждая правка — строка истории."""
+
+    __tablename__ = "task_assignees"
+    __table_args__ = (sa.Index("ix_task_assignees_user", "user_id"),)
+
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("tasks.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class TaskVideo(Base, AuditMixin):

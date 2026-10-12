@@ -22,10 +22,12 @@ import {
   videoFrameUrl,
 } from "../../auth/api";
 import type {
+  ApiError,
   AutoRefine,
   LabelClass,
   MaterializePreview,
   SingleWire,
+  TaskPerson,
   TaskVideoItem,
   VideoAnnotations,
   VideoSingleBox,
@@ -55,7 +57,8 @@ import { scoutLanes, taskColors, useScouts } from "../agents/scout";
 import AgentRunDialog, { AgentRunBar } from "../agents/AgentRunDialog";
 import AgentSetupDialog from "../agents/AgentSetupDialog";
 import { useConfirm } from "./tasks/Confirm";
-import { EditorHead, Float, Grip, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip } from "../editor/Chrome";
+import { EditorHead, Float, Grip, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip, editedBy, lostTo, useEditNote } from "../editor/Chrome";
+import { useAuth } from "../auth/AuthGate";
 import ClassPicker from "../editor/ClassPicker";
 import AutoSettings from "../editor/AutoSettings";
 import { AutoBar } from "../editor/FramePanels";
@@ -176,6 +179,7 @@ export default function VideoAnnotator({
   review = false,
   onClose,
   onChanged,
+  people,
 }: {
   code: string;
   taskId: string;
@@ -187,6 +191,8 @@ export default function VideoAnnotator({
   onClose: () => void;
   /** Разметка ролика закрыта или открыта заново — таске пора перечитаться. */
   onChanged?: () => void;
+  /** Участники проекта — имя соседа, чью правку подтянули. */
+  people: TaskPerson[];
 }) {
   const fps = video.fps || 25;
 
@@ -255,6 +261,11 @@ export default function VideoAnnotator({
   const [dockH, setDockH] = useState(() => Number(stored(DOCK_KEY)) || DOCK_DEFAULT);
   const dockLive = useRef(dockH);
   const [confirm, confirmNode] = useConfirm();
+  // Совместная работа (решение 12.10.2026): кто из соседей правил ролик последним
+  const { me } = useAuth();
+  const nameOf = (id: string | null) => people.find((m) => m.id === id)?.display_name ?? null;
+  const [editNote, say] = useEditNote();
+  const by = useRef<string | null>(null);
 
   const [autoPts, setAutoPts] = useState<CanvasPoint[]>([]);
   const [autoPrev, setAutoPrev] = useState<CanvasPreview | null>(null);
@@ -283,6 +294,14 @@ export default function VideoAnnotator({
   // Кадры, перечитанные после правки, пока кусок в пути: кусок их не затирает
   const touched = useRef(new Set<number>());
   const frameSeq = useRef(new Map<number, number>());
+  // Версии одиночной разметки кадров: запись поверх чужой правки сервер отклонит («stale»)
+  const revs = useRef(new Map<number, string>());
+  const setRevs = (got: Record<string, string>, from: number, to: number, skip?: Set<number>) => {
+    for (let f = from; f < to; f++) {
+      if (skip?.has(f)) continue;
+      if (got[f] !== undefined) revs.current.set(f, got[f]); else revs.current.delete(f);
+    }
+  };
 
   // --- кадры и проигрывание ------------------------------------------------ #
   const [quality, setQuality] = useState<string>("");
@@ -312,6 +331,7 @@ export default function VideoAnnotator({
     const seq = ++loadSeq.current;
     if (at === "all") {
       gen.current += 1;
+      revs.current.clear();
       setSingles([]);
       setLoaded(new Set());
       setFetching(null);
@@ -329,7 +349,8 @@ export default function VideoAnnotator({
       ]);
       if (frameSingles && typeof at === "number" && g === gen.current && frameSeq.current.get(at) === fs) {
         touched.current.add(at);
-        setSingles((prev) => [...prev.filter((s) => s.frame_no !== at), ...frameSingles]);
+        setRevs(frameSingles.revs, at, at + 1);
+        setSingles((prev) => [...prev.filter((s) => s.frame_no !== at), ...frameSingles.singles]);
       }
       // Опоздавший ответ затёр бы на экране более позднюю правку.
       if (seq !== loadSeq.current) return;
@@ -359,9 +380,10 @@ export default function VideoAnnotator({
       .then((got) => {
         if (g !== gen.current) return;
         const skip = touched.current;
+        setRevs(got.revs, c.from, c.to, skip);
         setSingles((prev) => [
           ...prev.filter((s) => s.frame_no < c.from || s.frame_no >= c.to || skip.has(s.frame_no)),
-          ...got.filter((s) => !skip.has(s.frame_no)),
+          ...got.singles.filter((s) => !skip.has(s.frame_no)),
         ]);
         setLoaded((prev) => new Set(prev).add(i));
       })
@@ -388,6 +410,18 @@ export default function VideoAnnotator({
   useLive("classes", () => {
     loadClasses();
     void load("all");
+  });
+
+  // Сосед поправил ролик: кадр — перечитать его фигуры, без кадра — треки и фоновые.
+  // Своя запись в пути — её ответ «stale» сам поставит чужую версию.
+  const frameNow = useRef(frame);
+  frameNow.current = frame;
+  useLive("task", (e) => {
+    if (e.v !== video.id || e.u === me.user.id) return;
+    by.current = e.u ?? null;
+    if (inFlight.current) return;
+    void load(e.f);
+    if (e.f === frameNow.current) say(editedBy(nameOf(e.u ?? null)));
   });
 
   useEffect(() => {
@@ -529,6 +563,8 @@ export default function VideoAnnotator({
         failed.current = true;
         sent.current = null;
         setDraft(null);
+        // Чужая правка кадра: на экране уже его версия (putFrame), у записи — строка, не ошибка
+        if ((e as ApiError).code === "stale") return;
         setError(errorText(e));
         await load("all");
       }
@@ -545,13 +581,27 @@ export default function VideoAnnotator({
     return run;
   }, [load]);
 
+  /** Записать одиночные кадра и перечитать его. Наткнулись на чужую правку — ставим её версию. */
+  const putFrame = useCallback(async (at: number, list: SingleWire[]) => {
+    try {
+      const res = await saveFrameBoxes(taskId, video.id, at, list, revs.current.get(at) ?? null);
+      if (res.rev) revs.current.set(at, res.rev); else revs.current.delete(at);
+    } catch (e) {
+      const got = (e as ApiError).code === "stale" ? (e as ApiError).data as { singles: VideoSingleBox[]; rev: string | null } : null;
+      if (got) {
+        touched.current.add(at);
+        if (got.rev) revs.current.set(at, got.rev); else revs.current.delete(at);
+        setSingles((prev) => [...prev.filter((s) => s.frame_no !== at), ...got.singles]);
+        say(lostTo(nameOf(by.current)));
+      }
+      throw e;
+    }
+    await load(at);
+  }, [taskId, video.id, load]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const saveSingles = useCallback(
-    (at: number, list: SingleWire[]) =>
-      guard(async () => {
-        await saveFrameBoxes(taskId, video.id, at, list);
-        await load(at);
-      }),
-    [guard, taskId, video.id, load]
+    (at: number, list: SingleWire[]) => guard(() => putFrame(at, list)),
+    [guard, putFrame]
   );
 
   /** Одиночная фигура в том виде, в каком уходит на сервер. По `id` сервер узнаёт
@@ -733,11 +783,10 @@ export default function VideoAnnotator({
             const got = change({ ...(asWire(s) as CanvasShape) });
             return got ? [wireOf(got, s.id)] : [];
           });
-        await saveFrameBoxes(taskId, video.id, box.frame_no, list);
-        await load(box.frame_no);
+        await putFrame(box.frame_no, list);
       });
     },
-    [frame, apply, guard, taskId, video.id, load, asWire]
+    [frame, apply, guard, putFrame, asWire]
   );
 
   /** Замкнутый контур — одиночная разметка кадра: треком контур не становится,
@@ -877,12 +926,9 @@ export default function VideoAnnotator({
     const at = frame;
     sent.current = null;
     setDraft(was.shapes.flatMap((s, i) => { const g = keepIt(s, was.items[i]); return g ? [g] : []; }));
-    guard(async () => {
-      await saveFrameBoxes(taskId, video.id, at, list);
-      await load(at);
-    });
+    guard(() => putFrame(at, list));
     return true;
-  }, [flushDraft, sentOf, frame, frozen, singlesOf, guard, taskId, video.id, load]);
+  }, [flushDraft, sentOf, frame, frozen, singlesOf, guard, putFrame]);
 
   /** «Подтвердить кадр»: оставшиеся рамки агента верны. Дальше — к следующему на проверке. */
   const confirmFrame = useCallback(() => {
@@ -1474,7 +1520,7 @@ export default function VideoAnnotator({
       >
         {clip.preparing && <PrepareNote clip={clip} />}
         {!clip.preparing && clip.loading && <span className="ve-prep"><i />Читаю ролик…</span>}
-        {data?.editable && <SaveNote state={saveState} error={error} />}
+        {data?.editable && <SaveNote state={saveState} error={error} note={editNote} />}
         <i className="ed-vsep" />
         {scout.length > 0 && (
           <Button variant="ghost" size="sm" icon="scan" kbd="R" aria-pressed={scoutOn} onClick={toggleScout}

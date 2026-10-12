@@ -1,11 +1,13 @@
-// Окно «Новая таска»: название, исполнитель, датасет для готовых кадров.
+// Окно «Новая таска»: название, исполнители, датасет для готовых кадров.
 
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { createTask } from "../../../auth/api";
+import { useAuth } from "../../auth/AuthGate";
 import { useProject } from "../ProjectShell";
 import { count } from "../../ru";
 import { Button, Dialog, Field, Input, Notice, Select } from "../../../ui";
+import { TeamPicker } from "./Team";
 
 export function CreateTaskModal({
   isAdmin,
@@ -17,9 +19,11 @@ export function CreateTaskModal({
   onCreated: (id: string) => void;
 }) {
   const { detail } = useProject();
+  const { me } = useAuth();
   const [name, setName] = useState("");
-  // Radix не принимает пустое значение: «me» и «new» — «я сам» и «новый датасет»
-  const [assignee, setAssignee] = useState("me");
+  // По умолчанию — автор; никого не выбрать — таска ничья, с очереди её возьмёт любой редактор
+  const [team, setTeam] = useState<string[]>([me.user.id]);
+  // Radix не принимает пустое значение: «new» — новый датасет
   const [dataset, setDataset] = useState("new");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -32,7 +36,7 @@ export function CreateTaskModal({
     try {
       const task = await createTask(detail.project.code, {
         name: name.trim(),
-        assignee_id: assignee === "me" ? null : assignee,
+        assignees: team,
         target_dataset_id: dataset === "new" ? null : dataset,
       });
       onCreated(task.id);
@@ -43,7 +47,8 @@ export function CreateTaskModal({
     }
   }
 
-  const people = isAdmin ? detail.members.filter((m) => m.role !== "viewer") : [];
+  // Других назначает админ; редактор — только себя или никого
+  const people = detail.members.filter((m) => m.role !== "viewer" && (isAdmin || m.id === me.user.id));
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }} width={520}
       title="Новая таска" desc="Кадры попадут в проект, когда вы переведёте таску в «Готово»."
@@ -60,10 +65,8 @@ export function CreateTaskModal({
           {(id) => <Input id={id} value={name} placeholder="Съёмка 12 августа" maxLength={255} data-autofocus
             onChange={(e) => setName(e.target.value)} />}
         </Field>
-        <Field label="Исполнитель" hint={isAdmin ? undefined : "Назначать других может администратор."}>
-          {(id) => <Select id={id} full value={assignee} onChange={setAssignee} disabled={!isAdmin} label="Исполнитель"
-            options={[{ value: "me", label: "Я сам" },
-              ...people.map((m) => ({ value: m.id, label: m.display_name, hint: m.role_label }))]} />}
+        <Field label="Исполнители" aside={team.length ? undefined : "ничья"}>
+          {() => <TeamPicker people={people} value={team} onChange={setTeam} />}
         </Field>
         <Field label="Готовые кадры пойдут в датасет" hint="Спрашиваем один раз: на «Готово» вопросов больше не будет.">
           {(id) => <Select id={id} full value={dataset} onChange={setDataset} label="Датасет для готовых кадров"
