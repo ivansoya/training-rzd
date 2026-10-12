@@ -217,6 +217,26 @@ def test_боксы_кадра_заменяются_целиком(api, task, vi
     assert len([s for s in body["singles"] if s["frame_no"] == 7]) == 1
 
 
+def test_каркас_и_куски_одиночных(api, task, video, label_class):
+    """Редактор берёт каркас без фигур и сводку по кадрам, фигуры — кусками [from, to)."""
+    base = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}"
+    ci = label_class["class_index"]
+    box = {"class_index": ci, "x": 5, "y": 5, "w": 20, "h": 20}
+    for f, n in ((3, 2), (9, 1), (20, 3)):
+        assert api.put(f"{base}/frames/{f}/boxes", json={"boxes": [box] * n}).status_code == 200
+    make_track(api, task, video, label_class, frame_no=5)
+
+    skel = api.get(f"{base}/annotations?singles=0").json()
+    assert "singles" not in skel and len(skel["tracks"]) == 1
+    # Ключ трека в сводку одиночных не попадает
+    assert skel["marks"] == [[3, 2, 0], [9, 1, 0], [20, 3, 0]]
+
+    part = api.get(f"{base}/annotations/singles?from=4&to=21").json()
+    assert sorted({s["frame_no"] for s in part["singles"]}) == [9, 20]
+    assert len(part["singles"]) == 4 and all(s["shape"] for s in part["singles"])
+    assert api.get(f"{base}/annotations/singles?from=x&to=5").status_code == 400
+
+
 # --- предпросмотр ---------------------------------------------------------- #
 def test_предпросмотр_считает_кадры_по_шагу(api, task, video, label_class):
     track = make_track(api, task, video, label_class)
@@ -274,8 +294,9 @@ def test_закрытие_разметки_делает_кадры_таски(ap
     body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
     assert body["videos"][0]["annotation_closed_at"] is not None
     # Кадры уже в таске, но ещё не в проекте — это обычные кадры.
-    assert body["counts"]["annotated"] == 3
-    assert body["counts"]["accepted"] == 0
+    counts = api.get(f"{BASE_URL}/api/tasks/{task['id']}/counts").json()["counts"]
+    assert counts["annotated"] == 3
+    assert counts["accepted"] == 0
 
     images = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]
     assert len(images) == 3
@@ -299,11 +320,10 @@ def test_повторное_закрытие_требует_убрать_кад�
 
     # Сводка знает об отказе заранее и не считает план «ждущим закрытия»:
     # иначе шапка показывала одни кадры дважды — «размечено» и «ждут».
-    body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
-    row = body["pending_videos"][0]
+    row = api.get(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/pending").json()["pending"]
     assert row["frames_in_task"] == 1
     assert row["frames"] == 0 and row["error"]
-    assert body["counts"]["annotated"] == 1
+    assert api.get(f"{BASE_URL}/api/tasks/{task['id']}/counts").json()["counts"]["annotated"] == 1
 
 
 def test_закрытый_ролик_только_для_просмотра(api, task, video, label_class):
@@ -388,7 +408,7 @@ def test_сдача_принимает_кадры_ролика_как_обычн
     res = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"})
     assert res.status_code == 200, res.text
     assert res.json()["accepted"] == 3
-    assert api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()["counts"]["accepted"] == 3
+    assert api.get(f"{BASE_URL}/api/tasks/{task['id']}/counts").json()["counts"]["accepted"] == 3
 
 
 def test_правка_кадра_переживает_повторную_сдачу(api, task, video, label_class):
@@ -417,14 +437,16 @@ def test_незакрытые_ролики_видны_в_сводке(api, task,
     track = make_track(api, task, video, label_class)
     api.patch(f"{BASE_URL}/api/video-tracks/{track['id']}", json={"export_step": 10})
 
-    body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
-    assert len(body["pending_videos"]) == 1
-    assert body["pending_videos"][0]["file_name"] == "sample-30f.mp4"
-    assert body["pending_videos"][0]["frames"] == 1
-    assert body["pending_videos"][0]["tracks"] == 1
+    pending = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/pending"
+    row = api.get(pending).json()["pending"]
+    assert row["file_name"] == "sample-30f.mp4"
+    assert row["frames"] == 1
+    assert row["tracks"] == 1
+    # Доска считает то же число одним полем
+    assert api.get(f"{BASE_URL}/api/tasks/{task['id']}/summary").json()["pending_frames"] == 1
 
     wait_job(api, close_annotation(api, task, video).json()["job_id"])
-    assert api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()["pending_videos"] == []
+    assert api.get(pending).json()["pending"] is None
 
 
 # --- границы --------------------------------------------------------------- #
@@ -467,7 +489,7 @@ def test_закрытие_таски_уносит_видео_но_оставля
 
     body = api.get(f"{BASE_URL}/api/tasks/{task['id']}").json()
     assert body["videos"] == []
-    assert body["counts"]["accepted"] == 1
+    assert api.get(f"{BASE_URL}/api/tasks/{task['id']}/counts").json()["counts"]["accepted"] == 1
 
 
 def test_нарезаемое_видео_треков_не_принимает(api, task, sample_video, label_class):

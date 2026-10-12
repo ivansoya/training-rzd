@@ -174,6 +174,16 @@ def test_план_собирает_треки_и_одиночные_боксы(t
     assert 130 in result and result[130][0]["track_id"] == "t1"
 
 
+def test_план_без_геометрии_одиночных_считает_то_же():
+    """Сводка читает разметку без геометрии (`video_payload(shapes=False)`)."""
+    singles = [{"frame_no": 7, "class_id": "c", "geometry": None, "pending": True},
+               {"frame_no": 7, "class_id": "c", "geometry": None},
+               {"frame_no": 9, "class_id": "c", "geometry": None}]
+    result = plan([], singles)
+    assert {f: len(v) for f, v in result.items()} == {7: 2, 9: 1}
+    assert result[7][0]["pending"] and result[7][0]["geometry"] is None
+
+
 def test_план_пуст_когда_размечать_нечего():
     assert plan([], []) == {}
 

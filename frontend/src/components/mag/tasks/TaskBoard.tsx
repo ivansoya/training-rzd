@@ -1,10 +1,11 @@
 // Таски: доска по состояниям; карточку тащат в соседнюю колонку — это смена состояния.
 
-import { useCallback, useEffect, useState } from "react";
-import type { DragEvent } from "react";
+import { useState } from "react";
+import type { DragEvent, ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { listTasks, setTaskStatus } from "../../../auth/api";
-import type { TaskBoardItem, TaskStatus } from "../../../auth/api";
+import { getTaskStats, setTaskStatus } from "../../../auth/api";
+import type { TaskLight, TaskStats, TaskStatus } from "../../../auth/api";
+import { cacheTime } from "../../../api/cache";
 import { Avatar, Badge, Button, Dot, Empty, Icon, Input, Notice, PageHeader, Seg, StackBar, cx } from "../../../ui";
 import { useAuth } from "../../auth/AuthGate";
 import { ago, count, ru } from "../../ru";
@@ -12,6 +13,8 @@ import { useProject } from "../ProjectShell";
 import { useConfirm } from "./Confirm";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { BOARD, STATES, STATUS, boardColumns, canMove, closePlan, closeText, sourceLine, stateParts, waitingOf } from "./tasks";
+import { look, useTaskBoard } from "./useTaskBoard";
+import type { Fresh } from "./useTaskBoard";
 
 const CLOSED_SHOWN = 2;
 
@@ -29,9 +32,8 @@ export default function TaskBoard() {
   const { me } = useAuth();
   const navigate = useNavigate();
   const code = detail.project.code;
-  const [tasks, setTasks] = useState<TaskBoardItem[] | null>(null);
-  const [canCreate, setCanCreate] = useState(false);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const board = useTaskBoard(code, me.user.id);
+  const { list: tasks, canCreate, isAdmin, stats, fresh, at } = board;
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -43,27 +45,20 @@ export default function TaskBoard() {
   const [landed, setLanded] = useState<string | null>(null);
   const [confirm, confirmNode] = useConfirm();
 
-  const load = useCallback(async () => {
-    try {
-      const d = await listTasks(code);
-      setTasks(d.tasks);
-      setCanCreate(d.can_create);
-      setIsAdmin(d.is_admin);
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [code]);
-  useEffect(() => { void load(); }, [load]);
-
   const list = tasks ?? [];
   const { cols, shown } = boardColumns(list, query, who === "mine" ? me.user.id : null);
   const working = list.filter((t) => t.status === "in_progress").length;
-  const desc = tasks === null ? "Загружаем…" : [
-    count(list.length, "таска", "таски", "тасок"),
-    working ? `${ru(working)} в работе` : null,
-    `${count(waitingOf(list), "кадр ждёт", "кадра ждут", "кадров ждут")} решения`,
-  ].filter(Boolean).join(" · ");
+  // Ждут решения — по пришедшим счётчикам; пока идут, рядом «обновляется»
+  const busy = board.listing || list.some((t) => fresh[t.id] !== "ok");
+  const desc = tasks === null ? <Updating>Загружаем…</Updating> : <>
+    {[
+      count(list.length, "таска", "таски", "тасок"),
+      working ? `${ru(working)} в работе` : null,
+      `${count(waitingOf(list, stats), "кадр ждёт", "кадра ждут", "кадров ждут")} решения`,
+    ].filter(Boolean).join(" · ")}
+    {at !== null && busy && <span className="tb-cache">на {cacheTime(at)}</span>}
+    {busy && <Updating>обновляется</Updating>}
+  </>;
 
   const endDrag = () => { setDrag(null); setOver(null); };
 
@@ -72,25 +67,30 @@ export default function TaskBoard() {
     endDrag();
     const t = d && list.find((x) => x.id === d.id);
     if (!d || !t || d.from === to || !canMove(d.from, to)) return;
-    if (to === "closed") {
+    // Окнам нужны числа таски — свежие, а не из кеша
+    let s: TaskStats | undefined = stats[t.id];
+    if (to === "closed" || to === "done") {
+      try { s = await getTaskStats(t.id); } catch (e) { setError(`«${t.name}»: ${(e as Error).message}`); return; }
+    }
+    if (to === "closed" && s) {
       const ok = await confirm({
         title: `Закрыть «${t.name}»?`, desc: "Закрытую таску нельзя вернуть в работу.",
-        lines: closeText(closePlan(t.counts, t.sources.cut + t.sources.annotate), t.target_dataset?.name ?? null),
+        lines: closeText(closePlan(s.counts, s.sources.cut + s.sources.annotate), t.target_dataset?.name ?? null),
         ok: "Закрыть таску", icon: "archive", danger: true,
       });
       if (!ok) return;
     }
-    if (to === "done" && t.pending_frames > 0) {
+    if (to === "done" && s && s.pending_frames > 0) {
       const ok = await confirm({
         title: "Сдать с незакрытыми роликами?",
-        desc: `${count(t.pending_frames, "кадр", "кадра", "кадров")} из роликов с незакрытой разметкой в датасет не уйдут.`,
+        desc: `${count(s.pending_frames, "кадр", "кадра", "кадров")} из роликов с незакрытой разметкой в датасет не уйдут.`,
         ok: "Сдать всё равно", icon: "tick",
       });
       if (!ok) return;
     }
     // Карточка переезжает сразу; ответ сервера её поправит или вернёт
     const now = new Date().toISOString();
-    setTasks((prev) => prev && prev.map((x) => (x.id === t.id ? { ...x, status: to, status_at: now, last_at: now } : x)));
+    board.patch(t.id, { status: to, status_at: now, last_at: now });
     setLanded(t.id);
     try {
       const res = await setTaskStatus(t.id, to);
@@ -99,7 +99,7 @@ export default function TaskBoard() {
     } catch (e) {
       setError(`«${t.name}»: ${(e as Error).message}`);
     }
-    await load();
+    await board.refresh([t.id]);
   }
 
   const colProps = (s: TaskStatus) => ({
@@ -124,7 +124,7 @@ export default function TaskBoard() {
           value={query} onChange={(e) => setQuery(e.target.value)} />
         {canCreate && <Button variant="primary" icon="plus" onClick={() => setCreating(true)}>Новая таска</Button>}
       </>} />
-      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+      {(error || board.error) && <Notice tone="error" onClose={() => setError(null)}>{error || board.error}</Notice>}
       {notice && <Notice tone="ok" onClose={() => setNotice(null)}>{notice}</Notice>}
 
       {tasks !== null && list.length === 0 ? (
@@ -148,7 +148,8 @@ export default function TaskBoard() {
                 </div>
                 {can && <div className="tb-drop"><Icon name="forward" size={14} />{DROP[s]}</div>}
                 {items.map((t) => (
-                  <TaskCard key={t.id} t={t} code={code} dragged={drag?.id === t.id} landed={landed === t.id}
+                  <TaskCard key={t.id} t={t} s={stats[t.id]} fresh={fresh[t.id]} at={at} code={code}
+                    dragged={drag?.id === t.id} landed={landed === t.id}
                     onDragStart={() => requestAnimationFrame(() => setDrag({ id: t.id, from: t.status }))}
                     onDragEnd={endDrag} />
                 ))}
@@ -172,8 +173,11 @@ export default function TaskBoard() {
   );
 }
 
-function TaskCard({ t, code, dragged, landed, onDragStart, onDragEnd }: {
-  t: TaskBoardItem;
+function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragEnd }: {
+  t: TaskLight;
+  s: TaskStats | undefined;
+  fresh: Fresh | undefined;
+  at: number | null;
   code: string;
   dragged: boolean;
   landed: boolean;
@@ -181,7 +185,6 @@ function TaskCard({ t, code, dragged, landed, onDragStart, onDragEnd }: {
   onDragEnd: () => void;
 }) {
   const to = `/projects/${code}/tasks/${t.id}`;
-  const c = t.counts;
   const movable = t.can_work && t.status !== "closed";
   const dragProps = {
     draggable: movable,
@@ -193,59 +196,81 @@ function TaskCard({ t, code, dragged, landed, onDragStart, onDragEnd }: {
     },
     onDragEnd,
   };
+  const v = look(s, fresh, at);
+  // Переливается только карточка, чей запрос в пути; ждущие — неподвижная заготовка
+  const zone = cx("tb-zone", v.stale && "stale", v.loading && "ui-shim", !v.has && !v.loading && "wait");
   const cls = cx("ui-card tb-card", movable && "movable", dragged && "dragged", landed && "landed");
+  const c = s?.counts;
   if (t.status === "closed") {
     return (
       <Link to={to} className={cx(cls, "closed")} draggable={false}>
         <b className="tb-name">{t.name}</b>
-        <span className="t-xs t-muted">
-          {c.accepted ? `${count(c.accepted, "кадр", "кадра", "кадров")} в датасете` : "в датасет ничего не ушло"} · {ago(t.status_at)}
+        <span className={cx(zone, "one")}>
+          {c ? (
+            <span className="t-xs t-muted">
+              {c.accepted ? `${count(c.accepted, "кадр", "кадра", "кадров")} в датасете` : "в датасет ничего не ушло"} · {ago(t.status_at)}
+            </span>
+          ) : <i className="ui-sk pill" style={{ width: 150 }} />}
         </span>
       </Link>
     );
   }
-  const fresh = t.last_box_at && Date.now() - Date.parse(t.last_box_at) < 15 * 60_000;
+  const recent = t.last_box_at && Date.now() - Date.parse(t.last_box_at) < 15 * 60_000;
   return (
     <Link to={to} className={cls} {...dragProps}>
       <div className="tb-card-h">
         <b className="tb-name">{t.name}</b>
         {t.assignee && <Avatar name={t.assignee.display_name} />}
       </div>
-      <span className="tb-src t-xs t-muted" title={sourceLine(t.sources)}>
-        <Icon name={t.sources.cut || t.sources.annotate ? "film" : "images"} size={14} />
-        <span className="t-ell">{sourceLine(t.sources)}</span>
+      <span className="tb-src t-xs t-muted" title={s ? sourceLine(s.sources) : undefined}>
+        <Icon name={s && (s.sources.cut || s.sources.annotate) ? "film" : "images"} size={14} />
+        {s ? <span className="t-ell">{sourceLine(s.sources)}</span> : <i className="ui-sk pill" style={{ width: 120 }} />}
       </span>
-      {c.total > 0 ? (
-        <>
-          <StackBar parts={stateParts(c)} />
-          <span className="tb-nums">
-            {(["annotated", "empty", "skipped", "new"] as const).filter((k) => c[k]).map((k) => (
-              <span key={k} title={STATES.find((x) => x.key === k)!.label}>
-                <i style={{ background: STATES.find((x) => x.key === k)!.color }} />{ru(c[k])}
+      {/* Три строки всегда — полоса, числа, значки: после загрузки высота карточки не меняется */}
+      <span className={zone}>
+        {!c ? (
+          <>
+            <i className="ui-sk bar" />
+            <span className="tb-nums"><i className="ui-sk pill" /><i className="ui-sk pill" style={{ width: 30 }} /><i className="ui-sk pill" style={{ width: 36 }} /></span>
+            <span className="tb-badges"><i className="ui-sk pill badge" /></span>
+          </>
+        ) : (
+          <>
+            {c.total > 0 ? <StackBar parts={stateParts(c)} /> : <i className="ui-stack" />}
+            {c.total > 0 ? (
+              <span className="tb-nums">
+                {(["annotated", "empty", "skipped", "new"] as const).filter((k) => c[k]).map((k) => (
+                  <span key={k} title={STATES.find((x) => x.key === k)!.label}>
+                    <i style={{ background: STATES.find((x) => x.key === k)!.color }} />{ru(c[k])}
+                  </span>
+                ))}
               </span>
-            ))}
-          </span>
-        </>
-      ) : <span className="t-xs t-faint">Кадров пока нет</span>}
-      {((c.agent || 0) > 0 || t.pending_frames > 0) && (
-        <span className="tb-badges">
-          {(c.agent || 0) > 0 && <Badge tone="var(--agent-fg)" icon="bot">{ru(c.agent!)} от агента</Badge>}
-          {t.pending_frames > 0 && <Badge tone="var(--st-skip)" icon="film">{ru(t.pending_frames)} ждут закрытия</Badge>}
-        </span>
-      )}
+            ) : <span className="t-xs t-faint">Кадров пока нет</span>}
+            <span className="tb-badges">
+              {(c.agent || 0) > 0 && <Badge tone="var(--agent-fg)" icon="bot">{ru(c.agent!)} от агента</Badge>}
+              {s!.pending_frames > 0 && <Badge tone="var(--st-skip)" icon="film">{ru(s!.pending_frames)} ждут закрытия</Badge>}
+            </span>
+          </>
+        )}
+      </span>
       <span className="tb-foot t-xs t-faint">
         <span className="t-ell">{t.assignee?.display_name ?? "без исполнителя"}</span>
         <span className="t-ell">
-          {fresh && <Dot color="var(--st-done)" live />}
-          {statusNote(t)}
+          {recent && <Dot color="var(--st-done)" live />}
+          {statusNote(t, s)}
         </span>
       </span>
     </Link>
   );
 }
 
-function statusNote(t: TaskBoardItem): string {
-  if (t.status === "done" && t.counts.accepted) return `${ru(t.counts.accepted)} в датасете`;
+function statusNote(t: TaskLight, s: TaskStats | undefined): string {
+  if (t.status === "done" && s?.counts.accepted) return `${ru(s.counts.accepted)} в датасете`;
   if (t.last_box_at) return `разметка ${ago(t.last_box_at)}`;
   return `создана ${ago(t.created_at)}`;
+}
+
+/** «обновляется» со спиннером — пока идут запросы. */
+function Updating({ children }: { children: ReactNode }) {
+  return <span className="ui-upd"><i className="ui-spin" aria-hidden="true" />{children}</span>;
 }

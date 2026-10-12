@@ -253,6 +253,31 @@
 
 /* полоса времени: запас по краям, чтобы ромб первого и последнего кадра не резало */
 .ve-l { position: relative; min-width: 0; margin: 0 14px 0 10px; cursor: pointer; touch-action: none; }
+/* Масштаб: что за краем окна, срезается; запас — чтобы ромб у самого края не резало */
+.ve-l { overflow: clip; overflow-clip-margin: 10px; }
+
+/* Незагруженные куски одиночной разметки — штриховка поверх служебных дорожек.
+   Плитка 10 px: сдвиг на плитку бесшовен — у куска в пути штрихи ползут; пришедший гаснет переходом */
+.ve-hatch {
+  --ha: color-mix(in srgb, var(--fg) 8%, transparent); --hb: color-mix(in srgb, var(--sidebar) 70%, transparent);
+  position: absolute; top: 0; bottom: 0; z-index: 2; pointer-events: none;
+  background-image: linear-gradient(-45deg, var(--ha) 25%, var(--hb) 25% 50%, var(--ha) 50% 75%, var(--hb) 75%);
+  background-size: 10px 10px;
+  box-shadow: inset 1px 0 0 color-mix(in srgb, var(--fg) 10%, transparent), inset -1px 0 0 color-mix(in srgb, var(--fg) 10%, transparent);
+  transition: opacity .5s var(--ease);
+}
+.ve-hatch.now { --ha: color-mix(in srgb, var(--fg) 13%, transparent); animation: ve-drift .8s linear infinite; }
+.ve-hatch.gone { opacity: 0; }
+@keyframes ve-drift { to { background-position: 10px 0; } }
+.ve-loading { gap: 7px; color: var(--muted-fg); font-size: 11.5px; }
+.ve-zoom { display: inline-flex; align-items: center; gap: 2px; }
+.ve-zoom b { min-width: 42px; text-align: center; font-size: 12px; font-weight: 600; }
+
+/* Полоса прокрутки окна масштаба — внизу дорожек, пока окно меньше ролика */
+.ve-hbar { position: sticky; bottom: 0; z-index: 4; height: 14px; margin-left: 200px; margin-right: 14px; background: var(--sidebar); cursor: pointer; }
+.ve-hbar-t { position: absolute; top: 4px; height: 6px; min-width: 24px; border-radius: var(--r-full); background: var(--input); cursor: grab; touch-action: none; }
+.ve-hbar-t:hover, .ve-hbar-t:active { background: var(--faint); }
+.ve-hbar-t:active { cursor: grabbing; }
 .ve-ruler .ve-l:focus-visible { outline: none; box-shadow: inset 0 -2px 0 var(--ring); }
 .ve-tick { position: absolute; top: 5px; translate: -50% 0; font: 500 10px var(--mono); color: var(--faint); white-space: nowrap; pointer-events: none; }
 .ve-tick::after { content: ""; position: absolute; left: 50%; top: 15px; width: 1px; height: 5px; background: var(--input); }
@@ -352,6 +377,13 @@
 .ed-review-t .ui-ic, .ed-review-t > i { color: var(--agent-fg); }
 .ed-review-t b { font-family: var(--mono); font-weight: 600; }
 .ed-review.scout { border-color: var(--border); }
+/* Стрелки к соседнему кадру на проверке: слева плашка начинается стрелкой — без лишнего отступа */
+.ed-review:has(> .ed-review-go) { padding-left: 4px; }
+.ed-review-go.ui-btn-sm.ui-btn-icon { width: 26px; }
+/* Кадр без непроверенного: плашка сжата и тише — только «ещё N» и стрелки */
+.ed-review.calm { border-color: var(--border); }
+.ed-review.calm .ed-review-t { color: var(--muted-fg); }
+.ed-review.calm .ed-review-t b { color: var(--fg); }
 .ed-review.scout .ed-review-t > i { color: var(--muted-fg); font-style: normal; }
 
 /* Лента: кадр на проверке обведён цветом агента — он поверх состояния, потому что ждёт действия */

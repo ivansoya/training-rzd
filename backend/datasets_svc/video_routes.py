@@ -18,7 +18,7 @@ import threading
 
 from flask import Blueprint, jsonify, request, send_file
 from PIL import Image as PilImage
-from sqlalchemy import or_, select, update
+from sqlalchemy import func, or_, select, update
 
 from common import attribution, config, jobs, task_frames
 from common import scout as scout_lib
@@ -590,54 +590,64 @@ def video_chunk(task_id, video_id, chunk_no):
 # --------------------------------------------------------------------------- #
 # Чтение разметки
 # --------------------------------------------------------------------------- #
+def _class_index(db, project):
+    return dict(db.execute(
+        select(LabelClass.id, LabelClass.class_index).where(LabelClass.project_id == project.id)
+    ).all())
+
+
+def _singles_json(db, rows, by_index):
+    """Одиночные фигуры ролика в виде редактора — общий вид для всей разметки и для куска."""
+    agents = attribution.agent_names(db, {r.agent_version_id for r in rows if r.agent_version_id})
+    reviewers = {u.id: u.display_name for u in db.execute(select(User).where(
+        User.id.in_({r.reviewed_by for r in rows if r.reviewed_by} or {None}))).scalars()}
+    out = []
+    for row in rows:
+        wire = shapes.to_wire(row.ann_type, row.geometry)
+        if not wire:
+            continue
+        out.append({
+            "id": str(row.id),
+            "frame_no": row.frame_no,
+            "class_index": by_index.get(row.class_id),
+            # Геометрию отдаём как есть — редактор кладёт её обратно
+            # без изменений, — а рядом ту же фигуру в общем виде: по
+            # ней рисуют и её же присылают на сохранение.
+            "geometry": row.geometry,
+            "shape": wire,
+            "source": row.source,
+            "pending": row.pending,
+            "conf": (row.attributes or {}).get("conf"),
+            "agent": agents.get(row.agent_version_id),
+            "reviewer": reviewers.get(row.reviewed_by),
+        })
+    return out
+
+
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/annotations")
 def video_annotations(task_id, video_id):
-    """Вся разметка ролика разом: редактор листает кадры без новых запросов."""
+    """Разметка ролика. `singles=0` — каркас: треки с ключами, фоновые кадры и сводка
+    одиночных по кадрам (`marks`: кадр, рамок, из них на проверке) без самих фигур.
+    Фигуры редактор берёт кусками (`/annotations/singles`): у агента их десятки тысяч
+    на ролик, одним ответом это секунды. Без параметра — всё разом, как раньше."""
     db, task, project, user, role, video = _resolve_video(task_id, video_id)
     if db is None:
         return video
     try:
-        by_index = {
-            c.id: c.class_index
-            for c in db.execute(
-                select(LabelClass).where(LabelClass.project_id == project.id)
-            ).scalars()
-        }
+        whole = request.args.get("singles") != "0"
+        by_index = _class_index(db, project)
         tracks = db.execute(
             select(VideoTrack).where(VideoTrack.video_id == video.id)
             .order_by(VideoTrack.created_at)
         ).scalars().all()
-        rows = db.execute(
-            select(VideoAnnotation).where(VideoAnnotation.video_id == video.id)
-            .order_by(VideoAnnotation.frame_no)
-        ).scalars().all()
+        q = select(VideoAnnotation).where(VideoAnnotation.video_id == video.id)
+        if not whole:
+            q = q.where(VideoAnnotation.track_id.isnot(None))
+        rows = db.execute(q.order_by(VideoAnnotation.frame_no)).scalars().all()
 
-        agents = attribution.agent_names(db, {r.agent_version_id for r in rows if r.agent_version_id})
-        reviewers = {u.id: u.display_name for u in db.execute(select(User).where(
-            User.id.in_({r.reviewed_by for r in rows if r.reviewed_by} or {None}))).scalars()}
         keys_by_track = {}
-        singles = []
         for row in rows:
-            if row.track_id is None:
-                wire = shapes.to_wire(row.ann_type, row.geometry)
-                if not wire:
-                    continue
-                singles.append({
-                    "id": str(row.id),
-                    "frame_no": row.frame_no,
-                    "class_index": by_index.get(row.class_id),
-                    # Геометрию отдаём как есть — редактор кладёт её обратно
-                    # без изменений, — а рядом ту же фигуру в общем виде: по
-                    # ней рисуют и её же присылают на сохранение.
-                    "geometry": row.geometry,
-                    "shape": wire,
-                    "source": row.source,
-                    "pending": row.pending,
-                    "conf": (row.attributes or {}).get("conf"),
-                    "agent": agents.get(row.agent_version_id),
-                    "reviewer": reviewers.get(row.reviewed_by),
-                })
-            else:
+            if row.track_id is not None:
                 keys_by_track.setdefault(row.track_id, []).append(row)
 
         out = []
@@ -654,7 +664,7 @@ def video_annotations(task_id, video_id):
             )
         ).all())
 
-        return jsonify({
+        data = {
             "video": {
                 "id": str(video.id),
                 "file_name": video.file_name,
@@ -666,13 +676,46 @@ def video_annotations(task_id, video_id):
                 "height": video.height,
             },
             "tracks": out,
-            "singles": singles,
             "materialized": {str(k): str(v) for k, v in materialized.items()},
             "empty_frames": sorted(int(f) for f in (video.empty_frames or [])),
             "editable": _may_work(task, user, role) and task.status != "closed"
                         and video.mode == "annotate"
                         and video.annotation_closed_at is None,
-        })
+        }
+        if whole:
+            data["singles"] = _singles_json(db, [r for r in rows if r.track_id is None], by_index)
+        else:
+            # По сводке редактор режет ролик на куски и сразу знает кадры на проверке.
+            A = VideoAnnotation
+            data["marks"] = [
+                [f, n, p] for f, n, p in db.execute(
+                    select(A.frame_no, func.count(A.id), func.count(A.id).filter(A.pending.is_(True)))
+                    .where(A.video_id == video.id, A.track_id.is_(None))
+                    .group_by(A.frame_no).order_by(A.frame_no)
+                ).all()
+            ]
+        return jsonify(data)
+    finally:
+        db.close()
+
+
+@bp.get("/api/tasks/<task_id>/videos/<video_id>/annotations/singles")
+def video_singles(task_id, video_id):
+    """Одиночные фигуры ролика на кадрах [from, to) — кусок для редактора."""
+    db, task, project, user, role, video = _resolve_video(task_id, video_id)
+    if db is None:
+        return video
+    try:
+        try:
+            lo, hi = int(request.args["from"]), int(request.args["to"])
+        except (KeyError, ValueError):
+            return jsonify({"error": "Нужны целые from и to."}), 400
+        A = VideoAnnotation
+        rows = db.execute(
+            select(A).where(A.video_id == video.id, A.track_id.is_(None), A.frame_no >= lo, A.frame_no < hi)
+            .order_by(A.frame_no)
+        ).scalars().all()
+        return jsonify({"from": lo, "to": hi, "singles": _singles_json(db, rows, _class_index(db, project))})
     finally:
         db.close()
 
@@ -1289,7 +1332,7 @@ def preview_materialize(task_id, video_id):
         return video
     try:
         try:
-            by_frame, empty = collect(db, video)
+            by_frame, empty = collect(db, video, shapes=False)
         except tracklib.TrackError as exc:
             return jsonify({"error": str(exc)}), 400
         # Принятые кадры закрытие не обновляет — их номера пропускаются.
@@ -1444,7 +1487,7 @@ def close_annotation(task_id, video_id):
             }), 409
 
         try:
-            plan, empty = collect(db, video)
+            plan, empty = collect(db, video, shapes=False)
         except tracklib.TrackError as exc:
             return jsonify({"error": str(exc)}), 400
         # Ролик из одних фоновых кадров — законная работа: отрицательные

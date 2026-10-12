@@ -201,7 +201,8 @@ def _status_at(db, task):
 
 
 def _board_extra(db, task):
-    """Сводка для карточки доски: откуда кадры, что ждёт закрытия ролика, когда трогали."""
+    """Сводка для карточки доски: откуда кадры и что ждёт закрытия ролика.
+    Когда трогали — в лёгком списке: по нему доска сортирует, и карточки не прыгают."""
     videos = db.execute(
         select(TaskVideo.mode, TaskVideo.segments, TaskVideo.annotation_closed_at)
         .where(TaskVideo.task_id == task.id)
@@ -214,14 +215,6 @@ def _board_extra(db, task):
     pending = 0
     if any(m == "annotate" and closed is None for m, _, closed in videos):
         pending = sum(p.get("frames", 0) for p in materialize.pending_summary(db, task))
-    last_box = db.execute(
-        select(func.max(Annotation.created_at)).join(Image, Image.id == Annotation.image_id)
-        .where(Image.task_id == task.id)
-    ).scalar_one()
-    last_event = db.execute(
-        select(func.max(TaskEvent.created_at)).where(TaskEvent.task_id == task.id)
-    ).scalar_one()
-    last = max([d for d in (last_box, last_event, task.created_at) if d is not None])
     return {
         "sources": {
             "files": files,
@@ -230,8 +223,6 @@ def _board_extra(db, task):
             "annotate": sum(1 for m, _, _ in videos if m == "annotate"),
         },
         "pending_frames": pending,
-        "last_box_at": last_box.isoformat() if last_box else None,
-        "last_at": last.isoformat(),
     }
 
 
@@ -265,6 +256,56 @@ def _task_json(db, task, with_counts=True):
 # --------------------------------------------------------------------------- #
 # Список и создание
 # --------------------------------------------------------------------------- #
+def _light_list(db, tasks, user, role):
+    """Карточки без счётчиков, пакетом: люди, датасеты и смены состояний — по запросу на всех.
+    Счётчики доска спрашивает потом по одной таске (`/summary`)."""
+    ids = [t.id for t in tasks]
+    people = ({t.assignee_id for t in tasks} | {t.created_by for t in tasks}) - {None}
+    # display_name — свойство, не колонка: людей читаем целиком
+    names = {u.id: u.display_name for u in db.execute(select(User).where(User.id.in_(people))).scalars()} if people else {}
+    sets = {t.target_dataset_id for t in tasks} - {None}
+    datasets = dict(db.execute(select(Dataset.id, Dataset.name).where(Dataset.id.in_(sets)))) if sets else {}
+    moved, touched, boxed = {}, {}, {}
+    if ids:
+        moved = dict(db.execute(
+            select(TaskEvent.task_id, func.max(TaskEvent.created_at))
+            .where(TaskEvent.task_id.in_(ids), TaskEvent.kind.in_(STATUS_EVENTS))
+            .group_by(TaskEvent.task_id)
+        ).all())
+        touched = dict(db.execute(
+            select(TaskEvent.task_id, func.max(TaskEvent.created_at))
+            .where(TaskEvent.task_id.in_(ids)).group_by(TaskEvent.task_id)
+        ).all())
+        boxed = dict(db.execute(
+            select(Image.task_id, func.max(Annotation.created_at))
+            .join(Image, Image.id == Annotation.image_id)
+            .where(Image.task_id.in_(ids)).group_by(Image.task_id)
+        ).all())
+    out = []
+    for t in tasks:
+        last_box = boxed.get(t.id)
+        last = max(d for d in (last_box, touched.get(t.id), t.created_at) if d is not None)
+        out.append({
+            "id": str(t.id),
+            "name": t.name,
+            "status": t.status,
+            "status_label": STATUS_LABELS.get(t.status, t.status),
+            "assignee": {"id": str(t.assignee_id), "display_name": names.get(t.assignee_id)} if t.assignee_id in names else None,
+            "target_dataset": (
+                {"id": str(t.target_dataset_id), "name": datasets[t.target_dataset_id]} if t.target_dataset_id in datasets
+                else ({"id": None, "name": t.target_dataset_name} if t.target_dataset_name else None)
+            ),
+            "created_at": t.created_at.isoformat(),
+            "created_by": names.get(t.created_by),
+            "status_at": (moved.get(t.id) or t.created_at).isoformat(),
+            "last_box_at": last_box.isoformat() if last_box else None,
+            "last_at": last.isoformat(),
+            # can_work — можно ли тащить карточку по доске (те же права, что у кнопок таски)
+            "can_work": _may_work(t, user, role),
+        })
+    return out
+
+
 @bp.get("/api/projects/<code>/tasks")
 def list_tasks(code):
     db, project, user, err = _resolve_project(code)
@@ -277,12 +318,22 @@ def list_tasks(code):
         ).scalars().all()
         role = role_in(db, user, project)
         return jsonify({
-            # can_work — можно ли тащить карточку по доске (те же права, что у кнопок таски)
-            "tasks": [{**_task_json(db, t), **_board_extra(db, t), "can_work": _may_work(t, user, role)}
-                      for t in tasks],
-            "can_create": has_role(role_in(db, user, project), "editor"),
-            "is_admin": role_in(db, user, project) == "admin",
+            "tasks": _light_list(db, tasks, user, role),
+            "can_create": has_role(role, "editor"),
+            "is_admin": role == "admin",
         })
+    finally:
+        db.close()
+
+
+@bp.get("/api/tasks/<task_id>/summary")
+def task_summary(task_id):
+    """Счётчики карточки доски одной таски: кадры по состояниям, источники, ждущие закрытия."""
+    db, task, project, user, role, err = _resolve_task(task_id)
+    if err:
+        return err
+    try:
+        return jsonify({"id": str(task.id), "counts": _counts(db, task.id), **_board_extra(db, task)})
     finally:
         db.close()
 
@@ -354,11 +405,14 @@ def create_task(code):
 
 @bp.get("/api/tasks/<task_id>")
 def get_task(task_id):
+    """Лёгкая часть страницы таски: шапка, паспорт без чисел, ролики с готовностью, таги.
+    Счётчики — `/counts`, сводка каждого ролика на разметку — `/videos/<id>/pending`:
+    страница спрашивает их по очереди, и тяжёлый ролик не держит остальное."""
     db, task, project, user, role, err = _resolve_task(task_id)
     if err:
         return err
     try:
-        data = _task_json(db, task)
+        data = _task_json(db, task, with_counts=False)
         data["project"] = {"code": project.code, "name": project.name}
         data["can_work"] = _may_work(task, user, role)
         data["is_admin"] = role == "admin"
@@ -405,10 +459,35 @@ def get_task(task_id):
             }
             for v in videos
         ]
-        # Работа по незакрытому ролику ещё не стала кадрами и потому невидима
-        # в счётчиках. Без этой сводки прогресс врал бы, а сдача молча теряла
-        # бы разметку целого ролика.
-        data["pending_videos"] = materialize.pending_summary(db, task)
+        # Какие блоки есть на странице: кадров у источника (с бракованными) и когда пришёл
+        # первый. Числа по состояниям — в `/counts`; блоки встают сразу и не прыгают потом.
+        data["sources"] = {
+            (str(source_id) if source_id else "files"): {
+                "total": total, "frames": frames, "first_at": first.isoformat() if first else None,
+            }
+            for source_id, total, frames, first in db.execute(
+                select(Image.source_video_id, func.count(Image.id),
+                       func.count(Image.id).filter(Image.task_status != "deleted"), func.min(Image.created_at))
+                .where(Image.task_id == task.id)
+                .group_by(Image.source_video_id)
+            ).all()
+        }
+        # Справочник тагов едет вместе с таской: его спрашивают три места на
+        # этой же странице — карточка ролика, карточка загрузки и редактор.
+        data["tags"] = [tags.view(t) for t in tags.project_tags(db, project.id)]
+        return jsonify(data)
+    finally:
+        db.close()
+
+
+@bp.get("/api/tasks/<task_id>/counts")
+def task_counts(task_id):
+    """Счётчики страницы таски: паспорт, блоки кадров по источникам, классы."""
+    db, task, project, user, role, err = _resolve_task(task_id)
+    if err:
+        return err
+    try:
+        data = {"counts": _counts(db, task.id)}
         data["from_files"] = db.execute(
             select(func.count(Image.id)).where(
                 Image.task_id == task.id, Image.source_video_id.is_(None),
@@ -447,16 +526,6 @@ def get_task(task_id):
         for source_id, count in agent_rows:
             key = str(source_id) if source_id else "files"
             buckets.setdefault(key, {})["agent"] = count
-        # Самый ранний кадр источника: по нему блоки выстраиваются во времени.
-        first_seen = db.execute(
-            select(Image.source_video_id, func.min(Image.created_at))
-            .where(Image.task_id == task.id)
-            .group_by(Image.source_video_id)
-        ).all()
-        for source_id, when in first_seen:
-            key = str(source_id) if source_id else "files"
-            if when is not None:
-                buckets.setdefault(key, {})["first_at"] = when.isoformat()
         data["by_source"] = buckets
 
         # Чем именно размечено: по одному числу «86 разметок» перекос не виден.
@@ -473,10 +542,26 @@ def get_task(task_id):
             {"class_index": i, "name": n, "color": c, "annotations": k}
             for i, n, c, k in rows
         ]
-        # Справочник тагов едет вместе с таской: его спрашивают три места на
-        # этой же странице — карточка ролика, карточка загрузки и редактор.
-        data["tags"] = [tags.view(t) for t in tags.project_tags(db, project.id)]
         return jsonify(data)
+    finally:
+        db.close()
+
+
+@bp.get("/api/tasks/<task_id>/videos/<video_id>/pending")
+def video_pending(task_id, video_id):
+    """Сводка незакрытой разметки одного ролика; null — в таску от него ничего не уйдёт.
+    Работа по незакрытому ролику ещё не стала кадрами и невидима в счётчиках — без сводки
+    прогресс врал бы, а сдача молча теряла бы разметку целого ролика."""
+    db, task, project, user, role, err = _resolve_task(task_id)
+    if err:
+        return err
+    try:
+        video = db.get(TaskVideo, _uuid_or_none(video_id))
+        if video is None or video.task_id != task.id:
+            return jsonify({"error": "Ролик не найден в таске."}), 404
+        open_ = video.mode == "annotate" and video.annotation_closed_at is None
+        row = materialize.pending_row(db, video, materialize.class_look(db, task.project_id)) if open_ else None
+        return jsonify({"pending": row})
     finally:
         db.close()
 

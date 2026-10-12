@@ -3,8 +3,9 @@ export function timelineFrame(x: number, left: number, width: number, last: numb
   return Math.max(0, Math.min(last, Math.round((x - left) / Math.max(1, width) * last)));
 }
 
-export function extensionFrame(edge: number, delta: number, width: number, last: number, side: "start" | "end") {
-  const next = Math.max(0, Math.min(last, Math.round(edge + delta / Math.max(1, width) * last)));
+/** `span` — сколько кадров на ширине полосы: весь ролик или окно масштаба. */
+export function extensionFrame(edge: number, delta: number, width: number, last: number, side: "start" | "end", span = last) {
+  const next = Math.max(0, Math.min(last, Math.round(edge + delta / Math.max(1, width) * span)));
   return side === "start" ? Math.min(edge, next) : Math.max(edge, next);
 }
 

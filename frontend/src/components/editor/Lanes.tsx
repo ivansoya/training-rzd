@@ -1,15 +1,17 @@
 // Дорожки редактора видео: линейка, закреплённые служебные дорожки, треки, меню дорожки.
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import type { VideoTrack } from "../../auth/api";
 import { Button, Icon, MenuItem, Swatch, cx, useEscape } from "../../ui";
 import type { ScoutLane } from "../agents/scout";
 import { hiddenRanges, keyAt, trackEnd } from "../mag/trackMath";
-import { extensionFrame, timelineFrame, visibleSpans } from "../mag/timelineMath";
+import { extensionFrame, visibleSpans } from "../mag/timelineMath";
 import { ru } from "../ru";
 import { nearestTick } from "./review";
-import { clockText, scoutHeat, timeTicks } from "./video";
+import { clampView, clockText, scoutHeat, timeTicks, zoomAt, zoomText } from "./video";
+import type { View } from "./video";
+import type { Chunk } from "./chunks";
 
 export interface LaneAction {
   kind: "seek" | "move-key" | "set-start" | "set-end" | "add-key" | "hide" | "menu";
@@ -25,7 +27,8 @@ type Drag = { kind: "key" | "start" | "end" | "hide" | "seek"; trackId: string; 
 type Label = (ci: number) => { name: string; color: string };
 
 export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selected, editable, hidden,
-  covered, marks, plan, singles, agent, scout, scoutDots, scoutOpen, onScout, onSelect, onHide, onAction, onSeek }: {
+  covered, marks, plan, singles, agent, scout, scoutDots, scoutOpen, view, onView, onWidth, chunks, loaded, inFlight, loading,
+  onScout, onSelect, onHide, onAction, onSeek }: {
   tracks: VideoTrack[];
   numbers: Map<string, number>;
   frame: number;
@@ -49,6 +52,16 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   scoutDots?: { all: number[]; by: Map<string, number[]> };
   /** R: разведка по классам вместо треков. */
   scoutOpen: boolean;
+  /** Окно масштаба: какие кадры видны на ширине дорожек. */
+  view: View;
+  onView: (v: View) => void;
+  onWidth?: (w: number) => void;
+  /** Куски одиночной разметки: незагруженные заштрихованы, кусок в пути — штрихи ползут. */
+  chunks: Chunk[];
+  loaded: Set<number>;
+  inFlight: number | null;
+  /** Разметка ещё грузится — «Разметка грузится» в углу шкалы. */
+  loading: boolean;
   onScout: () => void;
   onSelect: (id: string) => void;
   onHide: (id: string) => void;
@@ -56,24 +69,54 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   onSeek: (frame: number) => void;
 }) {
   const lane = useRef<HTMLDivElement>(null);
+  const root = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
   const [ghost, setGhost] = useState<{ drag: Drag; frame: number } | null>(null);
   const [width, setWidth] = useState(800);
+  const onWidthRef = useRef(onWidth);
+  onWidthRef.current = onWidth;
 
   useEffect(() => {
     const el = lane.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth));
+    const ro = new ResizeObserver(() => { setWidth(el.clientWidth); onWidthRef.current?.(el.clientWidth); });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / Math.max(1, lastFrame)) * 100))}%`;
-  const span = (a: number, b: number) => ({ left: pct(a), width: `max(2px, ${pct(b - a)})` });
+  // Позиция — доля окна масштаба, а не всего ролика; что за краем окна, срезает полоса (overflow: clip)
+  const pct = (n: number) => `${((n - view.from) / view.len) * 100}%`;
+  const span = (a: number, b: number): CSSProperties => ({ left: pct(a), width: `max(2px, ${((b - a) / view.len) * 100}%)` });
   const at = (x: number) => {
     const r = lane.current!.getBoundingClientRect();
-    return timelineFrame(x, r.left, r.width, lastFrame);
+    return Math.max(0, Math.min(lastFrame, Math.round(view.from + ((x - r.left) / Math.max(1, r.width)) * view.len)));
   };
+
+  // Ctrl+колесо — масштаб вокруг курсора, Shift+колесо (или колесо вбок) — сдвиг по времени.
+  // Нативный слушатель: в React колесо пассивное, а странице масштабироваться нельзя.
+  const live = useRef({ view, lastFrame, width, onView });
+  live.current = { view, lastFrame, width, onView };
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const wheel = (e: WheelEvent) => {
+      const { view: v, lastFrame: last, width: w, onView: set } = live.current;
+      const r = lane.current?.getBoundingClientRect();
+      if (!r) return;
+      if (e.ctrlKey) {
+        e.preventDefault();
+        const x = Math.max(0, Math.min(r.width, e.clientX - r.left));
+        set(zoomAt(v, e.deltaY < 0 ? 1.25 : 0.8, v.from + (x / Math.max(1, r.width)) * v.len, last, w));
+      } else if (e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) {
+        if (v.len >= last) return;
+        e.preventDefault();
+        const d = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        set(clampView({ from: v.from + (d / Math.max(1, r.width)) * v.len, len: v.len }, last, w));
+      }
+    };
+    el.addEventListener("wheel", wheel, { passive: false });
+    return () => el.removeEventListener("wheel", wheel);
+  }, []);
 
   function begin(e: ReactPointerEvent<HTMLElement>, kind: Drag["kind"], trackId = "", from = at(e.clientX)) {
     if (e.button !== 0) return;
@@ -89,7 +132,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   }
   const target = (d: Drag, x: number) =>
     d.kind === "start" || d.kind === "end"
-      ? extensionFrame(d.from, x - d.x, lane.current!.getBoundingClientRect().width, lastFrame, d.kind)
+      ? extensionFrame(d.from, x - d.x, lane.current!.getBoundingClientRect().width, lastFrame, d.kind, view.len)
       : at(x);
   function move(e: ReactPointerEvent<HTMLElement>) {
     const d = drag.current;
@@ -111,15 +154,22 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   const pointer = { onPointerMove: move, onPointerUp: finish, onPointerCancel: cancel, onLostPointerCapture: cancel };
   const seekHere = (e: ReactPointerEvent<HTMLElement>) => begin(e, "seek");
   const head = <i className="ve-ph" style={{ left: pct(frame) }} aria-hidden="true" />;
-  const ticks = timeTicks(lastFrame, fps, width);
+  const ticks = timeTicks(lastFrame, fps, width, 64, view);
   const heat = scoutHeat(scout);
-  const tickLane = { frame, lastFrame, head, onSeek, fallback: seekHere, pointer };
+  // Штриховка незагруженных кусков: элементы постоянные (ключ — номер куска) — пришедший гаснет переходом
+  const hatch = chunks.map((c, i) => (
+    <i key={`h${i}`} className={cx("ve-hatch", loaded.has(i) && "gone", inFlight === i && "now")} style={span(c.from, c.to)} aria-hidden="true" />
+  ));
+  const tickLane = { frame, view, head, hatch, onSeek, fallback: seekHere, pointer };
+  const zoomed = view.len < Math.max(1, lastFrame);
 
   return (
-    <div className="ve-tl" aria-label="Дорожки">
+    <div className="ve-tl" aria-label="Дорожки" ref={root}>
       <div className="ve-pin">
         <div className="ve-r ve-ruler">
-          <div className="ve-n t-faint">Дорожки <span className="ui-mono">{tracks.length}</span></div>
+          {loading
+            ? <div className="ve-n ve-loading"><i className="ui-spin" aria-hidden="true" />Разметка грузится</div>
+            : <div className="ve-n t-faint">Дорожки <span className="ui-mono">{tracks.length}</span></div>}
           <div className="ve-l" ref={lane} role="slider" tabIndex={0} aria-label="Кадр" aria-valuemin={0}
             aria-valuemax={lastFrame} aria-valuenow={frame} onPointerDown={seekHere} {...pointer}
             onKeyDown={(e) => {
@@ -129,7 +179,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
               if (next !== null) { e.preventDefault(); e.stopPropagation(); onSeek(next); }
             }}>
             {ticks.map((k) => (
-              <span key={k.frame} className={cx("ve-tick", k.frame === 0 && "first")} style={{ left: pct(k.frame) }}>{clockText(k.t)}</span>
+              <span key={k.frame} className={cx("ve-tick", k.frame === 0 && view.from === 0 && "first")} style={{ left: pct(k.frame) }}>{clockText(k.t)}</span>
             ))}
             <i className="ve-ph head" style={{ left: pct(frame) }} aria-hidden="true" />
           </div>
@@ -138,6 +188,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
         <Row name={<><Icon name="check" size={14} />Размечено{plan !== null && <span className="ui-mono t-faint">{ru(plan)}</span>}</>}
           title="Что уйдёт в таску при закрытии разметки; риски — фоновые кадры">
           <div className="ve-l" onPointerDown={seekHere} {...pointer}>
+            {hatch}
             {covered.map(([a, b]) => <i key={a} className="ve-cov" style={span(a, b + 1)} />)}
             {marks.map((m) => (
               <i key={m.frame} className={cx("ve-empty", !m.on && "off")} style={{ left: pct(m.frame) }}
@@ -150,7 +201,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
         {agent.length > 0 && (
           <Row name={<><Icon name="bot" size={14} className="ve-agent-ic" />Агент<span className="ui-mono t-faint">{agent.length}</span></>}
             title="Кадры с непроверенной разметкой агента; щелчок — к кадру, [ и ] — к соседнему">
-            <TickLane {...tickLane} frames={agent} kind="agent" label={(f) => `Кадр ${f}: разметка агента на проверке`} />
+            <TickLane {...tickLane} hatched frames={agent} kind="agent" label={(f) => `Кадр ${f}: разметка агента на проверке`} />
           </Row>
         )}
 
@@ -167,7 +218,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
 
         <Row name={<><Icon name="bbox" size={14} />Одиночные<span className="ui-mono t-faint">{singles.length}</span></>}
           title="Рамки и контуры одного кадра; щелчок по риске — к кадру">
-          <TickLane {...tickLane} frames={singles.map((x) => x.frame)} kind="single"
+          <TickLane {...tickLane} hatched frames={singles.map((x) => x.frame)} kind="single"
             color={(k) => labelOf(singles[k].ci).color}
             label={(f, k) => `${labelOf(singles[k].ci).name || "объект"} · кадр ${f}`} />
         </Row>
@@ -263,20 +314,50 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
       {!scoutOpen && !tracks.length && (
         <p className="ve-none"><Icon name="route" size={14} />Нажмите T и обведите объект — он поедет по ролику дорожкой здесь.</p>
       )}
+      {zoomed && <Scrollbar view={view} last={lastFrame} onView={(v) => onView(clampView(v, lastFrame, width))} />}
+    </div>
+  );
+}
+
+/** Полоса прокрутки окна масштаба: тянуть ползунок — сдвиг, щелчок по жёлобу — окно туда. */
+function Scrollbar({ view, last, onView }: { view: View; last: number; onView: (v: View) => void }) {
+  const track = useRef<HTMLDivElement>(null);
+  const full = Math.max(1, last);
+  const grab = useRef<{ x: number; from: number } | null>(null);
+  const frameAt = (x: number) => {
+    const r = track.current!.getBoundingClientRect();
+    return ((x - r.left) / Math.max(1, r.width)) * full;
+  };
+  return (
+    <div className="ve-hbar" ref={track} role="scrollbar" aria-orientation="horizontal" aria-label="Окно дорожек"
+      aria-valuemin={0} aria-valuemax={full} aria-valuenow={Math.round(view.from)}
+      onPointerDown={(e) => { if (e.target === e.currentTarget) onView({ from: frameAt(e.clientX) - view.len / 2, len: view.len }); }}>
+      <i className="ve-hbar-t" style={{ left: `${(view.from / full) * 100}%`, width: `${(view.len / full) * 100}%` }}
+        onPointerDown={(e) => { e.currentTarget.setPointerCapture(e.pointerId); grab.current = { x: e.clientX, from: view.from }; e.stopPropagation(); }}
+        onPointerMove={(e) => {
+          const g = grab.current;
+          if (!g) return;
+          const r = track.current!.getBoundingClientRect();
+          onView({ from: g.from + ((e.clientX - g.x) / Math.max(1, r.width)) * full, len: view.len });
+        }}
+        onPointerUp={() => { grab.current = null; }} onPointerCancel={() => { grab.current = null; }} />
     </div>
   );
 }
 
 /** Дорожка рисок: ближайшая к курсору растёт, щелчок рядом с ней (12 px) ведёт к её кадру —
  *  целиться в риску в 3 px не нужно. Мимо рисок — обычная перемотка протяжкой. */
-function TickLane({ frames, frame, lastFrame, kind, color, label, head, children, onSeek, fallback, pointer }: {
+function TickLane({ frames, frame, view, kind, color, label, head, hatch, hatched, children, onSeek, fallback, pointer }: {
   frames: number[];
   frame: number;
-  lastFrame: number;
+  view: View;
   kind: "agent" | "single" | "dot";
   color?: (k: number) => string;
   label: (f: number, k: number) => string;
   head: ReactNode;
+  /** Штриховка незагруженных кусков — на дорожках, зависящих от одиночной разметки. */
+  hatch: ReactNode;
+  hatched?: boolean;
   children?: ReactNode;
   onSeek: (f: number) => void;
   fallback: (e: ReactPointerEvent<HTMLElement>) => void;
@@ -285,9 +366,9 @@ function TickLane({ frames, frame, lastFrame, kind, color, label, head, children
   const [near, setNear] = useState<number | null>(null);
   const find = (e: ReactPointerEvent<HTMLElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
-    return nearestTick(frames.map((f) => (f / Math.max(1, lastFrame)) * r.width), e.clientX - r.left);
+    return nearestTick(frames.map((f) => ((f - view.from) / view.len) * r.width), e.clientX - r.left);
   };
-  const pct = (n: number) => `${Math.max(0, Math.min(100, (n / Math.max(1, lastFrame)) * 100))}%`;
+  const pct = (n: number) => `${((n - view.from) / view.len) * 100}%`;
   return (
     <div className="ve-l" {...pointer}
       onPointerMove={(e) => { setNear(find(e)); pointer.onPointerMove?.(e); }}
@@ -299,6 +380,7 @@ function TickLane({ frames, frame, lastFrame, kind, color, label, head, children
         e.stopPropagation();
         onSeek(frames[k]);
       }}>
+      {hatched && hatch}
       {children}
       {frames.map((f, k) => (
         <i key={`${f}:${k}`} className={cx("ve-t", kind, k === near && "near", f === frame && "now")}
@@ -382,5 +464,18 @@ export function LaneMenu({ action, track, frozen, onClose, onKey, onDropKey, onH
       <div className="ui-pop-sep" />
       <MenuItem icon="trash" danger disabled={frozen} onSelect={run(onDrop)}>Удалить трек</MenuItem>
     </div>
+  );
+}
+
+/** Масштаб дорожек: «− ×4 + Весь». Ctrl+колесо над дорожками делает то же вокруг курсора. */
+export function ZoomBar({ view, last, onZoom, onFit }: { view: View; last: number; onZoom: (k: number) => void; onFit: () => void }) {
+  const whole = view.len >= Math.max(1, last);
+  return (
+    <span className="ve-zoom" role="group" aria-label="Масштаб дорожек">
+      <Button variant="ghost" size="sm" icon="minus" aria-label="Мельче" title="Мельче · Ctrl+колесо" disabled={whole} onClick={() => onZoom(0.5)} />
+      <b className="ui-mono">{zoomText(view, last)}</b>
+      <Button variant="ghost" size="sm" icon="plus" aria-label="Крупнее" title="Крупнее · Ctrl+колесо" onClick={() => onZoom(2)} />
+      <Button variant="ghost" size="sm" disabled={whole} onClick={onFit} title="Весь ролик на ширину дорожек">Весь</Button>
+    </span>
   );
 }

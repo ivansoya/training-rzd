@@ -8,6 +8,7 @@ import {
 } from "react";
 import type { ReactNode } from "react";
 import { errorText, fetchMe, logout, UNAUTHORIZED_EVENT } from "../../auth/api";
+import { forgetAll } from "../../api/cache";
 import type { Me } from "../../auth/api";
 import AuthPages from "./AuthPages";
 
@@ -82,6 +83,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }, [me]);
 
   const signOut = useCallback(() => {
+    forgetAll();
     logout()
       .catch(() => {})
       .finally(() => setMe(null));

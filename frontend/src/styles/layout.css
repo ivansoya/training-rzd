@@ -149,6 +149,9 @@
 .ov-tasks li { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 .ov-task-n { font-size: 13px; font-weight: 500; color: var(--fg); text-decoration: none; min-width: 0; }
 .ov-task-n:hover { text-decoration: underline; }
+/* Полоса и строка под ней одной высоты, пока числа в пути: строка не прыгает */
+.ov-task-z { display: grid; grid-template-rows: 6px 18px; gap: 7px; align-items: center; transition: opacity .3s var(--ease); }
+.ov-task-z.stale { opacity: .55; }
 .ov-sep { height: 1px; border: 0; margin: 4px 0; background: var(--border); }
 .ov-gpu .ui-legend b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
 
@@ -406,7 +409,18 @@ a.pcard:hover { border-color: var(--input); }
 .tb-nums { display: flex; gap: 10px; flex-wrap: wrap; font: 500 11.5px var(--mono); color: var(--muted-fg); }
 .tb-nums span { display: inline-flex; align-items: center; gap: 4px; }
 .tb-nums i { width: 7px; height: 7px; border-radius: 2px; }
-.tb-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+.tb-badges { display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; }
+/* Числа карточки: три строки постоянной высоты — полоса, числа, значки, — заготовка и итог одной высоты */
+.tb-zone { display: grid; grid-template-rows: 6px 17px 20px; gap: 10px; align-items: center; min-width: 0; }
+.tb-zone.one { grid-template-rows: 17px; }
+.tb-zone > .ui-stack, .tb-zone > .ui-sk.bar { height: 6px; }
+.tb-zone.wait .ui-sk { opacity: .5; }
+/* Числа из кеша прошлого захода — бледнее, пока не придут свежие */
+.tb-zone.stale { opacity: .55; }
+.tb-zone, .tb-src { transition: opacity .3s var(--ease); }
+/* Строка источников — высотой строки текста и с заготовкой: иначе карточка росла на ~4 px, когда приходили числа */
+.tb-src { height: 17px; }
+.tb-cache { margin-left: 8px; font-size: 12px; color: var(--faint); }
 .tb-foot { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; }
 .tb-foot > span:last-child { display: inline-flex; align-items: center; gap: 6px; }
 .tb-more {
@@ -465,6 +479,12 @@ a.pcard:hover { border-color: var(--input); }
 .tp-prog { display: flex; flex-direction: column; gap: 8px; }
 .tp-prog-r { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; align-items: center; }
 .tp-prog .ui-legend b { color: var(--fg); font-weight: 500; }
+/* Заготовка подписи состояний — высотой строки легенды */
+.tp-legend-sk { display: flex; gap: 14px; align-items: center; min-height: 18px; }
+.tp-wait .ui-sk { opacity: .5; }
+/* Сводка ролика держит место под две строки: пришла короче — ниже ничего не поднимается */
+.tp-vsum { display: flex; flex-direction: column; justify-content: center; gap: 6px; min-height: calc(2 * 1.45 * 11.5px + 2px); }
+.tp-vsum > p { margin: 0; }
 .tp-tagall { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 .tp-reels { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: var(--r-md); }
@@ -568,6 +588,16 @@ a.pcard:hover { border-color: var(--input); }
 .tp-cnt > .ui-ic { color: var(--faint); opacity: 0; transform: translateX(-4px); transition: opacity .15s, transform .2s var(--ease); }
 .tp-cnt:hover > .ui-ic, .tp-cnt:focus-visible > .ui-ic { opacity: 1; transform: none; }
 .tp-cnt.sub { padding-left: 28px; color: var(--muted-fg); }
+/* Нулевые состояния — бледные и неактивные: строки стоят всегда, высота паспорта не прыгает */
+.tp-cnt.zero { color: var(--faint); cursor: default; }
+.tp-cnt.zero:hover { background: none; }
+.tp-cnt.zero > i { opacity: .45; box-shadow: none; }
+.tp-cnt.zero > .ui-ic { display: none; }
+.tp-ring-sk { width: 96px; height: 96px; border-radius: 50%; flex: none; }
+.tp-ring-w { min-height: 17px; display: flex; align-items: center; }
+/* Числа из кеша — бледнее, пока не придут свежие */
+.tp-stale { opacity: .55; }
+.tp-ring, .tp-cnts, .tp-prog, .tp-vsum { transition: opacity .3s var(--ease); }
 .tp-wide { width: 100%; }
 .tp-kv { display: grid; grid-template-columns: 100px minmax(0, 1fr); gap: 8px 12px; margin: 0; font-size: 13px; align-items: center; }
 .tp-kv dt { color: var(--muted-fg); }

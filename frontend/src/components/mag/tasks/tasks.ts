@@ -1,6 +1,6 @@
 // Логика экранов тасок без React: состояния, доли кадров, доска, источники, план закрытия.
 
-import type { TaskBoardItem, TaskCounts, TaskDetail, TaskStatus, TaskVideoItem } from "../../../auth/api";
+import type { TaskCounts, TaskDetail, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
 import type { StackPart } from "../../../ui";
 import { count, plural } from "../../ru";
 
@@ -69,7 +69,7 @@ export function dayOf(iso: string, now = new Date()): string {
 }
 
 /** Откуда кадры одной строкой для карточки доски. */
-export function sourceLine(s: TaskBoardItem["sources"]): string {
+export function sourceLine(s: TaskStats["sources"]): string {
   const parts = [
     s.files ? count(s.files, "изображение", "изображения", "изображений") : "",
     s.cut ? `${count(s.cut, "ролик", "ролика", "роликов")} на нарезку${s.uncut ? ` (${s.uncut} не ${plural(s.uncut, "нарезан", "нарезаны", "нарезаны")})` : ""}` : "",
@@ -79,11 +79,11 @@ export function sourceLine(s: TaskBoardItem["sources"]): string {
 }
 
 /** Колонки доски: свежее сверху; закрытые — по времени закрытия. */
-export function boardColumns(tasks: TaskBoardItem[], query: string, mine: string | null) {
+export function boardColumns(tasks: TaskLight[], query: string, mine: string | null) {
   const q = query.trim().toLowerCase();
   const shown = tasks.filter((t) =>
     (!q || t.name.toLowerCase().includes(q)) && (!mine || t.assignee?.id === mine));
-  const cols = Object.fromEntries(BOARD.map((s) => [s, [] as TaskBoardItem[]])) as Record<TaskStatus, TaskBoardItem[]>;
+  const cols = Object.fromEntries(BOARD.map((s) => [s, [] as TaskLight[]])) as Record<TaskStatus, TaskLight[]>;
   for (const t of shown) cols[t.status].push(t);
   for (const s of BOARD) {
     cols[s].sort((a, b) => (s === "closed" ? b.status_at.localeCompare(a.status_at) : b.last_at.localeCompare(a.last_at)));
@@ -91,9 +91,19 @@ export function boardColumns(tasks: TaskBoardItem[], query: string, mine: string
   return { cols, shown: shown.length };
 }
 
-/** Сколько кадров ждёт решения во всех незакрытых тасках. */
-export const waitingOf = (tasks: TaskBoardItem[]) =>
-  tasks.filter((t) => t.status !== "closed").reduce((s, t) => s + t.counts.new + t.counts.skipped, 0);
+/** Сколько кадров ждёт решения во всех незакрытых тасках — по пришедшим счётчикам. */
+export const waitingOf = (tasks: TaskLight[], stats: Record<string, TaskStats | undefined>) =>
+  tasks.filter((t) => t.status !== "closed")
+    .reduce((s, t) => s + (stats[t.id]?.counts.new ?? 0) + (stats[t.id]?.counts.skipped ?? 0), 0);
+
+/** В каком порядке доска спрашивает счётчики: мои → «В работе» → остальные по доске → закрытые.
+ *  Внутри — как карточки стоят в колонках. */
+export function requestOrder(tasks: TaskLight[], me: string | null): string[] {
+  const { cols } = boardColumns(tasks, "", null);
+  const board = BOARD.flatMap((s) => cols[s]);
+  const rank = (t: TaskLight) => (t.status === "closed" ? 3 : me && t.assignee?.id === me ? 0 : t.status === "in_progress" ? 1 : 2);
+  return board.map((t, i) => ({ t, i })).sort((a, b) => rank(a.t) - rank(b.t) || a.i - b.i).map((x) => x.t.id);
+}
 
 /** Что сделает закрытие: что уйдёт в датасет, что удалится навсегда. */
 export function closePlan(c: TaskCounts, videos: number) {
@@ -127,6 +137,9 @@ export interface SourceBlock {
   /** Нарезаемые ролики таски — блок у них общий, план у каждого свой. */
   videos?: TaskVideoItem[];
   counts: SourceCounts;
+  /** Разбивка по состояниям пришла (`/counts`); до того на её месте заготовка. */
+  known: boolean;
+  /** Кадров без брака — из лёгкой части, известно сразу. */
   total: number;
   /** Когда источник появился: по нему блоки идут во времени. */
   bornAt: number;
@@ -134,15 +147,20 @@ export interface SourceBlock {
 
 const SUM_KEYS = ["new", "annotated", "empty", "skipped", "deleted", "accepted", "agent"] as const;
 
-/** Блоки источников: файлы, ролики на нарезку, кадры из закрытой разметки роликов. */
-export function buildSources(task: TaskDetail): SourceBlock[] {
+/** Блоки источников: файлы, ролики на нарезку, кадры из закрытой разметки роликов.
+ *  Какие блоки есть, знает лёгкая часть таски (`sources`), числа — `by` из `/counts`, когда придут. */
+export function buildSources(task: TaskDetail, by: TaskNumbers["by_source"] | null): SourceBlock[] {
   const out: SourceBlock[] = [];
   const at = (value?: string | null) => (value ? Date.parse(value) : 0);
-  const by = task.by_source || {};
+  const has = (key: string) => (task.sources?.[key]?.total || 0) > 0;
+  const frames = (key: string) => task.sources?.[key]?.frames || 0;
+  // Дата «с …» — из лёгкой части, числа по состояниям — из `/counts`
+  const of = (key: string): SourceCounts => ({ ...((by || {})[key] || {}), first_at: task.sources?.[key]?.first_at ?? undefined });
+  const known = by !== null;
 
-  const files = by.files || {};
-  if (framesOf(files) || files.deleted) {
-    out.push({ key: "files", title: "Изображения", kind: "files", counts: files, total: framesOf(files), bornAt: at(files.first_at) });
+  if (has("files")) {
+    out.push({ key: "files", title: "Изображения", kind: "files", counts: of("files"), known,
+      total: frames("files"), bornAt: at(task.sources.files.first_at) });
   }
 
   // Ролики на нарезку видны всегда: с этого блока в нарезку и заходят
@@ -150,18 +168,19 @@ export function buildSources(task: TaskDetail): SourceBlock[] {
   if (videos.length) {
     const counts: SourceCounts = {};
     for (const v of videos) {
-      for (const k of SUM_KEYS) counts[k] = (counts[k] || 0) + ((by[v.id] || {})[k] || 0);
+      for (const k of SUM_KEYS) counts[k] = (counts[k] || 0) + (of(v.id)[k] || 0);
     }
     out.push({
-      key: "videos", title: "Ролики на нарезку", kind: "cut", videos, counts, total: framesOf(counts),
+      key: "videos", title: "Ролики на нарезку", kind: "cut", videos, counts, known,
+      total: videos.reduce((s, v) => s + frames(v.id), 0),
       bornAt: Math.min(...videos.map((v) => at(v.created_at))),
     });
   }
 
   for (const v of task.videos.filter((x) => x.mode !== "cut")) {
-    const own: SourceCounts = by[v.id] || {};
-    if (!framesOf(own) && !own.deleted) continue;
-    out.push({ key: v.id, title: `Из разметки «${v.file_name}»`, kind: "annotate", counts: own, total: framesOf(own), bornAt: at(v.created_at) });
+    if (!has(v.id)) continue;
+    const own = of(v.id);
+    out.push({ key: v.id, title: `Из разметки «${v.file_name}»`, kind: "annotate", counts: own, known, total: frames(v.id), bornAt: at(v.created_at) });
   }
   return out.sort((a, b) => a.bornAt - b.bornAt);
 }

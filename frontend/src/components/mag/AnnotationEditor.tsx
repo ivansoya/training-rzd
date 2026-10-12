@@ -558,6 +558,9 @@ export default function AnnotationEditor({
     [images, index]
   );
 
+  // Сколько кадров списка ещё на проверке — для сжатой плашки на кадре без непроверенного
+  const reviewLeft = flagged().filter(Boolean).length;
+
   /** К предыдущему или следующему кадру на проверке. */
   const goReview = useCallback((dir: 1 | -1) => {
     const i = nextFlagged(flagged(), index, dir);
@@ -1334,8 +1337,10 @@ export default function AnnotationEditor({
           </Float>
         )}
 
-        {panels && unchecked > 0 && !frozen && !autoPrev && (
-          <ReviewBar count={unchecked} onConfirm={() => void confirmFrame()} onReject={rejectFrame}
+        {/* Плашка видна, пока на проверке есть хоть один кадр списка: на кадре без него — «ещё N» и стрелки */}
+        {panels && reviewLeft > 0 && !frozen && !autoPrev && (
+          <ReviewBar count={unchecked} left={reviewLeft} onPrev={() => goReview(-1)} onNext={() => goReview(1)}
+            onConfirm={() => void confirmFrame()} onReject={rejectFrame}
             agents={agentsHere.map((g) => ({ agent: g.agent, count: g.idx.length }))}
             onConfirmAgent={confirmAgent} onRejectAgent={rejectAgent} />
         )}

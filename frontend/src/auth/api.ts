@@ -842,15 +842,21 @@ export interface TaskSummary {
   counts: TaskCounts;
 }
 
-/** Карточка доски: что ещё нужно, кроме счётчиков. */
-export interface TaskBoardItem extends TaskSummary {
-  sources: { files: number; cut: number; uncut: number; annotate: number };
-  /** Кадров незакрытых роликов: в таске их ещё нет. */
-  pending_frames: number;
+/** Карточка доски без счётчиков — лёгкий список проекта, приходит сразу. */
+export interface TaskLight extends Omit<TaskSummary, "counts"> {
   last_box_at: string | null;
+  /** По нему колонки сортируются — потому он в лёгком списке, а не в счётчиках. */
   last_at: string;
   /** Можно менять состояние: админ или исполнитель-редактор. */
   can_work: boolean;
+}
+
+/** Счётчики карточки доски: по одному запросу на таску. */
+export interface TaskStats {
+  counts: TaskCounts;
+  sources: { files: number; cut: number; uncut: number; annotate: number };
+  /** Кадров незакрытых роликов: в таске их ещё нет. */
+  pending_frames: number;
 }
 
 // План нарезки ролика, а не история: кадры таски приводятся к нему.
@@ -943,12 +949,23 @@ export interface PendingVideo {
   unchecked?: number;
 }
 
-export interface TaskDetail extends TaskSummary {
+/** Лёгкая часть страницы таски: шапка, паспорт без чисел, ролики, таги. Числа — `TaskNumbers`. */
+export interface TaskDetail extends Omit<TaskSummary, "counts"> {
   project: { code: string; name: string };
   can_work: boolean;
   is_admin: boolean;
   videos: TaskVideoItem[];
-  pending_videos: PendingVideo[];
+  /** Какие блоки есть: кадров у источника всего (`total`, с бракованными), без брака (`frames`)
+   *  и когда пришёл первый. Ключ — «files» или идентификатор ролика. Блоки встают сразу и не прыгают. */
+  sources: Record<string, { total: number; frames: number; first_at: string | null }>;
+  /** Справочник тагов проекта. Едет вместе с таской: его спрашивают три места
+   *  на одной странице — карточка ролика, карточка загрузки и редактор. */
+  tags: { id: string; name: string }[];
+}
+
+/** Счётчики страницы таски: паспорт, блоки кадров, классы. */
+export interface TaskNumbers {
+  counts: TaskCounts;
   from_files: number;
   /** Разбивка кадров по источникам: ключ — «files» или идентификатор ролика.
    *  Считается на сервере, потому что клиент видит лишь первую страницу. */
@@ -957,9 +974,6 @@ export interface TaskDetail extends TaskSummary {
     deleted?: number; accepted?: number; agent?: number; first_at?: string;
   }>;
   classes: { class_index: number; name: string; color: string; annotations: number }[];
-  /** Справочник тагов проекта. Едет вместе с таской: его спрашивают три места
-   *  на одной странице — карточка ролика, карточка загрузки и редактор. */
-  tags: { id: string; name: string }[];
 }
 
 export function videoStripUrl(taskId: string, videoId: string): string {
@@ -1040,8 +1054,12 @@ export interface Segment {
 
 export async function listTasks(
   code: string
-): Promise<{ tasks: TaskBoardItem[]; can_create: boolean; is_admin: boolean }> {
+): Promise<{ tasks: TaskLight[]; can_create: boolean; is_admin: boolean }> {
   return asJson(await fetch(`/api/projects/${encodeURIComponent(code)}/tasks`));
+}
+
+export async function getTaskStats(id: string): Promise<TaskStats> {
+  return asJson(await fetch(`/api/tasks/${id}/summary`));
 }
 
 export async function createTask(
@@ -1060,10 +1078,19 @@ export async function getTask(id: string): Promise<TaskDetail> {
   return asJson(await fetch(`/api/tasks/${id}`));
 }
 
+export async function getTaskNumbers(id: string): Promise<TaskNumbers> {
+  return asJson(await fetch(`/api/tasks/${id}/counts`));
+}
+
+/** Сводка незакрытой разметки одного ролика; null — в таску от него ничего не уйдёт. */
+export async function getVideoPending(taskId: string, videoId: string): Promise<PendingVideo | null> {
+  return (await asJson<{ pending: PendingVideo | null }>(await fetch(`/api/tasks/${taskId}/videos/${videoId}/pending`))).pending;
+}
+
 export async function setTaskStatus(
   id: string,
   status: TaskStatus
-): Promise<TaskDetail & { accepted?: number; dataset?: string; removed_images?: number }> {
+): Promise<TaskSummary & { accepted?: number; dataset?: string; removed_images?: number }> {
   return asJson(await post(`tasks/${id}/status`, { status }));
 }
 
@@ -1363,6 +1390,20 @@ export async function getVideoAnnotations(
   videoId: string
 ): Promise<VideoAnnotations> {
   return asJson(await fetch(`/api/tasks/${taskId}/videos/${videoId}/annotations`));
+}
+
+/** Каркас разметки ролика: всё, кроме одиночных фигур. `marks` — [кадр, рамок, из них на проверке]:
+ *  по ним редактор режет ролик на куски и сразу знает кадры на проверке. */
+export type VideoSkeleton = Omit<VideoAnnotations, "singles"> & { marks: [number, number, number][] };
+
+export async function getVideoSkeleton(taskId: string, videoId: string): Promise<VideoSkeleton> {
+  return asJson(await fetch(`/api/tasks/${taskId}/videos/${videoId}/annotations?singles=0`));
+}
+
+/** Одиночные фигуры ролика на кадрах [from, to). */
+export async function getVideoSingles(taskId: string, videoId: string, from: number, to: number): Promise<VideoSingleBox[]> {
+  const url = `/api/tasks/${taskId}/videos/${videoId}/annotations/singles?from=${from}&to=${to}`;
+  return (await asJson<{ singles: VideoSingleBox[] }>(await fetch(url))).singles;
 }
 
 export async function createTrack(

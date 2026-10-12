@@ -6,17 +6,43 @@ import { Float } from "./Chrome";
 import type { AgentKey } from "./review";
 
 /** На кадре непроверенное агента: принять оставшееся или отклонить. Когда агентов на кадре
- *  несколько — ещё «Принять всё от …» и «Отклонить всё от …» по одному агенту. */
-export function ReviewBar({ count, disabled, onConfirm, onReject, agents, onConfirmAgent, onRejectAgent }: {
+ *  несколько — ещё «Принять всё от …» и «Отклонить всё от …» по одному агенту.
+ *  Стрелки ‹ › — к соседнему кадру на проверке ([ и ]). Плашка видна, пока непроверенное есть
+ *  хоть где-то: на кадре без него она сжата до «ещё N кадров на проверке» со стрелками. */
+export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, onNext, agents, onConfirmAgent, onRejectAgent }: {
   count: number;
+  /** Кадров на проверке во всём ролике или списке — для сжатого вида. */
+  left?: number;
   disabled?: boolean;
   onConfirm: () => void;
   onReject: () => void;
+  onPrev?: () => void;
+  onNext?: () => void;
   /** Агенты кадра с числом их рамок на проверке. */
   agents?: { agent: AgentKey; count: number }[];
   onConfirmAgent?: (key: string) => void;
   onRejectAgent?: (key: string) => void;
 }) {
+  const prev = onPrev && (
+    <Button variant="ghost" size="sm" icon="chevL" className="is-agent ed-review-go" aria-label="Предыдущий кадр на проверке ([)"
+      title="Предыдущий кадр на проверке · [" onClick={onPrev} />
+  );
+  const next = onNext && (
+    <Button variant="ghost" size="sm" icon="chevR" className="is-agent ed-review-go" aria-label="Следующий кадр на проверке (])"
+      title="Следующий кадр на проверке · ]" onClick={onNext} />
+  );
+  if (count === 0) {
+    const n = left ?? 0;
+    return (
+      <Float className="ed-bot ed-review calm" role="toolbar" label="Проверка разметки агента">
+        {prev}
+        <span className="ed-review-t">
+          <Icon name="bot" size={14} />Агент: ещё <b>{n}</b> {plural(n, "кадр", "кадра", "кадров")} на проверке
+        </span>
+        {next}
+      </Float>
+    );
+  }
   const many = (agents?.length ?? 0) > 1;
   const pickAgent = (label: string, act?: (key: string) => void, variant?: "agent") => (
     <Popover align="center" width={260} trigger={
@@ -31,10 +57,12 @@ export function ReviewBar({ count, disabled, onConfirm, onReject, agents, onConf
   );
   return (
     <Float className="ed-bot ed-review" role="toolbar" label="Проверка разметки агента">
+      {prev}
       <span className="ed-review-t">
         <Icon name="bot" size={14} />
         {many ? "Агенты" : "Агент"}: <b>{count}</b> {plural(count, "рамка", "рамки", "рамок")} на проверке
       </span>
+      {next}
       <i className="ed-vsep" />
       {many ? pickAgent("Отклонить всё от…", onRejectAgent) : (
         <Button variant="ghost" size="sm" disabled={disabled} onClick={onReject}

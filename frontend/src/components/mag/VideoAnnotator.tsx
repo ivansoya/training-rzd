@@ -7,7 +7,8 @@ import {
   ensureClass,
   errorText,
   getClasses,
-  getVideoAnnotations,
+  getVideoSingles,
+  getVideoSkeleton,
   hideTrackSpan,
   markEmptyFrame,
   moveTrackKey,
@@ -28,6 +29,7 @@ import type {
   TaskVideoItem,
   VideoAnnotations,
   VideoSingleBox,
+  VideoSkeleton,
   VideoTrack,
 } from "../../auth/api";
 import { scoutStats } from "../../api/agents";
@@ -59,16 +61,18 @@ import AutoSettings from "../editor/AutoSettings";
 import { AutoBar } from "../editor/FramePanels";
 import { digitClass, isTyping, ownsArrows } from "../editor/look";
 import type { KeyGroup } from "../editor/look";
-import { LaneMenu, Lanes } from "../editor/Lanes";
+import { LaneMenu, Lanes, ZoomBar } from "../editor/Lanes";
 import type { LaneAction } from "../editor/Lanes";
 import { HereSide, Transport } from "../editor/VideoPanels";
 import { ReviewBar, ScoutBar } from "../editor/ReviewBars";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
 import { agentGroups, isTaken, nextFrame, scoutFrameAt, settlePending } from "../editor/review";
 import {
-  DOCK_DEFAULT, clampDock, coveredSpans, itemKey, seekToTrack, singleAgent, singleTicks, trackNumbers,
+  DOCK_DEFAULT, clampDock, coveredSpans, followView, fullView, itemKey, seekToTrack, singleAgent, singleTicks, trackNumbers, zoomAt,
 } from "../editor/video";
-import type { Item } from "../editor/video";
+import type { Item, View } from "../editor/video";
+import { chunkAt, chunkPlan, nextChunk } from "../editor/chunks";
+import type { Chunk } from "../editor/chunks";
 
 const KEYS: KeyGroup[] = [
   { title: "Инструменты", keys: [
@@ -209,7 +213,17 @@ export default function VideoAnnotator({
     (clip.manifest?.frame_count ?? video.frame_count ?? msToFrame(video.duration_ms || 0, fps)) - 1
   );
 
-  const [data, setData] = useState<VideoAnnotations | null>(null);
+  // Каркас (треки, фоновые, сводка одиночных по кадрам) и одиночные фигуры, пришедшие кусками.
+  // У агента их десятки тысяч на ролик — одним ответом это секунды и на каждую правку.
+  const [skel, setSkel] = useState<VideoSkeleton | null>(null);
+  const [singles, setSingles] = useState<VideoSingleBox[]>([]);
+  // null — нарезка этого поколения ещё не готова: кадр заперт, пока не придёт новый каркас
+  const [chunks, setChunks] = useState<Chunk[] | null>(null);
+  const [loaded, setLoaded] = useState<Set<number>>(() => new Set());
+  const [fetching, setFetching] = useState<number | null>(null);
+  // Кусок не пришёл — дальше не качаем, пока не перечитаем всё: иначе отказ повторялся бы без конца
+  const [stalled, setStalled] = useState(false);
+  const data = useMemo<VideoAnnotations | null>(() => skel && { ...skel, singles }, [skel, singles]);
   const [classes, setClasses] = useState<LabelClass[]>([]);
   const [active, setActive] = useState<number | null>(null);
   const [frame, setFrame] = useState(0);
@@ -262,6 +276,13 @@ export default function VideoAnnotator({
   const failed = useRef(false);
   const sent = useRef<Sent | null>(null);
   const loadSeq = useRef(0);
+  const lastRef = useRef(lastFrame);
+  lastRef.current = lastFrame;
+  // Поколение кусков: «всё заново» начинает новое, опоздавшие ответы старого не пишутся
+  const gen = useRef(0);
+  // Кадры, перечитанные после правки, пока кусок в пути: кусок их не затирает
+  const touched = useRef(new Set<number>());
+  const frameSeq = useRef(new Map<number, number>());
 
   // --- кадры и проигрывание ------------------------------------------------ #
   const [quality, setQuality] = useState<string>("");
@@ -271,7 +292,12 @@ export default function VideoAnnotator({
   const shown = useClipFrame(clip.reader, frame, quality);
   // Ролик, который браузер не разжимает, — чёрный холст: рисовать на нём нечего.
   const unplayable = isUnplayable(clip.error) || isUnplayable(shown.error);
-  const frozen = readOnly || !data?.editable || unplayable;
+  // Кадр, чьи одиночные ещё не пришли, править нельзя: сервер заменяет фигуры кадра целиком,
+  // и сохранение стёрло бы невидимые. Его кусок и так грузится первым.
+  const chunkHere = chunkAt(chunks ?? [], frame);
+  const frameLoaded = !!skel && chunks !== null && (chunkHere < 0 || loaded.has(chunkHere));
+  const viewOnly = readOnly || !data?.editable || unplayable;
+  const frozen = viewOnly || !frameLoaded;
   const onPlayFrame = useCallback((f: number) => setFrame(f), []);
   // Проигрывание ждёт картинку: иначе полоса убегает вперёд, кадр замирает, и кусок ролика проходит незамеченным.
   const behind = useRef(false);
@@ -280,20 +306,72 @@ export default function VideoAnnotator({
   const { playing, speed, start, stop, changeSpeed } = usePlayback(fps, lastFrame, onPlayFrame, caughtUp);
 
   // --- загрузка ------------------------------------------------------------ #
-  const load = useCallback(async () => {
+  /** Перечитать каркас; `at` — ещё и одиночные этого кадра (правка на нём);
+   *  "all" — всё заново: отказ записи, смена классов, прогон агента по ролику. */
+  const load = useCallback(async (at?: number | "all") => {
     const seq = ++loadSeq.current;
+    if (at === "all") {
+      gen.current += 1;
+      setSingles([]);
+      setLoaded(new Set());
+      setFetching(null);
+      setChunks(null);
+      setStalled(false);
+    }
+    const g = gen.current;
+    // Свой номер у каждого кадра: ответ кадра не теряется оттого, что следом перечитали каркас
+    const fs = typeof at === "number" ? (frameSeq.current.get(at) ?? 0) + 1 : 0;
+    if (typeof at === "number") frameSeq.current.set(at, fs);
     try {
-      const got = await getVideoAnnotations(taskId, video.id);
+      const [got, frameSingles] = await Promise.all([
+        getVideoSkeleton(taskId, video.id),
+        typeof at === "number" ? getVideoSingles(taskId, video.id, at, at + 1) : Promise.resolve(null),
+      ]);
+      if (frameSingles && typeof at === "number" && g === gen.current && frameSeq.current.get(at) === fs) {
+        touched.current.add(at);
+        setSingles((prev) => [...prev.filter((s) => s.frame_no !== at), ...frameSingles]);
+      }
       // Опоздавший ответ затёр бы на экране более позднюю правку.
       if (seq !== loadSeq.current) return;
-      setData(got);
+      setSkel(got);
+      // Куски — по первому каркасу поколения: по числу рамок, на границе кадра
+      if (g === gen.current) {
+        setChunks((c) => c ?? chunkPlan(got.marks, Math.max(lastRef.current, (got.video.frame_count ?? 1) - 1)));
+      }
       if (!inFlight.current) setError(null);
     } catch (e) {
       if (seq === loadSeq.current) setError(errorText(e));
     }
   }, [taskId, video.id]);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { void load("all"); }, [load]);
+
+  // Качаем по одному куску: тот, где указатель, дальше к концу, потом с начала
+  useEffect(() => {
+    if (!chunks?.length || fetching !== null || stalled) return;
+    const i = nextChunk(chunks, loaded, frame);
+    if (i === null) return;
+    const g = gen.current;
+    const c = chunks[i];
+    touched.current = new Set();
+    setFetching(i);
+    getVideoSingles(taskId, video.id, c.from, c.to)
+      .then((got) => {
+        if (g !== gen.current) return;
+        const skip = touched.current;
+        setSingles((prev) => [
+          ...prev.filter((s) => s.frame_no < c.from || s.frame_no >= c.to || skip.has(s.frame_no)),
+          ...got.filter((s) => !skip.has(s.frame_no)),
+        ]);
+        setLoaded((prev) => new Set(prev).add(i));
+      })
+      .catch((e) => {
+        if (g !== gen.current) return;
+        setStalled(true);
+        setError(errorText(e));
+      })
+      .finally(() => { if (g === gen.current) setFetching(null); });
+  }, [chunks, loaded, fetching, stalled, frame, taskId, video.id]);
 
   const loadClasses = useCallback(() => {
     getClasses(code)
@@ -309,11 +387,11 @@ export default function VideoAnnotator({
   // Класс мог уехать или исчезнуть, пока ролик открыт: у треков он сменится на сервере.
   useLive("classes", () => {
     loadClasses();
-    load();
+    void load("all");
   });
 
   useEffect(() => {
-    if (!data || !data.editable) return;
+    if (!skel || !skel.editable) return;
     const h = window.setTimeout(() => {
       // Отказ плана — не «плана нет»: причину показываем на кнопке «Закрыть разметку».
       previewMaterialize(taskId, video.id)
@@ -321,7 +399,7 @@ export default function VideoAnnotator({
         .catch((e) => { setPlan(null); setPlanError((e as Error).message); });
     }, 500);
     return () => window.clearTimeout(h);
-  }, [data, taskId, video.id]);
+  }, [skel, taskId, video.id]);
 
   const byIndex = useMemo(() => {
     const m = new Map<number, LabelClass>();
@@ -452,7 +530,7 @@ export default function VideoAnnotator({
         sent.current = null;
         setDraft(null);
         setError(errorText(e));
-        await load();
+        await load("all");
       }
     }).finally(() => {
       inFlight.current -= 1;
@@ -471,7 +549,7 @@ export default function VideoAnnotator({
     (at: number, list: SingleWire[]) =>
       guard(async () => {
         await saveFrameBoxes(taskId, video.id, at, list);
-        await load();
+        await load(at);
       }),
     [guard, taskId, video.id, load]
   );
@@ -656,7 +734,7 @@ export default function VideoAnnotator({
             return got ? [wireOf(got, s.id)] : [];
           });
         await saveFrameBoxes(taskId, video.id, box.frame_no, list);
-        await load();
+        await load(box.frame_no);
       });
     },
     [frame, apply, guard, taskId, video.id, load, asWire]
@@ -723,7 +801,7 @@ export default function VideoAnnotator({
   }, [settle, onClose]);
 
   // Перечитали посреди очереди — на экране остаются свои правки, а не прочитанное.
-  useEffect(() => { if (!inFlight.current) setDraft(null); }, [data]);
+  useEffect(() => { if (!inFlight.current && !pendingCommit.current) setDraft(null); }, [data]);
 
   const patchTrack = useCallback(
     (track: VideoTrack, body: Parameters<typeof updateTrack>[1]) =>
@@ -735,14 +813,15 @@ export default function VideoAnnotator({
   );
 
   // Пометка «фоновый» действует, только пока кадр свободен — по присутствию объекта, как считает сервер.
+  const marked = useMemo(() => new Map((skel?.marks || []).map(([f, n, p]) => [f, { n, p }])), [skel]);
   const frameBusy = useCallback(
     (at: number) =>
-      (data?.singles || []).some((b) => b.frame_no === at) ||
+      (marked.get(at)?.n || 0) > 0 ||
       (data?.tracks || []).some((t) => {
         const state = stateAt(t, at);
         return state !== null && !state.hidden;
       }),
-    [data]
+    [data, marked]
   );
   const marks = useMemo(
     () => (data?.empty_frames || []).map((at) => ({ frame: at, on: !frameBusy(at) })),
@@ -751,28 +830,31 @@ export default function VideoAnnotator({
   const markedHere = (data?.empty_frames || []).includes(frame);
   const busyHere = frameBusy(frame);
 
+  // Пометке и ключу трека одиночные кадра не нужны — занятость знает сводка каркаса
   const toggleEmpty = useCallback(() => {
-    if (frozen) return;
+    if (viewOnly) return;
     if (!markedHere && busyHere) return;
     guard(async () => {
       if (markedHere) await unmarkEmptyFrame(taskId, video.id, frame);
       else await markEmptyFrame(taskId, video.id, frame);
       await load();
     });
-  }, [frozen, markedHere, busyHere, guard, load, taskId, video.id, frame]);
+  }, [viewOnly, markedHere, busyHere, guard, load, taskId, video.id, frame]);
 
   const putKey = useCallback(() => {
-    if (frozen || !currentTrack || !stateAt(currentTrack, frame)) return;
+    if (viewOnly || !currentTrack || !stateAt(currentTrack, frame)) return;
     guard(async () => { await putTrackKey(currentTrack.id, frame, {}); await load(); });
-  }, [frozen, currentTrack, frame, guard, load]);
+  }, [viewOnly, currentTrack, frame, guard, load]);
 
   // --- проверка агента и разведка ----------------------------------------- #
   /** Кадры с непроверенной разметкой агента, по порядку. */
   const agentFrames = useMemo(
-    () => [...new Set((data?.singles || []).filter((b) => b.pending).map((b) => b.frame_no))].sort((a, b) => a - b),
-    [data]
+    () => (skel?.marks || []).filter(([, , p]) => p > 0).map(([f]) => f),
+    [skel]
   );
   const pendingHere = (draft ?? boxes).filter((b) => b.pending).length;
+  // Кадр ещё не пришёл — число рамок на проверке из сводки, кнопки погашены
+  const reviewHere = frameLoaded ? pendingHere : marked.get(frame)?.p || 0;
 
   /** Список одиночных кадра для записи: как его видит холст, с поправкой `change`. */
   const singlesOf = useCallback((was: Sent, keepIt: (s: CanvasShape, item?: Local) => CanvasShape | null) => {
@@ -797,7 +879,7 @@ export default function VideoAnnotator({
     setDraft(was.shapes.flatMap((s, i) => { const g = keepIt(s, was.items[i]); return g ? [g] : []; }));
     guard(async () => {
       await saveFrameBoxes(taskId, video.id, at, list);
-      await load();
+      await load(at);
     });
     return true;
   }, [flushDraft, sentOf, frame, frozen, singlesOf, guard, taskId, video.id, load]);
@@ -894,7 +976,7 @@ export default function VideoAnnotator({
         i: g.i,
         ...(as !== undefined ? { class_index: as } : g.class_index === null ? { class_index: active as number } : {}),
       })));
-      await load();
+      await load(at);
     });
   }, [frozen, ghosts, ghostOn, active, flushDraft, frame, guard, taskId, video.id, load]);
 
@@ -905,8 +987,9 @@ export default function VideoAnnotator({
     stop();
     setAgentNote(null);
     try {
-      const res = await agentTool.apply({ video_id: video.id, frame_no: frame });
-      await load();
+      const at = frame;
+      const res = await agentTool.apply({ video_id: video.id, frame_no: at });
+      await load(at);
       setAgentNote(res.put
         ? `Агент: ${res.put} ${plural(res.put, "рамка", "рамки", "рамок")} на проверке`
         : res.found ? "Агент нашёл только то, что на кадре уже есть" : "Агент ничего не нашёл на этом кадре");
@@ -957,7 +1040,7 @@ export default function VideoAnnotator({
       const track = trackById(action.trackId);
       if (!track) return;
       stop();
-      if (frozen && action.kind !== "seek" && action.kind !== "menu") return;
+      if (viewOnly && action.kind !== "seek" && action.kind !== "menu") return;
       switch (action.kind) {
         case "seek":
           setFrame(action.frame);
@@ -993,7 +1076,7 @@ export default function VideoAnnotator({
           break;
       }
     },
-    [trackById, guard, load, stop, frozen]
+    [trackById, guard, load, stop, viewOnly]
   );
 
   // --- полуавтомат --------------------------------------------------------- #
@@ -1316,6 +1399,18 @@ export default function VideoAnnotator({
       selected, pickedTrack, pick, apply, items, classes, pickClass, commitAuto, toggleEmpty, putKey,
       scout.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent]);
 
+  // --- масштаб дорожек ------------------------------------------------------ #
+  // Окно масштаба; null — весь ролик. Ширина дорожек — от самих дорожек (ограничение 12 px на кадр).
+  const [view, setView] = useState<View | null>(null);
+  const [laneW, setLaneW] = useState(800);
+  const zoomStep = useCallback((k: number) => {
+    setView((cur) => zoomAt(cur ?? fullView(lastFrame), k, frame, lastFrame, laneW));
+  }, [frame, lastFrame, laneW]);
+  // Указатель ушёл из окна (проигрывание, стрелки, [ ]) — окно едет за ним
+  useEffect(() => {
+    setView((cur) => cur && followView(cur, frame, lastFrame, laneW));
+  }, [frame, lastFrame, laneW]);
+
   // --- док ----------------------------------------------------------------- #
   const room = () => body.current?.clientHeight ?? 900;
   const sizeDock = (h: number) => {
@@ -1325,6 +1420,7 @@ export default function VideoAnnotator({
   };
 
   const covered = useMemo(() => coveredSpans(data?.tracks || [], data?.singles || []), [data]);
+  const shownView = view ?? fullView(lastFrame);
   // Непроверенное агента — своей дорожкой «Агент», в «Одиночные» оно попадает после проверки
   const ticks = useMemo(() => singleTicks((data?.singles || []).filter((b) => !b.pending)), [data]);
   const closed = closedAt !== null;
@@ -1416,7 +1512,7 @@ export default function VideoAnnotator({
           )}
           {planError && !problem && <Notice tone="warn">Разметку не закрыть: {planError}</Notice>}
           {note && <Notice tone="ok" onClose={() => setNote(null)}>{note}</Notice>}
-          {agentRun && <AgentRunBar taskId={taskId} run={agentRun} onRun={setAgentRun} onFinished={load} />}
+          {agentRun && <AgentRunBar taskId={taskId} run={agentRun} onRun={setAgentRun} onFinished={() => load("all")} />}
         </div>
       )}
 
@@ -1508,6 +1604,9 @@ export default function VideoAnnotator({
           <div className="ed-plates">
             <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn || samOn}
               quiet={frozen} onRetry={auto.retry} onDismiss={() => { auto.setError(null); setSamOn(false); }} />
+            {skel && !frameLoaded && (
+              <div className="mag-auto-plate" role="status"><i className="ui-spin" aria-hidden="true" />Рамки кадра грузятся</div>
+            )}
             {(agentTool.busy || agentNote) && (
               <div className="mag-auto-plate ed-agent-plate" role="status">{agentTool.busy ? "Агент смотрит кадр…" : agentNote}</div>
             )}
@@ -1542,8 +1641,9 @@ export default function VideoAnnotator({
               <AutoBar onCommit={commitAuto} onCancel={clearAuto} />
             </Float>
           )}
-          {!autoPrev && !frozen && pendingHere > 0 && (
-            <ReviewBar count={pendingHere} onConfirm={confirmFrame} onReject={rejectFrame}
+          {!autoPrev && !viewOnly && agentFrames.length > 0 && (reviewHere > 0 || !ghosts.length) && (
+            <ReviewBar count={reviewHere} left={agentFrames.length} disabled={!frameLoaded}
+              onPrev={() => goReview(-1)} onNext={() => goReview(1)} onConfirm={confirmFrame} onReject={rejectFrame}
               agents={agentsHere.map((g) => ({ agent: g.agent, count: g.idx.length }))}
               onConfirmAgent={confirmAgent} onRejectAgent={rejectAgent} />
           )}
@@ -1562,13 +1662,16 @@ export default function VideoAnnotator({
         <div className="ve-dock">
           <Transport frame={frame} lastFrame={lastFrame} fps={fps} playing={playing} pending={shown.pending}
             speed={speed} quality={quality} qualities={clip.manifest?.qualities || []} empty={emptyState}
-            frozen={frozen} canKey={!!currentTrack && !!stateAt(currentTrack, frame)}
+            frozen={viewOnly} canKey={!!currentTrack && !!stateAt(currentTrack, frame)}
             onGo={go} onPlay={togglePlay} onSpeed={(v) => changeSpeed(v, frame)} onQuality={setQuality}
-            onEmpty={toggleEmpty} onKey={putKey} />
+            onEmpty={toggleEmpty} onKey={putKey}
+            zoom={<ZoomBar view={shownView} last={lastFrame} onZoom={zoomStep} onFit={() => setView(null)} />} />
           <Lanes tracks={data?.tracks || []} numbers={numbers} frame={frame} lastFrame={lastFrame} fps={fps}
-            labelOf={labelOf} selected={pickedTrack} editable={!frozen} hidden={hiddenTracks}
+            labelOf={labelOf} selected={pickedTrack} editable={!viewOnly} hidden={hiddenTracks}
             covered={covered} marks={marks} plan={plan ? plan.frames : null} singles={ticks} agent={agentFrames}
             scout={scout} scoutDots={scoutDots} scoutOpen={scoutOn && scout.length > 0} onScout={toggleScout}
+            view={shownView} onView={setView} onWidth={setLaneW}
+            chunks={chunks ?? []} loaded={loaded} inFlight={fetching} loading={!!skel && (chunks === null || loaded.size < chunks.length)}
             onSelect={selectTrack} onHide={(id) => toggleHidden(`t:${id}`)} onAction={onLane} onSeek={seek} />
         </div>
       </div>

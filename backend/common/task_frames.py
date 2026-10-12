@@ -6,7 +6,7 @@
 """
 import uuid
 
-from sqlalchemy import and_, exists, select
+from sqlalchemy import and_, case, exists, select
 
 from common.models import Annotation, Image, TaskVideo, VideoAnnotation, VideoTrack
 
@@ -50,33 +50,30 @@ def agent_pending():
     return and_(Image.task_status != "deleted", has_pending())
 
 
-def video_payload(db, video):
+def video_payload(db, video, shapes=True):
     """Треки и одиночная разметка ролика — в том виде, в каком их ждёт
     `common.video_tracks`. Закрытие разметки и агент на ролике смотрят на
-    ролик одинаково: что уйдёт в таску и где уже поработал человек."""
+    ролик одинаково: что уйдёт в таску и где уже поработал человек.
+
+    `shapes=False` — для счёта: у одиночной только кадр, флаг и источник, геометрия None.
+    У агента их десятки тысяч на ролик, разбор JSON и UUID шёл секундами."""
     tracks = db.execute(
         select(VideoTrack).where(VideoTrack.video_id == video.id)
     ).scalars().all()
+    A = VideoAnnotation
+    cols = (A.class_id, A.ann_type, A.geometry, A.agent_version_id, A.created_by, A.reviewed_by) if shapes \
+        else (case((A.track_id.isnot(None), A.geometry)).label("geometry"),)
     rows = db.execute(
-        select(VideoAnnotation).where(VideoAnnotation.video_id == video.id)
-        .order_by(VideoAnnotation.frame_no)
-    ).scalars().all()
+        select(A.track_id, A.frame_no, A.source, A.pending, *cols)
+        .where(A.video_id == video.id)
+        .order_by(A.frame_no)
+    ).all()
 
     keys_by_track = {}
     singles = []
     for row in rows:
         if row.track_id is None:
-            singles.append({
-                "frame_no": row.frame_no,
-                "class_id": row.class_id,
-                "ann_type": row.ann_type,
-                "geometry": row.geometry,
-                "source": row.source,
-                "agent_version_id": row.agent_version_id,
-                "created_by": row.created_by,
-                "pending": row.pending,
-                "reviewed_by": row.reviewed_by,
-            })
+            singles.append({k: v for k, v in row._mapping.items() if k != "track_id"})
         else:
             keys_by_track.setdefault(row.track_id, []).append({
                 "frame_no": row.frame_no,

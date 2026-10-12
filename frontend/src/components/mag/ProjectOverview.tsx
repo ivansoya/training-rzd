@@ -2,12 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, Navigate, useNavigate, useSearchParams } from "react-router-dom";
 import { getOverview } from "../../api/overview";
 import type { Overview, OverviewClass } from "../../api/overview";
-import { listTasks } from "../../auth/api";
-import type { TaskSummary } from "../../auth/api";
+import type { TaskLight } from "../../auth/api";
 import { useLive } from "../../live/LiveProvider";
+import { useAuth } from "../auth/AuthGate";
 import {
   Avatar, Badge, Button, Card, Empty, Icon, Legend, LineChart, LinkButton, Notice, PageHeader,
-  Spark, StackBar,
+  Spark, StackBar, cx,
 } from "../../ui";
 import { ago, count, pct, ru } from "../ru";
 import { gb, liveDevices, serverParts, shortName, useGpuState } from "../shell/useGpuState";
@@ -15,6 +15,7 @@ import ExportModal from "./ExportModal";
 import { ProjectMenu } from "./ProjectMenu";
 import { useProject } from "./ProjectShell";
 import { CreateTaskModal } from "./tasks/CreateTaskModal";
+import { look, useTaskBoard } from "./tasks/useTaskBoard";
 import { describeTaskEvent } from "./taskEvents";
 
 const map = (x: number) => x.toLocaleString("ru-RU", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
@@ -29,6 +30,9 @@ const STATE_PARTS = [
 
 // Таски в работе важнее закрытых: порядок карточки — что ждёт рук.
 const TASK_ORDER: Record<string, number> = { in_progress: 0, updating: 1, queued: 2, done: 3, closed: 4 };
+/** Четыре открытые таски карточки — их счётчики и спрашиваем, остальные обзору не нужны. */
+const shownOf = (list: TaskLight[]) =>
+  list.filter((t) => t.status !== "closed").sort((a, b) => (TASK_ORDER[a.status] ?? 9) - (TASK_ORDER[b.status] ?? 9)).slice(0, 4);
 const RUN_BADGE: Record<string, [string, string]> = {
   queued: ["В очереди", ""], waiting_gpu: ["Ждёт карту", ""], preparing: ["Готовится", "var(--c1)"],
   running: ["Идёт", "var(--c1)"], stopping: ["Останавливается", "var(--st-skip)"],
@@ -46,29 +50,31 @@ export default function ProjectOverview() {
   const canEdit = my_role === "admin" || my_role === "editor";
   const importing = project.status === "importing";
 
+  const { me } = useAuth();
   const [data, setData] = useState<Overview | null>(null);
-  const [tasks, setTasks] = useState<TaskSummary[] | null>(null);
+  const tasks = useTaskBoard(code, me.user.id, shownOf);
+  const refreshTasks = tasks.refresh;
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const [o, t] = await Promise.all([getOverview(code), listTasks(code)]);
-      setData(o);
-      setTasks(t.tasks);
+      setData(await getOverview(code));
       setError(null);
     } catch (e) {
       setError((e as Error).message);
     }
   }, [code]);
+  // Таски хук спросил сам при входе; дальше — вместе со сводкой
+  const reload = useCallback(() => { void load(); void refreshTasks(); }, [load, refreshTasks]);
   useEffect(() => {
     void load();
-    const h = window.setInterval(load, 60_000);
+    const h = window.setInterval(reload, 60_000);
     return () => window.clearInterval(h);
-  }, [load]);
-  useLive("run", () => void load());
-  useLive("classes", () => void load());
+  }, [load, reload]);
+  useLive("run", reload);
+  useLive("classes", reload);
 
   // «Все кадры» переехали в галерею датасетов; старая ссылка ведёт туда
   if (search.get("view") === "frames") return <Navigate replace to={`/projects/${code}/datasets`} />;
@@ -142,7 +148,7 @@ export default function ProjectOverview() {
           <Kpis data={data} code={code} />
           <div className="g-7-5">
             <ClassBalance rows={data.classes.rows} declared={data.classes.declared} code={code} />
-            <TasksCard tasks={tasks ?? []} code={code} />
+            <TasksCard board={tasks} code={code} />
           </div>
           <div className="g3">
             <RunCard run={data.latest_run} code={code} />
@@ -236,33 +242,40 @@ function ClassBalance({ rows, declared, code }: { rows: OverviewClass[]; declare
   );
 }
 
-function TasksCard({ tasks, code }: { tasks: TaskSummary[]; code: string }) {
-  const open = tasks.filter((t) => t.status !== "closed");
+function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; code: string }) {
+  const tasks = board.list ?? [];
   const working = tasks.filter((t) => t.status === "in_progress" || t.status === "updating").length;
-  const shown = [...open].sort((a, b) => (TASK_ORDER[a.status] ?? 9) - (TASK_ORDER[b.status] ?? 9)).slice(0, 4);
+  const shown = shownOf(tasks);
   const desc = tasks.length
     ? `${count(tasks.length, "таска", "таски", "тасок")}${working ? `, ${ru(working)} в работе` : ""}`
     : undefined;
   return (
     <Card title="Таски" desc={desc}
       actions={<LinkButton variant="ghost" size="sm" to={`/projects/${code}/tasks`}>Все таски</LinkButton>}>
-      {shown.length === 0 ? (
+      {board.list === null ? (
+        <Empty compact icon="check" title="Загружаем…" />
+      ) : shown.length === 0 ? (
         <Empty compact icon="check" title={tasks.length ? "Открытых тасок нет" : "Тасок пока нет"} />
       ) : (
         <>
           <ul className="ov-tasks">
             {shown.map((t) => {
-              const c = t.counts;
+              const s = board.stats[t.id];
+              const v = look(s, board.fresh[t.id], board.at);
+              const c = s?.counts;
               return (
                 <li key={t.id}>
                   <div className="row between">
                     <Link className="ov-task-n t-ell" to={`/projects/${code}/tasks/${t.id}`}>{t.name}</Link>
                     <Badge>{t.status_label}</Badge>
                   </div>
-                  <StackBar parts={STATE_PARTS.map(([k, label, color]) => ({ label, color, value: c[k] }))} />
-                  <div className="row between t-xs t-muted">
-                    <span className="t-ell">{t.assignee?.display_name ?? "без исполнителя"}</span>
-                    <span className="ui-mono">{ru(c.annotated + c.empty)} из {ru(c.total)}</span>
+                  {/* Полоса и строка под ней — той же высоты, пока числа в пути */}
+                  <div className={cx("ov-task-z", v.stale && "stale", v.loading && "ui-shim")}>
+                    {c ? <StackBar parts={STATE_PARTS.map(([k, label, color]) => ({ label, color, value: c[k] }))} /> : <i className="ui-sk bar" />}
+                    <div className="row between t-xs t-muted">
+                      <span className="t-ell">{t.assignee?.display_name ?? "без исполнителя"}</span>
+                      {c ? <span className="ui-mono">{ru(c.annotated + c.empty)} из {ru(c.total)}</span> : <i className="ui-sk pill" style={{ width: 64 }} />}
+                    </div>
                   </div>
                 </li>
               );

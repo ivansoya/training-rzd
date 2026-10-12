@@ -40,15 +40,18 @@ def _last_frame(video):
     return None
 
 
-def collect(db, video):
+def collect(db, video, shapes=True, loaded=None):
     """Что уйдёт в таску: ``({кадр: [боксы]}, [фоновые кадры])``.
 
     Зовут трое — предпросмотр в редакторе, сводка незакрытых роликов и само
     закрытие. Расходиться им нельзя, иначе предпросмотр обещает одно, а в таску
     уходит другое; поэтому и фоновые кадры отбираются здесь же, а не у каждого
     вызывающего по-своему.
+
+    Геометрия одиночных нужна только закрытию: остальные считают (`shapes=False`).
+    `loaded` — уже прочитанный `video_payload`, чтобы не читать ролик второй раз.
     """
-    payload, singles = task_frames.video_payload(db, video)
+    payload, singles = loaded or task_frames.video_payload(db, video, shapes)
     return (
         tracklib.plan(payload, singles, _last_frame(video)),
         tracklib.empty_frames(payload, singles, video.empty_frames),
@@ -61,7 +64,7 @@ def frame_is_free(db, video, frame_no):
     Нужно пометке «фоновый»: спрашивать об этом планом нельзя, шаг выгрузки
     трека выбрасывает из плана кадры, на которых объект есть.
     """
-    payload, singles = task_frames.video_payload(db, video)
+    payload, singles = task_frames.video_payload(db, video, shapes=False)
     return bool(tracklib.empty_frames(payload, singles, [frame_no]))
 
 
@@ -112,82 +115,85 @@ def pending_summary(db, task):
     ровно то же, что у ролика без разметки. Теперь видно, сколько даёт каждый
     объект и который из них не считается.
     """
-    out = []
-    for video in open_videos(db, task):
-        payload, singles = task_frames.video_payload(db, video)
-        last = _last_frame(video)
-        # Имя и цвет берём здесь: в сводке таски классы считаются по уже
-        # созданным аннотациям, а у незакрытого ролика их ещё нет — экран
-        # показывал бы «класс 0» вместо названия.
-        by_class = {
-            c.id: (c.class_index, c.name, c.color)
-            for c in db.execute(
-                select(LabelClass).where(LabelClass.project_id == task.project_id)
-            ).scalars()
-        }
+    by_class = class_look(db, task.project_id)
+    return [row for video in open_videos(db, task) if (row := pending_row(db, video, by_class))]
 
-        objects = []
-        for track in payload:
-            keys = sorted(track.get("keys") or [], key=lambda k: k["frame_no"])
-            index, name, color = by_class.get(track["class_id"], (None, None, None))
-            item = {
-                "class_index": index,
-                "class_name": name,
-                "class_color": color,
-                "start": track["start_frame"],
-                "end": tracklib.track_end(track, keys),
-                "keys": len(keys),
-                "step": int(track.get("export_step") or 1),
-                "interpolate": bool(track.get("interpolate", True)),
-                "hidden": len(track.get("hidden_ranges") or []),
-                "frames": 0,
-                "error": None,
-            }
-            try:
-                item["frames"] = len(tracklib.export_frames(track, keys, last))
-            except tracklib.TrackError as exc:
-                item["error"] = str(exc)
-            objects.append(item)
 
-        row = {
-            "video_id": str(video.id),
-            "file_name": video.file_name,
-            "tracks": len(payload),
-            "objects": objects,
-            "singles": len(singles),
-            "frames_in_task": frames_in_task(db, video),
+def class_look(db, project_id):
+    """{класс: (номер, имя, цвет)}. Имя и цвет берём здесь: в сводке таски классы считаются
+    по уже созданным аннотациям, а у незакрытого ролика их ещё нет — экран показывал бы «класс 0»."""
+    return {
+        c.id: (c.class_index, c.name, c.color)
+        for c in db.execute(select(LabelClass).where(LabelClass.project_id == project_id)).scalars()
+    }
+
+
+def pending_row(db, video, by_class):
+    """Строка сводки одного незакрытого ролика; None — в таску от него ничего не уйдёт.
+    Страница таски спрашивает ролики по одному, чтобы тяжёлый не держал остальные."""
+    loaded = task_frames.video_payload(db, video, shapes=False)
+    payload, singles = loaded
+    last = _last_frame(video)
+
+    objects = []
+    for track in payload:
+        keys = sorted(track.get("keys") or [], key=lambda k: k["frame_no"])
+        index, name, color = by_class.get(track["class_id"], (None, None, None))
+        item = {
+            "class_index": index,
+            "class_name": name,
+            "class_color": color,
+            "start": track["start_frame"],
+            "end": tracklib.track_end(track, keys),
+            "keys": len(keys),
+            "step": int(track.get("export_step") or 1),
+            "interpolate": bool(track.get("interpolate", True)),
+            "hidden": len(track.get("hidden_ranges") or []),
+            "frames": 0,
+            "error": None,
         }
-        if row["frames_in_task"]:
-            # Открыли заново, а прежние кадры на месте: план не станет кадрами,
-            # пока их не уберут. Считать его в «ждут закрытия» значило бы
-            # показать одни и те же кадры дважды — рядом с «размечено».
-            row.update({
-                "frames": 0, "boxes": 0, "empty": 0, "unchecked": 0,
-                "error": f"Прежние кадры ролика ещё в таске ({row['frames_in_task']}) — "
-                         "уберите их, чтобы закрыть разметку заново.",
-            })
-            out.append(row)
-            continue
         try:
-            plan, empty = collect(db, video)
+            item["frames"] = len(tracklib.export_frames(track, keys, last))
         except tracklib.TrackError as exc:
-            # План целиком не считается, но остальное показать всё равно надо:
-            # человеку нужно знать, какой именно объект мешает закрыть разметку.
-            row.update({"frames": 0, "boxes": 0, "empty": 0, "unchecked": 0, "error": str(exc)})
-            out.append(row)
-            continue
-        if not plan and not empty:
-            continue
+            item["error"] = str(exc)
+        objects.append(item)
+
+    row = {
+        "video_id": str(video.id),
+        "file_name": video.file_name,
+        "tracks": len(payload),
+        "objects": objects,
+        "singles": len(singles),
+        "frames_in_task": frames_in_task(db, video),
+    }
+    if row["frames_in_task"]:
+        # Открыли заново, а прежние кадры на месте: план не станет кадрами,
+        # пока их не уберут. Считать его в «ждут закрытия» значило бы
+        # показать одни и те же кадры дважды — рядом с «размечено».
         row.update({
-            # Фоновые кадры — такие же кадры таски, поэтому входят в общее
-            # число; отдельным полем видно, сколько их из этого числа.
-            "frames": len(plan) + len(empty),
-            "boxes": sum(len(v) for v in plan.values()),
-            "empty": len(empty),
-            "unchecked": unchecked_frames(plan),
+            "frames": 0, "boxes": 0, "empty": 0, "unchecked": 0,
+            "error": f"Прежние кадры ролика ещё в таске ({row['frames_in_task']}) — "
+                     "уберите их, чтобы закрыть разметку заново.",
         })
-        out.append(row)
-    return out
+        return row
+    try:
+        plan, empty = collect(db, video, loaded=loaded)
+    except tracklib.TrackError as exc:
+        # План целиком не считается, но остальное показать всё равно надо:
+        # человеку нужно знать, какой именно объект мешает закрыть разметку.
+        row.update({"frames": 0, "boxes": 0, "empty": 0, "unchecked": 0, "error": str(exc)})
+        return row
+    if not plan and not empty:
+        return None
+    row.update({
+        # Фоновые кадры — такие же кадры таски, поэтому входят в общее
+        # число; отдельным полем видно, сколько их из этого числа.
+        "frames": len(plan) + len(empty),
+        "boxes": sum(len(v) for v in plan.values()),
+        "empty": len(empty),
+        "unchecked": unchecked_frames(plan),
+    })
+    return row
 
 
 def unchecked_frames(plan):

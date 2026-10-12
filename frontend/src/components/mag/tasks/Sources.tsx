@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
-import type { AgentClearScope, PendingObject, PendingVideo, TaskDetail, TaskVideoItem, VideoPrepare } from "../../../auth/api";
+import type { AgentClearScope, PendingObject, PendingVideo, TaskNumbers, TaskVideoItem, VideoPrepare } from "../../../auth/api";
 import type { Tag } from "../../../api/tags";
 import { Badge, Button, Card, Icon, Legend, MenuItem, Popover, StackBar, Swatch, cx } from "../../../ui";
 import { count, plural, ru } from "../../ru";
@@ -15,6 +15,8 @@ import VideoStrip from "../VideoStrip";
 import { fmtBytes, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
 import type { SourceBlock, SourceCounts } from "./tasks";
 import { STATES, coverage, dayOf, stateParts } from "./tasks";
+import { look as lookOf } from "./useTaskBoard";
+import type { Fresh, Look } from "./useTaskBoard";
 
 type Add = "images" | "cut" | "annotate";
 
@@ -72,10 +74,19 @@ export function StateLegend({ c }: { c: SourceCounts }) {
   );
 }
 
-function Progress({ c }: { c: SourceCounts }) {
+function Progress({ c, known, look }: { c: SourceCounts; known: boolean; look: Look }) {
   const left = (c.new || 0) + (c.skipped || 0);
+  // Полоса и подпись состояний — той же высоты, пока числа в пути
+  if (!known) {
+    return (
+      <div className={cx("tp-prog", look.loading && "ui-shim", !look.loading && "tp-wait")}>
+        <div className="tp-prog-r"><i className="ui-sk" style={{ height: 8 }} /><span className="ui-sk pill" style={{ width: 70 }} /></div>
+        <div className="tp-legend-sk"><span className="ui-sk pill" style={{ width: 90 }} /><span className="ui-sk pill" style={{ width: 70 }} /><span className="ui-sk pill" style={{ width: 80 }} /></div>
+      </div>
+    );
+  }
   return (
-    <div className="tp-prog">
+    <div className={cx("tp-prog", look.stale && "tp-stale", look.loading && "ui-shim")}>
       <div className="tp-prog-r">
         <StackBar parts={stateParts(c)} height={8} />
         <span className="t-xs t-muted">{left ? `${ru(left)} в работе` : `всё пройдено`}</span>
@@ -164,8 +175,10 @@ export function AgentLine({ run }: { run?: RunView | null }) {
 }
 
 /** Изображения или кадры из закрытой разметки ролика. */
-export function FramesCard({ block, editable, run, agent, onAnnotate, onReview }: {
+export function FramesCard({ block, look, editable, run, agent, onAnnotate, onReview }: {
   block: SourceBlock;
+  /** Как рисовать числа блока: заготовка, бледное из кеша, переливание в пути. */
+  look: Look;
   editable: boolean;
   /** Идущий по этому блоку агент. */
   run?: RunView | null;
@@ -193,7 +206,7 @@ export function FramesCard({ block, editable, run, agent, onAnnotate, onReview }
         )}
       </>}>
       <AgentLine run={run} />
-      <Progress c={block.counts} />
+      <Progress c={block.counts} known={block.known} look={look} />
     </Card>
   );
 }
@@ -215,9 +228,10 @@ export function Rail({ parts, tone }: { parts: [number, number][]; tone?: "track
 }
 
 /** Ролики на нарезку: общий счёт кадров и строка на каждый ролик со своим планом. */
-export function CutCard({ block, taskId, code, tags, editable, run, agent, onAnnotate, onReview,
+export function CutCard({ block, look, taskId, code, tags, editable, run, agent, onAnnotate, onReview,
   onCut, onDelete, onVideoTags, onTagCreated }: {
   block: SourceBlock;
+  look: Look;
   taskId: string;
   code: string;
   tags: Tag[];
@@ -263,7 +277,7 @@ export function CutCard({ block, taskId, code, tags, editable, run, agent, onAnn
         )}
       </>}>
       <AgentLine run={run} />
-      {block.total > 0 && <Progress c={block.counts} />}
+      {block.total > 0 && <Progress c={block.counts} known={block.known} look={look} />}
       {editable && videos.length > 1 && (
         <div className="tp-tagall">
           <span className="t-xs t-muted">Таг на все {videos.length}</span>
@@ -348,7 +362,7 @@ function ReelRow({ v, taskId, code, tags, editable, menu, onCut, onTags, onTagCr
   );
 }
 
-type TaskClass = TaskDetail["classes"][number];
+type TaskClass = TaskNumbers["classes"][number];
 
 function classOf(classes: TaskClass[], o: PendingObject): { name: string; color: string | null } {
   if (o.class_name) return { name: o.class_name, color: o.class_color || null };
@@ -358,10 +372,13 @@ function classOf(classes: TaskClass[], o: PendingObject): { name: string; color:
 }
 
 /** Ролики на разметку: каждый со своей шкалой, объектами и закрытием. */
-export function AnnotateCard({ videos, pending, classes, taskId, code, tags, editable, busy, run, agent, onAdd, onOpen, onReview,
+export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code, tags, editable, busy, run, agent, onAdd, onOpen, onReview,
   onClose, onReopen, onDropFrames, onDelete, onVideoTags, onTagCreated }: {
   videos: TaskVideoItem[];
-  pending: PendingVideo[];
+  /** Сводки открытых роликов по мере прихода; нет ключа — ещё в пути, null — закрывать нечего. */
+  pending: Record<string, PendingVideo | null>;
+  fresh: Record<string, Fresh>;
+  at: number | null;
   classes: TaskClass[];
   taskId: string;
   code: string;
@@ -382,7 +399,7 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
   onTagCreated: (t: Tag) => void;
 }) {
   const open = videos.filter((v) => !v.annotation_closed_at);
-  const unchecked = pending.filter((p) => open.some((v) => v.id === p.video_id)).reduce((s, p) => s + (p.unchecked || 0), 0);
+  const unchecked = open.reduce((s, v) => s + (pending[v.id]?.unchecked || 0), 0);
   return (
     <Card className="tp-src" flush
       title={<><Icon name="film" />Ролики на разметку<Badge variant="secondary">{videos.length}</Badge></>}
@@ -398,8 +415,12 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
       </>}>
       {run && <div className="tp-agent-w"><AgentLine run={run} /></div>}
       {videos.map((v) => {
-        const p = pending.find((x) => x.video_id === v.id);
         const closed = v.annotation_closed_at !== null;
+        // У закрытого ролика сводки нет и не будет — ему ждать нечего
+        const known = closed || v.id in pending;
+        const p = pending[v.id] ?? undefined;
+        const l = lookOf(known ? true : undefined, fresh[v.id], at);
+        const zone = cx(l.stale && "tp-stale", l.loading && "ui-shim");
         const inTask = Math.max(v.frames, p?.frames_in_task ?? 0);
         return (
           <div key={v.id} className="tp-vid">
@@ -410,6 +431,9 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
                 {closed ? <Badge tone="var(--st-done)" icon="lock">разметка закрыта</Badge>
                   : <Badge tone="var(--c1)" live>размечается</Badge>}
                 <span className="grow" />
+                {editable && !closed && !known && (
+                  <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled>Проверить <span className="ui-sk pill" style={{ width: 34 }} /></Button>
+                )}
                 {editable && !closed && !!p?.unchecked && (
                   <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled={!v.prepare?.ready}
                     onClick={() => onReview(v)} title="Кадры ролика с непроверенной разметкой агента">
@@ -439,9 +463,11 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
                 {fmtTime(v.duration_ms || 0)} · {v.width}×{v.height} · {v.fps} к/с · {fmtBytes(v.size_bytes)}
                 {" "}<PrepareLine prepare={v.prepare} />
               </span>
-              <Rail parts={coverage(v, p?.objects)} tone="track" />
+              {known ? <span className={zone}><Rail parts={coverage(v, p?.objects)} tone="track" /></span>
+                : <i className={cx("ui-sk bar", l.loading && "ui-shim")} />}
               <div className="tp-vnums">
-                <span><b>{ru(v.frames || p?.frames || 0)}</b>{v.frames ? "кадров в таске" : "кадров уйдёт в таску"}</span>
+                <span>{v.frames || known ? <b className={zone}>{ru(v.frames || p?.frames || 0)}</b> : <span className={cx("ui-sk pill", l.loading && "ui-shim")} style={{ width: 40, height: 13 }} />}
+                  {v.frames ? "кадров в таске" : "кадров уйдёт в таску"}</span>
                 <span><b>{ru(v.tracks)}</b>объектов ведётся</span>
                 <span><b>{v.frame_count ? ru(v.frame_count) : "—"}</b>кадров в ролике</span>
               </div>
@@ -457,8 +483,19 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
               {!closed && p?.error && !(editable && inTask > 0) && (
                 <p className="t-sm tp-bad"><b>Разметку не закрыть.</b> {p.error}</p>
               )}
+              {/* Строк в таблице — по числу треков из лёгкой части: заготовка той же высоты */}
+              {!closed && !known && v.tracks > 0 && (
+                <table className={cx("tp-mini", l.loading && "ui-shim")}>
+                  <thead><tr><th>объект</th><th>кадры</th><th className="r">ключей</th><th>шаг</th><th className="r">уйдёт кадров</th></tr></thead>
+                  <tbody>
+                    {Array.from({ length: v.tracks }, (_, i) => (
+                      <tr key={i}>{[80, 90, 20, 50, 40].map((w, k) => <td key={k}><span className="ui-sk pill" style={{ width: w }} /></td>)}</tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
               {!closed && p && (p.objects || []).length > 0 && (
-                <table className="tp-mini">
+                <table className={cx("tp-mini", zone)}>
                   <thead><tr><th>объект</th><th>кадры</th><th className="r">ключей</th><th>шаг</th><th className="r">уйдёт кадров</th></tr></thead>
                   <tbody>
                     {(p.objects || []).map((o, i) => {
@@ -477,14 +514,21 @@ export function AnnotateCard({ videos, pending, classes, taskId, code, tags, edi
                   </tbody>
                 </table>
               )}
-              {!closed && p && !p.error && (
-                <p className="t-xs t-muted">
-                  Размечено {count(p.boxes, "объект", "объекта", "объектов")} на {ru(p.frames - p.empty)}{" "}
-                  {plural(p.frames - p.empty, "кадре", "кадрах", "кадрах")}
-                  {p.empty > 0 && `, ещё ${p.empty} ${plural(p.empty, "кадр отмечен фоновым", "кадра отмечено фоновыми", "кадров отмечено фоновыми")}`}
-                  {(p.singles || 0) > 0 && `, одиночных фигур ${p.singles}`}
-                  . {count(p.frames, "кадр", "кадра", "кадров")} {plural(p.frames, "появится", "появятся", "появятся")} в таске, когда закроете разметку.
-                </p>
+              {/* Сводка держит место под две строки: пришла короче — то, что ниже, не поднимается */}
+              {!closed && (
+                <div className={cx("tp-vsum", zone)}>
+                  {!known ? (
+                    <><span className="ui-sk pill" style={{ width: "80%" }} /><span className="ui-sk pill" style={{ width: "45%" }} /></>
+                  ) : p && !p.error ? (
+                    <p className="t-xs t-muted">
+                      Размечено {count(p.boxes, "объект", "объекта", "объектов")} на {ru(p.frames - p.empty)}{" "}
+                      {plural(p.frames - p.empty, "кадре", "кадрах", "кадрах")}
+                      {p.empty > 0 && `, ещё ${p.empty} ${plural(p.empty, "кадр отмечен фоновым", "кадра отмечено фоновыми", "кадров отмечено фоновыми")}`}
+                      {(p.singles || 0) > 0 && `, одиночных фигур ${p.singles}`}
+                      . {count(p.frames, "кадр", "кадра", "кадров")} {plural(p.frames, "появится", "появятся", "появятся")} в таске, когда закроете разметку.
+                    </p>
+                  ) : !p ? <p className="t-xs t-faint">Разметки пока нет — закрывать нечего.</p> : null}
+                </div>
               )}
             </div>
           </div>

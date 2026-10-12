@@ -1,5 +1,6 @@
 // Панели редактора видео: справа — что на этом кадре, снизу — транспорт.
 
+import type { ReactNode } from "react";
 import type { ClipQuality, LabelClass, VideoTrack } from "../../auth/api";
 import { Button, Icon, Select, Seg, Swatch, Switch, cx } from "../../ui";
 import type { SelectOption } from "../../ui";
@@ -250,7 +251,7 @@ export function qualityOptions(list: ClipQuality[]): SelectOption<string>[] {
 }
 
 export function Transport({ frame, lastFrame, fps, playing, pending, speed, quality, qualities, empty, frozen, canKey,
-  onGo, onPlay, onSpeed, onQuality, onEmpty, onKey }: {
+  onGo, onPlay, onSpeed, onQuality, onEmpty, onKey, zoom }: {
   frame: number;
   lastFrame: number;
   fps: number;
@@ -270,6 +271,8 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
   onQuality: (id: string) => void;
   onEmpty: () => void;
   onKey: () => void;
+  /** Плашка масштаба дорожек — справа в строке. */
+  zoom?: ReactNode;
 }) {
   const w = String(lastFrame).length;
   return (
@@ -300,6 +303,7 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
       <Button size="sm" icon="diamond" kbd="K" disabled={frozen || !canKey}
         title={canKey ? "Ключ выбранного трека на этом кадре" : "Выберите трек, который живёт на этом кадре"}
         onClick={onKey}>Ключ</Button>
+      {zoom && <><i className="ed-vsep" />{zoom}</>}
     </div>
   );
 }

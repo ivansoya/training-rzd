@@ -233,9 +233,10 @@ def plan(tracks: list[dict], singles: list[dict], last_frame: int | None = None)
 
     for single in singles:
         by_frame.setdefault(int(single["frame_no"]), []).append({
-            "class_id": single["class_id"],
+            "class_id": single.get("class_id"),
             "ann_type": single.get("ann_type") or "bbox",
-            "geometry": dict(single["geometry"]),
+            # None — разметку прочли без геометрии, только для счёта (`video_payload`).
+            "geometry": None if single["geometry"] is None else dict(single["geometry"]),
             "source": single.get("source", "human"),
             # Происхождение рамки агента — до кадра таски: по нему закрытие
             # решает, уходит ли кадр на проверку.

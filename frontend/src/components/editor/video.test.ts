@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { VideoSingleBox, VideoTrack } from "../../auth/api";
 import {
-  clampDock, clockText, coveredSpans, mergeSpans, presenceAt, scoutHeat, seekToTrack, singleTicks, timeTicks, trackNumbers,
+  clampDock, clampView, clockText, coveredSpans, followView, fullView, mergeSpans, presenceAt, scoutHeat, seekToTrack,
+  singleTicks, timeTicks, trackNumbers, zoomAt, zoomText,
 } from "./video";
 
 const g = { x: 0, y: 0, w: 10, h: 10 };
@@ -88,5 +89,39 @@ describe("высота дока", () => {
     expect(clampDock(40, 900)).toBe(150);
     expect(clampDock(800, 900)).toBe(680);
     expect(clampDock(320, 900)).toBe(320);
+  });
+});
+
+describe("масштаб дорожек", () => {
+  const last = 33701;
+  const width = 1000;
+
+  it("кадр под курсором остаётся на месте", () => {
+    const v = zoomAt(fullView(last), 4, 10000, last, width);
+    expect(v.len).toBeCloseTo(last / 4);
+    // Доля окна слева от якоря та же, что была
+    expect((10000 - v.from) / v.len).toBeCloseTo(10000 / last);
+    expect(zoomText(v, last)).toBe("×4");
+  });
+
+  it("не мельче 12 px на кадр и не за края ролика", () => {
+    const v = zoomAt(fullView(last), 1e6, 33700, last, width);
+    expect(v.len).toBeCloseTo(width / 12);
+    expect(v.from + v.len).toBeLessThanOrEqual(last);
+    expect(clampView({ from: -50, len: 1e9 }, last, width)).toEqual(fullView(last));
+  });
+
+  it("окно едет за указателем, только когда тот ушёл", () => {
+    const v = { from: 1000, len: 500 };
+    expect(followView(v, 1200, last, width)).toBe(v);
+    expect(followView(v, 5000, last, width)).toEqual({ from: 4750, len: 500 });
+  });
+
+  it("засечки — только видимые и с шагом по окну", () => {
+    const ticks = timeTicks(last, 30, width, 64, { from: 300, len: 300 });
+    expect(ticks[0].frame).toBe(300);
+    expect(ticks.every((x) => x.frame >= 300 && x.frame <= 600)).toBe(true);
+    // 10 с в окне на 1000 px — шаг в секунду
+    expect(ticks[1].t - ticks[0].t).toBe(1);
   });
 });

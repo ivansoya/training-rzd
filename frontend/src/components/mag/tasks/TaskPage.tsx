@@ -3,12 +3,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  assignTask, clearAgentUnchecked, closeVideoAnnotation, deleteTaskVideo, dropVideoFrames, getProject, getTask,
-  getTaskEvents, getTaskImages, reopenVideoAnnotation, setTaskStatus, uploadTaskImages, uploadTaskVideo,
+  assignTask, clearAgentUnchecked, closeVideoAnnotation, deleteTaskVideo, dropVideoFrames, getProject,
+  getTaskImages, getTaskNumbers, getVideoPending, reopenVideoAnnotation, setTaskStatus, uploadTaskImages, uploadTaskVideo,
 } from "../../../auth/api";
 import type {
-  AgentClearScope, ProjectMemberInfo, TaskDetail, TaskEventItem, TaskImage, TaskStatus, TaskVideoItem,
+  AgentClearScope, ProjectMemberInfo, TaskDetail, TaskImage, TaskStatus, TaskVideoItem,
 } from "../../../auth/api";
+import { useAuth } from "../../auth/AuthGate";
 import { pollJob } from "../../../api/jobs";
 import { setImageTags, setVideoTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
@@ -32,6 +33,11 @@ import type { AgentHooks } from "./Sources";
 import { EventList, TaskPassport } from "./TaskPassport";
 import type { FrameState } from "./tasks";
 import { buildSources, closePlan, closeText } from "./tasks";
+import { look } from "./useTaskBoard";
+import { openVideos, useTaskPage } from "./useTaskPage";
+
+/** Кадров в таске без брака — из лёгкой части, известно сразу. */
+const framesTotal = (t: TaskDetail) => Object.values(t.sources || {}).reduce((s, x) => s + (x.frames || 0), 0);
 
 const ACTIVE_RUN = ["queued", "waiting_gpu", "running"];
 
@@ -56,9 +62,10 @@ const isTyping = (t: EventTarget | null) =>
 export default function TaskPage() {
   const { code, taskId } = useParams<{ code: string; taskId: string }>();
   const navigate = useNavigate();
-  const [task, setTask] = useState<TaskDetail | null>(null);
+  const { me } = useAuth();
+  const page = useTaskPage(taskId || "", me.user.id);
+  const { task, numbers, pending, events } = page;
   const [workers, setWorkers] = useState<ProjectMemberInfo[]>([]);
-  const [events, setEvents] = useState<TaskEventItem[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -111,21 +118,15 @@ export default function TaskPage() {
   const cutRef = useRef<HTMLInputElement>(null);
   const annotateRef = useRef<HTMLInputElement>(null);
 
+  // Перечитать всё по очереди: лёгкая часть, счётчики, сводки роликов. Первый заход хук делает сам.
+  const pageLoad = page.load;
   const load = useCallback(async () => {
-    if (!taskId) return;
-    try {
-      // Редактор мог только что отправить последнюю правку — читаем после неё
-      await saveSettled();
-      const [t, ev] = await Promise.all([getTask(taskId), getTaskEvents(taskId)]);
-      setTask(t);
-      setTags(t.tags);
-      setEvents(ev);
-      setError(null);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }, [taskId]);
-  useEffect(() => { void load(); }, [load]);
+    // Редактор мог только что отправить последнюю правку — читаем после неё
+    await saveSettled();
+    await pageLoad();
+  }, [pageLoad]);
+  const taskTags = task?.tags;
+  useEffect(() => { if (taskTags) setTags(taskTags); }, [taskTags]);
 
   const adminOf = task?.is_admin ? task.project.code : null;
   useEffect(() => {
@@ -169,11 +170,13 @@ export default function TaskPage() {
 
   // Пока ролик готовится на сервере — переспрашиваем таску
   const preparing = (task?.videos || []).some((v) => v.prepare && (v.prepare.busy || (!v.prepare.ready && !v.prepare.error)));
+  // Опрос — только лёгкой части: готовность ролика живёт в ней, счётчики не трогаем
+  const loadMain = page.loadMain;
   useEffect(() => {
     if (!preparing) return undefined;
-    const id = window.setInterval(() => { void load(); }, 2500);
+    const id = window.setInterval(() => { void loadMain().catch(() => undefined); }, 2500);
     return () => window.clearInterval(id);
-  }, [preparing, load]);
+  }, [preparing, loadMain]);
 
   const guard = useCallback(async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -183,7 +186,14 @@ export default function TaskPage() {
 
   const editable = !!task && task.can_work && task.status !== "closed";
   const agentBusy = !!agentRun && ACTIVE_RUN.includes(agentRun.status);
-  const pendingFrames = (task?.pending_videos || []).reduce((s, v) => s + v.frames, 0);
+  // Ждут закрытия — когда пришли сводки всех открытых роликов; до того заготовка
+  const opened = task ? openVideos(task) : [];
+  const pendingFrames = opened.every((v) => v.id in pending)
+    ? opened.reduce((s, v) => s + (pending[v.id]?.frames || 0), 0) : null;
+  const pendingLook = look(pendingFrames ?? undefined,
+    opened.some((v) => page.fresh.videos[v.id] === "load") ? "load" : opened.every((v) => page.fresh.videos[v.id] === "ok") ? "ok" : "wait",
+    page.at);
+  const numbersLook = look(numbers ?? undefined, page.fresh.numbers, page.at);
 
   /** «Размечать»: все кадры таски, с первого нетронутого или отложенного. */
   const annotateAll = useCallback(() => guard(async () => {
@@ -207,7 +217,7 @@ export default function TaskPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || editing || annotating || cutting || hasLayer() || isTyping(e.target)) return;
-      if (e.key === "Enter" && task && task.counts.total > 0) { e.preventDefault(); void annotateAll(); }
+      if (e.key === "Enter" && task && framesTotal(task) > 0) { e.preventDefault(); void annotateAll(); }
       if ((e.key === "g" || e.key === "п") && editable) { e.preventDefault(); setSetupOpen(true); }
     };
     window.addEventListener("keydown", onKey);
@@ -216,11 +226,13 @@ export default function TaskPage() {
 
   async function move(to: TaskStatus) {
     if (!taskId || !task) return;
-    if (to === "done" && task.pending_videos.length) {
+    // Решение «сдать» — по свежим сводкам, а не по кешу
+    const open = to === "done" ? await page.pendingNow().catch(() => []) : [];
+    if (open.length) {
       const ok = await confirm({
         title: "Сдать с незакрытыми роликами?",
-        desc: `У ${count(task.pending_videos.length, "ролика", "роликов", "роликов")} разметка не закрыта — их кадры в датасет не уйдут.`,
-        lines: task.pending_videos.map((v) => `«${v.file_name}» — ${count(v.frames, "кадр", "кадра", "кадров")}`),
+        desc: `У ${count(open.length, "ролика", "роликов", "роликов")} разметка не закрыта — их кадры в датасет не уйдут.`,
+        lines: open.map((v) => `«${v.file_name}» — ${count(v.frames, "кадр", "кадра", "кадров")}`),
         ok: "Сдать всё равно", icon: "tick",
       });
       if (!ok) return;
@@ -236,12 +248,21 @@ export default function TaskPage() {
   async function closeTask() {
     if (!taskId || !task) return;
     // Тот же отбор, что у сервера: незакрытая разметка ролика при закрытии таски пропала бы.
-    const open = task.pending_videos.filter((v) => !v.frames_in_task && (v.frames || v.error));
+    // Числа — свежие: окно обещает, что уйдёт в датасет и что удалится навсегда.
+    let fresh: Awaited<ReturnType<typeof getTaskNumbers>>;
+    let open: Awaited<ReturnType<typeof page.pendingNow>>;
+    try {
+      [open, fresh] = await Promise.all([page.pendingNow(), getTaskNumbers(taskId)]);
+    } catch (e) {
+      setError((e as Error).message);
+      return;
+    }
+    open = open.filter((v) => !v.frames_in_task && (v.frames || v.error));
     if (open.length) {
       setError(`Разметка роликов не закрыта — при закрытии таски она пропадёт: ${open.map((v) => `«${v.file_name}»`).join(", ")}. Закройте их разметку или уберите ролики.`);
       return;
     }
-    const plan = closePlan(task.counts, task.videos.length);
+    const plan = closePlan(fresh.counts, task.videos.length);
     const ok = await confirm({
       title: "Закрыть таску?", lines: closeText(plan, task.target_dataset?.name ?? null),
       desc: "Закрытую таску нельзя вернуть в работу.", ok: "Закрыть таску", icon: "archive", danger: true,
@@ -311,7 +332,7 @@ export default function TaskPage() {
 
   async function saveVideoTags(video: TaskVideoItem, tagIds: string[]) {
     if (!taskId) return;
-    setTask((prev) => prev && { ...prev, videos: prev.videos.map((v) => (v.id === video.id ? { ...v, tag_ids: tagIds } : v)) });
+    page.patchTask((prev) => ({ ...prev, videos: prev.videos.map((v) => (v.id === video.id ? { ...v, tag_ids: tagIds } : v)) }));
     try { await setVideoTags(taskId, video.id, tagIds); } catch (e) { await load(); setError((e as Error).message); }
   }
 
@@ -325,7 +346,9 @@ export default function TaskPage() {
     const forms: [string, string, string] = video.mode === "annotate"
       ? ["кадр разметки", "кадра разметки", "кадров разметки"]
       : ["нарезанный кадр", "нарезанных кадра", "нарезанных кадров"];
-    const open = task?.pending_videos.find((v) => v.video_id === video.id && !v.frames_in_task && v.frames);
+    const p = video.mode === "annotate" && !video.annotation_closed_at
+      ? await getVideoPending(taskId, video.id).catch(() => null) : null;
+    const open = p && !p.frames_in_task && p.frames ? p : null;
     const ok = await confirm({
       title: `Убрать «${video.file_name}»?`,
       desc: [
@@ -397,17 +420,17 @@ export default function TaskPage() {
   const onAdd = (w: "images" | "cut" | "annotate") =>
     (w === "images" ? fileRef : w === "cut" ? cutRef : annotateRef).current?.click();
 
-  if (error && !task) {
+  if ((error || page.error) && !task) {
     return (
       <div className="page">
-        <Notice tone="error">{error}</Notice>
+        <Notice tone="error">{error || page.error}</Notice>
         <Link to={`/projects/${code}/tasks`}>← К таскам</Link>
       </div>
     );
   }
   if (!task) return <div className="page"><span className="t-muted">Загружаем таску…</span></div>;
 
-  const sources = buildSources(task);
+  const sources = buildSources(task, numbers?.by_source ?? null);
   const annotateVideos = task.videos.filter((v) => v.mode === "annotate");
   // Ход агента — в блоке, по которому он идёт
   const live = agentBusy ? agentRun : null;
@@ -433,17 +456,18 @@ export default function TaskPage() {
   };
   const cards = [
     ...sources.filter((b) => b.kind !== "annotate").map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (
-      <CutCard key={b.key} block={b} taskId={task.id} code={task.project.code} tags={tags} editable={editable}
+      <CutCard key={b.key} block={b} look={numbersLook} taskId={task.id} code={task.project.code} tags={tags} editable={editable}
         run={runOn(b.key, (b.videos || []).map((v) => v.id), ["frames", "scout"])} agent={agent}
         onAnnotate={() => openFiltered({ source: b.key })} onReview={() => review(b.key)}
         onCut={setCutting} onDelete={removeVideo} onVideoTags={saveVideoTags}
         onTagCreated={(t) => setTags((p) => [...p, t])} />
     ) : (
-      <FramesCard key={b.key} block={b} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
+      <FramesCard key={b.key} block={b} look={numbersLook} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
         run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)} />
     ) })),
     ...(annotateVideos.length ? [{ key: "annotate", born: Math.min(...annotateVideos.map((v) => Date.parse(v.created_at))), node: (
-      <AnnotateCard key="annotate" videos={annotateVideos} pending={task.pending_videos} classes={task.classes}
+      <AnnotateCard key="annotate" videos={annotateVideos} pending={pending} fresh={page.fresh.videos} at={page.at}
+        classes={numbers?.classes ?? []}
         taskId={task.id} code={task.project.code} tags={tags} editable={editable} busy={busy}
         run={runOn(null, annotateVideos.map((v) => v.id), ["annotate", "scout"])} agent={agent}
         onAdd={() => onAdd("annotate")} onOpen={(v) => openVideo(v)} onReview={(v) => openVideo(v, true)} onClose={closeVideo}
@@ -452,7 +476,7 @@ export default function TaskPage() {
         onTagCreated={(t) => setTags((p) => [...p, t])} />
     ) }] : []),
     ...sources.filter((b) => b.kind === "annotate").map((b) => ({ key: b.key, born: Infinity, node: (
-      <FramesCard key={b.key} block={b} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
+      <FramesCard key={b.key} block={b} look={numbersLook} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
         run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)} />
     ) })),
   ].sort((a, b) => a.born - b.born);
@@ -469,7 +493,7 @@ export default function TaskPage() {
               {agentTool.agent ? <>Агент: {agentTool.agent.name}{agentTool.version && <span className="ui-mono tp-agent-v">v{agentTool.version.version}</span>}</> : "Агент таски"}
             </Button>
           )}
-          <Button variant="primary" icon={editable ? "edit" : "eye"} kbd="Enter" disabled={busy || task.counts.total === 0}
+          <Button variant="primary" icon={editable ? "edit" : "eye"} kbd="Enter" disabled={busy || framesTotal(task) === 0}
             onClick={() => void annotateAll()}>{editable ? "Размечать" : "Смотреть кадры"}</Button>
         </div>
       </div>
@@ -490,7 +514,8 @@ export default function TaskPage() {
           {empty ? <TaskEmpty editable={editable} dataset={task.target_dataset?.name ?? null} onAdd={onAdd} />
             : cards.map((c) => c.node)}
         </div>
-        <TaskPassport task={task} events={events} workers={workers} pendingFrames={pendingFrames} busy={busy}
+        <TaskPassport task={task} numbers={numbers} numbersLook={numbersLook} pendingFrames={pendingFrames} pendingLook={pendingLook}
+          events={events} workers={workers} busy={busy}
           onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
           onAssign={(id) => void reassign(id)} onHistory={() => setHistory(true)} />
       </div>

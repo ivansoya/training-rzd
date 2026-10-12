@@ -99,17 +99,54 @@ export function clampDock(h: number, room: number): number {
 
 const TICK_S = [0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1800, 3600];
 
-/** Засечки линейки: круглые секунды не теснее minPx; кадр — где стоит засечка, t — её подпись в секундах. */
-export function timeTicks(lastFrame: number, fps: number, width: number, minPx = 64): { frame: number; t: number }[] {
+/** Засечки линейки: круглые секунды не теснее minPx; кадр — где стоит засечка, t — её подпись в секундах.
+ *  С окном `view` — только видимые и с шагом по видимой длине. */
+export function timeTicks(lastFrame: number, fps: number, width: number, minPx = 64, view?: View): { frame: number; t: number }[] {
   if (lastFrame <= 0 || fps <= 0 || width <= 0) return [{ frame: 0, t: 0 }];
-  const total = lastFrame / fps;
+  const from = view?.from ?? 0;
+  const len = view?.len ?? lastFrame;
+  const total = len / fps;
   const step = TICK_S.find((s) => (s / total) * width >= minPx) ?? TICK_S[TICK_S.length - 1];
   const out: { frame: number; t: number }[] = [];
-  for (let i = 0; i * step * fps <= lastFrame + 1e-6; i++) {
+  for (let i = Math.max(0, Math.ceil(from / fps / step - 1e-9)); i * step * fps <= from + len + 1e-6; i++) {
     const t = Math.round(i * step * 10) / 10;
     out.push({ frame: Math.round(t * fps), t });
   }
   return out;
+}
+
+/** Окно таймлайна — кадры [from, from + len]. Без масштаба — весь ролик. */
+export interface View { from: number; len: number }
+
+/** Мельче этого кадр не растягивается: ~12 px на кадр уже читается риской. */
+export const FRAME_PX = 12;
+
+export const fullView = (last: number): View => ({ from: 0, len: Math.max(1, last) });
+
+/** Окно внутри ролика и не крупнее FRAME_PX на кадр. */
+export function clampView(v: View, last: number, width: number): View {
+  const full = Math.max(1, last);
+  const len = Math.min(full, Math.max(width / FRAME_PX, v.len));
+  return { from: Math.max(0, Math.min(full - len, v.from)), len };
+}
+
+/** Масштаб вокруг кадра `anchor`: он остаётся под курсором. factor > 1 — крупнее. */
+export function zoomAt(v: View, factor: number, anchor: number, last: number, width: number): View {
+  const len = v.len / factor;
+  const ratio = v.len ? (anchor - v.from) / v.len : 0;
+  return clampView({ from: anchor - ratio * len, len }, last, width);
+}
+
+/** Указатель ушёл из окна — окно едет за ним, указатель встаёт в середину. */
+export function followView(v: View, frame: number, last: number, width: number): View {
+  if (frame >= v.from && frame <= v.from + v.len) return v;
+  return clampView({ from: frame - v.len / 2, len: v.len }, last, width);
+}
+
+/** Во сколько раз окно крупнее всего ролика: «×1», «×2,5», «×40». */
+export function zoomText(v: View, last: number): string {
+  const z = Math.max(1, last) / v.len;
+  return `×${z < 10 ? String(Math.round(z * 10) / 10).replace(".", ",") : Math.round(z)}`;
 }
 
 /** Подпись засечки: «1:05», при долях секунды — «0:01,5». */
