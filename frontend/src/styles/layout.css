@@ -145,13 +145,24 @@
 .bal-v { text-align: right; color: var(--muted-fg); font-size: 11.5px; }
 .bal-f { margin-top: 14px; display: flex; justify-content: space-between; align-items: center; gap: 8px 16px; flex-wrap: wrap; }
 
-.ov-tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 14px; }
-.ov-tasks li { display: flex; flex-direction: column; gap: 7px; min-width: 0; }
-.ov-task-n { font-size: 13px; font-weight: 500; color: var(--fg); text-decoration: none; min-width: 0; }
+/* Таска — две строки: имя и когда размечали, источник с людьми и ход работы; линия между тасками, как в ленте */
+.ov-tasks { list-style: none; margin: 0; padding: 0; }
+.ov-tasks li {
+  display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; grid-template-rows: 20px 18px; gap: 3px 10px; align-items: center;
+  padding: 11px 0; border-bottom: 1px solid var(--border); min-width: 0;
+}
+.ov-tasks li:first-child { padding-top: 0; }
+.ov-tasks li:last-child { border-bottom: 0; padding-bottom: 0; }
+.ov-task-n { font-size: 13.5px; font-weight: 600; color: var(--fg); text-decoration: none; min-width: 0; }
 .ov-task-n:hover { text-decoration: underline; }
-/* Полоса и строка под ней одной высоты, пока числа в пути: строка не прыгает */
-.ov-task-z { display: grid; grid-template-rows: 6px 18px; gap: 7px; align-items: center; transition: opacity .3s var(--ease); }
-.ov-task-z.stale { opacity: .55; }
+.ov-task-w { justify-self: end; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ov-task-m { grid-column: 2; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.ov-task-m .ui-ic { color: var(--faint); flex: none; }
+.ov-task-p { grid-column: 3; justify-self: end; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.ov-task-p .ui-stack { width: 72px; }
+.ov-task-m, .ov-task-p { transition: opacity .3s var(--ease); }
+.ov-task-m.stale, .ov-task-p.stale { opacity: .55; }
+.ov-pend { color: color-mix(in srgb, var(--st-skip) 80%, var(--fg)); }
 .ov-sep { height: 1px; border: 0; margin: 4px 0; background: var(--border); }
 .ov-gpu .ui-legend b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
 

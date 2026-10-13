@@ -2,7 +2,7 @@
 
 import type { TaskCounts, TaskDetail, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
 import type { StackPart } from "../../../ui";
-import { count, plural } from "../../ru";
+import { ago, count, plural, ru } from "../../ru";
 
 export const STATUS: Record<TaskStatus, { label: string; tone: string }> = {
   queued: { label: "На очереди", tone: "var(--faint)" },
@@ -65,6 +65,16 @@ export function dayOf(iso: string, now = new Date()): string {
   const y = d.getFullYear() === now.getFullYear() ? "" : ` ${d.getFullYear()}`;
   return `${d.getDate()} ${MONTHS[d.getMonth()]}${y}`;
 }
+
+/** Последнее, что было с таской: сданное — сколько в датасете, иначе разметка или создание. */
+export function statusNote(t: TaskLight, s: TaskStats | undefined): string {
+  if (t.status === "done" && s?.counts.accepted) return `${ru(s.counts.accepted)} в датасете`;
+  if (t.last_box_at) return `разметка ${ago(t.last_box_at)}`;
+  return `создана ${ago(t.created_at)}`;
+}
+
+/** Размечали меньше 15 минут назад — у таски живая точка. */
+export const boxedRecently = (t: TaskLight) => !!t.last_box_at && Date.now() - Date.parse(t.last_box_at) < 15 * 60_000;
 
 /** Откуда кадры одной строкой для карточки доски. */
 export function sourceLine(s: TaskStats["sources"]): string {

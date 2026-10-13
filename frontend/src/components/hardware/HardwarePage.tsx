@@ -13,7 +13,7 @@ import { NumInput } from "../NumInput";
 import { Avatar, Badge, Button, Card, Empty, Icon, Input, Legend, Notice, PageHeader, Seg, StackBar, Switch, Table, cx } from "../../ui";
 import type { IconName } from "../../ui";
 import { count } from "../ru";
-import { FREE_COLOR, HATCH, cardList, gb, kindOf, liveDevices, shortName } from "../shell/useGpuState";
+import { HATCH, RESERVE, cardList, freeColor, gb, kindOf, liveDevices, loadOf, shortName } from "../shell/useGpuState";
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 
@@ -169,8 +169,8 @@ function DeviceRows({ device: d, state, many, open, onToggle, onLimit, onKill }:
     ...(d.sam2_reserve_mb > 0 ? [{ label: "под разметку", value: d.sam2_reserve_mb, color: HATCH }] : []),
     ...d.holders.map((h) => ({ label: h.what ?? kindOf(h.kind)[0], value: h.granted_mb, color: kindOf(h.kind)[1] })),
     ...(others > 0 ? [{ label: "занято задачами", value: others, color: "var(--faint)" }] : []),
-    ...(d.reserved_mb > 0 ? [{ label: "неприкосновенный запас", value: d.reserved_mb, color: "var(--input)" }] : []),
-    { label: "свободно", value: d.free_mb, color: FREE_COLOR },
+    ...(d.reserved_mb > 0 ? [{ label: "неприкосновенный запас", value: d.reserved_mb, color: RESERVE }] : []),
+    { label: "свободно", value: d.free_mb, color: freeColor(loadOf(d.free_mb, d.total_mb).tone) },
   ];
   const kinds = [...new Set(d.holders.map((h) => h.kind))];
   const state_ = !d.enabled ? <span className="hw-st bad">выключена</span>

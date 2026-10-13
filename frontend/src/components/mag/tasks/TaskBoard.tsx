@@ -12,7 +12,9 @@ import { ago, count, ru } from "../../ru";
 import { useProject } from "../ProjectShell";
 import { useConfirm } from "./Confirm";
 import { CreateTaskModal } from "./CreateTaskModal";
-import { BOARD, STATES, STATUS, boardColumns, closePlan, closeText, sourceLine, stateParts, teamLine, waitingOf } from "./tasks";
+import {
+  BOARD, STATES, STATUS, boardColumns, boxedRecently, closePlan, closeText, sourceLine, stateParts, statusNote, teamLine, waitingOf,
+} from "./tasks";
 import { look, useTaskBoard } from "./useTaskBoard";
 import type { Fresh } from "./useTaskBoard";
 
@@ -216,7 +218,6 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
       </Link>
     );
   }
-  const recent = t.last_box_at && Date.now() - Date.parse(t.last_box_at) < 15 * 60_000;
   return (
     <Link to={to} className={cls} {...dragProps}>
       <div className="tb-card-h">
@@ -257,18 +258,12 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
       <span className="tb-foot t-xs t-faint">
         <span className="t-ell">{teamLine(t.assignees)}</span>
         <span className="t-ell">
-          {recent && <Dot color="var(--st-done)" live />}
+          {boxedRecently(t) && <Dot color="var(--st-done)" live />}
           {statusNote(t, s)}
         </span>
       </span>
     </Link>
   );
-}
-
-function statusNote(t: TaskLight, s: TaskStats | undefined): string {
-  if (t.status === "done" && s?.counts.accepted) return `${ru(s.counts.accepted)} в датасете`;
-  if (t.last_box_at) return `разметка ${ago(t.last_box_at)}`;
-  return `создана ${ago(t.created_at)}`;
 }
 
 /** «обновляется» со спиннером — пока идут запросы. */

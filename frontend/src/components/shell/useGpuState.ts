@@ -56,15 +56,26 @@ export const kindOf = (k: string) => KIND[k] ?? [k, "var(--c5)"];
 const upper = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Резерв под полуавтомат — штриховкой: это не работа, а место, которое держат для разметки. */
-export const HATCH = "repeating-linear-gradient(135deg, var(--input) 0 3px, var(--hover) 3px 6px)";
-export const FREE_COLOR = "color-mix(in srgb, var(--muted-fg) 22%, var(--card))";
+export const HATCH = "repeating-linear-gradient(135deg, var(--c4) 0 3px, color-mix(in srgb, var(--c4) 40%, var(--card)) 3px 6px)";
+// Запас серый: жёлтым занято «загружена»
+export const RESERVE = "repeating-linear-gradient(135deg, var(--faint) 0 3px, var(--hover) 3px 6px)";
+
+/** Состояние карты по свободной доле: от 30 % — свободна, меньше 10 % — занята (решение 13.10.2026). */
+export function loadOf(free_mb: number, total_mb: number) {
+  const share = total_mb > 0 ? free_mb / total_mb : 0;
+  return share >= 0.3 ? { label: "свободна", tone: "var(--st-done)" }
+    : share >= 0.1 ? { label: "загружена", tone: "var(--st-skip)" }
+      : { label: "занята", tone: "var(--destructive)" };
+}
+export const freeColor = (tone: string) => `color-mix(in srgb, ${tone} 65%, var(--card))`;
 
 /** Доли памяти всех живых карт одной полосой: разметка, работы по видам, запас, свободное.
  *  Высота карточки обзора не зависит от числа карт (решение 10.10.2026). */
 export function serverParts(devices: Device[]) {
   const byKind = new Map<string, number>();
-  let sam2 = 0, reserved = 0, free = 0, anonymous = 0;
+  let sam2 = 0, reserved = 0, free = 0, anonymous = 0, total = 0;
   for (const d of devices) {
+    total += d.total_mb;
     sam2 += d.sam2_reserve_mb;
     reserved += d.reserved_mb;
     free += d.free_mb;
@@ -72,13 +83,15 @@ export function serverParts(devices: Device[]) {
     // Без права на оборудование держателей нет — занятое одной суммой.
     if (d.holders.length === 0) anonymous += d.held_mb;
   }
-  return [
+  const load = loadOf(free, total);
+  const parts = [
     ...(sam2 > 0 ? [{ label: "Разметка", value: sam2, color: HATCH }] : []),
     ...[...byKind].map(([k, mb]) => ({ label: upper(kindOf(k)[0]), value: mb, color: kindOf(k)[1] })),
     ...(anonymous > 0 ? [{ label: "Занято", value: anonymous, color: "var(--faint)" }] : []),
-    ...(reserved > 0 ? [{ label: "Запас", value: reserved, color: "var(--input)" }] : []),
-    { label: "Свободно", value: free, color: FREE_COLOR },
+    ...(reserved > 0 ? [{ label: "Запас", value: reserved, color: RESERVE }] : []),
+    { label: "Свободно", value: free, color: freeColor(load.tone) },
   ];
+  return { parts, load, total };
 }
 
 /** Карты для сводок: выключенные и пропавшие показывает только «Оборудование». */

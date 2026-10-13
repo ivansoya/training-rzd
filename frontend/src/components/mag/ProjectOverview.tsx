@@ -6,7 +6,7 @@ import type { TaskLight } from "../../auth/api";
 import { useLive } from "../../live/LiveProvider";
 import { useAuth } from "../auth/AuthGate";
 import {
-  Avatar, Badge, Button, Card, Empty, Icon, Legend, LineChart, LinkButton, Notice, PageHeader,
+  Avatar, Badge, Button, Card, Dot, Empty, Icon, Legend, LineChart, LinkButton, Notice, PageHeader,
   Spark, StackBar, cx,
 } from "../../ui";
 import { ago, count, pct, ru } from "../ru";
@@ -15,19 +15,11 @@ import ExportModal from "./ExportModal";
 import { ProjectMenu } from "./ProjectMenu";
 import { useProject } from "./ProjectShell";
 import { CreateTaskModal } from "./tasks/CreateTaskModal";
-import { teamLine } from "./tasks/tasks";
+import { STATUS, boxedRecently, decidedOf, framesOf, sourceLine, stateParts, statusNote, teamLine } from "./tasks/tasks";
 import { look, useTaskBoard } from "./tasks/useTaskBoard";
 import { describeTaskEvent } from "./taskEvents";
 
 const map = (x: number) => x.toLocaleString("ru-RU", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-
-const STATE_PARTS = [
-  ["annotated", "Размечен", "var(--st-done)"],
-  ["empty", "Пусто", "var(--st-empty)"],
-  ["skipped", "Отложен", "var(--st-skip)"],
-  ["deleted", "Брак", "var(--st-del)"],
-  ["new", "Не тронут", "var(--st-new)"],
-] as const;
 
 // Таски в работе важнее закрытых: порядок карточки — что ждёт рук.
 const TASK_ORDER: Record<string, number> = { in_progress: 0, updating: 1, queued: 2, done: 3, closed: 4 };
@@ -247,6 +239,8 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
   const tasks = board.list ?? [];
   const working = tasks.filter((t) => t.status === "in_progress" || t.status === "updating").length;
   const shown = shownOf(tasks);
+  // Легенда — только когда на экране есть полоса: у роликов до закрытия кадров нет
+  const bars = shown.some((t) => framesOf(board.stats[t.id]?.counts ?? {}) > 0);
   const desc = tasks.length
     ? `${count(tasks.length, "таска", "таски", "тасок")}${working ? `, ${ru(working)} в работе` : ""}`
     : undefined;
@@ -266,25 +260,37 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
               const c = s?.counts;
               return (
                 <li key={t.id}>
-                  <div className="row between">
-                    <Link className="ov-task-n t-ell" to={`/projects/${code}/tasks/${t.id}`}>{t.name}</Link>
-                    <Badge>{t.status_label}</Badge>
-                  </div>
-                  {/* Полоса и строка под ней — той же высоты, пока числа в пути */}
-                  <div className={cx("ov-task-z", v.stale && "stale", v.loading && "ui-shim")}>
-                    {c ? <StackBar parts={STATE_PARTS.map(([k, label, color]) => ({ label, color, value: c[k] }))} /> : <i className="ui-sk bar" />}
-                    <div className="row between t-xs t-muted">
-                      <span className="t-ell">{teamLine(t.assignees)}</span>
-                      {c ? <span className="ui-mono">{ru(c.annotated + c.empty)} из {ru(c.total)}</span> : <i className="ui-sk pill" style={{ width: 64 }} />}
-                    </div>
-                  </div>
+                  <Dot color={STATUS[t.status].tone} title={STATUS[t.status].label} />
+                  <Link className="ov-task-n t-ell" to={`/projects/${code}/tasks/${t.id}`}>{t.name}</Link>
+                  <span className="ov-task-w t-xs t-faint">
+                    {boxedRecently(t) && <Dot color="var(--st-done)" live />}{statusNote(t, s)}
+                  </span>
+                  {/* Числа в пути — заготовки той же высоты: строка не прыгает */}
+                  <span className={cx("ov-task-m t-xs t-muted", v.stale && "stale", v.loading && "ui-shim")}>
+                    <Icon name={s && (s.sources.cut || s.sources.annotate) ? "film" : "images"} size={14} />
+                    <span className="t-ell">
+                      {s ? sourceLine(s.sources) : <i className="ui-sk pill" style={{ width: 110 }} />} · {teamLine(t.assignees)}
+                    </span>
+                  </span>
+                  <span className={cx("ov-task-p t-xs", v.stale && "stale", v.loading && "ui-shim")}>
+                    {!c ? <i className="ui-sk pill" style={{ width: 120 }} />
+                      : framesOf(c) > 0 ? <>
+                        <StackBar parts={stateParts(c)} />
+                        <span className="ui-mono t-muted">{ru(decidedOf(c))} из {ru(framesOf(c))}</span>
+                      </>
+                      : s!.pending_frames > 0
+                        ? <span className="ov-pend">{count(s!.pending_frames, "кадр ждёт", "кадра ждут", "кадров ждут")} закрытия</span>
+                        : <span className="t-faint">кадров пока нет</span>}
+                  </span>
                 </li>
               );
             })}
           </ul>
-          <div className="bal-f">
-            <Legend items={STATE_PARTS.map(([, label, color]) => ({ label, color }))} />
-          </div>
+          {bars && (
+            <div className="bal-f">
+              <Legend items={stateParts({}).map(({ label, color }) => ({ label, color }))} />
+            </div>
+          )}
         </>
       )}
     </Card>
@@ -366,12 +372,12 @@ function GpuCard() {
     return <Card title="Видеокарта"><Empty compact icon="cpu" title="Видеокарт на сервере нет" /></Card>;
   }
   // Одна полоса на весь сервер — сумма по работающим картам; подробности по картам — на «Оборудовании».
-  const parts = serverParts(devices);
-  const total = devices.reduce((s, d) => s + d.total_mb, 0);
+  const { parts, load, total } = serverParts(devices);
   const many = devices.length > 1;
   return (
     <Card title={many ? "Видеокарты" : "Видеокарта"}
-      desc={many ? `${count(devices.length, "карта", "карты", "карт")} в работе · ${gb(total)} ГБ` : `${shortName(devices[0].name)} · ${gb(total)} ГБ`}>
+      desc={many ? `${count(devices.length, "карта", "карты", "карт")} в работе · ${gb(total)} ГБ` : `${shortName(devices[0].name)} · ${gb(total)} ГБ`}
+      actions={<Badge tone={load.tone}>{load.label}</Badge>}>
       <div className="stack-v ov-gpu">
         <StackBar parts={parts} height={12} label="Память видеокарт" />
         <Legend items={parts.map((p) => ({ label: <>{p.label} <b>{gb(p.value)}</b></>, color: p.color }))} />
