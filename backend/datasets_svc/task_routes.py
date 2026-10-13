@@ -319,7 +319,7 @@ def _light_list(db, tasks, user, role):
     # display_name — свойство, не колонка: людей читаем целиком
     names = {u.id: u.display_name for u in db.execute(select(User).where(User.id.in_(people))).scalars()} if people else {}
     sets = {t.target_dataset_id for t in tasks} - {None}
-    datasets = dict(db.execute(select(Dataset.id, Dataset.name).where(Dataset.id.in_(sets)))) if sets else {}
+    datasets = dict(db.execute(select(Dataset.id, Dataset.name).where(Dataset.id.in_(sets))).all()) if sets else {}
     moved, touched, boxed = {}, {}, {}
     if ids:
         moved = dict(db.execute(

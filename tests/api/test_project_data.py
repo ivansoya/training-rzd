@@ -131,6 +131,10 @@ def test_датасет_под_таской_не_удаляется(api, project
     res = api.post(url(project, "/tasks"),
                    json={"name": "test-держит", "target_dataset_id": imported})
     assert res.status_code in (200, 201), res.text
+    # Список тасок с датасетом-приёмником падал 500 (dict по Result без .all())
+    listed = api.get(url(project, "/tasks"))
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["tasks"][0]["target_dataset"]["id"] == imported
     res = api.delete(url(project, f"/datasets/{imported}"))
     assert res.status_code == 409
     assert res.json()["code"] == "dataset_held"
