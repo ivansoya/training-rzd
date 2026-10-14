@@ -1875,7 +1875,7 @@ def move_class(code, class_id):
         db.execute(
             update(Image)
             .where(Image.id.in_(select(Annotation.image_id).where(Annotation.class_id == row.id)))
-            .values(annotations_rev=Image.annotations_rev + 1)
+            .values(**task_frames.rev_bump())
         )
         db.execute(
             update(Annotation)
@@ -1953,7 +1953,7 @@ def delete_class(code, class_id):
             # Разметка кадров изменилась мимо редактора: версия растёт, статус — по остатку.
             db.execute(
                 update(Image).where(Image.id.in_(touched))
-                .values(annotations_rev=Image.annotations_rev + 1)
+                .values(**task_frames.rev_bump())
             )
             task_frames.settle_status(db, touched)
         db.commit()

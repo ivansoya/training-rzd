@@ -11,7 +11,7 @@ import zipfile
 import pytest
 from PIL import Image as PilImage
 
-from conftest import BASE_URL, tag, wait_job
+from conftest import BASE_URL, hand_over, tag, wait_job
 
 
 @pytest.fixture
@@ -254,8 +254,8 @@ def test_контур_и_рамка_уживаются_на_кадре_роли�
     assert kinds == ["bbox", "polygon"]
 
 
-def test_контур_ролика_становится_контуром_кадра_таски(api, task, video, label_class):
-    """Главная проверка: закрытие разметки не превращает контур в рамку.
+def test_контур_ролика_становится_контуром_кадра_таски(api, project, task, video, label_class):
+    """Главная проверка: сдача таски не превращает контур в рамку.
 
     Материализация переносит фигуру как есть — иначе работа разметчика тихо
     упрощалась бы ровно в тот момент, когда её уже нельзя проверить глазами.
@@ -266,17 +266,9 @@ def test_контур_ролика_становится_контуром_кад�
         "kind": "polygon", "parts": [ring],
         "x": 20, "y": 20, "w": 160, "h": 120,
     }])
-    res = api.post(
-        f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/close-annotation",
-        json={},
-    )
-    assert res.status_code == 202, res.text
-    job = wait_job(api, res.json()["job_id"])
-    assert job["status"] == "done", job.get("error")
-    assert job["result"]["boxes"] == 1
+    assert hand_over(api, task["id"])["result"]["boxes"] == 1
 
-    images = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images").json()["images"]
-    made = [i for i in images if i["source_video_id"] == video["id"]]
+    made = api.get(f"{BASE_URL}/api/projects/{project['code']}/images").json()["images"]
     assert len(made) == 1
     shape = made[0]["boxes"][0]
     assert shape["kind"] == "polygon"

@@ -1,11 +1,8 @@
 """Разметка видео: кадры, треки и покадровые боксы.
 
-Пока разметка ролика не закрыта, она живёт в ``video_tracks`` и
-``video_annotations``, а не в обычных ``annotations``: кадров как изображений
-ещё нет, есть только номера кадров на ролике. Закрытие разметки — отдельное
-действие, а не сдача таски: оно достаёт нужные кадры и превращает их в
-обычные кадры таски, после чего они живут своей жизнью и никем не
-переписываются (см. ``materialize``).
+Разметка ролика живёт в ``video_tracks`` и ``video_annotations``, а не в обычных
+``annotations``: кадров как изображений нет, есть только номера кадров на ролике.
+Кадрами датасета она становится при сдаче таски («Готово», «Закрыто») — см. ``materialize``.
 
 Кадр выдаётся сервером, а не берётся из ``<video>`` в браузере: currentTime не
 даёт номера кадра, браузер волен показать соседний, а mkv и avi он не играет
@@ -14,13 +11,12 @@
 """
 import io
 import os
-import threading
 
 from flask import Blueprint, jsonify, request, send_file
 from PIL import Image as PilImage
 from sqlalchemy import func, or_, select, update
 
-from common import attribution, config, jobs, task_frames
+from common import attribution, config, task_frames
 from common import scout as scout_lib
 from common.db import SessionLocal
 from common.models import (
@@ -29,12 +25,10 @@ from common.models import (
     Image,
     VideoScout,
     LabelClass,
-    Task,
     TaskVideo,
     User,
     VideoAnnotation,
     VideoTrack,
-    utcnow,
 )
 from datasets_svc import materialize, video_busy
 from datasets_svc import video as videolib
@@ -43,11 +37,10 @@ from datasets_svc import video_index
 from common import shapes
 from datasets_svc import video_queue as queue
 from common import video_tracks as tracklib
-from common.web import InputError, json_body, public_error
+from common.web import InputError, json_body
 from datasets_svc.materialize import collect, frame_is_free
 from datasets_svc.task_routes import (
     _clamp_box,
-    _drop_files,
     _can,
     _log,
     _ping,
@@ -107,9 +100,6 @@ def _resolve_track(track_id, needed="editor"):
     if denied:
         db.close()
         return None, None, None, None, denied
-    if video.annotation_closed_at is not None:
-        db.close()
-        return None, None, None, None, (jsonify({"error": CLOSED_VIDEO}), 409)
     busy = video_busy.refusal(video.id)
     if busy:
         db.close()
@@ -117,26 +107,13 @@ def _resolve_track(track_id, needed="editor"):
     return db, task, db.get(VideoTrack, tid), user, None
 
 
-# Закрытая разметка ролика — событие, после которого правят уже кадры таски.
-# Правка треков после закрытия молча ложилась в базу и никуда не шла: план
-# никто не выполнит, пока ролик не откроют заново.
-CLOSED_VIDEO = "Разметка ролика закрыта — откройте её заново, чтобы править."
-
-
-def _writable(task, user, role, video, edit=True):
-    """Общая проверка перед любой правкой разметки видео.
-
-    ``edit=False`` — для действий над самим закрытием (закрыть, открыть
-    заново, убрать кадры): закрытый ролик им не помеха, а предмет работы.
-    """
+def _writable(task, user, role, video):
+    """Общая проверка перед любой правкой разметки видео. Сдачу таски ловит `_refusal`."""
     denied = _refusal(task, user, role)
     if denied:
         return denied
     if video.mode != "annotate":
         return jsonify({"error": "Это видео загружено для нарезки на кадры."}), 409
-    if edit and video.annotation_closed_at is not None:
-        return jsonify({"error": CLOSED_VIDEO}), 409
-    # Идёт закрытие: план уже снят, правка пропала бы молча.
     return video_busy.refusal(video.id)
 
 
@@ -183,7 +160,7 @@ def _last_frame(video):
 def _frame_error(video, frame_no):
     """400, если кадра с таким номером в ролике нет, иначе None.
 
-    Без проверки кадр −5 при закрытии «съедал» кадр 0, а кадры за концом
+    Без проверки кадр −5 при сдаче «съедал» кадр 0, а кадры за концом
     обещались и пропадали молча."""
     last = _last_frame(video)
     if frame_no < 0 or (last is not None and frame_no > last):
@@ -666,8 +643,7 @@ def video_annotations(task_id, video_id):
             track.class_index = by_index.get(track.class_id)
             out.append(_track_json(track, keys_by_track.get(track.id, [])))
 
-        # Кадры, уже уехавшие в проект: редактор помечает их на таймлайне,
-        # чтобы правка попадала в то же изображение, а не создавала второе.
+        # Кадры ролика, уже лежащие в датасете с прошлой сдачи: следующая обновит их на месте.
         materialized = dict(db.execute(
             select(Image.source_frame_no, Image.id).where(
                 Image.source_video_id == video.id,
@@ -689,9 +665,8 @@ def video_annotations(task_id, video_id):
             "tracks": out,
             "materialized": {str(k): str(v) for k, v in materialized.items()},
             "empty_frames": sorted(int(f) for f in (video.empty_frames or [])),
-            "editable": _can(task, user, role)
-                        and video.mode == "annotate"
-                        and video.annotation_closed_at is None,
+            "editable": _can(task, user, role) and video.mode == "annotate"
+                        and video_busy.current(video_busy.task_key(task.id)) is None,
         }
         if whole:
             data["singles"] = _singles_json(db, [r for r in rows if r.track_id is None], by_index)
@@ -1211,7 +1186,7 @@ def put_frame_boxes(task_id, video_id, frame_no):
             for a in db.execute(select(VideoAnnotation).where(*single)).scalars()
         }
         # Тот же закон авторства, что у кадра таски: рамка агента, которую
-        # не трогали, остаётся его, и при закрытии разметки её кадр уйдёт на
+        # не трогали, остаётся его, и при сдаче таски её кадр уйдёт на
         # проверку, а не в датасет. Прежде `source` брался у клиента, а версия
         # агента терялась на первом же сохранении кадра.
         # «Подтвердить кадр» идёт тем же сохранением: оставшиеся рамки агента проверены.
@@ -1361,7 +1336,7 @@ def unmark_empty_frame(task_id, video_id, frame_no):
 
 @bp.post("/api/tasks/<task_id>/videos/<video_id>/materialize/preview")
 def preview_materialize(task_id, video_id):
-    """Сколько кадров и объектов уйдёт в проект — до нажатия «Готово»."""
+    """Сколько кадров и объектов уйдёт в датасет при сдаче — до нажатия «Готово»."""
     db, task, project, user, role, video = _resolve_video(task_id, video_id)
     if db is None:
         return video
@@ -1370,17 +1345,20 @@ def preview_materialize(task_id, video_id):
             by_frame, empty = collect(db, video, shapes=False)
         except tracklib.TrackError as exc:
             return jsonify({"error": str(exc)}), 400
-        # Принятые кадры закрытие не обновляет — их номера пропускаются.
-        kept = materialize.accepted_frames(db, video)
-        # Фоновые кадры — такие же кадры таски и считаются вместе со всеми.
+        # Правленые в датасете сдача не трогает, бывшие — обновит на месте, остальные достанет.
+        have = {img.source_frame_no: img for img in db.execute(
+            select(Image).where(Image.source_video_id == video.id, Image.source_frame_no.isnot(None))
+        ).scalars()}
+        kept = {f for f, img in have.items() if materialize.edited(img)}
+        # Фоновые кадры — такие же кадры и считаются вместе со всеми.
         frames = sorted(set(by_frame) | set(empty))
         return jsonify({
             "frames": len(frames),
             "boxes": sum(len(v) for v in by_frame.values()),
             "empty": len(empty),
-            "new_frames": len([f for f in frames if f not in kept]),
-            "updated_frames": 0,
-            "kept_accepted": len([f for f in frames if f in kept]),
+            "new_frames": len([f for f in frames if f not in have]),
+            "updated_frames": len([f for f in frames if f in have and f not in kept]),
+            "kept_edited": len([f for f in frames if f in kept]),
             "unchecked": materialize.unchecked_frames({f: v for f, v in by_frame.items() if f not in kept}),
             "first_frames": frames[:50],
         })
@@ -1442,166 +1420,6 @@ def move_key(track_id, frame_no):
         cls = db.get(LabelClass, track.class_id)
         track.class_index = cls.class_index if cls else None
         return jsonify(_track_json(track, keys))
-    finally:
-        db.close()
-
-
-# --------------------------------------------------------------------------- #
-# Закрытие разметки: план становится кадрами таски
-# --------------------------------------------------------------------------- #
-def _run_close_job(job_id, task_id, video_id, user_id):
-    db = SessionLocal()
-    task = made_ids = None
-    try:
-        task = db.get(Task, task_id)
-        video = db.get(TaskVideo, video_id)
-        made = materialize.run_video(
-            db, task, video, user_id,
-            progress=lambda done: jobs.update(job_id, processed=done),
-        )
-        made_ids = made.pop("image_ids")
-        video.annotation_closed_at = utcnow()
-        user = db.get(User, user_id) if user_id else None
-        _log(db, task, user, "video_annotation_closed",
-             file=video.file_name, frames=made["created"], boxes=made["boxes"],
-             empty=made["empty"])
-        db.commit()
-        made_ids = None
-        jobs.update(job_id, status="done", processed=made["created"], result=made)
-    except (videolib.VideoError, tracklib.TrackError) as exc:
-        db.rollback()
-        jobs.update(job_id, status="error", error=str(exc))
-    except Exception as exc:  # noqa: BLE001
-        db.rollback()
-        jobs.update(job_id, status="error",
-                    error=public_error(exc, "Не удалось достать кадры из ролика."))
-    finally:
-        # Упал коммит — строки откатились, а файлы кадров уже на томе.
-        if made_ids:
-            materialize.drop_frame_files(task, made_ids)
-        db.close()
-        video_busy.release(video_id)
-
-
-@bp.post("/api/tasks/<task_id>/videos/<video_id>/close-annotation")
-def close_annotation(task_id, video_id):
-    """Превратить разметку ролика в обычные кадры таски.
-
-    Это событие, а не синхронизация: созданные кадры дальше живут как любые
-    другие — правятся в обычном редакторе, уходят в проект штатной сдачей и
-    никем не переписываются. Поэтому закрыть повторно, пока прежние кадры на
-    месте, нельзя: сперва их надо убрать.
-    """
-    db, task, project, user, role, video = _resolve_video(task_id, video_id, "editor")
-    if db is None:
-        return video
-    try:
-        denied = _writable(task, user, role, video, edit=False)
-        if denied:
-            return denied
-        # Агент, идущий по ролику, писал бы рамки уже после закрытия — мимо таски.
-        running = [r for r in db.execute(
-            select(AgentRun).where(
-                AgentRun.task_id == task.id,
-                AgentRun.status.in_(("queued", "waiting_gpu", "running")),
-            )
-        ).scalars() if str(video.id) in [str(v) for v in (r.params or {}).get("videos") or []]]
-        if running:
-            return jsonify({
-                "error": "По ролику идёт прогон агента — дождитесь его конца или остановите.",
-                "code": "agent_running",
-            }), 409
-        existing = materialize.frames_in_task(db, video)
-        if existing:
-            # Число в скобках, а не перед словом: «382 кадров» резало глаз,
-            # а склонять по-русски на сервере больше негде.
-            return jsonify({
-                "error": f"Прежние кадры ролика ещё в таске ({existing}) — "
-                         "уберите их, чтобы закрыть разметку заново.",
-                "code": "frames_exist",
-                "frames": existing,
-            }), 409
-
-        try:
-            plan, empty = collect(db, video, shapes=False)
-        except tracklib.TrackError as exc:
-            return jsonify({"error": str(exc)}), 400
-        # Ролик из одних фоновых кадров — законная работа: отрицательные
-        # примеры нужны обучению не меньше объектов.
-        total = len(set(plan) | set(empty))
-        if not total:
-            return jsonify({
-                "error": "Размечать нечего — на ролике нет ни боксов, ни фоновых кадров."
-            }), 400
-
-        slot = video_busy.take(video.id, "close")
-        if slot is None:
-            return video_busy.refusal(video.id)
-        job_id = jobs.create("video-close", total=total, message="Достаю кадры",
-                             project_id=project.id, owner=user.id)
-        slot["job_id"] = job_id
-        threading.Thread(
-            target=_run_close_job,
-            args=(job_id, task.id, video.id, user.id),
-            daemon=True,
-        ).start()
-        return jsonify({"job_id": job_id, "frames": total}), 202
-    finally:
-        db.close()
-
-
-@bp.post("/api/tasks/<task_id>/videos/<video_id>/reopen-annotation")
-def reopen_annotation(task_id, video_id):
-    """Вернуть ролик в работу. Кадры не трогаем — они уже данные таски."""
-    db, task, project, user, role, video = _resolve_video(task_id, video_id, "editor")
-    if db is None:
-        return video
-    try:
-        denied = _writable(task, user, role, video, edit=False)
-        if denied:
-            return denied
-        video.annotation_closed_at = None
-        _log(db, task, user, "video_annotation_reopened", file=video.file_name)
-        db.commit()
-        _ping(db, task.id, task.project_id, user, v=str(video.id))
-        return jsonify({"reopened": True})
-    finally:
-        db.close()
-
-
-@bp.delete("/api/tasks/<task_id>/videos/<video_id>/frames")
-def drop_video_frames(task_id, video_id):
-    """Убрать кадры ролика из таски, чтобы разметить его заново.
-
-    Кадры, уже принятые в датасет, не трогаем: это данные проекта, а не
-    черновик таски. Их число возвращаем — человек должен знать, что осталось.
-    """
-    db, task, project, user, role, video = _resolve_video(task_id, video_id, "editor")
-    if db is None:
-        return video
-    try:
-        denied = _writable(task, user, role, video, edit=False)
-        if denied:
-            return denied
-        rows = db.execute(
-            select(Image).where(
-                Image.source_video_id == video.id, Image.source_frame_no.isnot(None)
-            )
-        ).scalars().all()
-        base = config.image_base_dir(task.project_id, task.id)
-        removed, kept = 0, 0
-        for image in rows:
-            if image.dataset_id is not None:
-                kept += 1
-                continue
-            _drop_files(base, image.id)
-            db.delete(image)
-            removed += 1
-        _log(db, task, user, "video_frames_dropped",
-             file=video.file_name, removed=removed, kept=kept)
-        db.commit()
-        _ping(db, task.id, task.project_id, user, v=str(video.id))
-        return jsonify({"removed": removed, "kept_accepted": kept})
     finally:
         db.close()
 

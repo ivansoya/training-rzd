@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
-  assignTask, clearAgentUnchecked, closeVideoAnnotation, deleteTaskVideo, dropVideoFrames, getProject,
-  getTaskImages, getTaskNumbers, getVideoPending, reopenVideoAnnotation, setTaskStatus, uploadTaskImages, uploadTaskVideo,
+  assignTask, clearAgentUnchecked, deleteTaskVideo, getProject,
+  getTaskImages, getTaskNumbers, getVideoPending, setTaskStatus, uploadTaskImages, uploadTaskVideo,
 } from "../../../auth/api";
 import type {
-  AgentClearScope, ProjectMemberInfo, TaskDetail, TaskImage, TaskStatus, TaskVideoItem,
+  AgentClearScope, ProjectMemberInfo, StatusResult, TaskDetail, TaskImage, TaskStatus, TaskVideoItem,
 } from "../../../auth/api";
 import { useAuth } from "../../auth/AuthGate";
 import { pollJob } from "../../../api/jobs";
@@ -32,7 +32,7 @@ import { AddMenu, AnnotateCard, CutCard, FramesCard, TaskEmpty } from "./Sources
 import type { AgentHooks } from "./Sources";
 import { EventList, TaskPassport } from "./TaskPassport";
 import type { FrameState } from "./tasks";
-import { buildSources, closePlan, closeText } from "./tasks";
+import { buildSources, closePlan, closeText, handoverText } from "./tasks";
 import { look } from "./useTaskBoard";
 import { openVideos, useTaskPage } from "./useTaskPage";
 
@@ -186,11 +186,28 @@ export default function TaskPage() {
     try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   }, []);
 
+  // Сдача идёт фоном: её работа — в карточке таски, видна всем. Пока идёт — только просмотр.
+  // За работой следим до её конца, а не пока она в карточке: перечитка таски (опрос готовности
+  // ролика) обнуляет поле раньше, чем опрос работы узнаёт итог, — и строка итога терялась.
+  const [handing, setHanding] = useState<number | null>(null);
+  const [watched, setWatched] = useState<string | null>(null);
+  const handJob = task?.handover ?? null;
+  useEffect(() => { if (handJob) setWatched(handJob); }, [handJob]);
+  useEffect(() => {
+    if (!watched) return undefined;
+    let alive = true;
+    setHanding(0);
+    pollJob<StatusResult>(watched, (j) => { if (alive) setHanding(j.total ? j.processed / j.total : 0); })
+      .then((r) => { if (alive) setNotice(handoverText(r)); }, (e) => { if (alive) setError((e as Error).message); })
+      .finally(() => { if (alive) { setHanding(null); setWatched(null); void load(); } });
+    return () => { alive = false; };
+  }, [watched, load]);
+
   // Права считает сервер по состоянию таски: работа над кадрами — только «в работе», источники — и на очереди
-  const editable = !!task && task.rights.edit;
-  const fillable = !!task && task.rights.fill;
+  const editable = !!task && task.rights.edit && !handJob && !watched;
+  const fillable = !!task && task.rights.fill && !handJob && !watched;
   const agentBusy = !!agentRun && ACTIVE_RUN.includes(agentRun.status);
-  // Ждут закрытия — когда пришли сводки всех открытых роликов; до того заготовка
+  // Уйдёт при сдаче — когда пришли сводки всех роликов; до того заготовка
   const opened = task ? openVideos(task) : [];
   const pendingFrames = opened.every((v) => v.id in pending)
     ? opened.reduce((s, v) => s + (pending[v.id]?.frames || 0), 0) : null;
@@ -228,31 +245,35 @@ export default function TaskPage() {
     return () => window.removeEventListener("keydown", onKey);
   }, [editing, annotating, cutting, task, editable, agentBusy, annotateAll]);
 
+  /** Смена состояния. Сдача с роликами идёт фоном: ответ — работа, её ход и итог ведёт эффект выше. */
+  const send = (to: TaskStatus) => guard(async () => {
+    if (!taskId) return;
+    const res = await setTaskStatus(taskId, to);
+    if (res.job_id) { page.patchTask((t) => ({ ...t, handover: res.job_id })); return; }
+    if (to === "done" || to === "closed") setNotice(handoverText(res));
+    await load();
+  });
+
   async function move(to: TaskStatus) {
     if (!taskId || !task) return;
-    // Решение «сдать» — по свежим сводкам, а не по кешу
+    // Непроверенное агента в датасет не уйдёт — сказать до сдачи, по свежим сводкам, а не по кешу
     const open = to === "done" ? await page.pendingNow().catch(() => []) : [];
-    if (open.length) {
+    const unchecked = open.reduce((s, v) => s + (v.unchecked || 0), 0);
+    if (unchecked) {
       const ok = await confirm({
-        title: "Сдать с незакрытыми роликами?",
-        desc: `У ${count(open.length, "ролика", "роликов", "роликов")} разметка не закрыта — их кадры в датасет не уйдут.`,
-        lines: open.map((v) => `«${v.file_name}» — ${count(v.frames, "кадр", "кадра", "кадров")}`),
-        ok: "Сдать всё равно", icon: "tick",
+        title: "Сдать с непроверенным агента?",
+        desc: `${count(unchecked, "кадр", "кадра", "кадров")} из роликов с непроверенной разметкой агента в датасет не ${plural(unchecked, "уйдёт", "уйдут", "уйдут")} — ${plural(unchecked, "останется", "останутся", "останутся")} в ролике до проверки.`,
+        ok: "Сдать", icon: "tick",
       });
       if (!ok) return;
     }
-    await guard(async () => {
-      const res = await setTaskStatus(taskId, to);
-      if (res.accepted) setNotice(`В датасет «${res.dataset}» ушло ${count(res.accepted, "кадр", "кадра", "кадров")}.`);
-      else if (to === "done") setNotice("Размеченных кадров пока нет — принимать нечего.");
-      await load();
-    });
+    await send(to);
   }
 
   async function closeTask() {
     if (!taskId || !task) return;
-    // Тот же отбор, что у сервера: незакрытая разметка ролика при закрытии таски пропала бы.
     // Числа — свежие: окно обещает, что уйдёт в датасет и что удалится навсегда.
+    // Из работы закрытие сперва сдаёт ролики — их кадры тоже уходят в датасет.
     let fresh: Awaited<ReturnType<typeof getTaskNumbers>>;
     let open: Awaited<ReturnType<typeof page.pendingNow>>;
     try {
@@ -261,26 +282,18 @@ export default function TaskPage() {
       setError((e as Error).message);
       return;
     }
-    open = open.filter((v) => !v.frames_in_task && (v.frames || v.error));
-    if (open.length) {
-      setError(`Разметка роликов не закрыта — при закрытии таски она пропадёт: ${open.map((v) => `«${v.file_name}»`).join(", ")}. Закройте их разметку или уберите ролики.`);
-      return;
-    }
+    const fromVideos = open.reduce((s, v) => s + (v.frames || 0), 0);
     const plan = closePlan(fresh.counts, task.videos.length);
     const ok = await confirm({
-      title: "Закрыть таску?", lines: closeText(plan, task.target_dataset?.name ?? null),
+      title: "Закрыть таску?",
+      lines: [
+        ...(fromVideos ? [`Из роликов в датасет ${plural(fromVideos, "уйдёт", "уйдут", "уйдут")} ${count(fromVideos, "кадр", "кадра", "кадров")}.`] : []),
+        ...closeText(plan, task.target_dataset?.name ?? null),
+      ],
       desc: "Закрытую таску нельзя вернуть в работу.", ok: "Закрыть таску", icon: "archive", danger: true,
     });
     if (!ok) return;
-    await guard(async () => {
-      const res = await setTaskStatus(taskId, "closed");
-      const said = [
-        res.accepted ? `В датасет «${res.dataset}» ушло ${count(res.accepted, "кадр", "кадра", "кадров")}.` : "",
-        res.removed_images ? `${plural(res.removed_images, "Удалён", "Удалено", "Удалено")} ${count(res.removed_images, "черновой кадр", "черновых кадра", "черновых кадров")}.` : "",
-      ].filter(Boolean);
-      if (said.length) setNotice(said.join(" "));
-      await load();
-    });
+    await send("closed");
   }
 
   const reassign = (ids: string[]) => guard(async () => {
@@ -350,14 +363,12 @@ export default function TaskPage() {
     const forms: [string, string, string] = video.mode === "annotate"
       ? ["кадр разметки", "кадра разметки", "кадров разметки"]
       : ["нарезанный кадр", "нарезанных кадра", "нарезанных кадров"];
-    const p = video.mode === "annotate" && !video.annotation_closed_at
-      ? await getVideoPending(taskId, video.id).catch(() => null) : null;
-    const open = p && !p.frames_in_task && p.frames ? p : null;
+    const p = video.mode === "annotate" ? await getVideoPending(taskId, video.id).catch(() => null) : null;
     const ok = await confirm({
       title: `Убрать «${video.file_name}»?`,
       desc: [
         video.frames ? `Вместе с ним уйдут ${count(video.frames, ...forms)}. Принятые в проект останутся.` : "",
-        open ? `Незакрытая разметка ролика (${count(open.frames, "кадр", "кадра", "кадров")}) пропадёт — в таску она не попадёт.` : "",
+        p?.frames ? `Разметка ролика (${count(p.frames, "кадр", "кадра", "кадров")}) пропадёт — в датасет она не уйдёт.` : "",
       ].filter(Boolean).join(" ") || undefined,
       ok: "Убрать", icon: "trash", danger: true,
     });
@@ -367,20 +378,6 @@ export default function TaskPage() {
       setNotice(res.removed
         ? `Ролик «${res.file_name}» убран вместе с ${count(res.removed, "кадром", "кадрами", "кадрами")}${res.kept_accepted ? `, ${res.kept_accepted} осталось в проекте` : ""}.`
         : `Ролик «${res.file_name}» убран.`);
-      await load();
-    });
-  }
-
-  async function dropFrames(video: TaskVideoItem) {
-    if (!taskId) return;
-    const ok = await confirm({
-      title: `Убрать кадры «${video.file_name}» из таски?`, desc: "Принятые в проект останутся.",
-      ok: "Убрать кадры", icon: "trash", danger: true,
-    });
-    if (!ok) return;
-    await guard(async () => {
-      const res = await dropVideoFrames(taskId, video.id);
-      setNotice(`Убрано ${count(res.removed, "кадр", "кадра", "кадров")}${res.kept_accepted ? `, ${res.kept_accepted} осталось в проекте` : ""}.`);
       await load();
     });
   }
@@ -410,16 +407,6 @@ export default function TaskPage() {
       await load();
     });
   }
-
-  const closeVideo = (video: TaskVideoItem) => guard(async () => {
-    if (!taskId) return;
-    const { job_id } = await closeVideoAnnotation(taskId, video.id);
-    setNotice(`Достаю кадры из «${video.file_name}»…`);
-    const made = await pollJob<{ created: number; boxes: number; empty: number }>(job_id, () => {});
-    setNotice(`Разметка «${video.file_name}» закрыта: ${count(made.created, "кадр", "кадра", "кадров")} в таске` +
-      (made.empty ? `, из них ${made.empty} ${plural(made.empty, "фоновый", "фоновых", "фоновых")}.` : "."));
-    await load();
-  });
 
   const onAdd = (w: "images" | "cut" | "annotate") =>
     (w === "images" ? fileRef : w === "cut" ? cutRef : annotateRef).current?.click();
@@ -459,7 +446,7 @@ export default function TaskPage() {
     clear: (scope) => void clearAgents(scope),
   };
   const cards = [
-    ...sources.filter((b) => b.kind !== "annotate").map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (
+    ...sources.map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (
       <CutCard key={b.key} block={b} look={numbersLook} taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable}
         run={runOn(b.key, (b.videos || []).map((v) => v.id), ["frames", "scout"])} agent={agent}
         onAnnotate={() => openFiltered({ source: b.key })} onReview={() => review(b.key)}
@@ -470,19 +457,14 @@ export default function TaskPage() {
         run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)} />
     ) })),
     ...(annotateVideos.length ? [{ key: "annotate", born: Math.min(...annotateVideos.map((v) => Date.parse(v.created_at))), node: (
-      <AnnotateCard key="annotate" videos={annotateVideos} pending={pending} fresh={page.fresh.videos} at={page.at}
+      <AnnotateCard key="annotate" videos={annotateVideos} working={opened.length > 0} handing={!!handJob || !!watched} pending={pending} fresh={page.fresh.videos} at={page.at}
         classes={numbers?.classes ?? []}
-        taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable} busy={busy}
+        taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable}
         run={runOn(null, annotateVideos.map((v) => v.id), ["annotate", "scout"])} agent={agent}
-        onAdd={() => onAdd("annotate")} onOpen={(v) => openVideo(v)} onReview={(v) => openVideo(v, true)} onClose={closeVideo}
-        onReopen={(v) => guard(async () => { await reopenVideoAnnotation(task.id, v.id); await load(); })}
-        onDropFrames={dropFrames} onDelete={removeVideo} onVideoTags={saveVideoTags}
+        onAdd={() => onAdd("annotate")} onOpen={(v) => openVideo(v)} onReview={(v) => openVideo(v, true)}
+        onDelete={removeVideo} onVideoTags={saveVideoTags}
         onTagCreated={(t) => setTags((p) => [...p, t])} />
     ) }] : []),
-    ...sources.filter((b) => b.kind === "annotate").map((b) => ({ key: b.key, born: Infinity, node: (
-      <FramesCard key={b.key} block={b} look={numbersLook} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
-        run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)} />
-    ) })),
   ].sort((a, b) => a.born - b.born);
 
   return (
@@ -519,7 +501,7 @@ export default function TaskPage() {
             : cards.map((c) => c.node)}
         </div>
         <TaskPassport task={task} numbers={numbers} numbersLook={numbersLook} pendingFrames={pendingFrames} pendingLook={pendingLook}
-          events={events} workers={workers} busy={busy}
+          events={events} workers={workers} busy={busy || !!handJob || !!watched} handing={handing}
           onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
           onAssign={(ids) => void reassign(ids)} onHistory={() => setHistory(true)} />
       </div>
@@ -561,7 +543,7 @@ export default function TaskPage() {
       )}
       {annotating && (
         <VideoAnnotator code={code!} taskId={task.id} taskName={task.name} video={annotating} readOnly={!editable} review={reviewing} people={members}
-          onClose={() => { setAnnotating(null); void load(); }} onChanged={() => void load()} />
+          onClose={() => { setAnnotating(null); void load(); }} />
       )}
       {editing && editing.list[editing.index] && (
         <AnnotationEditor code={code!} taskId={task.id} taskName={task.name} images={editing.list} index={editing.index}

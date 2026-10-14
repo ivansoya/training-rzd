@@ -75,7 +75,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
 
   // Из блока — только его ролики: разведка блока «Ролики на разметку» не берёт ролики нарезки
   const eligible = (ctx?.videos ?? []).filter((v) => (!initial?.within || initial.within.includes(v.id))
-    && (mode === "scout" || (v.mode === "annotate" && !v.closed)));
+    && (mode === "scout" || v.mode === "annotate"));
   const chosen = eligible.filter((v) => videos.has(v.id));
   const total = mode === "frames"
     ? ctx ? [...sources].reduce((sum, s) => sum + (ctx.sources[s]?.new ?? 0), 0) : 0

@@ -5,9 +5,8 @@
 очистки, стёртое не возвращает: кадр изображения отвечает «stale», кадр ролика
 не пишет непроверенную рамку, которой в базе уже нет.
 """
-from conftest import BASE_URL, wait_job
+from conftest import BASE_URL, hand_over
 from test_agent_review import agent_box, frame, image, save, singles, video_agent_box, wire  # noqa: F401
-from test_video_annotation import close_annotation
 
 
 def clear(api, task, dry=False, **scope):
@@ -61,7 +60,7 @@ def test_устаревший_редактор_не_возвращает_стё�
     assert got["shape"]["x"] == 100 and got["pending"] is False
 
 
-def test_очистка_не_идёт_поверх_агента_и_закрытого_ролика(api, db, task, video, label_class):
+def test_очистка_не_идёт_поверх_агента_и_сданной_таски(api, db, task, video, label_class):
     with db.cursor() as cur:
         cur.execute("""INSERT INTO agent_runs (id, project_id, task_id, params, status, created_at)
                        SELECT gen_random_uuid(), project_id, id, '{}', 'running', now() FROM tasks WHERE id = %s
@@ -73,8 +72,8 @@ def test_очистка_не_идёт_поверх_агента_и_закрыт�
         finally:
             cur.execute("DELETE FROM agent_runs WHERE id = %s", (run_id,))
 
-    # Закрытый ролик правке не подлежит; его кадры в таске чистит блок «Из разметки»
+    # Сданная таска правке не подлежит — ни ролик, ни его кадры
     video_agent_box(db, video, label_class, 5)
-    wait_job(api, close_annotation(api, task, video).json()["job_id"])
+    hand_over(api, task["id"])
     assert clear(api, task, videos=[video["id"]]).status_code == 409
-    assert clear(api, task, sources=[video["id"]]).json() == {"boxes": 1, "frames": 1}
+    assert clear(api, task, sources=["files"]).status_code == 409

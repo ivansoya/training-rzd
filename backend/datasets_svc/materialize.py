@@ -1,35 +1,39 @@
-"""Превращение разметки видео в кадры таски.
+"""Кадры размечаемого ролика: как разметка ролика становится кадрами датасета.
 
-Пока разметка ролика идёт, это номера кадров и боксы на них. Изображений не
-существует: держать на диске каждый тронутый кадр значило бы плодить файлы,
+Пока таска в работе, разметка ролика — номера кадров и боксы на них. Изображений
+не существует: держать на диске каждый тронутый кадр значило бы плодить файлы,
 которые разметчик через минуту перерисует.
 
-Закрытие разметки выполняет план: нужные кадры извлекаются из ролика и
-становятся обычными кадрами таски. Дальше их не отличить от нарезанных или
-загруженных файлами — они правятся обычным редактором, уходят в проект
-штатной сдачей таски и никем не переписываются.
+Сдача таски («Готово», «Закрыто») выполняет план ролика, и кадры уходят в датасет
+вместе с остальными (решение 14.10.2026; ручное «Закрыть разметку» убрано — после
+него ролик было не вернуть в работу). Кадр «ролик + номер» один на все сдачи:
+повторная обновляет его на месте — рамки и состояние из ролика, а id, сплит и таги
+остаются. Кадр, который правили в датасете после прошлой сдачи, сдача не трогает:
+чужая работа молча не затирается. Возврат таски к разметке убирает черновые кадры
+ролика — их рамки и так в ролике.
 
-Это событие, а не вечная синхронизация. Отсюда правило: закрыть разметку
-второй раз, пока прежние кадры на месте, нельзя — сперва их надо убрать.
-Иначе трек снова стал бы хозяином кадра, который человек уже поправил рукой.
+Разово после выкладки: ``python -m datasets_svc.materialize [--yes]`` убирает нетронутые
+черновики роликов в тасках, которые в работе (остались от ручного закрытия).
 """
 import os
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from common import config, tags, task_frames
 from common.models import (
     Annotation,
     Image,
     LabelClass,
+    Task,
     TaskVideo,
-    VideoAnnotation,
-    VideoTrack,
 )
 from common import polygon as polylib
 from datasets_svc import video_index
 from datasets_svc import video as videolib
 from common import video_tracks as tracklib
+
+# Таски, в которых черновых кадров ролика быть не должно: они рождаются сдачей.
+WORKING = ("queued", "in_progress", "updating")
 
 
 def _last_frame(video):
@@ -41,14 +45,13 @@ def _last_frame(video):
 
 
 def collect(db, video, shapes=True, loaded=None):
-    """Что уйдёт в таску: ``({кадр: [боксы]}, [фоновые кадры])``.
+    """Что уйдёт в датасет: ``({кадр: [боксы]}, [фоновые кадры])``.
 
-    Зовут трое — предпросмотр в редакторе, сводка незакрытых роликов и само
-    закрытие. Расходиться им нельзя, иначе предпросмотр обещает одно, а в таску
-    уходит другое; поэтому и фоновые кадры отбираются здесь же, а не у каждого
-    вызывающего по-своему.
+    Зовут трое — предпросмотр в редакторе, сводка роликов таски и сама сдача.
+    Расходиться им нельзя, иначе предпросмотр обещает одно, а уходит другое;
+    поэтому и фоновые кадры отбираются здесь же, а не у каждого вызывающего по-своему.
 
-    Геометрия одиночных нужна только закрытию: остальные считают (`shapes=False`).
+    Геометрия одиночных нужна только сдаче: остальные считают (`shapes=False`).
     `loaded` — уже прочитанный `video_payload`, чтобы не читать ролик второй раз.
     """
     payload, singles = loaded or task_frames.video_payload(db, video, shapes)
@@ -68,60 +71,34 @@ def frame_is_free(db, video, frame_no):
     return bool(tracklib.empty_frames(payload, singles, [frame_no]))
 
 
-def frames_in_task(db, video):
-    """Сколько черновых кадров ролик дал прежним закрытием.
+def edited(image):
+    """Правили после прошлой сдачи: разметку (счётчик ушёл от отметки) или забраковали."""
+    return image.task_status == "deleted" or image.annotations_rev != (image.handed_rev or 0)
 
-    Пока они есть, закрыть разметку заново нельзя — их убирают. Принятые в
-    датасет не в счёт: убрать их нечем, и раньше они запирали ролик навсегда.
-    Один счёт на отказ в закрытии и на сводку.
-    """
+
+def annotate_videos(db, task):
     return db.execute(
-        select(func.count(Image.id)).where(
-            Image.source_video_id == video.id, Image.source_frame_no.isnot(None),
-            Image.dataset_id.is_(None),
-        )
-    ).scalar_one()
-
-
-def accepted_frames(db, video):
-    """Номера кадров ролика, уже принятых в датасет: повторное закрытие их не трогает."""
-    return set(db.execute(
-        select(Image.source_frame_no).where(
-            Image.source_video_id == video.id, Image.source_frame_no.isnot(None),
-            Image.dataset_id.isnot(None),
-        )
-    ).scalars())
-
-
-def open_videos(db, task):
-    """Ролики с незакрытой разметкой: их работа ещё не стала кадрами."""
-    return db.execute(
-        select(TaskVideo).where(
-            TaskVideo.task_id == task.id,
-            TaskVideo.mode == "annotate",
-            TaskVideo.annotation_closed_at.is_(None),
-        )
+        select(TaskVideo).where(TaskVideo.task_id == task.id, TaskVideo.mode == "annotate")
     ).scalars().all()
 
 
 def pending_summary(db, task):
-    """Что ещё не стало кадрами: по строке на незакрытый ролик с разметкой.
+    """Что уйдёт при сдаче: по строке на размечаемый ролик с разметкой.
 
-    Нужна вкладке прогресса, шапке таски и карточке ролика: работа по
-    незакрытому ролику иначе невидима, и прогресс врал бы.
+    Нужна вкладке прогресса, шапке таски и карточке ролика: работа по ролику
+    до сдачи иначе невидима, и прогресс врал бы.
 
     Каждый трек считается **отдельно**. Раньше одна негодная дорожка обнуляла
-    сводку целиком, и карточка показывала «0 кадров уйдёт в таску» — то есть
-    ровно то же, что у ролика без разметки. Теперь видно, сколько даёт каждый
-    объект и который из них не считается.
+    сводку целиком, и карточка показывала «0 кадров» — то есть ровно то же, что у
+    ролика без разметки. Теперь видно, сколько даёт каждый объект и который не считается.
     """
     by_class = class_look(db, task.project_id)
-    return [row for video in open_videos(db, task) if (row := pending_row(db, video, by_class))]
+    return [row for video in annotate_videos(db, task) if (row := pending_row(db, video, by_class))]
 
 
 def class_look(db, project_id):
     """{класс: (номер, имя, цвет)}. Имя и цвет берём здесь: в сводке таски классы считаются
-    по уже созданным аннотациям, а у незакрытого ролика их ещё нет — экран показывал бы «класс 0»."""
+    по уже созданным аннотациям, а у ролика до сдачи их нет — экран показывал бы «класс 0»."""
     return {
         c.id: (c.class_index, c.name, c.color)
         for c in db.execute(select(LabelClass).where(LabelClass.project_id == project_id)).scalars()
@@ -129,7 +106,7 @@ def class_look(db, project_id):
 
 
 def pending_row(db, video, by_class):
-    """Строка сводки одного незакрытого ролика; None — в таску от него ничего не уйдёт.
+    """Строка сводки одного ролика; None — при сдаче от него ничего не уйдёт.
     Страница таски спрашивает ролики по одному, чтобы тяжёлый не держал остальные."""
     loaded = task_frames.video_payload(db, video, shapes=False)
     payload, singles = loaded
@@ -164,30 +141,19 @@ def pending_row(db, video, by_class):
         "tracks": len(payload),
         "objects": objects,
         "singles": len(singles),
-        "frames_in_task": frames_in_task(db, video),
     }
-    if row["frames_in_task"]:
-        # Открыли заново, а прежние кадры на месте: план не станет кадрами,
-        # пока их не уберут. Считать его в «ждут закрытия» значило бы
-        # показать одни и те же кадры дважды — рядом с «размечено».
-        row.update({
-            "frames": 0, "boxes": 0, "empty": 0, "unchecked": 0,
-            "error": f"Прежние кадры ролика ещё в таске ({row['frames_in_task']}) — "
-                     "уберите их, чтобы закрыть разметку заново.",
-        })
-        return row
     try:
         plan, empty = collect(db, video, loaded=loaded)
     except tracklib.TrackError as exc:
         # План целиком не считается, но остальное показать всё равно надо:
-        # человеку нужно знать, какой именно объект мешает закрыть разметку.
+        # человеку нужно знать, какой именно объект мешает сдаче.
         row.update({"frames": 0, "boxes": 0, "empty": 0, "unchecked": 0, "error": str(exc)})
         return row
     if not plan and not empty:
         return None
     row.update({
-        # Фоновые кадры — такие же кадры таски, поэтому входят в общее
-        # число; отдельным полем видно, сколько их из этого числа.
+        # Фоновые кадры — такие же кадры, поэтому входят в общее число;
+        # отдельным полем видно, сколько их из этого числа.
         "frames": len(plan) + len(empty),
         "boxes": sum(len(v) for v in plan.values()),
         "empty": len(empty),
@@ -197,7 +163,7 @@ def pending_row(db, video, by_class):
 
 
 def unchecked_frames(plan):
-    """Сколько кадров плана уйдут с непроверенной разметкой агента."""
+    """Сколько кадров плана с непроверенной разметкой агента: в датасет они не уйдут."""
     return len([f for f, items in plan.items() if any(i.get("pending") for i in items)])
 
 
@@ -206,9 +172,9 @@ def _file_name(video, frame_no):
     return f"{stem}_f{frame_no:06d}.jpg"
 
 
-def drop_frame_files(task, image_ids):
-    """Файлы кадров, чьи строки откатились: иначе они остались бы на томе ничьими."""
-    base = config.image_base_dir(task.project_id, task.id)
+def drop_frame_files(project_id, task_id, image_ids):
+    """Файлы кадров, чьих строк больше нет: иначе они остались бы на томе ничьими."""
+    base = config.image_base_dir(project_id, task_id)
     for image_id in image_ids:
         for sub in ("images", "thumbs", "preview"):
             try:
@@ -217,17 +183,17 @@ def drop_frame_files(task, image_ids):
                 pass
 
 
-def run_video(db, task, video, user_id, progress=None):
-    """Выполняет план одного ролика. Коммит остаётся за вызывающим.
+def hand_over(db, task, video, user_id, progress=None):
+    """Сдача одного ролика. Коммит, как и `_accept`, — за вызывающим.
 
-    Кадры создаются нетронутыми данными таски: со статусом «размечен», но без
-    датасета — в проект они уйдут обычной сдачей вместе со всеми остальными.
-    Помеченные фоновыми уходят со статусом «empty» и без разметки — ровно тем
-    же, каким разметчик изображений объявляет кадр фоновым примером.
+    По номеру кадра: правленый после прошлой сдачи — не трогаем; есть изображение —
+    обновляем на месте; нет — достаём из ролика. Выпавшие из плана изображения
+    убираются. Кадр с непроверенным агента в датасет не идёт: новый остаётся
+    черновиком, а уже бывший в датасете — прежним, пока непроверенное не разберут.
 
-    Всё или ничего: при ошибке файлы созданных кадров убираются здесь же, строки
-    откатывает вызывающий. ``image_ids`` в ответе — чтобы убрать файлы, если
-    упадёт уже его коммит.
+    Всё или ничего: при ошибке файлы новых кадров убираются здесь же, строки
+    откатывает вызывающий. В ответе `image_ids` — файлы новых кадров (убрать, если
+    упадёт уже его коммит), `dropped_ids` — файлы убранных (удалить после коммита).
     """
     source = os.path.join(config.DATA_DIR, video.file_path)
     if not os.path.exists(source):
@@ -236,44 +202,74 @@ def run_video(db, task, video, user_id, progress=None):
         )
 
     # Номер кадра — позиция в таблице кадров ролика, как у `/frame` и перегонов.
-    # Закрытие — фоновая работа, так что недостроенную таблицу строим здесь же.
+    # Сдача — фоновая работа, так что недостроенную таблицу строим здесь же.
     # До замка: `store` коммитит и отпустил бы его.
     index = video_index.ensure(db, video, source)
 
     # Замок на ролик до коммита: агент из training-worker, пишущий рамки, ждёт
-    # его и после видит закрытый ролик, а не дописывает мимо снятого плана.
+    # его и после видит сданную таску, а не дописывает мимо снятого плана.
     db.execute(select(TaskVideo.id).where(TaskVideo.id == video.id).with_for_update())
     by_frame, empty = collect(db, video)
     empty_set = set(empty)
-    if not by_frame and not empty_set:
-        return {"created": 0, "boxes": 0, "empty": 0, "kept_accepted": 0, "image_ids": []}
+    unchecked = {f for f, items in by_frame.items() if any(i.get("pending") for i in items)}
+    have = {
+        img.source_frame_no: img for img in db.execute(
+            select(Image).where(Image.source_video_id == video.id, Image.source_frame_no.isnot(None))
+        ).scalars()
+    }
+    kept = {f for f, img in have.items() if edited(img)}
+    planned = set(by_frame) | empty_set
+    stats = {"planned": len(planned), "created": 0, "updated": 0, "removed": 0, "kept_edited": len(kept),
+             "waiting": 0, "boxes": 0, "empty": 0, "unchecked": 0}
 
+    # Выпавшие из плана: строки уходят сейчас, файлы — после коммита.
+    dropped = []
+    for f, img in have.items():
+        if f not in planned and f not in kept:
+            dropped.append(img.id)
+            db.delete(img)
+    stats["removed"] = len(dropped)
+
+    # Уже есть: рамки и состояние — из ролика, id/сплит/таги остаются.
+    for f in sorted(planned & set(have) - kept):
+        img = have[f]
+        if f in unchecked:
+            stats["waiting"] += 1
+            continue
+        db.execute(Annotation.__table__.delete().where(Annotation.image_id == img.id))
+        img.task_status = "empty" if f in empty_set else "annotated"
+        # Открытый редактор датасета получит «stale», а не запишет старое поверх.
+        img.annotations_rev += 1
+        img.handed_rev = img.annotations_rev
+        stats["boxes"] += _annotate(db, {f: by_frame.get(f, [])}, {f: img.id}, user_id)
+        stats["empty"] += f in empty_set
+        stats["updated"] += 1
+
+    # Ход — по кадрам плана: обновлённые на месте разжимать не надо, они идут сразу.
+    ready = len(planned & set(have))
+    if progress:
+        progress(ready)
     base = config.image_base_dir(task.project_id, task.id)
     created = {}
-    # Кадр, на котором одно непроверенное агента, уходит в таску новым. Рамки
-    # переезжают со своим флагом: проверять их дальше можно и в редакторе кадров.
-    # Любая работа человека на кадре (своя рамка, проверенная агентова, трек)
-    # делает его размеченным.
-    unchecked = {
-        f for f, items in by_frame.items()
-        if items and all(i.get("pending") for i in items)
-    }
-    # Таги ролика — один раз на всю материализацию, а не на кадр.
+    # Таги ролика — один раз на всю сдачу, а не на кадр.
     video_tags = tags.ids_of(db, "video", video.id)
+    wanted = planned - set(have)
 
     def on_frame(frame_no, time_ms, img):
         image = Image(
             project_id=task.project_id,
             dataset_id=None,
             task_id=task.id,
+            # Кадр, на котором одно непроверенное агента, — новый: работы человека на нём нет.
             task_status=("empty" if frame_no in empty_set
-                         else "new" if frame_no in unchecked else "annotated"),
+                         else "new" if all(i.get("pending") for i in by_frame[frame_no]) else "annotated"),
             file_name=_file_name(video, frame_no),
             file_path="",
             split="other",
             source_video_id=video.id,
             source_frame_no=frame_no,
             source_time_ms=time_ms,
+            handed_rev=0,
             created_by=user_id,
         )
         db.add(image)
@@ -285,17 +281,13 @@ def run_video(db, task, video, user_id, progress=None):
         image.size_bytes = nbytes
         created[frame_no] = image.id
         if progress and len(created) % 20 == 0:
-            progress(len(created))
+            progress(ready + len(created))
 
     # Одним проходом декодера: фоновые кадры перемешаны с размеченными, и
     # второй проход по тому же ролику стоил бы столько же, сколько первый.
-    # Принятые кадры — уже данные проекта: создаём только недостающие номера.
-    kept = accepted_frames(db, video)
-    by_frame = {f: items for f, items in by_frame.items() if f not in kept}
-    empty_set = empty_set - kept
-    wanted = set(by_frame) | empty_set
     try:
-        videolib.extract_frames(source, sorted(wanted), on_frame, pts=index["pts"])
+        if wanted:
+            videolib.extract_frames(source, sorted(wanted), on_frame, pts=index["pts"])
         missing = sorted(wanted - set(created))
         if missing:
             # Кадр не дошёл — разметка на нём потерялась бы молча. Лучше не записать ничего.
@@ -304,24 +296,21 @@ def run_video(db, task, video, user_id, progress=None):
                 f"{' и ещё ' + str(len(missing) - 5) if len(missing) > 5 else ''} — "
                 "ничего не записано."
             )
-        boxes = _annotate(db, by_frame, created, user_id)
+        stats["boxes"] += _annotate(db, {f: v for f, v in by_frame.items() if f in created}, created, user_id)
     except BaseException:
-        drop_frame_files(task, created.values())
+        drop_frame_files(task.project_id, task.id, created.values())
         raise
 
+    stats["created"] = len(created)
+    stats["empty"] += len([f for f in empty_set if f in created])
+    stats["unchecked"] = len([f for f in unchecked if f in created])
     if progress:
-        progress(len(created))
-    return {
-        "created": len(created),
-        "boxes": boxes,
-        "empty": len([f for f in empty_set if f in created]),
-        "kept_accepted": len(kept),
-        "image_ids": list(created.values()),
-    }
+        progress(len(planned))
+    return {**stats, "image_ids": list(created.values()), "dropped_ids": dropped}
 
 
 def _annotate(db, by_frame, created, user_id):
-    """Фигуры плана — аннотациями на созданные кадры. Возвращает их число."""
+    """Фигуры плана — аннотациями на кадры. Возвращает их число."""
     boxes = 0
     for frame_no, planned in sorted(by_frame.items()):
         image_id = created[frame_no]
@@ -352,3 +341,48 @@ def _annotate(db, by_frame, created, user_id):
     # Ошибка строки (класс удалён, кривая геометрия) — здесь, а не на коммите.
     db.flush()
     return boxes
+
+
+def drop_drafts(db, task):
+    """Возврат к разметке: черновые кадры роликов таски уходят — их рамки и так в ролике.
+    Правленые не трогаем. Возвращает id, чьи файлы убрать после коммита."""
+    rows = db.execute(
+        select(Image).where(Image.task_id == task.id, Image.dataset_id.is_(None),
+                            Image.source_frame_no.isnot(None), task_frames.video_frame())
+    ).scalars().all()
+    gone = [img for img in rows if not edited(img)]
+    for img in gone:
+        db.delete(img)
+    return [img.id for img in gone]
+
+
+def _main():
+    """Разовая уборка после выкладки 14.10.2026: черновики от ручного закрытия в тасках в работе."""
+    import argparse
+
+    from common.db import SessionLocal
+
+    parser = argparse.ArgumentParser(description=_main.__doc__)
+    parser.add_argument("--yes", action="store_true", help="удалить; без него — только счёт")
+    args = parser.parse_args()
+    db = SessionLocal()
+    try:
+        total = 0
+        for task in db.execute(select(Task).where(Task.status.in_(WORKING))).scalars().all():
+            ids = drop_drafts(db, task)
+            if not ids:
+                continue
+            total += len(ids)
+            print(f"таска {task.id} ({task.status}): черновиков {len(ids)}")
+            if args.yes:
+                db.commit()
+                drop_frame_files(task.project_id, task.id, ids)
+            else:
+                db.rollback()
+        print(f"всего {total}{'' if args.yes else ' — ничего не удалено, запустите с --yes'}")
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    _main()

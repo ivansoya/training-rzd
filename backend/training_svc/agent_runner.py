@@ -34,12 +34,13 @@ from sqlalchemy import or_, select, text
 from sqlalchemy.exc import OperationalError
 
 from common import (
-    agent_graph, agent_memory, config, gpu, gpu_peak, live, settings, shapes, task_frames, video_frames, video_tracks,
+    agent_graph, agent_memory, config, gpu, gpu_peak, live, settings, shapes, task_frames, task_rights, video_frames,
+    video_tracks,
 )
 from common.db import SessionLocal
 from common.models import (
     AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, GpuDevice, GpuLease, Image,
-    TaskVideo, VideoAnnotation, VideoScout, utcnow,
+    Task, TaskVideo, VideoAnnotation, VideoScout, utcnow,
 )
 
 log = logging.getLogger("training")
@@ -905,7 +906,7 @@ def _ticker(db, run, lease_id, devices=(), info=None):
 # `video_annotations` на каждый N-й кадр, кроме кадров, где уже поработал
 # человек; повторный прогон заменяет только нетронутые рамки агентов. Разведка
 # — информация, а не разметка: где и что нашлось, участки по классам агента,
-# SAM не участвует. Кадры достаёт тот же декодер, что и закрытие разметки
+# SAM не участвует. Кадры достаёт тот же декодер, что и сдача таски
 # (`common.video_frames`): номер кадра обязан совпасть до единицы.
 # --------------------------------------------------------------------------- #
 def _last_frame(video):
@@ -972,7 +973,7 @@ def _videos(db, run, mode, plan, work, mapping, tick):
                 db.execute(_agent_rows(video, _own_versions(db, run.version_id))
                            .where(VideoAnnotation.frame_no.notin_(wanted or [-1])))
         except VideoClosed:
-            log.warning("прогон %s: разметку ролика %s закрыли — дальше без него", run.id, video.id)
+            log.warning("прогон %s: таску ролика %s сдают или сдали — дальше без него", run.id, video.id)
             stats["closed"] = stats.get("closed", 0) + 1
             continue
         if mode == "scout":
@@ -998,25 +999,25 @@ def _agent_rows(video, own):
 
 
 class VideoClosed(Exception):
-    """Разметку ролика закрыли посреди прогона — писать в него больше нельзя."""
+    """Таску ролика сдали (или сдают) посреди прогона, либо ролик убрали — писать в него нельзя."""
 
 
 def _lock_open(db, video):
-    """Замок на ролик; VideoClosed, если разметка закрыта, закрывается или ролика нет.
+    """Замок на ролик; VideoClosed, если таска не в работе, сдаётся или ролика нет.
 
-    Закрытие держит этот же замок до коммита. Ждать его до конца нельзя — это
+    Сдача держит этот же замок до коммита. Ждать её до конца нельзя — это
     минуты, за них истечёт бронь карты; а дописать рамки мимо снятого плана —
     потерять их. Короткие правки строки (пометки, таги) укладываются в 5 с."""
     try:
         db.execute(text("SET LOCAL lock_timeout = '5s'"))
-        row = db.execute(select(TaskVideo.annotation_closed_at)
-                         .where(TaskVideo.id == video.id).with_for_update()).first()
+        row = db.execute(select(Task.status).join(TaskVideo, TaskVideo.task_id == Task.id)
+                         .where(TaskVideo.id == video.id).with_for_update(of=TaskVideo)).first()
     except OperationalError as exc:
         db.rollback()
-        if getattr(exc.orig, "pgcode", None) == "55P03":  # lock_not_available — идёт закрытие
+        if getattr(exc.orig, "pgcode", None) == "55P03":  # lock_not_available — идёт сдача
             raise VideoClosed() from exc
         raise
-    if row is None or row[0] is not None:
+    if row is None or row[0] not in task_rights.WORK:
         db.rollback()
         raise VideoClosed()
 

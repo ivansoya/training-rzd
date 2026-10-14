@@ -2,29 +2,31 @@
 
 import { Link } from "react-router-dom";
 import type { ProjectMemberInfo, TaskDetail, TaskEventItem, TaskNumbers, TaskStatus } from "../../../auth/api";
-import { Avatar, Badge, Button, Icon, Ring, Swatch, cx, useTween } from "../../../ui";
+import { Avatar, Badge, Button, Icon, Progress, Ring, Swatch, cx, useTween } from "../../../ui";
 import { ago, count, ru } from "../../ru";
 import { describeTaskEvent } from "../taskEvents";
 import type { FrameState } from "./tasks";
-import { NEXT, STATES, STATUS, dayOf, decidedOf, framesOf } from "./tasks";
+import { NEXT, STATES, STATUS, dayOf, decidedOf, framesOf, inDataset } from "./tasks";
 import { TeamEdit, TeamView } from "./Team";
 import type { Look } from "./useTaskBoard";
 import { openVideos } from "./useTaskPage";
 
 const NO_CLASSES: TaskNumbers["classes"] = [];
 
-export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendingLook, events, workers, busy,
+export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendingLook, events, workers, busy, handing,
   onState, onMove, onClose, onAssign, onHistory }: {
   task: TaskDetail;
   /** Счётчики; null — ещё в пути, на их месте заготовка той же высоты. */
   numbers: TaskNumbers | null;
   numbersLook: Look;
-  /** Кадров ждут закрытия роликов; null — сводки ещё в пути. */
+  /** Кадров роликов уйдёт при сдаче; null — сводки ещё в пути. */
   pendingFrames: number | null;
   pendingLook: Look;
   events: TaskEventItem[];
   workers: ProjectMemberInfo[];
   busy: boolean;
+  /** Доля хода идущей сдачи; null — не сдаётся. */
+  handing: number | null;
   onState: (s: FrameState) => void;
   onMove: (to: TaskStatus) => void;
   onClose: () => void;
@@ -41,7 +43,8 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
   const shownDecided = useTween(decided);
   const share = frames ? decided / frames : 0;
   const shownPct = useTween(Math.floor(share * 100));
-  const toAccept = c ? Math.max(0, decided - c.accepted) : null;
+  // Уйдёт в датасет: решённое вкладки «Кадры» плюс кадры роликов, когда придут их сводки
+  const toAccept = c && pendingFrames !== null ? Math.max(0, decided - c.accepted) + pendingFrames : null;
   const objects = classes.reduce((s, x) => s + x.annotations, 0);
   const maxCls = Math.max(1, ...classes.map((x) => x.annotations));
   // Главный переход страницы — если он мне разрешён; закрытие отдельной кнопкой внизу
@@ -68,14 +71,14 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
                 <b>{Math.round(shownPct)}<small> %</small></b>
               </Ring>
             ) : <i className="ui-sk tp-ring-sk" />}
-            {/* Три строки всегда: решено, подпись, ждут закрытия — высота не меняется, когда придут числа */}
+            {/* Три строки всегда: решено, подпись, уйдёт из роликов — высота не меняется, когда придут числа */}
             <div className="tp-ring-t">
               {c ? <b><span className="ui-mono">{ru(shownDecided)}</span> из <span className="ui-mono">{ru(frames)}</span></b>
                 : <i className="ui-sk pill" style={{ width: 90, height: 14 }} />}
               <span className="t-sm t-muted">кадров решено</span>
               <span className={cx("t-xs t-faint tp-ring-w", zone(pendingLook))}>
                 {pendingFrames === null ? <i className="ui-sk pill" style={{ width: 150 }} />
-                  : pendingFrames > 0 ? <>+ {count(pendingFrames, "кадр ждёт", "кадра ждут", "кадров ждут")} закрытия ролика</> : null}
+                  : pendingFrames > 0 ? <>+ {count(pendingFrames, "кадр", "кадра", "кадров")} из роликов при сдаче</> : null}
               </span>
             </div>
           </div>
@@ -96,11 +99,16 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
         </section>
       )}
 
-      {(closed || next) && <section>
+      {(closed || next || handing !== null) && <section>
         {closed ? (
           <>
-            <span className="t-sm">Таска закрыта{c?.accepted ? `: ${count(c.accepted, "кадр", "кадра", "кадров")} в датасете` : ""}.</span>
+            <span className="t-sm">Таска закрыта{c && inDataset(c) ? `: ${count(inDataset(c), "кадр", "кадра", "кадров")} в датасете` : ""}.</span>
             <Link to={`/projects/${task.project.code}/datasets`} className="t-sm">Смотреть датасеты</Link>
+          </>
+        ) : handing !== null ? (
+          <>
+            <span className="t-sm">Сдаётся… {Math.round(handing * 100)} %</span>
+            <Progress value={handing} label="Сдача таски" />
           </>
         ) : next?.to === "done" ? (
           <>
@@ -113,8 +121,8 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
           </>
         ) : next ? (
           <>
-            {task.status === "done" && !!c?.accepted && (
-              <span className="t-sm">{count(c.accepted, "кадр", "кадра", "кадров")} в датасете{task.target_dataset ? ` «${task.target_dataset.name}»` : ""}.</span>
+            {task.status === "done" && !!c && inDataset(c) > 0 && (
+              <span className="t-sm">{count(inDataset(c), "кадр", "кадра", "кадров")} в датасете{task.target_dataset ? ` «${task.target_dataset.name}»` : ""}.</span>
             )}
             <Button variant={task.status === "queued" ? "primary" : "outline"} icon={task.status === "queued" ? "play" : "undo"}
               className="tp-wide" disabled={busy} onClick={() => onMove(next.to)}>{next.label}</Button>

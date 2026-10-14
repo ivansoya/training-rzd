@@ -1,6 +1,6 @@
 // Логика экранов тасок без React: состояния, доли кадров, доска, источники, план закрытия.
 
-import type { TaskCounts, TaskDetail, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
+import type { StatusResult, TaskCounts, TaskDetail, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
 import type { StackPart } from "../../../ui";
 import { ago, count, plural, ru } from "../../ru";
 
@@ -66,9 +66,12 @@ export function dayOf(iso: string, now = new Date()): string {
   return `${d.getDate()} ${MONTHS[d.getMonth()]}${y}`;
 }
 
+/** Сколько кадров таски в датасете: из вкладки «Кадры» и из роликов (их счётчики врозь). */
+export const inDataset = (c: Pick<TaskCounts, "accepted" | "video_accepted">) => c.accepted + (c.video_accepted || 0);
+
 /** Последнее, что было с таской: сданное — сколько в датасете, иначе разметка или создание. */
 export function statusNote(t: TaskLight, s: TaskStats | undefined): string {
-  if (t.status === "done" && s?.counts.accepted) return `${ru(s.counts.accepted)} в датасете`;
+  if (t.status === "done" && s && inDataset(s.counts)) return `${ru(inDataset(s.counts))} в датасете`;
   if (t.last_box_at) return `разметка ${ago(t.last_box_at)}`;
   return `создана ${ago(t.created_at)}`;
 }
@@ -120,6 +123,18 @@ export function closePlan(c: TaskCounts, videos: number) {
   return { accept, drafts, videos };
 }
 
+/** Итог сдачи и закрытия одной строкой: что ушло, что обновилось, что осталось ждать. */
+export function handoverText(r: StatusResult): string {
+  const waiting = (r.unchecked || 0) + (r.waiting || 0);
+  return [
+    r.accepted ? `В датасет${r.dataset ? ` «${r.dataset}»` : ""} ушло ${count(r.accepted, "кадр", "кадра", "кадров")}.` : "",
+    r.updated || r.removed ? `Кадры роликов в датасете: обновлено ${ru(r.updated || 0)}${r.removed ? `, убрано ${ru(r.removed)}` : ""}.` : "",
+    r.kept_edited ? `${count(r.kept_edited, "кадр правили", "кадра правили", "кадров правили")} в датасете — ${plural(r.kept_edited, "оставлен", "оставлены", "оставлены")} как есть.` : "",
+    waiting ? `${count(waiting, "кадр ждёт", "кадра ждут", "кадров ждут")} проверки агента — в датасет не ${plural(waiting, "ушёл", "ушли", "ушли")}.` : "",
+    r.removed_images ? `${plural(r.removed_images, "Удалён", "Удалено", "Удалено")} ${count(r.removed_images, "черновой кадр", "черновых кадра", "черновых кадров")}.` : "",
+  ].filter(Boolean).join(" ") || "Размеченных кадров пока нет — принимать нечего.";
+}
+
 export function closeText(p: ReturnType<typeof closePlan>, dataset: string | null): string[] {
   const gone = [
     p.drafts ? count(p.drafts, "черновой кадр", "черновых кадра", "черновых кадров") : "",
@@ -141,7 +156,7 @@ export interface SourceCounts extends Counts {
 export interface SourceBlock {
   key: string;
   title: string;
-  kind: "files" | "cut" | "annotate";
+  kind: "files" | "cut";
   /** Нарезаемые ролики таски — блок у них общий, план у каждого свой. */
   videos?: TaskVideoItem[];
   counts: SourceCounts;
@@ -155,8 +170,9 @@ export interface SourceBlock {
 
 const SUM_KEYS = ["new", "annotated", "empty", "skipped", "deleted", "accepted", "agent"] as const;
 
-/** Блоки источников: файлы, ролики на нарезку, кадры из закрытой разметки роликов.
- *  Какие блоки есть, знает лёгкая часть таски (`sources`), числа — `by` из `/counts`, когда придут. */
+/** Блоки источников: файлы и ролики на нарезку. Кадров размечаемых роликов тут нет: они рождаются
+ *  сдачей и правятся только в ролике. Какие блоки есть, знает лёгкая часть таски (`sources`),
+ *  числа — `by` из `/counts`, когда придут. */
 export function buildSources(task: TaskDetail, by: TaskNumbers["by_source"] | null): SourceBlock[] {
   const out: SourceBlock[] = [];
   const at = (value?: string | null) => (value ? Date.parse(value) : 0);
@@ -183,12 +199,6 @@ export function buildSources(task: TaskDetail, by: TaskNumbers["by_source"] | nu
       total: videos.reduce((s, v) => s + frames(v.id), 0),
       bornAt: Math.min(...videos.map((v) => at(v.created_at))),
     });
-  }
-
-  for (const v of task.videos.filter((x) => x.mode !== "cut")) {
-    if (!has(v.id)) continue;
-    const own = of(v.id);
-    out.push({ key: v.id, title: `Из разметки «${v.file_name}»`, kind: "annotate", counts: own, known, total: frames(v.id), bornAt: at(v.created_at) });
   }
   return out.sort((a, b) => a.bornAt - b.bornAt);
 }

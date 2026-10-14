@@ -10,7 +10,7 @@
 «человек, пусто, человек, пусто, пусто» — пусто в смысле «человека нет».
 Разведка обязана найти человека ровно в блоках с человеком; разметка —
 поставить рамки на каждый N-й кадр, кроме кадра, где уже поработал человек,
-дать полигоны от SAM и рамки обеих сетей; закрытие разметки — отдать кадры
+дать полигоны от SAM и рамки обеих сетей; сдача таски — отдать кадры
 агента на проверку (`new`), а тронутые человеком — размеченными.
 
 Нужен стенд с картой; данные тест заводит сам.
@@ -22,7 +22,7 @@ import pytest
 
 import agent_data
 from agent_data import PERSON
-from conftest import BASE_URL, drop_project, tag, wait_job
+from conftest import BASE_URL, drop_project, hand_over, tag
 
 FPS = 5
 BLOCK = 10                      # кадров на блок — две секунды
@@ -311,10 +311,7 @@ def test_закрытие_отдаёт_кадры_агента_на_провер
     if len(wire) > 1:
         assert after[wire[1]["id"]][4] == "model", "нетронутая рамка агента потеряла авторство"
 
-    res = owner.post(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/close-annotation", json={})
-    assert res.status_code == 202, res.text
-    job = wait_job(owner, res.json()["job_id"], timeout=300)
-    assert job["status"] == "done", job.get("error")
+    hand_over(owner, task["id"])
 
     with db.cursor() as cur:
         cur.execute("""select i.source_frame_no, i.task_status,

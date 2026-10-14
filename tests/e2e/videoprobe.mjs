@@ -142,12 +142,6 @@ try {
   await page.screenshot({ path: `${OUT}/ve-keys.png` });
   await page.keyboard.press("Escape");
 
-  if (TRACKS) {
-    await ed.getByRole("button", { name: "Закрыть разметку" }).click();
-    await page.waitForTimeout(500);
-    await page.screenshot({ path: `${OUT}/ve-close.png` });
-    await page.keyboard.press("Escape");
-  }
 } finally {
   if (temp) console.log("проект удалён:", (await page.request.delete(`${BASE}/api/projects/${temp}`)).status());
   console.log("ошибки:", errors.length ? errors : "нет");

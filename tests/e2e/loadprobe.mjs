@@ -86,12 +86,12 @@ try {
   await page.locator(".ui-upd").waitFor({ state: "detached", timeout: 15000 });
   const after = await page.$$eval(".tb-card:not(.closed)", (els) => els.map((e) => Math.round(e.getBoundingClientRect().height)));
   check("доска: высота карточек не меняется", JSON.stringify(before) === JSON.stringify(after), `${before} → ${after}`);
-  check("доска: «ждут закрытия» у ролика", await page.locator(".tb-card", { hasText: "Ролик агента" }).getByText("ждут закрытия").count() === 1);
+  check("доска: «уйдут при сдаче» у ролика", await page.locator(".tb-card", { hasText: "Ролик агента" }).getByText("уйдут при сдаче").count() === 1);
 
   // --- доска из кеша: числа сразу ---
   await page.reload();
   await page.locator(".tb-card").first().waitFor();
-  const cachedNums = await page.locator(".tb-card", { hasText: "Ролик агента" }).getByText("ждут закрытия").count();
+  const cachedNums = await page.locator(".tb-card", { hasText: "Ролик агента" }).getByText("уйдут при сдаче").count();
   check("доска из кеша: числа на месте до ответа", cachedNums === 1);
   await page.unroute(/\/api\/tasks\/[^/]+\/summary$/);
 

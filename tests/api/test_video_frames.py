@@ -47,7 +47,7 @@ def test_кадр_за_концом_ролика_это_400(api, task, video):
     assert api.get(url, params={"n": -1}).status_code == 400
 
 
-def test_три_закрытия_разом_дают_одну_работу(api, task, video, label_class):
+def test_три_сдачи_разом_дают_одну_работу(api, task, video, label_class):
     import threading
 
     url = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}"
@@ -56,8 +56,8 @@ def test_три_закрытия_разом_дают_одну_работу(api, 
         "geometry": {"x": 10, "y": 10, "w": 40, "h": 40}})
     assert res.status_code in (200, 201), res.text
     codes = []
-    threads = [threading.Thread(target=lambda: codes.append(
-        api.post(f"{url}/close-annotation").status_code)) for _ in range(3)]
+    threads = [threading.Thread(target=lambda: codes.append(api.post(
+        f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"}).status_code)) for _ in range(3)]
     [t.start() for t in threads]
     [t.join() for t in threads]
     assert sorted(codes).count(202) == 1, codes

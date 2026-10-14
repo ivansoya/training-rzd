@@ -279,8 +279,10 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
                         <span className="ui-mono t-muted">{ru(decidedOf(c))} из {ru(framesOf(c))}</span>
                       </>
                       : s!.pending_frames > 0
-                        ? <span className="ov-pend">{count(s!.pending_frames, "кадр ждёт", "кадра ждут", "кадров ждут")} закрытия</span>
-                        : <span className="t-faint">кадров пока нет</span>}
+                        ? <span className="ov-pend">{count(s!.pending_frames, "кадр уйдёт", "кадра уйдут", "кадров уйдут")} при сдаче</span>
+                        : c.video_accepted
+                          ? <span className="t-muted">{count(c.video_accepted, "кадр", "кадра", "кадров")} в датасете</span>
+                          : <span className="t-faint">кадров пока нет</span>}
                   </span>
                 </li>
               );

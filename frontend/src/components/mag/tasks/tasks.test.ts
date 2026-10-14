@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { TaskCounts, TaskDetail, TaskLight, TaskStats } from "../../../auth/api";
-import { boardColumns, buildSources, closePlan, closeText, dayOf, percentOf, requestOrder, sourceLine, teamLine, waitingOf } from "./tasks";
+import {
+  boardColumns, buildSources, closePlan, closeText, dayOf, handoverText, percentOf, requestOrder, sourceLine, teamLine, waitingOf,
+} from "./tasks";
 
 const video = (id: string, mode: string, created = "2026-10-01T10:00:00Z") =>
   ({ id, mode, file_name: `${id}.mp4`, created_at: created, segments: [] }) as never;
@@ -14,24 +16,21 @@ const card = (id: string, status: string, o: Partial<TaskLight> = {}) => ({
 const stats = (c: Partial<TaskCounts>) => ({ counts: counts(c) }) as TaskStats;
 
 describe("источники таски", () => {
-  it("закрытая разметка ролика даёт свой блок с кадрами агента", () => {
+  it("кадров размечаемого ролика блоком нет — в таске они правятся только в ролике", () => {
     const task = {
-      videos: [video("v1", "annotate"), video("v2", "annotate")],
-      sources: { v1: { total: 16, frames: 16, first_at: null } },
+      videos: [video("v1", "annotate")],
+      sources: { v1: { total: 16, frames: 16, first_at: null }, files: { total: 2, frames: 2, first_at: null } },
     } as unknown as TaskDetail;
-    const blocks = buildSources(task, { v1: { new: 16, agent: 16 } });
-    expect(blocks.map((b) => b.key)).toEqual(["v1"]);
-    expect(blocks[0]).toMatchObject({ kind: "annotate", total: 16, known: true, title: "Из разметки «v1.mp4»" });
+    expect(buildSources(task, { v1: { new: 16 }, files: { new: 2 } }).map((b) => b.key)).toEqual(["files"]);
   });
 
   it("блоки встают по лёгкой части, числа — когда придут", () => {
     const task = {
-      videos: [video("v1", "annotate")],
-      sources: { v1: { total: 16, frames: 15, first_at: null }, files: { total: 2, frames: 0, first_at: "2026-09-01T00:00:00Z" } },
+      videos: [],
+      sources: { files: { total: 2, frames: 0, first_at: "2026-09-01T00:00:00Z" } },
     } as unknown as TaskDetail;
     // Блок из одного брака остаётся; число кадров — без брака и сразу
-    const blocks = buildSources(task, null);
-    expect(blocks.map((b) => [b.key, b.known, b.total])).toEqual([["files", false, 0], ["v1", false, 15]]);
+    expect(buildSources(task, null).map((b) => [b.key, b.known, b.total])).toEqual([["files", false, 0]]);
   });
 
   it("ролики на нарезку — один блок с суммой, даже ненарезанные", () => {
@@ -61,6 +60,19 @@ describe("закрытие", () => {
       "4 размеченных кадра уйдут в датасет «Ш-12».",
       "Будут удалены 6 черновых кадров и исходное видео — это необратимо.",
     ]);
+  });
+});
+
+describe("итог сдачи", () => {
+  it("что ушло, что обновилось, что оставлено и что ждёт — одной строкой", () => {
+    expect(handoverText({ accepted: 12, dataset: "Ш-12", created: 10, updated: 30, removed: 2, kept_edited: 1, waiting: 1, unchecked: 2 }))
+      .toBe("В датасет «Ш-12» ушло 12 кадров. Кадры роликов в датасете: обновлено 30, убрано 2. "
+        + "1 кадр правили в датасете — оставлен как есть. 3 кадра ждут проверки агента — в датасет не ушли.");
+    // Повторная сдача без новых кадров — не «принимать нечего»: обновления тоже итог
+    expect(handoverText({ accepted: 0, updated: 3 })).toBe("Кадры роликов в датасете: обновлено 3.");
+    expect(handoverText({ accepted: 0 })).toBe("Размеченных кадров пока нет — принимать нечего.");
+    expect(handoverText({ accepted: 2, removed_images: 5, removed_videos: 1 }))
+      .toBe("В датасет ушло 2 кадра. Удалено 5 черновых кадров.");
   });
 });
 

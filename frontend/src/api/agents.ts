@@ -88,7 +88,6 @@ export interface TaskVideoRow {
   id: string;
   file_name: string;
   mode: "cut" | "annotate";
-  closed: boolean;
   frames: number | null;
 }
 

@@ -159,6 +159,15 @@ def wait_job(api, job_id, timeout=180):
     raise AssertionError(f"Задача {job_id} не завершилась за {timeout} с")
 
 
+def hand_over(api, task_id, status="done", timeout=300):
+    """Сдача таски с роликами идёт фоном (решение 14.10.2026): ждём её, возвращаем итог работы."""
+    res = api.post(f"{BASE_URL}/api/tasks/{task_id}/status", json={"status": status})
+    assert res.status_code == 202, res.text
+    job = wait_job(api, res.json()["job_id"], timeout)
+    assert job["status"] == "done", job.get("error")
+    return job
+
+
 def clip_url(task_id, video_id):
     return f"{BASE_URL}/api/tasks/{task_id}/videos/{video_id}"
 
@@ -224,7 +233,7 @@ def assets_of(db, video_id):
 
 
 __all__ = [
-    "BASE_URL", "wait_job", "wait_clip", "clip_url", "jobs_of", "assets_of", "tag",
+    "BASE_URL", "wait_job", "hand_over", "wait_clip", "clip_url", "jobs_of", "assets_of", "tag",
 ]
 
 

@@ -11,14 +11,15 @@ import type { Fresh } from "./useTaskBoard";
 interface Snapshot {
   task: TaskDetail;
   numbers: TaskNumbers | null;
-  /** Сводка открытого ролика на разметку; null — в таску от него ничего не уйдёт. */
+  /** Сводка ролика на разметку; null — при сдаче от него ничего не уйдёт. */
   pending: Record<string, PendingVideo | null>;
 }
 
 export interface PageFresh { numbers: Fresh; videos: Record<string, Fresh> }
 
-/** Ролики, чья разметка ещё не стала кадрами: у них есть сводка. */
-export const openVideos = (t: TaskDetail) => t.videos.filter((v) => v.mode === "annotate" && !v.annotation_closed_at);
+/** Ролики, чья разметка уйдёт при сдаче: размечаемые, пока таска не сдана. У них есть сводка. */
+export const openVideos = (t: TaskDetail) =>
+  (["queued", "in_progress", "updating"].includes(t.status) ? t.videos.filter((v) => v.mode === "annotate") : []);
 
 export function useTaskPage(taskId: string, me: string) {
   const key = `${me}:task:${taskId}`;
@@ -69,7 +70,7 @@ export function useTaskPage(taskId: string, me: string) {
     }
     if (r !== round.current) return;
     setFresh((f) => ({ ...f, numbers: "ok" }));
-    // Сводки закрытых и убранных роликов больше не нужны
+    // Сводки сданных и убранных роликов больше не нужны
     const keep = new Set(open.map((v) => v.id));
     const cur = snapRef.current!;
     put({ ...cur, pending: Object.fromEntries(Object.entries(cur.pending).filter(([id]) => keep.has(id))) });
@@ -122,7 +123,7 @@ export function useTaskPage(taskId: string, me: string) {
     if (prev) put({ ...prev, task: fn(prev.task) });
   }, [put]);
 
-  /** Сводки всех открытых роликов — свежие, для решения «сдать» или «закрыть», а не из кеша. */
+  /** Сводки всех роликов — свежие, для решения «сдать» или «закрыть», а не из кеша. */
   const pendingNow = useCallback(async (): Promise<PendingVideo[]> => {
     const t = snapRef.current?.task;
     if (!t) return [];

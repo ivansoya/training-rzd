@@ -59,6 +59,16 @@ export function describeTaskEvent(kind: string, payload: Record<string, unknown>
           <b>{count(n("frames"), "кадр", "кадра", "кадров")}</b> из {p.file}, участков: {p.segments}
         </>
       );
+    case "videos_handed":
+      return (
+        <>
+          Сданы ролики: новых кадров <b>{n("created")}</b>, обновлено <b>{n("updated")}</b>
+          {n("removed") ? `, убрано ${n("removed")}` : ""}
+          {n("kept_edited") ? `, правленых в датасете оставлено ${n("kept_edited")}` : ""}
+          {n("waiting") + n("unchecked") ? `, ждут проверки агента ${n("waiting") + n("unchecked")}` : ""}
+        </>
+      );
+    // Ручное закрытие разметки убрано 14.10.2026; события остались в истории старых тасок
     case "video_annotation_closed":
       return (
         <>

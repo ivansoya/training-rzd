@@ -386,18 +386,9 @@ def _run_view(db, run):
     }
 
 
-def _frame_sources(db, task):
-    """Блоки кадров таски: файлы, нарезка и кадры каждого закрытого размечаемого ролика."""
-    own = db.execute(
-        select(TaskVideo.id).where(TaskVideo.task_id == task.id, TaskVideo.mode == "annotate",
-                                   TaskVideo.id.in_(select(Image.source_video_id).where(Image.task_id == task.id)))
-    ).scalars().all()
-    return [*task_frames.SOURCES, *(str(v) for v in own)]
-
-
 def _source_counts(db, task):
     out = {}
-    for source in _frame_sources(db, task):
+    for source in task_frames.SOURCES:
         clause = task_frames.source_clause(task.id, source)
         base = select(func.count(Image.id)).where(Image.task_id == task.id, clause)
         out[source] = {
@@ -497,7 +488,6 @@ def run_context(task_id):
         ).scalars().all()
         videos = [
             {"id": str(v.id), "file_name": v.file_name, "mode": v.mode,
-             "closed": v.annotation_closed_at is not None,
              "frames": v.frame_count or (round(v.duration_ms / 1000 * v.fps) if v.duration_ms and v.fps else None)}
             for v in db.execute(
                 select(TaskVideo).where(TaskVideo.task_id == task.id).order_by(TaskVideo.created_at)
@@ -540,24 +530,23 @@ def start_agent_run(task_id):
         mode = data.get("mode") or "frames"
         if mode not in ("frames", "annotate", "scout"):
             return jsonify({"error": "Неизвестный режим прогона."}), 400
-        known = _frame_sources(db, task)
-        sources = [s for s in data.get("sources") or [] if s in known]
+        # Кадры размечаемых роликов блоком не бывают: в таске они правятся только в ролике.
+        sources = [s for s in data.get("sources") or [] if s in task_frames.SOURCES]
         if mode == "frames" and not sources:
             return jsonify({"error": "Выберите, что размечать."}), 400
         videos = []
         if mode != "frames":
-            # Разведка смотрит ролики обоих режимов; разметка — только
-            # размечаемые и ещё не закрытые: у закрытого кадры уже в таске.
+            # Разведка смотрит ролики обоих режимов; разметка — только размечаемые.
             for vid in data.get("videos") or []:
                 video = db.get(TaskVideo, _uuid(vid))
                 if video is None or video.task_id != task.id:
                     continue
-                if mode == "annotate" and (video.mode != "annotate" or video.annotation_closed_at):
+                if mode == "annotate" and video.mode != "annotate":
                     continue
                 videos.append(str(video.id))
             if not videos:
                 return jsonify({"error": "Выберите ролики." if mode == "scout" else
-                                "Выберите размечаемые ролики с незакрытой разметкой."}), 400
+                                "Выберите размечаемые ролики."}), 400
         try:
             step = max(1, min(10000, int(data.get("step", agent_graph.VIDEO_STEP))))
             gap = max(0.0, min(60.0, float(data.get("gap") if data.get("gap") is not None
@@ -966,8 +955,6 @@ def apply_agent(task_id):
             video = db.get(TaskVideo, _uuid(data.get("video_id")))
             if video is None or video.task_id != task.id or video.mode != "annotate":
                 return jsonify({"error": "Ролик не найден в таске."}), 404
-            if video.annotation_closed_at is not None:
-                return jsonify({"error": "Разметка ролика закрыта."}), 409
             try:
                 frame_no = int(data.get("frame_no"))
             except (TypeError, ValueError):
@@ -999,7 +986,7 @@ def apply_agent(task_id):
         try:
             put = agent_runner._write_video(db, owner, video, target["frame"], found, mapping)
         except agent_runner.VideoClosed:
-            return jsonify({"error": "Разметку ролика закрыли — агенту писать некуда."}), 409
+            return jsonify({"error": "Таска сдаётся или сдана — агенту писать некуда."}), 409
         return jsonify({"put": put, "found": len(found), "ms": row.result.get("ms"),
                         "device": row.result.get("device")})
     finally:

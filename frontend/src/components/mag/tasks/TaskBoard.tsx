@@ -6,6 +6,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { getTaskStats, setTaskStatus } from "../../../auth/api";
 import type { TaskLight, TaskStats, TaskStatus } from "../../../auth/api";
 import { cacheTime } from "../../../api/cache";
+import { pollJob } from "../../../api/jobs";
+import type { StatusResult } from "../../../auth/api";
 import { Avatars, Badge, Button, Dot, Empty, Icon, Input, Notice, PageHeader, Seg, StackBar, cx } from "../../../ui";
 import { useAuth } from "../../auth/AuthGate";
 import { ago, count, ru } from "../../ru";
@@ -13,7 +15,8 @@ import { useProject } from "../ProjectShell";
 import { useConfirm } from "./Confirm";
 import { CreateTaskModal } from "./CreateTaskModal";
 import {
-  BOARD, STATES, STATUS, boardColumns, boxedRecently, closePlan, closeText, sourceLine, stateParts, statusNote, teamLine, waitingOf,
+  BOARD, STATES, STATUS, boardColumns, boxedRecently, closePlan, closeText, handoverText, inDataset, sourceLine, stateParts, statusNote,
+  teamLine, waitingOf,
 } from "./tasks";
 import { look, useTaskBoard } from "./useTaskBoard";
 import type { Fresh } from "./useTaskBoard";
@@ -83,11 +86,11 @@ export default function TaskBoard() {
       });
       if (!ok) return;
     }
-    if (to === "done" && s && s.pending_frames > 0) {
+    if (to === "done" && s?.pending_unchecked) {
       const ok = await confirm({
-        title: "Сдать с незакрытыми роликами?",
-        desc: `${count(s.pending_frames, "кадр", "кадра", "кадров")} из роликов с незакрытой разметкой в датасет не уйдут.`,
-        ok: "Сдать всё равно", icon: "tick",
+        title: "Сдать с непроверенным агента?",
+        desc: `${count(s.pending_unchecked, "кадр", "кадра", "кадров")} из роликов с непроверенной разметкой агента в датасет не уйдут — останутся в ролике до проверки.`,
+        ok: "Сдать", icon: "tick",
       });
       if (!ok) return;
     }
@@ -97,8 +100,16 @@ export default function TaskBoard() {
     setLanded(t.id);
     try {
       const res = await setTaskStatus(t.id, to);
-      if (res.accepted) setNotice(`«${t.name}»: в датасет «${res.dataset}» ушло ${count(res.accepted, "кадр", "кадра", "кадров")}.`);
-      else if (to === "closed" && res.removed_images) setNotice(`«${t.name}» закрыта, черновых кадров удалено: ${ru(res.removed_images)}.`);
+      if (res.job_id) {
+        // Сдача с роликами идёт фоном: карточка стоит «сдаётся», пока работа не кончится.
+        // Своё живое событие доска не слушает — конец ловим опросом.
+        setNotice(`«${t.name}» сдаётся — кадры роликов уходят в датасет.`);
+        void pollJob<StatusResult>(res.job_id, () => {})
+          .then((r) => setNotice(`«${t.name}»: ${handoverText(r)}`), (e) => setError(`«${t.name}»: ${(e as Error).message}`))
+          .finally(() => void board.refresh([t.id]));
+      } else if (to === "done" || to === "closed") {
+        setNotice(`«${t.name}»: ${handoverText(res)}`);
+      }
     } catch (e) {
       setError(`«${t.name}»: ${(e as Error).message}`);
     }
@@ -211,7 +222,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
         <span className={cx(zone, "one")}>
           {c ? (
             <span className="t-xs t-muted">
-              {c.accepted ? `${count(c.accepted, "кадр", "кадра", "кадров")} в датасете` : "в датасет ничего не ушло"} · {ago(t.status_at)}
+              {inDataset(c) ? `${count(inDataset(c), "кадр", "кадра", "кадров")} в датасете` : "в датасет ничего не ушло"} · {ago(t.status_at)}
             </span>
           ) : <i className="ui-sk pill" style={{ width: 150 }} />}
         </span>
@@ -250,7 +261,8 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
             ) : <span className="t-xs t-faint">Кадров пока нет</span>}
             <span className="tb-badges">
               {(c.agent || 0) > 0 && <Badge tone="var(--agent-fg)" icon="bot">{ru(c.agent!)} от агента</Badge>}
-              {s!.pending_frames > 0 && <Badge tone="var(--st-skip)" icon="film">{ru(s!.pending_frames)} ждут закрытия</Badge>}
+              {s!.handover && <Badge tone="var(--c1)" live>сдаётся</Badge>}
+              {s!.pending_frames > 0 && <Badge tone="var(--st-skip)" icon="film">{ru(s!.pending_frames)} уйдут при сдаче</Badge>}
             </span>
           </>
         )}

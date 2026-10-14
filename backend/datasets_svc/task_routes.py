@@ -46,6 +46,7 @@ from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
 from datasets_svc import upload, video_busy, video_index
 from common.video_frames import FrameClock
+from common import video_tracks as tracklib
 from datasets_svc import video_queue as queue
 
 bp = Blueprint("tasks", __name__)
@@ -173,12 +174,24 @@ STATE_REFUSAL = {
 
 
 def _refusal(task, user, role, what="edit"):
-    """None, если можно; иначе ответ: 403 — не ваша таска, 409 — не то состояние."""
+    """None, если можно; иначе ответ: 403 — не ваша таска, 409 — не то состояние или идёт сдача."""
+    handing = _handing(task)
+    if handing:
+        return handing
     if _can(task, user, role, what):
         return None
     if task.status in task_rights.WORK or (what == "fill" and task.status == "queued"):
         return jsonify({"error": "Это не ваша таска.", "code": "not_yours"}), 403
     return jsonify({"error": STATE_REFUSAL[task.status], "code": f"task_{task.status}"}), 409
+
+
+def _handing(task):
+    """409, пока таска сдаётся: кадры роликов достаются фоном, и правка ушла бы мимо сдачи."""
+    busy = video_busy.current(video_busy.task_key(task.id))
+    if busy is None:
+        return None
+    return jsonify({"error": "Таска сдаётся — дождитесь конца.", "code": "task_handover",
+                    "job_id": busy["job_id"]}), 409
 
 
 def _rights(task, user, role):
@@ -202,21 +215,22 @@ def _log(db, task, user, kind, **payload):
 
 
 def _counts(db, task_id):
+    """Счётчики вкладки «Кадры». Кадры размечаемых роликов в них не входят: в таске они
+    правятся только в ролике (решение 14.10.2026); сколько их в датасете — `video_accepted`."""
+    frames = (Image.task_id == task_id, ~task_frames.video_frame())
     rows = dict(db.execute(
         select(Image.task_status, func.count(Image.id))
-        .where(Image.task_id == task_id)
+        .where(*frames)
         .group_by(Image.task_status)
     ).all())
-    accepted = db.execute(
-        select(func.count(Image.id)).where(
-            Image.task_id == task_id, Image.dataset_id.isnot(None)
-        )
-    ).scalar_one()
+    accepted, video_accepted = db.execute(
+        select(func.count(Image.id).filter(~task_frames.video_frame()),
+               func.count(Image.id).filter(task_frames.video_frame()))
+        .where(Image.task_id == task_id, Image.dataset_id.isnot(None))
+    ).one()
     deleted = rows.get("deleted", 0)
     agent = db.execute(
-        select(func.count(Image.id)).where(
-            Image.task_id == task_id, task_frames.agent_pending()
-        )
+        select(func.count(Image.id)).where(*frames, task_frames.agent_pending())
     ).scalar_one()
     # Забракованные не в общем числе: иначе прогресс не дойдёт до конца никогда.
     return {
@@ -229,6 +243,7 @@ def _counts(db, task_id):
         "empty": rows.get("empty", 0),
         "deleted": deleted,
         "accepted": accepted,
+        "video_accepted": video_accepted,
     }
 
 
@@ -245,28 +260,28 @@ def _status_at(db, task):
 
 
 def _board_extra(db, task):
-    """Сводка для карточки доски: откуда кадры и что ждёт закрытия ролика.
+    """Сводка для карточки доски: откуда кадры и сколько кадров роликов уйдёт при сдаче.
     Когда трогали — в лёгком списке: по нему доска сортирует, и карточки не прыгают."""
     videos = db.execute(
-        select(TaskVideo.mode, TaskVideo.segments, TaskVideo.annotation_closed_at)
-        .where(TaskVideo.task_id == task.id)
+        select(TaskVideo.mode, TaskVideo.segments).where(TaskVideo.task_id == task.id)
     ).all()
     files = db.execute(
         select(func.count(Image.id)).where(
             Image.task_id == task.id, Image.source_video_id.is_(None),
             Image.task_status != "deleted")
     ).scalar_one()
-    pending = 0
-    if any(m == "annotate" and closed is None for m, _, closed in videos):
-        pending = sum(p.get("frames", 0) for p in materialize.pending_summary(db, task))
+    rows = (materialize.pending_summary(db, task)
+            if task.status in materialize.WORKING and any(m == "annotate" for m, _ in videos) else [])
     return {
         "sources": {
             "files": files,
-            "cut": sum(1 for m, _, _ in videos if m == "cut"),
-            "uncut": sum(1 for m, segs, _ in videos if m == "cut" and not segs),
-            "annotate": sum(1 for m, _, _ in videos if m == "annotate"),
+            "cut": sum(1 for m, _ in videos if m == "cut"),
+            "uncut": sum(1 for m, segs in videos if m == "cut" and not segs),
+            "annotate": sum(1 for m, _ in videos if m == "annotate"),
         },
-        "pending_frames": pending,
+        "pending_frames": sum(p.get("frames", 0) for p in rows),
+        "pending_unchecked": sum(p.get("unchecked", 0) for p in rows),
+        "handover": (video_busy.current(video_busy.task_key(task.id)) or {}).get("job_id"),
     }
 
 
@@ -297,6 +312,7 @@ def _task_json(db, task, user, role, with_counts=True):
         "created_at": task.created_at.isoformat(),
         "created_by": author.display_name if author else None,
         "status_at": _status_at(db, task),
+        "handover": (video_busy.current(video_busy.task_key(task.id)) or {}).get("job_id"),
     }
     if with_counts:
         data["counts"] = _counts(db, task.id)
@@ -460,13 +476,14 @@ def get_task(task_id):
             select(TaskVideo).where(TaskVideo.task_id == task.id)
             .order_by(TaskVideo.created_at)
         ).scalars().all()
-        # Сколько кадров дал каждый ролик и сколько загружено файлами.
-        per_video = dict(db.execute(
-            select(Image.source_video_id, func.count(Image.id))
+        # Сколько кадров дал каждый ролик и сколько из них в датасете.
+        per_video = {vid: (n, a) for vid, n, a in db.execute(
+            select(Image.source_video_id, func.count(Image.id),
+                   func.count(Image.id).filter(Image.dataset_id.isnot(None)))
             .where(Image.task_id == task.id, Image.source_video_id.isnot(None),
                    Image.task_status != "deleted")
             .group_by(Image.source_video_id)
-        ).all())
+        ).all()}
         # Сколько объектов ведётся на каждом размечаемом ролике: в списке
         # источников у нарезки счётчик кадров, а у разметки — счётчик треков.
         per_video_tracks = dict(db.execute(
@@ -490,11 +507,9 @@ def get_task(task_id):
                 "mode": v.mode,
                 "frame_count": v.frame_count,
                 "segments": v.segments or [],
-                "frames": per_video.get(v.id, 0),
+                "frames": per_video.get(v.id, (0, 0))[0],
+                "accepted": per_video.get(v.id, (0, 0))[1],
                 "tracks": per_video_tracks.get(v.id, 0),
-                "annotation_closed_at": (
-                    v.annotation_closed_at.isoformat() if v.annotation_closed_at else None
-                ),
                 "created_at": v.created_at.isoformat(),
             }
             for v in videos
@@ -508,7 +523,7 @@ def get_task(task_id):
             for source_id, total, frames, first in db.execute(
                 select(Image.source_video_id, func.count(Image.id),
                        func.count(Image.id).filter(Image.task_status != "deleted"), func.min(Image.created_at))
-                .where(Image.task_id == task.id)
+                .where(Image.task_id == task.id, ~task_frames.video_frame())
                 .group_by(Image.source_video_id)
             ).all()
         }
@@ -540,7 +555,7 @@ def task_counts(task_id):
         # сильнее, чем больше таска.
         rows = db.execute(
             select(Image.source_video_id, Image.task_status, func.count(Image.id))
-            .where(Image.task_id == task.id)
+            .where(Image.task_id == task.id, ~task_frames.video_frame())
             .group_by(Image.source_video_id, Image.task_status)
         ).all()
         buckets = {}
@@ -552,7 +567,7 @@ def task_counts(task_id):
             bucket[status] = bucket.get(status, 0) + count
         accepted = db.execute(
             select(Image.source_video_id, func.count(Image.id))
-            .where(Image.task_id == task.id, Image.dataset_id.isnot(None))
+            .where(Image.task_id == task.id, Image.dataset_id.isnot(None), ~task_frames.video_frame())
             .group_by(Image.source_video_id)
         ).all()
         for source_id, count in accepted:
@@ -560,7 +575,7 @@ def task_counts(task_id):
             buckets.setdefault(key, {})["accepted"] = count
         agent_rows = db.execute(
             select(Image.source_video_id, func.count(Image.id))
-            .where(Image.task_id == task.id, task_frames.agent_pending())
+            .where(Image.task_id == task.id, task_frames.agent_pending(), ~task_frames.video_frame())
             .group_by(Image.source_video_id)
         ).all()
         for source_id, count in agent_rows:
@@ -574,7 +589,7 @@ def task_counts(task_id):
                    func.count(Annotation.id))
             .join(Annotation, Annotation.class_id == LabelClass.id)
             .join(Image, Image.id == Annotation.image_id)
-            .where(Image.task_id == task.id, Image.task_status != "deleted")
+            .where(Image.task_id == task.id, Image.task_status != "deleted", ~task_frames.video_frame())
             .group_by(LabelClass.id)
             .order_by(func.count(Annotation.id).desc())
         ).all()
@@ -589,9 +604,8 @@ def task_counts(task_id):
 
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/pending")
 def video_pending(task_id, video_id):
-    """Сводка незакрытой разметки одного ролика; null — в таску от него ничего не уйдёт.
-    Работа по незакрытому ролику ещё не стала кадрами и невидима в счётчиках — без сводки
-    прогресс врал бы, а сдача молча теряла бы разметку целого ролика."""
+    """Что уйдёт из ролика при сдаче; null — ничего (или таска уже сдана).
+    Работа по ролику до сдачи не кадры и невидима в счётчиках — без сводки прогресс врал бы."""
     db, task, project, user, role, err = _resolve_task(task_id)
     if err:
         return err
@@ -599,7 +613,7 @@ def video_pending(task_id, video_id):
         video = db.get(TaskVideo, _uuid_or_none(video_id))
         if video is None or video.task_id != task.id:
             return jsonify({"error": "Ролик не найден в таске."}), 404
-        open_ = video.mode == "annotate" and video.annotation_closed_at is None
+        open_ = video.mode == "annotate" and task.status in materialize.WORKING
         row = materialize.pending_row(db, video, materialize.class_look(db, task.project_id)) if open_ else None
         return jsonify({"pending": row})
     finally:
@@ -713,31 +727,119 @@ def set_status(task_id):
                 return jsonify({"error": "Таску назначили другим — взять её могут они."}), 403
             return jsonify({"error": "Это не ваша таска."}), 403
         # На «Готово» ничего не должно меняться; на очереди нарезка не мешает — там готовят материал.
-        blocked = (_agent_running(db, task) if target in ("done", "queued") else None)             or (_video_busy(db, task) if target == "done" else None)
+        blocked = _handing(task) \
+            or (_agent_running(db, task) if target in ("done", "queued") else None) \
+            or (_video_busy(db, task) if target == "done" else None) \
+            or (_close_blockers(db, task) if target == "closed" else None)
         if blocked:
             return blocked
+        # Кадры роликов рождаются сдачей: «Готово» и «Закрыто» из работы идут фоном.
+        if target in ("done", "closed") and task.status != "done":
+            videos = materialize.annotate_videos(db, task)
+            if videos:
+                return _start_handover(db, task, project, user, target, videos)
 
-        result = {}
+        result, dropped = {}, []
         if target == "done":
             result = _accept(db, task, user)
         elif target == "closed":
-            blocked = _close_blockers(db, task)
-            if blocked:
-                return blocked
             result = _close(db, task, user)
         elif task_rights.joins_on_take(task.status, target, team):
             task.assignees.append(user)
             _log(db, task, user, "status", status=target, joined=user.display_name)
         else:
+            if task.status == "done":
+                # Обратно к разметке: черновые кадры роликов уходят, их рамки и так в ролике.
+                dropped = materialize.drop_drafts(db, task)
             _log(db, task, user, "status", status=target)
 
         task.status = target
         db.commit()
+        materialize.drop_frame_files(task.project_id, task.id, dropped)
         _ping(db, task.id, task.project_id, user, s=target)
         payload = _task_json(db, task, user, role)
         payload.update(result)
         return jsonify(payload)
     finally:
+        db.close()
+
+
+def _start_handover(db, task, project, user, target, videos):
+    """«Готово»/«Закрыто» таски с роликами: кадры достаются фоном, состояние — только после успеха.
+    Объект, у которого план не считается, кадров не даст — отказ до начала, с его именем."""
+    by_class = materialize.class_look(db, task.project_id)
+    total = 0
+    for video in videos:
+        row = materialize.pending_row(db, video, by_class)
+        if row and row.get("error"):
+            bad = next((o for o in row["objects"] if o["error"]), None)
+            what = (f"объект «{bad['class_name'] or 'без класса'}» с кадра {bad['start']}: {bad['error']}"
+                    if bad else row["error"])
+            return jsonify({"error": f"Ролик «{video.file_name}», {what}", "code": "video_plan",
+                            "video_id": str(video.id)}), 409
+        total += row["frames"] if row else 0
+
+    key = video_busy.task_key(task.id)
+    slot = video_busy.take(key, "handover")
+    if slot is None:
+        return _handing(task)
+    taken = []
+    for video in videos:
+        if video_busy.take(video.id, "handover") is None:
+            for vid in [key, *taken]:
+                video_busy.release(vid)
+            return video_busy.refusal(video.id)
+        taken.append(video.id)
+    slot["job_id"] = jobs.create("task-handover", total=total, message="Достаю кадры роликов",
+                                 project_id=project.id, owner=user.id)
+    threading.Thread(target=_run_handover, args=(slot["job_id"], task.id, target, user.id, taken),
+                     daemon=True).start()
+    # notify коммитит: замок строки таски отпущен, сдача в потоке берёт его сама
+    _ping(db, task.id, task.project_id, user, s="handover")
+    return jsonify({"job_id": slot["job_id"], "frames": total}), 202
+
+
+HANDOVER_SUMS = ("created", "updated", "removed", "kept_edited", "waiting", "unchecked", "boxes", "empty")
+
+
+def _run_handover(job_id, task_id, target, user_id, video_ids):
+    """Сдача одной транзакцией: кадры роликов, приёмка, новое состояние. Упала — не записано ничего,
+    таска остаётся в работе."""
+    db = SessionLocal()
+    made, project_id = [], None
+    try:
+        task = db.execute(select(Task).where(Task.id == task_id).with_for_update()).scalar_one()
+        project_id = task.project_id
+        user = db.get(User, user_id)
+        sums, dropped, base = dict.fromkeys(HANDOVER_SUMS, 0), [], 0
+        for video in materialize.annotate_videos(db, task):
+            got = materialize.hand_over(db, task, video, user_id,
+                                        progress=lambda n, b=base: jobs.update(job_id, processed=b + n))
+            made += got["image_ids"]
+            dropped += got["dropped_ids"]
+            base += got["planned"]
+            for k in HANDOVER_SUMS:
+                sums[k] += got[k]
+        _log(db, task, user, "videos_handed", **sums)
+        result = _accept(db, task, user) if target == "done" else _close(db, task, user)
+        task.status = target
+        db.commit()
+        made = []
+        materialize.drop_frame_files(project_id, task_id, dropped)
+        jobs.update(job_id, status="done", processed=base, result={**result, **sums})
+        _ping(db, task_id, project_id, user, s=target)
+    except (videolib.VideoError, tracklib.TrackError) as exc:
+        db.rollback()
+        jobs.update(job_id, status="error", error=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        jobs.update(job_id, status="error", error=public_error(exc, "Сдать таску не удалось."))
+    finally:
+        # Упал коммит — строки откатились, а файлы новых кадров уже на томе.
+        if made:
+            materialize.drop_frame_files(project_id, task_id, made)
+        for vid in [video_busy.task_key(task_id), *video_ids]:
+            video_busy.release(vid)
         db.close()
 
 
@@ -840,7 +942,7 @@ def _video_busy(db, task):
     busy = [name for vid, name in vids if video_busy.current(vid)]
     if busy:
         return jsonify({
-            "error": f"По ролику «{busy[0]}» идёт нарезка или закрытие разметки — дождитесь конца.",
+            "error": f"По ролику «{busy[0]}» идёт нарезка — дождитесь конца.",
             "code": "video_busy",
         }), 409
     return None
@@ -858,28 +960,9 @@ def _agent_running(db, task):
 
 
 def _close_blockers(db, task):
-    """409, если закрытие уничтожило бы работу; иначе None.
-
-    Закрытие удаляет ролики вместе с их разметкой — треками, рамками, фоновыми
-    пометками. Незакрытая разметка ролика ещё не стала кадрами, и раньше она
-    пропадала молча. Выбросить её можно только явно — убрав ролик.
-    """
-    blocked = _video_busy(db, task) or _agent_running(db, task)
-    if blocked:
-        return blocked
-    # Ролик, который уже дал кадры и открыт заново, не держит: его кадры в таске.
-    open_work = [p for p in materialize.pending_summary(db, task)
-                 if not p["frames_in_task"] and (p["frames"] or p.get("error"))]
-    if open_work:
-        return jsonify({
-            "error": "Разметка роликов не закрыта — при закрытии таски она пропадёт: "
-                     + ", ".join(f"«{p['file_name']}»" for p in open_work)
-                     + ". Закройте их разметку или уберите ролики.",
-            "code": "videos_open",
-            "videos": [{"video_id": p["video_id"], "file_name": p["file_name"],
-                        "frames": p["frames"]} for p in open_work],
-        }), 409
-    return None
+    """409, если закрытие оборвало бы работу; иначе None. Разметку роликов закрытие
+    из работы сперва сдаёт (`_start_handover`) и только потом удаляет ролики."""
+    return _video_busy(db, task) or _agent_running(db, task)
 
 
 def _close(db, task, user):

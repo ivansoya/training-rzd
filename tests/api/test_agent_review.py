@@ -12,8 +12,7 @@ import json
 import pytest
 from PIL import Image as PilImage
 
-from conftest import BASE_URL, wait_job
-from test_video_annotation import close_annotation
+from conftest import BASE_URL, hand_over
 
 
 @pytest.fixture
@@ -151,14 +150,16 @@ def test_ролик_подтверждение_кадра(api, db, task, video, 
     assert len(after) == 1 and after[0]["pending"] is False
 
 
-def test_закрытие_ролика_переносит_флаг_на_кадры(api, db, task, video, label_class):
+def test_сдача_оставляет_непроверенное_черновиком_с_флагом(api, db, task, video, label_class):
     video_agent_box(db, video, label_class, 5)
     plan = api.post(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/materialize/preview").json()
     assert plan["unchecked"] == 1
-    wait_job(api, close_annotation(api, task, video).json()["job_id"])
-    rows = api.get(f"{BASE_URL}/api/tasks/{task['id']}/images?status=agent").json()["images"]
-    assert len(rows) == 1 and rows[0]["task_status"] == "new"
-    assert rows[0]["boxes"][0]["pending"] is True
+    assert hand_over(api, task["id"])["result"]["unchecked"] == 1
+    with db.cursor() as cur:
+        cur.execute("""SELECT i.task_status, i.dataset_id IS NULL, bool_and(a.pending)
+                       FROM images i JOIN annotations a ON a.image_id = i.id
+                       WHERE i.source_video_id = %s GROUP BY i.id""", (video["id"],))
+        assert cur.fetchall() == [("new", True, True)]
 
 
 def test_в_разметку_из_разведки(api, db, task, video, label_class):

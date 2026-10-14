@@ -14,14 +14,31 @@ from common.models import Annotation, Image, TaskVideo, VideoAnnotation, VideoTr
 SOURCES = ("files", "videos")
 
 
+def video_frame():
+    """Кадр размечаемого ролика. Рождается сдачей таски и в таске правится только в ролике,
+    поэтому во вкладку «Кадры» не входит (решение 14.10.2026). NOT EXISTS, а не NOT IN:
+    у кадра из файла ролика нет, и `NOT (NULL IN …)` выбросил бы его."""
+    return exists().where(TaskVideo.id == Image.source_video_id, TaskVideo.mode == "annotate")
+
+
+def rev_bump():
+    """Правка разметки мимо редактора, одинаковая для ролика и его кадра (перенос, удаление
+    класса): версия растёт, отметка сдачи — следом, иначе сдача сочла бы кадр правленым."""
+    return {
+        "annotations_rev": Image.annotations_rev + 1,
+        "handed_rev": case((Image.handed_rev == Image.annotations_rev, Image.handed_rev + 1),
+                           else_=Image.handed_rev),
+    }
+
+
 def source_clause(task_id, source):
-    """Условие на `Image` для блока, или None — «все кадры таски».
+    """Условие на `Image` для блока; без блока — все кадры вкладки «Кадры».
 
     «files» — загруженные файлами, «videos» — все нарезаемые ролики разом,
     иначе идентификатор одного ролика (uuid).
     """
     if not source:
-        return None
+        return ~video_frame()
     if source == "files":
         return Image.source_video_id.is_(None)
     if source == "videos":

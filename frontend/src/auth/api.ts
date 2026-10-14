@@ -824,6 +824,8 @@ export interface TaskCounts {
   empty: number;
   deleted: number;
   accepted: number;
+  /** Кадры размечаемых роликов в датасете: во вкладку «Кадры» они не входят, и счёт у них свой. */
+  video_accepted?: number;
   /** Часть «new»: кадры с рамками агента, которые ещё никто не принял. */
   agent?: number;
 }
@@ -861,6 +863,8 @@ export interface TaskSummary {
   /** С какого момента таска в нынешнем состоянии. */
   status_at: string;
   counts: TaskCounts;
+  /** Работа идущей сдачи (кадры роликов достаются фоном); пока она есть — таска только для просмотра. */
+  handover?: string | null;
 }
 
 /** Карточка доски без счётчиков — лёгкий список проекта, приходит сразу. */
@@ -876,8 +880,12 @@ export interface TaskLight extends Omit<TaskSummary, "counts" | "rights"> {
 export interface TaskStats {
   counts: TaskCounts;
   sources: { files: number; cut: number; uncut: number; annotate: number };
-  /** Кадров незакрытых роликов: в таске их ещё нет. */
+  /** Кадров роликов уйдёт при сдаче: до неё их в таске нет. */
   pending_frames: number;
+  /** Из них с непроверенным агента — в датасет не уйдут. */
+  pending_unchecked?: number;
+  /** Работа идущей сдачи; null — не сдаётся. */
+  handover?: string | null;
 }
 
 // План нарезки ролика, а не история: кадры таски приводятся к нему.
@@ -924,17 +932,16 @@ export interface TaskVideoItem {
   frames: number;
   /** Сколько объектов ведётся на размечаемом ролике. */
   tracks: number;
-  /** Когда разметку закрыли и она стала кадрами таски. null — ещё в работе. */
-  annotation_closed_at: string | null;
+  /** Сколько кадров ролика в датасете — с прошлых сдач. */
+  accepted: number;
   created_at: string;
 }
 
-/** Ролик, чья разметка ещё не стала кадрами: его работа невидима в счётчиках. */
-/** Один трек в сводке незакрытого ролика: как он ведётся и сколько даёт. */
+/** Один трек в сводке ролика: как он ведётся и сколько кадров даст при сдаче. */
 export interface PendingObject {
   class_index: number | null;
   /** Имя и цвет класса приходят с планом: в сводке таски классы считаются по
-   *  уже созданным аннотациям, а у незакрытого ролика их ещё нет. */
+   *  уже созданным аннотациям, а у ролика до сдачи их нет. */
   class_name: string | null;
   class_color: string | null;
   start: number;
@@ -945,14 +952,14 @@ export interface PendingObject {
   /** Сколько отрезков невидимости на этом треке. */
   hidden: number;
   frames: number;
-  /** Этот трек посчитать не вышло — он и мешает закрыть разметку. */
+  /** Этот трек посчитать не вышло — он и мешает сдать таску. */
   error: string | null;
 }
 
 export interface PendingVideo {
   video_id: string;
   file_name: string;
-  /** Всего кадров уйдёт в таску — вместе с фоновыми. */
+  /** Всего кадров уйдёт при сдаче — вместе с фоновыми. */
   frames: number;
   boxes: number;
   /** Сколько из `frames` уйдёт фоновыми примерами. */
@@ -961,11 +968,8 @@ export interface PendingVideo {
   /** Одиночная разметка: фигуры, живущие на своём кадре. */
   singles?: number;
   objects?: PendingObject[];
-  /** План целиком не считается: закрыть разметку не выйдет, пока не поправят. */
+  /** План целиком не считается: сдать таску не выйдет, пока не поправят. */
   error?: string;
-  /** Ролик открыт заново, а его прежние кадры ещё в таске: закрыть нельзя,
-   *  пока их не уберут. Тот же счёт, что у отказа в закрытии. */
-  frames_in_task?: number;
   /** Кадров уйдёт с непроверенной разметкой агента. */
   unchecked?: number;
 }
@@ -1103,15 +1107,30 @@ export async function getTaskNumbers(id: string): Promise<TaskNumbers> {
   return asJson(await fetch(`/api/tasks/${id}/counts`));
 }
 
-/** Сводка незакрытой разметки одного ролика; null — в таску от него ничего не уйдёт. */
+/** Что уйдёт из ролика при сдаче; null — ничего (или таска уже сдана). */
 export async function getVideoPending(taskId: string, videoId: string): Promise<PendingVideo | null> {
   return (await asJson<{ pending: PendingVideo | null }>(await fetch(`/api/tasks/${taskId}/videos/${videoId}/pending`))).pending;
 }
 
-export async function setTaskStatus(
-  id: string,
-  status: TaskStatus
-): Promise<TaskSummary & { accepted?: number; dataset?: string; removed_images?: number }> {
+/** Итог смены состояния. «Готово» и «Закрыто» с роликами идут фоном: тогда ответ — только `job_id`,
+ *  а итог (те же поля плюс счёт роликов) — в результате работы. */
+export interface StatusResult {
+  job_id?: string;
+  accepted?: number;
+  dataset?: string;
+  removed_images?: number;
+  removed_videos?: number;
+  /** Кадры роликов: новых, обновлено на месте, убрано, правленых в датасете оставлено. */
+  created?: number;
+  updated?: number;
+  removed?: number;
+  kept_edited?: number;
+  /** Ждут проверки агента: бывшие в датасете остались прежними, новые — черновиками. */
+  waiting?: number;
+  unchecked?: number;
+}
+
+export async function setTaskStatus(id: string, status: TaskStatus): Promise<StatusResult> {
   return asJson(await post(`tasks/${id}/status`, { status }));
 }
 
@@ -1561,30 +1580,6 @@ export interface MaterializePreview {
   updated_frames: number;
   first_frames: number[];
   error?: string;
-}
-
-/** Закрыть разметку ролика: план становится обычными кадрами таски. */
-export async function closeVideoAnnotation(
-  taskId: string,
-  videoId: string
-): Promise<{ job_id: string; frames: number }> {
-  return asJson(await post(`tasks/${taskId}/videos/${videoId}/close-annotation`));
-}
-
-export async function reopenVideoAnnotation(
-  taskId: string,
-  videoId: string
-): Promise<{ reopened: boolean }> {
-  return asJson(await post(`tasks/${taskId}/videos/${videoId}/reopen-annotation`));
-}
-
-/** Убрать кадры ролика из таски, чтобы разметить его заново. Принятые в
- *  датасет не трогаются — это данные проекта. */
-export async function dropVideoFrames(
-  taskId: string,
-  videoId: string
-): Promise<{ removed: number; kept_accepted: number }> {
-  return asJson(await del(`tasks/${taskId}/videos/${videoId}/frames`));
 }
 
 /** Где чистить: блоки кадров (как у прогона агента) и размечаемые ролики. */

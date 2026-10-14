@@ -174,7 +174,7 @@ export function AgentLine({ run }: { run?: RunView | null }) {
   );
 }
 
-/** Изображения или кадры из закрытой разметки ролика. */
+/** Изображения, загруженные файлами. */
 export function FramesCard({ block, look, editable, run, agent, onAnnotate, onReview }: {
   block: SourceBlock;
   /** Как рисовать числа блока: заготовка, бледное из кеша, переливание в пути. */
@@ -376,11 +376,15 @@ function classOf(classes: TaskClass[], o: PendingObject): { name: string; color:
     : { name: o.class_index === null ? "класс не задан" : `класс ${o.class_index}`, color: null };
 }
 
-/** Ролики на разметку: каждый со своей шкалой, объектами и закрытием. */
-export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code, tags, editable, fillable, busy, run, agent, onAdd, onOpen, onReview,
-  onClose, onReopen, onDropFrames, onDelete, onVideoTags, onTagCreated }: {
+/** Ролики на разметку: каждый со своей шкалой, объектами и тем, что уйдёт при сдаче. */
+export function AnnotateCard({ videos, working, handing, pending, fresh, at, classes, taskId, code, tags, editable, fillable, run, agent, onAdd, onOpen, onReview,
+  onDelete, onVideoTags, onTagCreated }: {
   videos: TaskVideoItem[];
-  /** Сводки открытых роликов по мере прихода; нет ключа — ещё в пути, null — закрывать нечего. */
+  /** Таска не сдана: разметка роликов ещё уйдёт при сдаче, и у них есть сводка. */
+  working: boolean;
+  /** Идёт сдача: кадры роликов уходят в датасет. */
+  handing: boolean;
+  /** Сводки роликов по мере прихода; нет ключа — ещё в пути, null — сдавать нечего. */
   pending: Record<string, PendingVideo | null>;
   fresh: Record<string, Fresh>;
   at: number | null;
@@ -388,83 +392,69 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
   taskId: string;
   code: string;
   tags: Tag[];
-  /** Работа над роликом: разметка, агент, закрытие разметки. */
+  /** Работа над роликом: разметка, агент. */
   editable: boolean;
   /** Источники: добавить, удалить, таги ролика — на очереди тоже. */
   fillable: boolean;
-  busy: boolean;
   run?: RunView | null;
   agent: AgentHooks;
   onAdd: () => void;
   onOpen: (v: TaskVideoItem) => void;
   /** Открыть ролик на первом кадре с непроверенным агента. */
   onReview: (v: TaskVideoItem) => void;
-  onClose: (v: TaskVideoItem) => void;
-  onReopen: (v: TaskVideoItem) => void;
-  onDropFrames: (v: TaskVideoItem) => void;
   onDelete: (v: TaskVideoItem) => void;
   onVideoTags: (v: TaskVideoItem, ids: string[]) => void;
   onTagCreated: (t: Tag) => void;
 }) {
-  const open = videos.filter((v) => !v.annotation_closed_at);
-  const unchecked = open.reduce((s, v) => s + (pending[v.id]?.unchecked || 0), 0);
+  const unchecked = videos.reduce((s, v) => s + (pending[v.id]?.unchecked || 0), 0);
   return (
     <Card className="tp-src" flush
       title={<><Icon name="film" />Ролики на разметку<Badge variant="secondary">{videos.length}</Badge></>}
-      desc="размечаются треками, кадрами становятся при закрытии разметки"
+      desc="размечаются треками, кадрами датасета становятся при сдаче таски"
       actions={<>
-        {editable && <AgentButton agent={agent} ask={{ mode: "annotate", videos: open.map((v) => v.id),
+        {editable && <AgentButton agent={agent} ask={{ mode: "annotate", videos: videos.map((v) => v.id),
           within: videos.map((v) => v.id), modes: ["annotate", "scout"] }} />}
         {fillable && <Button size="sm" icon="plus" onClick={onAdd}>Видео на разметку</Button>}
         {editable && <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label="Агент: ролики на разметку" step
-          actions={[annotateAction(agent, open, "Разметить все ролики"),
+          actions={[annotateAction(agent, videos, "Разметить все ролики"),
             scoutAction(agent, videos, "Разведать все ролики")]}
-          clear={clearOf(agent, { videos: open.map((v) => v.id) }, unchecked, open.length === 0 && "открытых роликов нет")} />}
+          clear={clearOf(agent, { videos: videos.map((v) => v.id) }, unchecked)} />}
       </>}>
       {run && <div className="tp-agent-w"><AgentLine run={run} /></div>}
       {videos.map((v) => {
-        const closed = v.annotation_closed_at !== null;
-        // У закрытого ролика сводки нет и не будет — ему ждать нечего
-        const known = closed || v.id in pending;
+        // У сданной таски сводки нет и не будет — ждать нечего
+        const known = !working || v.id in pending;
         const p = pending[v.id] ?? undefined;
         const l = lookOf(known ? true : undefined, fresh[v.id], at);
         const zone = cx(l.stale && "tp-stale", l.loading && "ui-shim");
-        const inTask = Math.max(v.frames, p?.frames_in_task ?? 0);
         return (
           <div key={v.id} className="tp-vid">
             <VideoStrip className="tp-poster big" taskId={taskId} videoId={v.id} />
             <div className="tp-vid-b">
               <div className="tp-vid-h">
                 <b className="t-ell" title={v.file_name}>{v.file_name}</b>
-                {closed ? <Badge tone="var(--st-done)" icon="lock">разметка закрыта</Badge>
-                  : <Badge tone="var(--c1)" live>размечается</Badge>}
+                {handing ? <Badge tone="var(--c1)" live>сдаётся</Badge>
+                  : working ? <Badge tone="var(--c1)" live>размечается</Badge>
+                  : <Badge tone="var(--st-done)" icon="tick">сдан</Badge>}
                 <span className="grow" />
-                {editable && !closed && !known && (
+                {editable && !known && (
                   <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled>Проверить <span className="ui-sk pill" style={{ width: 34 }} /></Button>
                 )}
-                {editable && !closed && !!p?.unchecked && (
+                {editable && !!p?.unchecked && (
                   <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled={!v.prepare?.ready}
                     onClick={() => onReview(v)} title="Кадры ролика с непроверенной разметкой агента">
                     Проверить <span className="ui-mono">{ru(p.unchecked)}</span>
                   </Button>
                 )}
-                {editable && !closed && (
-                  <Button variant="primary" size="sm" icon="lock" disabled={busy || !p || !!p.error} onClick={() => onClose(v)}
-                    title={!p ? "Размечать нечего — на ролике нет ни боксов, ни фоновых кадров" : p.error || "Превратить разметку в кадры таски"}>
-                    Закрыть разметку
-                  </Button>
-                )}
-                {editable && closed && <Button variant="ghost" size="sm" icon="unlock" disabled={busy} onClick={() => onReopen(v)}>Открыть заново</Button>}
-                <Button size="sm" icon={editable && !closed ? "edit" : "eye"} disabled={!v.prepare?.ready}
+                <Button size="sm" icon={editable ? "edit" : "eye"} disabled={!v.prepare?.ready}
                   title={v.prepare?.ready ? undefined : "Ролик ещё готовится"} onClick={() => onOpen(v)}>
-                  {editable && !closed ? "Размечать ролик" : "Смотреть"}
+                  {editable ? "Размечать ролик" : "Смотреть"}
                 </Button>
                 {(editable || fillable) && (
                   <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
-                    actions={editable ? [{ ...annotateAction(agent, closed ? [] : [v], "Разметить ролик"), off: closed ? "разметка ролика закрыта" : annotateAction(agent, [v], "").off },
-                      scoutAction(agent, [v], "Разведать ролик")] : []}
-                    clear={editable ? clearOf(agent, { videos: [v.id] }, p?.unchecked, closed && "разметка ролика закрыта") : undefined}
-                    deleteLabel="Удалить ролик и всё, что из него вышло" onDelete={fillable ? () => onDelete(v) : undefined} />
+                    actions={editable ? [annotateAction(agent, [v], "Разметить ролик"), scoutAction(agent, [v], "Разведать ролик")] : []}
+                    clear={editable ? clearOf(agent, { videos: [v.id] }, p?.unchecked) : undefined}
+                    deleteLabel="Удалить ролик и его разметку" onDelete={fillable ? () => onDelete(v) : undefined} />
                 )}
               </div>
               <span className="t-xs t-muted">
@@ -474,25 +464,21 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
               {known ? <span className={zone}><Rail parts={coverage(v, p?.objects)} tone="track" /></span>
                 : <i className={cx("ui-sk bar", l.loading && "ui-shim")} />}
               <div className="tp-vnums">
-                <span>{v.frames || known ? <b className={zone}>{ru(v.frames || p?.frames || 0)}</b> : <span className={cx("ui-sk pill", l.loading && "ui-shim")} style={{ width: 40, height: 13 }} />}
-                  {v.frames ? "кадров в таске" : "кадров уйдёт в таску"}</span>
+                {working && (
+                  <span>{known ? <b className={zone}>{ru(p?.frames || 0)}</b> : <span className={cx("ui-sk pill", l.loading && "ui-shim")} style={{ width: 40, height: 13 }} />}
+                    уйдёт при сдаче</span>
+                )}
+                <span><b>{ru(v.accepted)}</b>в датасете</span>
                 <span><b>{ru(v.tracks)}</b>объектов ведётся</span>
                 <span><b>{v.frame_count ? ru(v.frame_count) : "—"}</b>кадров в ролике</span>
               </div>
-              <TagPicker code={code} all={tags} value={v.tag_ids || []} disabled={!fillable || closed} compact
+              <TagPicker code={code} all={tags} value={v.tag_ids || []} disabled={!fillable} compact
                 placeholder="таг ролика" onChange={(ids) => onVideoTags(v, ids)} onCreated={onTagCreated} />
-              {editable && inTask > 0 && (
-                <p className="t-sm t-muted">
-                  У ролика {count(inTask, "кадр", "кадра", "кадров")} в таске. Чтобы разметить его заново,{" "}
-                  <button type="button" className="tp-link" disabled={busy} onClick={() => onDropFrames(v)}>уберите их</button>
-                  {" "}— принятые в проект останутся.
-                </p>
-              )}
-              {!closed && p?.error && !(editable && inTask > 0) && (
-                <p className="t-sm tp-bad"><b>Разметку не закрыть.</b> {p.error}</p>
+              {working && p?.error && (
+                <p className="t-sm tp-bad"><b>Таску не сдать.</b> {p.error}</p>
               )}
               {/* Строк в таблице — по числу треков из лёгкой части: заготовка той же высоты */}
-              {!closed && !known && v.tracks > 0 && (
+              {working && !known && v.tracks > 0 && (
                 <table className={cx("tp-mini", l.loading && "ui-shim")}>
                   <thead><tr><th>объект</th><th>кадры</th><th className="r">ключей</th><th>шаг</th><th className="r">уйдёт кадров</th></tr></thead>
                   <tbody>
@@ -502,7 +488,7 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
                   </tbody>
                 </table>
               )}
-              {!closed && p && (p.objects || []).length > 0 && (
+              {working && p && (p.objects || []).length > 0 && (
                 <table className={cx("tp-mini", zone)}>
                   <thead><tr><th>объект</th><th>кадры</th><th className="r">ключей</th><th>шаг</th><th className="r">уйдёт кадров</th></tr></thead>
                   <tbody>
@@ -523,7 +509,7 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
                 </table>
               )}
               {/* Сводка держит место под две строки: пришла короче — то, что ниже, не поднимается */}
-              {!closed && (
+              {working && (
                 <div className={cx("tp-vsum", zone)}>
                   {!known ? (
                     <><span className="ui-sk pill" style={{ width: "80%" }} /><span className="ui-sk pill" style={{ width: "45%" }} /></>
@@ -533,9 +519,9 @@ export function AnnotateCard({ videos, pending, fresh, at, classes, taskId, code
                       {plural(p.frames - p.empty, "кадре", "кадрах", "кадрах")}
                       {p.empty > 0 && `, ещё ${p.empty} ${plural(p.empty, "кадр отмечен фоновым", "кадра отмечено фоновыми", "кадров отмечено фоновыми")}`}
                       {(p.singles || 0) > 0 && `, одиночных фигур ${p.singles}`}
-                      . {count(p.frames, "кадр", "кадра", "кадров")} {plural(p.frames, "появится", "появятся", "появятся")} в таске, когда закроете разметку.
+                      . {count(p.frames, "кадр", "кадра", "кадров")} {plural(p.frames, "уйдёт", "уйдут", "уйдут")} в датасет при сдаче таски.
                     </p>
-                  ) : !p ? <p className="t-xs t-faint">Разметки пока нет — закрывать нечего.</p> : null}
+                  ) : !p ? <p className="t-xs t-faint">Разметки пока нет — сдавать нечего.</p> : null}
                 </div>
               )}
             </div>

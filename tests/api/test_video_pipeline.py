@@ -16,7 +16,7 @@ import time
 import av
 import pytest
 import sample
-from conftest import BASE_URL, assets_of, clip_url, jobs_of, wait_clip
+from conftest import BASE_URL, assets_of, clip_url, hand_over, jobs_of, wait_clip
 
 
 @pytest.fixture(scope="session")
@@ -246,9 +246,8 @@ def test_закрытие_таски_уносит_ступени_и_очеред
     wait_clip(api, tall["task_id"], tall["id"])
     assert assets_of(db, tall["id"]), "ступени не завелись — проверять нечего"
 
-    res = api.post(f"{BASE_URL}/api/tasks/{tall['task_id']}/status",
-                   json={"status": "closed"})
-    assert res.status_code == 200, res.text
+    # Таска с роликом на разметку закрывается сдачей — фоном (решение 14.10.2026)
+    assert hand_over(api, tall["task_id"], "closed")["result"]["removed_videos"] == 1
 
     assert assets_of(db, tall["id"]) == []
     assert jobs_of(db, tall["id"]) == []

@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  closeVideoAnnotation,
   createTrack,
   deleteTrack,
   deleteTrackKey,
@@ -14,7 +13,6 @@ import {
   moveTrackKey,
   previewMaterialize,
   putTrackKey,
-  reopenVideoAnnotation,
   saveFrameBoxes,
   takeScout,
   unmarkEmptyFrame,
@@ -36,8 +34,7 @@ import type {
 } from "../../auth/api";
 import { scoutStats } from "../../api/agents";
 import type { RunView, ScoutStats } from "../../api/agents";
-import { pollJob } from "../../api/jobs";
-import { Badge, Button, Notice, hasLayer } from "../../ui";
+import { Button, Notice, hasLayer } from "../../ui";
 import BoxCanvas, { fmtConf } from "./BoxCanvas";
 import { useLive } from "../../live/LiveProvider";
 import type { CanvasGhost, CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
@@ -178,7 +175,6 @@ export default function VideoAnnotator({
   readOnly,
   review = false,
   onClose,
-  onChanged,
   people,
 }: {
   code: string;
@@ -189,8 +185,6 @@ export default function VideoAnnotator({
   /** Открыт ради проверки агента: встать на первый кадр с непроверенным. */
   review?: boolean;
   onClose: () => void;
-  /** Разметка ролика закрыта или открыта заново — таске пора перечитаться. */
-  onChanged?: () => void;
   /** Участники проекта — имя соседа, чью правку подтянули. */
   people: TaskPerson[];
 }) {
@@ -251,8 +245,6 @@ export default function VideoAnnotator({
   const [scale, setScale] = useState(1);
   const [draft, setDraft] = useState<CanvasShape[] | null>(null);
   const [keysOpen, setKeysOpen] = useState(false);
-  const [closedAt, setClosedAt] = useState<string | null>(video.annotation_closed_at);
-  const [closing, setClosing] = useState<number | null>(null);
   const [agentOpen, setAgentOpen] = useState(false);
   const [agentRun, setAgentRun] = useState<RunView | null>(null);
   const agentTool = useAgentTool(taskId);
@@ -427,7 +419,7 @@ export default function VideoAnnotator({
   useEffect(() => {
     if (!skel || !skel.editable) return;
     const h = window.setTimeout(() => {
-      // Отказ плана — не «плана нет»: причину показываем на кнопке «Закрыть разметку».
+      // Отказ плана — не «плана нет»: причину показываем заметкой, иначе сдача споткнётся молча.
       previewMaterialize(taskId, video.id)
         .then((p) => { setPlan(p); setPlanError(p.error ?? null); })
         .catch((e) => { setPlan(null); setPlanError((e as Error).message); });
@@ -1315,60 +1307,6 @@ export default function VideoAnnotator({
     }));
   }, [items, boxes, frozen, auto, refine, editSingle]);
 
-  // --- закрытие разметки --------------------------------------------------- #
-  const finishAnnotation = useCallback(async () => {
-    if (!(await settle())) return;
-    let p: MaterializePreview;
-    try {
-      p = await previewMaterialize(taskId, video.id);
-    } catch (e) {
-      setPlanError(errorText(e));
-      return;
-    }
-    if (p.error) { setPlanError(p.error); return; }
-    const ok = await confirm({
-      title: "Закрыть разметку ролика?",
-      desc: "Разметка станет кадрами таски. Править ролик дальше можно, открыв разметку заново.",
-      lines: [
-        `${count(p.frames, "кадр", "кадра", "кадров")} ${plural(p.frames, "уйдёт", "уйдут", "уйдут")} в таску${p.empty ? `, из них ${p.empty} ${plural(p.empty, "фоновый", "фоновых", "фоновых")}` : ""}`,
-        `${count(p.boxes, "объект", "объекта", "объектов")} на них`,
-        ...(p.updated_frames ? [`${count(p.updated_frames, "кадр", "кадра", "кадров")} уже в таске — ${plural(p.updated_frames, "обновится", "обновятся", "обновятся")}`] : []),
-        ...(p.unchecked ? [`${count(p.unchecked, "кадр уйдёт", "кадра уйдут", "кадров уйдут")} с непроверенной разметкой агента — проверить можно и в редакторе кадров`] : []),
-      ],
-      ok: "Закрыть разметку", icon: "lock",
-    });
-    if (!ok) return;
-    stop();
-    setClosing(0);
-    try {
-      const { job_id } = await closeVideoAnnotation(taskId, video.id);
-      const made = await pollJob<{ created: number; boxes: number; empty: number }>(job_id, (j) => {
-        setClosing(j.total ? j.processed / j.total : 0);
-      });
-      setClosedAt(new Date().toISOString());
-      setNote(`Разметка закрыта: ${count(made.created, "кадр", "кадра", "кадров")} в таске` +
-        (made.empty ? `, из них ${made.empty} ${plural(made.empty, "фоновый", "фоновых", "фоновых")}.` : "."));
-      onChanged?.();
-      await load();
-    } catch (e) {
-      setError(errorText(e));
-    } finally {
-      setClosing(null);
-    }
-  }, [settle, taskId, video.id, confirm, stop, onChanged, load]);
-
-  const reopen = useCallback(async () => {
-    try {
-      await reopenVideoAnnotation(taskId, video.id);
-      setClosedAt(null);
-      setNote(null);
-      onChanged?.();
-      await load();
-    } catch (e) {
-      setError(errorText(e));
-    }
-  }, [taskId, video.id, onChanged, load]);
-
   // --- клавиши ------------------------------------------------------------- #
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1469,7 +1407,6 @@ export default function VideoAnnotator({
   const shownView = view ?? fullView(lastFrame);
   // Непроверенное агента — своей дорожкой «Агент», в «Одиночные» оно попадает после проверки
   const ticks = useMemo(() => singleTicks((data?.singles || []).filter((b) => !b.pending)), [data]);
-  const closed = closedAt !== null;
   const editable = !readOnly && !unplayable;
   const autoTitle = auto.state === "ready" ? undefined
     : auto.state === "error" ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}` : "Модель готовится…";
@@ -1516,7 +1453,6 @@ export default function VideoAnnotator({
         backLabel="К таске (Esc)"
         title={video.file_name}
         sub={<>{taskName} · <span className="ui-mono">{fmtTime(video.duration_ms || 0)}</span> · <span className="ui-mono">{ru(fps)}</span> к/с</>}
-        extra={closed ? <Badge tone="var(--st-done)" icon="lock">разметка закрыта</Badge> : undefined}
       >
         {clip.preparing && <PrepareNote clip={clip} />}
         {!clip.preparing && clip.loading && <span className="ve-prep"><i />Читаю ролик…</span>}
@@ -1526,23 +1462,11 @@ export default function VideoAnnotator({
           <Button variant="ghost" size="sm" icon="scan" kbd="R" aria-pressed={scoutOn} onClick={toggleScout}
             title={scoutOn ? "Вернуть треки на дорожки" : "Разведка агента по классам вместо треков"}>Разведка</Button>
         )}
-        {editable && !closed && (
+        {editable && (
           <Button variant="ghost" size="sm" icon="bot" className="is-agent" onClick={() => setAgentOpen(true)}
             title="Разметить этот ролик агентом: каждый N-й кадр, где не работал человек">Агент</Button>
         )}
         <Button variant="ghost" size="sm" icon="keyboard" kbd="?" onClick={() => setKeysOpen(true)}>Клавиши</Button>
-        {!readOnly && !closed && (
-          <Button variant="primary" size="sm" icon={planError ? "alert" : "lock"}
-            disabled={!data?.editable || closing !== null || !!planError || !plan || plan.frames === 0}
-            title={planError ? `Разметку не закрыть: ${planError}` : !plan || plan.frames === 0
-              ? "Закрывать нечего: на ролике нет ни объектов, ни фоновых кадров" : "Превратить разметку в кадры таски"}
-            onClick={() => void finishAnnotation()}>
-            {closing !== null ? `Закрываю… ${Math.round(closing * 100)} %` : "Закрыть разметку"}
-          </Button>
-        )}
-        {!readOnly && closed && (
-          <Button variant="outline" size="sm" icon="unlock" onClick={() => void reopen()}>Открыть заново</Button>
-        )}
       </EditorHead>
 
       {(problem || note || planError || agentRun) && (
@@ -1556,7 +1480,7 @@ export default function VideoAnnotator({
               )}
             </Notice>
           )}
-          {planError && !problem && <Notice tone="warn">Разметку не закрыть: {planError}</Notice>}
+          {planError && !problem && <Notice tone="warn">Таску не сдать: {planError}</Notice>}
           {note && <Notice tone="ok" onClose={() => setNote(null)}>{note}</Notice>}
           {agentRun && <AgentRunBar taskId={taskId} run={agentRun} onRun={setAgentRun} onFinished={() => load("all")} />}
         </div>

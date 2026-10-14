@@ -194,7 +194,7 @@ test("ролик виден в таске как размечаемый и от�
   const card = reel(page);
   await expect(card).toBeVisible();
   await expect(card.getByText("размечается")).toBeVisible();
-  // Ролик ещё не закрыт, поэтому кадров в таске нет, а работа уже видна.
+  // Таска не сдана, поэтому кадров ролика в таске нет, а работа уже видна.
   await expect(card.getByText(/объектов ведётся/)).toBeVisible();
 
   await card.getByRole("button", { name: "Размечать ролик" }).click();
@@ -337,7 +337,7 @@ function readSample(): Buffer {
   return readFileSync(SAMPLE);
 }
 
-test("разметка закрывается и становится кадрами таски", async ({ page }) => {
+test("сдача таски делает кадры ролика в датасете", async ({ page }) => {
   await signIn(page);
   const project = await (
     await page.request.post("/api/projects", { data: { name: tag() } })
@@ -365,15 +365,14 @@ test("разметка закрывается и становится кадра
   await page.request.patch(`/api/video-tracks/${track.id}`, { data: { export_step: 30 } });
 
   await page.goto(`/projects/${project.code}/tasks/${task.id}`);
-  await reel(page).getByRole("button", { name: "Закрыть разметку" }).click();
+  await expect(reel(page).getByText(/уйдёт при сдаче/)).toBeVisible();
+  await page.getByRole("button", { name: "Готово", exact: true }).click();
 
-  // Кадры появляются в таске до всякой сдачи — это обычные кадры.
-  await expect(page.locator(".ui-notice").getByText(/Разметка .* закрыта/)).toBeVisible({ timeout: 30_000 });
-  await expect(reel(page).getByText("разметка закрыта")).toBeVisible();
-
-  const block = source(page, "Из разметки «sample.mp4»");
-  await expect(block).toBeVisible();
-  await expect(block.getByRole("button", { name: "Проверить" })).toBeVisible();
+  // Кадры ролика рождаются сдачей и уходят в датасет; блока «Из разметки» в таске нет.
+  await expect(page.locator(".ui-notice").getByText(/ушло 1 кадр/)).toBeVisible({ timeout: 30_000 });
+  await expect(reel(page).getByText("сдан", { exact: true })).toBeVisible();
+  await expect(reel(page).locator(".tp-vnums")).toContainText("1в датасете");
+  await expect(source(page, "Из разметки")).toHaveCount(0);
 });
 
 test("шаг стрелкой показывает соседний кадр, а не соседний примерно", async ({ page }) => {
@@ -709,33 +708,6 @@ test("одиночный объект превращается в трек и у
     await page.request.get(`/api/tasks/${task.id}/videos/${video.id}/annotations`)
   ).json();
   expect(after.tracks).toHaveLength(0);
-});
-
-test("разметка закрывается и открывается заново из шапки редактора", async ({ page }) => {
-  const { project, task, video } = await shortClip(page);
-  const cls = await (await page.request.get(`/api/projects/${project.code}/classes`)).json();
-  await page.request.put(`/api/tasks/${task.id}/videos/${video.id}/frames/4/boxes`, {
-    data: { boxes: [{ class_index: cls.classes[0].class_index, x: 10, y: 10, w: 40, h: 30 }] },
-  });
-  const editor = await openEditor(page, project, task);
-
-  // План считается с задержкой — кнопка оживает, когда есть что закрывать
-  const close = editor.getByRole("button", { name: "Закрыть разметку" });
-  await expect(close).toBeEnabled({ timeout: 15_000 });
-  await close.click();
-  const ask = page.getByRole("dialog", { name: "Закрыть разметку ролика?" });
-  await expect(ask.getByText(/1 кадр уйдёт в таску/)).toBeVisible();
-  await ask.getByRole("button", { name: "Закрыть разметку" }).click();
-
-  await expect(editor.getByText(/Разметка закрыта: 1 кадр в таске/)).toBeVisible({ timeout: 30_000 });
-  await expect(editor.getByText("разметка закрыта", { exact: true })).toBeVisible();
-  const reopen = editor.getByRole("button", { name: "Открыть заново" });
-  await expect(reopen).toBeVisible();
-
-  await reopen.click();
-  await expect(editor.getByRole("button", { name: "Закрыть разметку" })).toBeVisible();
-  const detail = await (await page.request.get(`/api/tasks/${task.id}`)).json();
-  expect(detail.videos[0].annotation_closed_at).toBeNull();
 });
 
 test("граница кадра и дорожек тянется и помнит высоту", async ({ page }) => {

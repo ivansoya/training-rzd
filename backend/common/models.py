@@ -314,6 +314,9 @@ class Image(Base, AuditMixin):
     # а не плодит второй экземпляр того же кадра. У нарезки он пуст: там кадр
     # адресуется временем, и попасть точно в тот же кадр нарезка не обещает.
     source_frame_no: Mapped[int | None] = mapped_column(sa.Integer)
+    # Кадр размечаемого ролика: каким был `annotations_rev` на прошлой сдаче таски.
+    # Разошлись — кадр правили в датасете, и следующая сдача его не трогает.
+    handed_rev: Mapped[int | None] = mapped_column(sa.Integer)
     width: Mapped[int | None] = mapped_column(sa.Integer)
     height: Mapped[int | None] = mapped_column(sa.Integer)
     size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
@@ -531,12 +534,6 @@ class TaskVideo(Base, AuditMixin):
     # десятки тысяч чисел в строке БД не ищутся и не соединяются. Отпечаток
     # нужен, чтобы отказать плану разметки, посчитанному по другой нумерации.
     index_version: Mapped[str | None] = mapped_column(sa.String(32))
-    # Когда разметку ролика закрыли и превратили в кадры таски. Пусто — она
-    # ещё в работе. Материализация — событие, а не вечная синхронизация:
-    # созданные кадры дальше живут как обычные и никем не переписываются.
-    annotation_closed_at: Mapped[datetime | None] = mapped_column(
-        sa.DateTime(timezone=True), nullable=True
-    )
     # Кадры, помеченные фоновыми: объектов на них нет, и в датасет они уйдут
     # отрицательными примерами со статусом «empty» — тем же, что ставит рукой
     # разметчик изображений. Держим списком номеров прямо здесь: пометок
