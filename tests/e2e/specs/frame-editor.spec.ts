@@ -27,6 +27,8 @@ test("редактор кадров: рамка, класс, решения, п�
     expect((await page.request.post(`/api/projects/${project.code}/classes`, { data: { name } })).ok()).toBeTruthy();
   }
   const task = await (await page.request.post(`/api/projects/${project.code}/tasks`, { data: { name: "Фокус" } })).json();
+  // С 12.10 кадры правятся только в таске «В работе»
+  await page.request.post(`/api/tasks/${task.id}/status`, { data: { status: "in_progress" } });
   await page.goto("/");
   for (const [i, color] of ["#5a6", "#a65"].entries()) {
     const up = await page.request.post(`/api/tasks/${task.id}/images`, {
