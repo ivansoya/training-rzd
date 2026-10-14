@@ -36,6 +36,7 @@ from common.models import (
     TaskEvent,
     TaskVideo,
     User,
+    VideoAnnotation,
     VideoTrack,
 )
 from common.storage import translit_slug
@@ -214,36 +215,42 @@ def _log(db, task, user, kind, **payload):
     ))
 
 
-def _counts(db, task_id):
-    """Счётчики вкладки «Кадры». Кадры размечаемых роликов в них не входят: в таске они
-    правятся только в ролике (решение 14.10.2026); сколько их в датасете — `video_accepted`."""
-    frames = (Image.task_id == task_id, ~task_frames.video_frame())
+def _states(db, task_id, which):
+    """Кадры таски по состояниям. Забракованные не в общем числе: иначе прогресс не дойдёт до конца никогда."""
     rows = dict(db.execute(
         select(Image.task_status, func.count(Image.id))
-        .where(*frames)
+        .where(Image.task_id == task_id, which)
         .group_by(Image.task_status)
     ).all())
-    accepted, video_accepted = db.execute(
-        select(func.count(Image.id).filter(~task_frames.video_frame()),
-               func.count(Image.id).filter(task_frames.video_frame()))
-        .where(Image.task_id == task_id, Image.dataset_id.isnot(None))
-    ).one()
     deleted = rows.get("deleted", 0)
-    agent = db.execute(
-        select(func.count(Image.id)).where(*frames, task_frames.agent_pending())
-    ).scalar_one()
-    # Забракованные не в общем числе: иначе прогресс не дойдёт до конца никогда.
     return {
         # Часть «new»: кадры с рамками агента, которые ещё никто не принял.
-        "agent": agent,
+        "agent": db.execute(
+            select(func.count(Image.id)).where(Image.task_id == task_id, which, task_frames.agent_pending())
+        ).scalar_one(),
         "total": sum(rows.values()) - deleted,
         "new": rows.get("new", 0),
         "skipped": rows.get("skipped", 0),
         "annotated": rows.get("annotated", 0),
         "empty": rows.get("empty", 0),
         "deleted": deleted,
+    }
+
+
+def _counts(db, task_id):
+    """Счётчики вкладки «Кадры». Кадры размечаемых роликов в них не входят: в таске они
+    правятся только в ролике (решение 14.10.2026); их состояния — отдельно в `video`:
+    сданная таска на доске показывает все свои изображения, а не одну вкладку."""
+    video = task_frames.video_frame()
+    accepted, video_accepted = db.execute(
+        select(func.count(Image.id).filter(~video), func.count(Image.id).filter(video))
+        .where(Image.task_id == task_id, Image.dataset_id.isnot(None))
+    ).one()
+    return {
+        **_states(db, task_id, ~video),
         "accepted": accepted,
         "video_accepted": video_accepted,
+        "video": _states(db, task_id, video),
     }
 
 
@@ -260,27 +267,40 @@ def _status_at(db, task):
 
 
 def _board_extra(db, task):
-    """Сводка для карточки доски: откуда кадры и сколько кадров роликов уйдёт при сдаче.
-    Когда трогали — в лёгком списке: по нему доска сортирует, и карточки не прыгают."""
+    """Сводка для карточки доски: откуда кадры и как идёт разметка роликов — треки, рамки и проверка
+    агента по кадрам (решения 14.10.2026). Когда трогали — в лёгком списке: по нему доска сортирует,
+    и карточки не прыгают."""
     videos = db.execute(
-        select(TaskVideo.mode, TaskVideo.segments).where(TaskVideo.task_id == task.id)
+        select(TaskVideo.id, TaskVideo.mode, TaskVideo.segments, TaskVideo.agent_frames)
+        .where(TaskVideo.task_id == task.id)
     ).all()
     files = db.execute(
         select(func.count(Image.id)).where(
             Image.task_id == task.id, Image.source_video_id.is_(None),
             Image.task_status != "deleted")
     ).scalar_one()
-    rows = (materialize.pending_summary(db, task)
-            if task.status in materialize.WORKING and any(m == "annotate" for m, _ in videos) else [])
+    # Ролики на разметку и кадры, где в них ставил рамки агент
+    seen = {v.id: set(v.agent_frames or []) for v in videos if v.mode == "annotate"}
+    tracks = boxes = done = left = 0
+    if seen:
+        A = VideoAnnotation
+        single = (A.video_id.in_(list(seen)), A.track_id.is_(None))
+        tracks = db.execute(select(func.count(VideoTrack.id)).where(VideoTrack.video_id.in_(list(seen)))).scalar_one()
+        boxes = db.execute(select(func.count(A.id)).where(*single, A.pending.is_(False))).scalar_one()
+        waiting = {}
+        for vid, f in db.execute(select(A.video_id, A.frame_no).where(*single, A.pending.is_(True)).distinct()):
+            waiting.setdefault(vid, set()).add(f)
+        left = sum(len(fs) for fs in waiting.values())
+        # Проверено — кадры, где агент ставил рамки и ничего не ждёт: и принятые, и где всё отклонили
+        done = sum(len(fs - waiting.get(vid, set())) for vid, fs in seen.items())
     return {
         "sources": {
             "files": files,
-            "cut": sum(1 for m, _ in videos if m == "cut"),
-            "uncut": sum(1 for m, segs in videos if m == "cut" and not segs),
-            "annotate": sum(1 for m, _ in videos if m == "annotate"),
+            "cut": sum(1 for v in videos if v.mode == "cut"),
+            "uncut": sum(1 for v in videos if v.mode == "cut" and not v.segments),
+            "annotate": len(seen),
         },
-        "pending_frames": sum(p.get("frames", 0) for p in rows),
-        "pending_unchecked": sum(p.get("unchecked", 0) for p in rows),
+        "videos": {"tracks": tracks, "boxes": boxes, "agent_done": done, "agent_left": left},
         "handover": (video_busy.current(video_busy.task_key(task.id)) or {}).get("job_id"),
     }
 

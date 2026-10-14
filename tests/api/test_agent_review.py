@@ -162,6 +162,21 @@ def test_сводка_ролика_несёт_классы_непроверен�
     assert skel["marks"] == [[5, 2, 2, [ci]], [9, 1, 0, []]]
 
 
+def test_карточка_считает_проверку_агента_по_кадрам(api, db, task, video, label_class):
+    """Проверено — кадры, где агент ставил рамки и ничего не ждёт, в том числе где всё отклонили."""
+    video_agent_box(db, video, label_class, 5)
+    video_agent_box(db, video, label_class, 7)
+    with db.cursor() as cur:
+        cur.execute("UPDATE task_videos SET agent_frames = '[5, 7, 9]' WHERE id = %s", (video["id"],))
+    base = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}"
+    keep = next(s for s in singles(api, task, video) if s["frame_no"] == 7)
+    # Кадр 7 приняли, на кадре 9 всё отклонили раньше — рамок нет, но он проверен
+    assert api.put(f"{base}/frames/7/boxes", json={"boxes": [
+        {"id": keep["id"], **keep["shape"], "class_index": keep["class_index"], "pending": False}]}).status_code == 200
+    got = api.get(f"{BASE_URL}/api/tasks/{task['id']}/summary").json()["videos"]
+    assert got == {"tracks": 0, "boxes": 1, "agent_done": 2, "agent_left": 1}
+
+
 def test_сдача_оставляет_непроверенное_черновиком_с_флагом(api, db, task, video, label_class):
     video_agent_box(db, video, label_class, 5)
     plan = api.post(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/materialize/preview").json()

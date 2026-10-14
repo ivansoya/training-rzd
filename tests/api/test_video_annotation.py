@@ -430,13 +430,13 @@ def test_сводка_ролика_до_сдачи(api, task, video, label_class
     pending = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/pending"
     row = api.get(pending).json()["pending"]
     assert (row["file_name"], row["frames"], row["tracks"]) == ("sample-30f.mp4", 1, 1)
-    # Доска считает то же число одним полем
+    # Доска до сдачи считает ролик треками, после — его кадры среди изображений таски
     summary = f"{BASE_URL}/api/tasks/{task['id']}/summary"
-    assert api.get(summary).json()["pending_frames"] == 1
+    assert api.get(summary).json()["videos"]["tracks"] == 1
 
     hand_over(api, task["id"])
     assert api.get(pending).json()["pending"] is None
-    assert api.get(summary).json()["pending_frames"] == 0
+    assert api.get(summary).json()["counts"]["video"]["total"] == 1
 
 
 def test_сданная_таска_ролик_не_правит(api, task, video, label_class):

@@ -238,6 +238,10 @@ def test_разметка_ролика_каждый_n_й_кадр_кроме_р�
     assert person_frames, "сеть «человек» не поставила ни одной рамки"
     assert {r[2] for r in agent} - {PERSON}, "сеть «всё остальное» не поставила ни одной рамки"
     assert any(r[3] == "polygon" for r in agent), "SAM не дал ни одного полигона"
+    # Ролик запомнил кадры агента: по ним карточка считает «проверено», даже когда рамки отклонят
+    with db.cursor() as cur:
+        cur.execute("select agent_frames from task_videos where id = %s", (video["id"],))
+        assert set(cur.fetchone()[0]) == frames
 
     # Повторный прогон заменяет рамки агента и не трогает рамку человека.
     before = {r[0] for r in agent}

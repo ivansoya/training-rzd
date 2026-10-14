@@ -30,7 +30,7 @@ import threading
 import time
 from contextlib import contextmanager
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import or_, select, text, update
 from sqlalchemy.exc import OperationalError
 
 from common import (
@@ -1052,6 +1052,13 @@ def _write_video(db, run, video, frame_no, found, mapping):
             agent_version_id=run.version_id, created_by=run.created_by,
         ))
         put += 1
+    if put:
+        # Кадр запоминается навсегда: отклонённые рамки удалят, а «проверено» на карточке должно их помнить.
+        # Читаем под тем же замком строки ролика — список не теряет кадры соседнего вызова.
+        seen = db.execute(select(TaskVideo.agent_frames).where(TaskVideo.id == video.id)).scalar() or []
+        if frame_no not in seen:
+            db.execute(update(TaskVideo).where(TaskVideo.id == video.id)
+                       .values(agent_frames=sorted({*seen, frame_no})))
     db.commit()
     return put
 

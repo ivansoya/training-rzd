@@ -25,7 +25,7 @@ def test_карточка_доски_знает_источники_и_актив
     assert card["last_box_at"] and card["last_at"] >= card["last_box_at"]
     s = summary(api, task["id"])
     assert s["sources"] == {"files": 1, "cut": 0, "uncut": 0, "annotate": 0}
-    assert s["pending_frames"] == 0
+    assert s["videos"] == {"tracks": 0, "boxes": 0, "agent_done": 0, "agent_left": 0}
     assert s["counts"]["total"] == 1
 
 
