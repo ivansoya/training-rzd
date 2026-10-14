@@ -150,6 +150,18 @@ def test_ролик_подтверждение_кадра(api, db, task, video, 
     assert len(after) == 1 and after[0]["pending"] is False
 
 
+def test_сводка_ролика_несёт_классы_непроверенного(api, db, task, video, label_class):
+    """Фильтр классов гасит риски «Агента» по сводке — до прихода кусков с фигурами."""
+    ci = label_class["class_index"]
+    video_agent_box(db, video, label_class, 5)
+    video_agent_box(db, video, label_class, 5, x=200.0)
+    base = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}"
+    assert api.put(f"{base}/frames/9/boxes", json={"boxes": [
+        {"class_index": ci, "x": 5, "y": 5, "w": 20, "h": 20}]}).status_code == 200
+    skel = api.get(f"{base}/annotations?singles=0").json()
+    assert skel["marks"] == [[5, 2, 2, [ci]], [9, 1, 0, []]]
+
+
 def test_сдача_оставляет_непроверенное_черновиком_с_флагом(api, db, task, video, label_class):
     video_agent_box(db, video, label_class, 5)
     plan = api.post(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/materialize/preview").json()

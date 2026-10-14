@@ -229,7 +229,7 @@ def test_каркас_и_куски_одиночных(api, task, video, label_c
     skel = api.get(f"{base}/annotations?singles=0").json()
     assert "singles" not in skel and len(skel["tracks"]) == 1
     # Ключ трека в сводку одиночных не попадает
-    assert skel["marks"] == [[3, 2, 0], [9, 1, 0], [20, 3, 0]]
+    assert skel["marks"] == [[3, 2, 0, []], [9, 1, 0, []], [20, 3, 0, []]]
 
     part = api.get(f"{base}/annotations/singles?from=4&to=21").json()
     assert sorted({s["frame_no"] for s in part["singles"]}) == [9, 20]

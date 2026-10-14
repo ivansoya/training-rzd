@@ -14,7 +14,7 @@ import os
 
 from flask import Blueprint, jsonify, request, send_file
 from PIL import Image as PilImage
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import distinct, func, or_, select, update
 
 from common import attribution, config, task_frames
 from common import scout as scout_lib
@@ -615,7 +615,7 @@ def _singles_json(db, rows, by_index):
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/annotations")
 def video_annotations(task_id, video_id):
     """Разметка ролика. `singles=0` — каркас: треки с ключами, фоновые кадры и сводка
-    одиночных по кадрам (`marks`: кадр, рамок, из них на проверке) без самих фигур.
+    одиночных по кадрам (`marks`: кадр, рамок, из них на проверке, классы рамок на проверке) без самих фигур.
     Фигуры редактор берёт кусками (`/annotations/singles`): у агента их десятки тысяч
     на ролик, одним ответом это секунды. Без параметра — всё разом, как раньше."""
     db, task, project, user, role, video = _resolve_video(task_id, video_id)
@@ -672,11 +672,14 @@ def video_annotations(task_id, video_id):
             data["singles"] = _singles_json(db, [r for r in rows if r.track_id is None], by_index)
             data["revs"] = _frame_revs(db, video.id)
         else:
-            # По сводке редактор режет ролик на куски и сразу знает кадры на проверке.
+            # По сводке редактор режет ролик на куски и сразу знает кадры на проверке; классы
+            # рамок на проверке — чтобы фильтр классов гасил риски «Агента» и у незагруженных кусков.
             A = VideoAnnotation
             data["marks"] = [
-                [f, n, p] for f, n, p in db.execute(
-                    select(A.frame_no, func.count(A.id), func.count(A.id).filter(A.pending.is_(True)))
+                [f, n, p, sorted(by_index[c] for c in (cls or []) if by_index.get(c) is not None)]
+                for f, n, p, cls in db.execute(
+                    select(A.frame_no, func.count(A.id), func.count(A.id).filter(A.pending.is_(True)),
+                           func.array_agg(distinct(A.class_id)).filter(A.pending.is_(True)))
                     .where(A.video_id == video.id, A.track_id.is_(None))
                     .group_by(A.frame_no).order_by(A.frame_no)
                 ).all()
