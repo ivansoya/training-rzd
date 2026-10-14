@@ -1,7 +1,7 @@
 // Логика экранов тасок без React: состояния, доли кадров, доска, источники, план закрытия.
 
 import type { StatusResult, TaskCounts, TaskDetail, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
-import type { StackPart } from "../../../ui";
+import type { IconName, StackPart } from "../../../ui";
 import { ago, count, plural, ru } from "../../ru";
 
 export const STATUS: Record<TaskStatus, { label: string; tone: string }> = {
@@ -69,11 +69,85 @@ export function dayOf(iso: string, now = new Date()): string {
 /** Сколько кадров таски в датасете: из вкладки «Кадры» и из роликов (их счётчики врозь). */
 export const inDataset = (c: Pick<TaskCounts, "accepted" | "video_accepted">) => c.accepted + (c.video_accepted || 0);
 
-/** Последнее, что было с таской: сданное — сколько в датасете, иначе разметка или создание. */
-export function statusNote(t: TaskLight, s: TaskStats | undefined): string {
-  if (t.status === "done" && s && inDataset(s.counts)) return `${ru(inDataset(s.counts))} в датасете`;
+/** Последнее, что было с таской: сданная — когда сдана, иначе разметка или создание. */
+export function statusNote(t: Pick<TaskLight, "status" | "status_at" | "last_box_at" | "created_at">): string {
+  if (t.status === "done") return `сдана ${dayOf(t.status_at)}`;
   if (t.last_box_at) return `разметка ${ago(t.last_box_at)}`;
   return `создана ${ago(t.created_at)}`;
+}
+
+/** Сделано — размечено, фон и брак: выброшенный кадр тоже разобран (решение 14.10.2026). */
+export const doneOf = (c: Counts) => (c.annotated || 0) + (c.empty || 0) + (c.deleted || 0);
+
+/** Полоса карточки доски: сделанное слева (брак своим цветом), потом отложенное и нетронутое. */
+export function boardParts(c: Counts): StackPart[] {
+  return (["annotated", "empty", "deleted", "skipped", "new"] as const).map((k) => ({
+    value: c[k] || 0, color: color(k), label: STATES.find((s) => s.key === k)!.label,
+  }));
+}
+
+export interface CardBadge { text: string; title: string; tone?: string; icon?: IconName; live?: boolean }
+/** Карточка таски на доске и в обзоре: полоса, строка (числа — отдельными кусками), подсказка с полным
+ *  счётом и значки по важности — что не влезет в строку, обрежется с конца. */
+export interface CardLook { parts: StackPart[]; line: (string | number)[]; title: string; badges: CardBadge[]; quiet?: boolean }
+
+const plus = (a: Counts, b: Counts): Counts => Object.fromEntries(
+  (["new", "skipped", "annotated", "empty", "deleted", "agent"] as const).map((k) => [k, (a[k] || 0) + (b[k] || 0)]));
+const NO_VIDEOS: TaskStats["videos"] = { tracks: 0, boxes: 0, agent_done: 0, agent_left: 0 };
+const flat = (line: (string | number)[]) => line.map((x) => (typeof x === "number" ? ru(x) : x)).join("");
+
+/** Решения 14.10.2026: изображения — «сделано · осталось», отложенные — значком; ролик — треками и рамками,
+ *  с агентом — проверкой по кадрам; сданная — все изображения таски вместе с кадрами роликов. */
+export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sources" | "handover"> & { videos?: TaskStats["videos"] }): CardLook {
+  const c = s.counts;
+  const v = s.videos ?? NO_VIDEOS;
+  const badges: CardBadge[] = [];
+  if (s.handover) badges.push({ text: "сдаётся", title: "Идёт сдача: кадры роликов достаются фоном", tone: "var(--c1)", live: true });
+  const waiting = (n: number) => n > 0 && badges.push({
+    text: `${ru(n)} ждут проверки`, title: `${count(n, "кадр ждёт", "кадра ждут", "кадров ждут")} проверки агента`,
+    tone: "var(--agent-fg)", icon: "bot",
+  });
+
+  if (status === "done" || status === "closed") {
+    const images = c.total + (c.video?.total || 0);
+    const ds = inDataset(c);
+    const word = plural(images, "изображение", "изображения", "изображений");
+    const line = !images ? ["изображений нет"]
+      : ds === images ? [images, ` ${word} в датасете`] : [images, ` ${word} · `, ds, " в датасете"];
+    waiting((c.agent || 0) + (c.video?.agent || 0));
+    return { parts: boardParts(plus(c, c.video ?? {})), line, title: flat(line), badges, quiet: !images };
+  }
+
+  const rolls = s.sources.annotate;
+  const checking = v.agent_done + v.agent_left > 0;
+  const made = `${count(v.tracks, "трек", "трека", "треков")}, ${count(v.boxes, "рамка", "рамки", "рамок")}`;
+  const checkTitle = `Агент: проверено ${count(v.agent_done, "кадр", "кадра", "кадров")}, осталось проверить ${ru(v.agent_left)}`;
+  if (framesOf(c) + (c.deleted || 0) > 0) {
+    waiting(c.agent || 0);
+    if (c.skipped) badges.push({ text: `${ru(c.skipped)} отложено`, title: count(c.skipped, "кадр отложен", "кадра отложены", "кадров отложено"), tone: "var(--st-skip)" });
+    if (rolls) {
+      const head = rolls > 1 ? count(rolls, "ролик", "ролика", "роликов") : "ролик";
+      badges.push(checking
+        ? { text: `${head}: осталось проверить ${ru(v.agent_left)}`, title: `${head}: ${checkTitle}`, tone: "var(--agent-fg)", icon: "film" }
+        : { text: `${head}: ${made}`, title: `${head}: ${made}`, icon: "film" });
+    }
+    const line = ["сделано ", doneOf(c), " · осталось ", c.new || 0];
+    const title = `Сделано ${ru(doneOf(c))}: размечено ${ru(c.annotated)}, фон ${ru(c.empty)}, брак ${ru(c.deleted || 0)}`
+      + `${c.skipped ? ` · отложено ${ru(c.skipped)}` : ""} · осталось ${ru(c.new)}${c.agent ? `, из них ${ru(c.agent)} ждут проверки агента` : ""}`;
+    return { parts: boardParts(c), line, title, badges };
+  }
+  if (rolls && checking) {
+    badges.push({ text: made, title: made, icon: "film" });
+    return {
+      parts: [{ value: v.agent_done, color: "var(--agent-hi)", label: "Проверено" }, { value: v.agent_left, color: "var(--st-new)", label: "Ждёт проверки" }],
+      line: ["проверено ", v.agent_done, " · осталось ", v.agent_left], title: checkTitle, badges,
+    };
+  }
+  if (rolls) {
+    const line = [v.tracks, ` ${plural(v.tracks, "трек", "трека", "треков")} · `, v.boxes, ` ${plural(v.boxes, "рамка", "рамки", "рамок")}`];
+    return { parts: [], line, title: made, badges };
+  }
+  return { parts: [], line: ["кадров пока нет"], title: "Кадров пока нет", badges, quiet: true };
 }
 
 /** Размечали меньше 15 минут назад — у таски живая точка. */

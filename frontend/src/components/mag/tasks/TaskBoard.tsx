@@ -15,7 +15,7 @@ import { useProject } from "../ProjectShell";
 import { useConfirm } from "./Confirm";
 import { CreateTaskModal } from "./CreateTaskModal";
 import {
-  BOARD, STATES, STATUS, boardColumns, boxedRecently, closePlan, closeText, handoverText, inDataset, sourceLine, stateParts, statusNote,
+  BOARD, STATUS, boardColumns, boxedRecently, cardLook, closePlan, closeText, handoverText, sourceLine, statusNote,
   teamLine, waitingOf,
 } from "./tasks";
 import { look, useTaskBoard } from "./useTaskBoard";
@@ -86,10 +86,10 @@ export default function TaskBoard() {
       });
       if (!ok) return;
     }
-    if (to === "done" && s?.pending_unchecked) {
+    if (to === "done" && s?.videos?.agent_left) {
       const ok = await confirm({
         title: "Сдать с непроверенным агента?",
-        desc: `${count(s.pending_unchecked, "кадр", "кадра", "кадров")} из роликов с непроверенной разметкой агента в датасет не уйдут — останутся в ролике до проверки.`,
+        desc: `${count(s.videos.agent_left, "кадр", "кадра", "кадров")} из роликов с непроверенной разметкой агента в датасет не уйдут — останутся в ролике до проверки.`,
         ok: "Сдать", icon: "tick",
       });
       if (!ok) return;
@@ -214,16 +214,14 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
   // Переливается только карточка, чей запрос в пути; ждущие — неподвижная заготовка
   const zone = cx("tb-zone", v.stale && "stale", v.loading && "ui-shim", !v.has && !v.loading && "wait");
   const cls = cx("ui-card tb-card", movable && "movable", dragged && "dragged", landed && "landed");
-  const c = s?.counts;
+  const face = s ? cardLook(t.status, s) : null;
   if (t.status === "closed") {
     return (
       <Link to={to} className={cx(cls, "closed")} draggable={false}>
         <b className="tb-name">{t.name}</b>
         <span className={cx(zone, "one")}>
-          {c ? (
-            <span className="t-xs t-muted">
-              {inDataset(c) ? `${count(inDataset(c), "кадр", "кадра", "кадров")} в датасете` : "в датасет ничего не ушло"} · {ago(t.status_at)}
-            </span>
+          {face ? (
+            <span className="tb-line" title={face.title}><CardLine line={face.line} /> · {ago(t.status_at)}</span>
           ) : <i className="ui-sk pill" style={{ width: 150 }} />}
         </span>
       </Link>
@@ -239,9 +237,10 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
         <Icon name={s && (s.sources.cut || s.sources.annotate) ? "film" : "images"} size={14} />
         {s ? <span className="t-ell">{sourceLine(s.sources)}</span> : <i className="ui-sk pill" style={{ width: 120 }} />}
       </span>
-      {/* Три строки всегда — полоса, числа, значки: после загрузки высота карточки не меняется */}
+      {/* Три строки всегда — полоса, числа, значки: после загрузки высота карточки не меняется.
+          Каждая — в одну строку с многоточием: перенос ложился на соседнюю строку */}
       <span className={zone}>
-        {!c ? (
+        {!face ? (
           <>
             <i className="ui-sk bar" />
             <span className="tb-nums"><i className="ui-sk pill" /><i className="ui-sk pill" style={{ width: 30 }} /><i className="ui-sk pill" style={{ width: 36 }} /></span>
@@ -249,33 +248,30 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
           </>
         ) : (
           <>
-            {c.total > 0 ? <StackBar parts={stateParts(c)} /> : <i className="ui-stack" />}
-            {c.total > 0 ? (
-              <span className="tb-nums">
-                {(["annotated", "empty", "skipped", "new"] as const).filter((k) => c[k]).map((k) => (
-                  <span key={k} title={STATES.find((x) => x.key === k)!.label}>
-                    <i style={{ background: STATES.find((x) => x.key === k)!.color }} />{ru(c[k])}
-                  </span>
-                ))}
-              </span>
-            ) : <span className="t-xs t-faint">Кадров пока нет</span>}
+            {face.parts.some((p) => p.value) ? <StackBar parts={face.parts} /> : <i className="ui-stack" />}
+            <span className={cx("tb-line", face.quiet && "quiet")} title={face.title}><CardLine line={face.line} /></span>
             <span className="tb-badges">
-              {(c.agent || 0) > 0 && <Badge tone="var(--agent-fg)" icon="bot">{ru(c.agent!)} от агента</Badge>}
-              {s!.handover && <Badge tone="var(--c1)" live>сдаётся</Badge>}
-              {s!.pending_frames > 0 && <Badge tone="var(--st-skip)" icon="film">{ru(s!.pending_frames)} уйдут при сдаче</Badge>}
+              {face.badges.map((b) => (
+                <Badge key={b.text} tone={b.tone} icon={b.icon} live={b.live} title={b.title}><span className="t-ell">{b.text}</span></Badge>
+              ))}
             </span>
           </>
         )}
       </span>
       <span className="tb-foot t-xs t-faint">
         <span className="t-ell">{teamLine(t.assignees)}</span>
-        <span className="t-ell">
+        <span className="tb-when">
           {boxedRecently(t) && <Dot color="var(--st-done)" live />}
-          {statusNote(t, s)}
+          <span className="t-ell">{statusNote(t)}</span>
         </span>
       </span>
     </Link>
   );
+}
+
+/** Строка чисел карточки: числа выделены, слова тише. Общая у доски и обзора. */
+export function CardLine({ line }: { line: (string | number)[] }) {
+  return <>{line.map((x, i) => (typeof x === "number" ? <b key={i}>{ru(x)}</b> : x))}</>;
 }
 
 /** «обновляется» со спиннером — пока идут запросы. */

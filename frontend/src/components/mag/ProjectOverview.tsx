@@ -15,7 +15,8 @@ import ExportModal from "./ExportModal";
 import { ProjectMenu } from "./ProjectMenu";
 import { useProject } from "./ProjectShell";
 import { CreateTaskModal } from "./tasks/CreateTaskModal";
-import { STATUS, boxedRecently, decidedOf, framesOf, sourceLine, stateParts, statusNote, teamLine } from "./tasks/tasks";
+import { STATUS, boardParts, boxedRecently, cardLook, sourceLine, statusNote, teamLine } from "./tasks/tasks";
+import { CardLine } from "./tasks/TaskBoard";
 import { look, useTaskBoard } from "./tasks/useTaskBoard";
 import { describeTaskEvent } from "./taskEvents";
 
@@ -239,8 +240,12 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
   const tasks = board.list ?? [];
   const working = tasks.filter((t) => t.status === "in_progress" || t.status === "updating").length;
   const shown = shownOf(tasks);
-  // Легенда — только когда на экране есть полоса: у роликов до закрытия кадров нет
-  const bars = shown.some((t) => framesOf(board.stats[t.id]?.counts ?? {}) > 0);
+  // Вид строк — тот же, что у карточек доски; легенда — только для полос, что есть на экране
+  const faces = Object.fromEntries(shown.flatMap((t) => (board.stats[t.id] ? [[t.id, cardLook(t.status, board.stats[t.id])]] : [])));
+  const shownParts = Object.values(faces).flatMap((f) => f.parts.filter((p) => p.value > 0));
+  const legend = boardParts({}).concat(shownParts.some((p) => p.label === "Проверено")
+    ? [{ value: 0, color: "var(--agent-hi)", label: "Проверено агентом" }] : [])
+    .filter((p) => shownParts.some((q) => q.color === p.color));
   const desc = tasks.length
     ? `${count(tasks.length, "таска", "таски", "тасок")}${working ? `, ${ru(working)} в работе` : ""}`
     : undefined;
@@ -257,13 +262,13 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
             {shown.map((t) => {
               const s = board.stats[t.id];
               const v = look(s, board.fresh[t.id], board.at);
-              const c = s?.counts;
+              const f = faces[t.id];
               return (
                 <li key={t.id}>
                   <Dot color={STATUS[t.status].tone} title={STATUS[t.status].label} />
                   <Link className="ov-task-n t-ell" to={`/projects/${code}/tasks/${t.id}`}>{t.name}</Link>
                   <span className="ov-task-w t-xs t-faint">
-                    {boxedRecently(t) && <Dot color="var(--st-done)" live />}{statusNote(t, s)}
+                    {boxedRecently(t) && <Dot color="var(--st-done)" live />}{statusNote(t)}
                   </span>
                   {/* Числа в пути — заготовки той же высоты: строка не прыгает */}
                   <span className={cx("ov-task-m t-xs t-muted", v.stale && "stale", v.loading && "ui-shim")}>
@@ -273,24 +278,18 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
                     </span>
                   </span>
                   <span className={cx("ov-task-p t-xs", v.stale && "stale", v.loading && "ui-shim")}>
-                    {!c ? <i className="ui-sk pill" style={{ width: 120 }} />
-                      : framesOf(c) > 0 ? <>
-                        <StackBar parts={stateParts(c)} />
-                        <span className="ui-mono t-muted">{ru(decidedOf(c))} из {ru(framesOf(c))}</span>
-                      </>
-                      : s!.pending_frames > 0
-                        ? <span className="ov-pend">{count(s!.pending_frames, "кадр уйдёт", "кадра уйдут", "кадров уйдут")} при сдаче</span>
-                        : c.video_accepted
-                          ? <span className="t-muted">{count(c.video_accepted, "кадр", "кадра", "кадров")} в датасете</span>
-                          : <span className="t-faint">кадров пока нет</span>}
+                    {!f ? <i className="ui-sk pill" style={{ width: 120 }} /> : <>
+                      {f.parts.some((p) => p.value) && <StackBar parts={f.parts} />}
+                      <span className={cx("tb-line", f.quiet && "quiet")} title={f.title}><CardLine line={f.line} /></span>
+                    </>}
                   </span>
                 </li>
               );
             })}
           </ul>
-          {bars && (
+          {legend.length > 0 && (
             <div className="bal-f">
-              <Legend items={stateParts({}).map(({ label, color }) => ({ label, color }))} />
+              <Legend items={legend.map(({ label, color }) => ({ label, color }))} />
             </div>
           )}
         </>

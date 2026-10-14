@@ -828,6 +828,8 @@ export interface TaskCounts {
   video_accepted?: number;
   /** Часть «new»: кадры с рамками агента, которые ещё никто не принял. */
   agent?: number;
+  /** Кадры размечаемых роликов (рождаются сдачей) теми же состояниями — сданная таска показывает все. */
+  video?: Omit<TaskCounts, "accepted" | "video_accepted" | "video">;
 }
 
 export interface TaskPerson {
@@ -880,10 +882,8 @@ export interface TaskLight extends Omit<TaskSummary, "counts" | "rights"> {
 export interface TaskStats {
   counts: TaskCounts;
   sources: { files: number; cut: number; uncut: number; annotate: number };
-  /** Кадров роликов уйдёт при сдаче: до неё их в таске нет. */
-  pending_frames: number;
-  /** Из них с непроверенным агента — в датасет не уйдут. */
-  pending_unchecked?: number;
+  /** Ролики на разметку: треки, проверенные рамки и проверка агента по кадрам. */
+  videos: { tracks: number; boxes: number; agent_done: number; agent_left: number };
   /** Работа идущей сдачи; null — не сдаётся. */
   handover?: string | null;
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TaskCounts, TaskDetail, TaskLight, TaskStats } from "../../../auth/api";
 import {
-  boardColumns, buildSources, closePlan, closeText, dayOf, handoverText, percentOf, requestOrder, sourceLine, teamLine, waitingOf,
+  boardColumns, buildSources, cardLook, closePlan, closeText, dayOf, handoverText, percentOf, requestOrder, sourceLine, teamLine, waitingOf,
 } from "./tasks";
 
 const video = (id: string, mode: string, created = "2026-10-01T10:00:00Z") =>
@@ -127,5 +127,40 @@ describe("даты", () => {
     expect(dayOf(new Date(2026, 8, 28).toISOString(), now)).toBe("28 сен");
     expect(dayOf(new Date(2025, 8, 28).toISOString(), now)).toBe("28 сен 2025");
     expect(dayOf(new Date(2026, 9, 5, 10, 42).toISOString(), now)).toMatch(/^сегодня, 10:42$/);
+  });
+});
+
+describe("карточка таски (решения 14.10.2026)", () => {
+  const src = (o: Partial<TaskStats["sources"]> = {}) => ({ files: 0, cut: 0, uncut: 0, annotate: 0, ...o });
+  const vids = (o: Partial<TaskStats["videos"]> = {}) => ({ tracks: 0, boxes: 0, agent_done: 0, agent_left: 0, ...o });
+  const text = (line: (string | number)[]) => line.join("");
+  const badges = (l: ReturnType<typeof cardLook>) => l.badges.map((b) => b.text);
+
+  it("изображения: брак сделан, отложенные — значком, кадры агента — в «осталось»", () => {
+    const l = cardLook("in_progress", { counts: counts({ total: 40, annotated: 20, empty: 5, skipped: 3, new: 12, deleted: 2, agent: 4 }), sources: src({ files: 42 }) });
+    expect(text(l.line)).toBe("сделано 27 · осталось 12");
+    expect(badges(l)).toEqual(["4 ждут проверки", "3 отложено"]);
+    expect(l.parts.map((p) => p.value)).toEqual([20, 5, 2, 3, 12]);
+  });
+
+  it("ролик без агента — треки и рамки, с агентом — проверка по кадрам", () => {
+    expect(text(cardLook("in_progress", { counts: counts({}), sources: src({ annotate: 1 }), videos: vids({ tracks: 7, boxes: 120 }) }).line))
+      .toBe("7 треков · 120 рамок");
+    const l = cardLook("in_progress", { counts: counts({}), sources: src({ annotate: 1 }), videos: vids({ tracks: 1, boxes: 3, agent_done: 340, agent_left: 1408 }) });
+    expect(text(l.line)).toBe("проверено 340 · осталось 1408");
+    expect(badges(l)).toEqual(["1 трек, 3 рамки"]);
+  });
+
+  it("смешанная таска: ролик значком после остального", () => {
+    const l = cardLook("updating", { counts: counts({ total: 5, annotated: 5 }), sources: src({ files: 5, annotate: 2 }), videos: vids({ agent_done: 1, agent_left: 9 }), handover: "j1" });
+    expect(badges(l)).toEqual(["сдаётся", "2 ролика: осталось проверить 9"]);
+  });
+
+  it("сданная — все изображения вместе с кадрами роликов", () => {
+    const c = counts({ total: 4, annotated: 4, accepted: 4, video_accepted: 422, video: { total: 426, new: 4, skipped: 0, annotated: 422, empty: 0, deleted: 0, agent: 4 } });
+    const l = cardLook("done", { counts: c, sources: src({ annotate: 1 }) });
+    expect(text(l.line)).toBe("430 изображений · 426 в датасете");
+    expect(badges(l)).toEqual(["4 ждут проверки"]);
+    expect(text(cardLook("closed", { counts: counts({ total: 3, annotated: 3, accepted: 3 }), sources: src() }).line)).toBe("3 изображения в датасете");
   });
 });
