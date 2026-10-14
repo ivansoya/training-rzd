@@ -61,11 +61,13 @@ export function Select<T extends string>({ value, onChange, options, placeholder
 }
 
 /** Всплывающая панель у кнопки. Закрывается Esc, щелчком мимо и прокруткой страницы. */
-export function Popover({ trigger, children, align = "start", width, open: openProp, onOpenChange,
+export function Popover({ trigger, children, align = "start", side, width, open: openProp, onOpenChange,
   className, yieldFocus }: {
   trigger: ReactElement;
   children: ReactNode | ((close: () => void) => ReactNode);
   align?: "start" | "center" | "end";
+  /** Сторона от кнопки; без неё — снизу, у края экрана Radix сам перевернёт наверх. */
+  side?: "top" | "right" | "bottom" | "left";
   width?: number;
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
@@ -92,7 +94,7 @@ export function Popover({ trigger, children, align = "start", width, open: openP
     <RP.Root open={open} onOpenChange={set}>
       <RP.Trigger asChild>{trigger}</RP.Trigger>
       <RP.Portal>
-        <RP.Content ref={content} align={align} sideOffset={6} collisionPadding={8}
+        <RP.Content ref={content} align={align} side={side} sideOffset={6} collisionPadding={8}
           className={cx("ui-pop", className)} style={width ? { width } : undefined}
           onCloseAutoFocus={yieldFocus ? (e) => {
             const now = document.activeElement;

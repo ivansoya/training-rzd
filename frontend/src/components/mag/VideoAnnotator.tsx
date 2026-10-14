@@ -67,6 +67,8 @@ import { HereSide, Transport } from "../editor/VideoPanels";
 import { ReviewBar, ScoutBar } from "../editor/ReviewBars";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
 import { agentGroups, isTaken, nextFrame, scoutFrameAt, settlePending } from "../editor/review";
+import { useClassFilter } from "../editor/ClassFilter";
+import { agentKey, agentShown, classKey, countClasses } from "../editor/filter";
 import {
   DOCK_DEFAULT, clampDock, coveredSpans, followView, fullView, itemKey, seekToTrack, singleAgent, singleTicks, trackNumbers, zoomAt,
 } from "../editor/video";
@@ -193,7 +195,7 @@ export default function VideoAnnotator({
   // Число кадров — из таблицы кадров ролика, а не прикидкой по длительности: разметка адресуется номером кадра.
   const clip = useClip(taskId, video.id);
   const scouts = useScouts(taskId);
-  const scout = scoutLanes(scouts[video.id], taskColors(scouts));
+  const scoutAll = useMemo(() => scoutLanes(scouts[video.id], taskColors(scouts)), [scouts, video.id]);
   const [scoutOn, setScoutOn] = useState(() => stored(SCOUT_KEY) === "1");
   // Покадровые находки разведки — призракам на кадре и точкам на дорожках
   const [found, setFound] = useState<ScoutStats | null>(null);
@@ -435,6 +437,31 @@ export default function VideoAnnotator({
 
   const labelOf = useCallback((ci: number) => byIndex.get(ci) || GREY, [byIndex]);
   const numbers = useMemo(() => trackNumbers(data?.tracks || []), [data]);
+
+  // Фильтр классов (решения 14.10.2026): только дорожки — холст и «На кадре» рисуют всё.
+  const [fltOff, setFltOff] = useClassFilter(`mag.filter.video.${taskId}`);
+  /** Полоса разведки: сопоставленная идёт за классом проекта; пока сопоставление не пришло — не фильтруется. */
+  const laneShown = useCallback((name: string) => {
+    if (!found) return true;
+    const m = found.mapped[name];
+    return !fltOff.has(m ? classKey(m.class_index) : agentKey(name));
+  }, [found, fltOff]);
+  const scout = useMemo(() => scoutAll.filter((l) => laneShown(l.name)), [scoutAll, laneShown]);
+  const filter = useMemo(() => {
+    const tracks = data?.tracks || [];
+    const n = countClasses([...tracks.map((t) => t.class_index ?? -1), ...(data?.singles || []).map((b) => b.class_index ?? -1)]);
+    const present = new Set([...n.keys(), ...(skel?.marks || []).flatMap((m) => m[3] ?? []),
+      ...Object.values(found?.mapped || {}).flatMap((m) => (m ? [m.class_index] : []))]);
+    return {
+      classes: classes.filter((c) => present.has(c.class_index))
+        .map((c) => ({ key: classKey(c.class_index), name: c.name, color: c.color, n: n.get(c.class_index) ?? 0 })),
+      agent: found ? scoutAll.filter((l) => !found.mapped[l.name]).map((l) => ({
+        key: agentKey(l.name), name: l.name, color: l.color, n: l.spans.reduce((a, sp) => a + sp[2], 0) })) : [],
+      off: fltOff,
+      onChange: setFltOff,
+      cut: tracks.filter((t) => fltOff.has(classKey(t.class_index))).length,
+    };
+  }, [data, skel, found, scoutAll, classes, fltOff, setFltOff]);
 
   // --- что показано на кадре ----------------------------------------------- #
   const { items, boxes, dashed } = useMemo(() => {
@@ -890,8 +917,8 @@ export default function VideoAnnotator({
   // --- проверка агента и разведка ----------------------------------------- #
   /** Кадры с непроверенной разметкой агента, по порядку. */
   const agentFrames = useMemo(
-    () => (skel?.marks || []).filter(([, , p]) => p > 0).map(([f]) => f),
-    [skel]
+    () => (skel?.marks || []).filter(([, , p, cis]) => p > 0 && agentShown(cis, fltOff)).map(([f]) => f),
+    [skel, fltOff]
   );
   const pendingHere = (draft ?? boxes).filter((b) => b.pending).length;
   // Кадр ещё не пришёл — число рамок на проверке из сводки, кнопки погашены
@@ -987,14 +1014,16 @@ export default function VideoAnnotator({
     const by = new Map<string, number[]>();
     const all: number[] = [];
     for (const [f, list] of Object.entries(found?.frames || {})) {
-      if (!list.length) continue;
-      all.push(Number(f));
-      for (const name of new Set(list.map((d) => d[0]))) by.set(name, [...(by.get(name) || []), Number(f)]);
+      const names = new Set(list.map((d) => d[0]));
+      if (!names.size) continue;
+      // Общая строка — точки только видимых классов
+      if ([...names].some(laneShown)) all.push(Number(f));
+      for (const name of names) by.set(name, [...(by.get(name) || []), Number(f)]);
     }
     const asc = (a: number, b: number) => a - b;
     by.forEach((v) => v.sort(asc));
     return { all: all.sort(asc), by };
-  }, [found]);
+  }, [found, laneShown]);
 
   /** «В разметку»: выбранная находка или все на кадре — проверенными одиночными рамками. */
   const take = useCallback((which: "one" | "all", as?: number) => {
@@ -1346,7 +1375,7 @@ export default function VideoAnnotator({
         case "KeyT": if (!frozen) setTool("track"); break;
         case "KeyA": if (!frozen && auto.state === "ready") pickAuto(); break;
         case "KeyE": toggleEmpty(); break;
-        case "KeyR": if (scout.length) toggleScout(); break;
+        case "KeyR": if (scoutAll.length) toggleScout(); break;
         case "KeyK": putKey(); break;
         case "Digit0": canvas.current?.fit(); break;
         case "Delete":
@@ -1381,7 +1410,7 @@ export default function VideoAnnotator({
     };
   }, [tool, frozen, autoPrev, autoPts, clearAuto, closeEditor, togglePlay, go, auto.state, pickAuto,
       selected, pickedTrack, pick, apply, items, classes, pickClass, commitAuto, toggleEmpty, putKey,
-      scout.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent]);
+      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent]);
 
   // --- масштаб дорожек ------------------------------------------------------ #
   // Окно масштаба; null — весь ролик. Ширина дорожек — от самих дорожек (ограничение 12 px на кадр).
@@ -1406,7 +1435,13 @@ export default function VideoAnnotator({
   const covered = useMemo(() => coveredSpans(data?.tracks || [], data?.singles || []), [data]);
   const shownView = view ?? fullView(lastFrame);
   // Непроверенное агента — своей дорожкой «Агент», в «Одиночные» оно попадает после проверки
-  const ticks = useMemo(() => singleTicks((data?.singles || []).filter((b) => !b.pending)), [data]);
+  const ticks = useMemo(
+    () => singleTicks((data?.singles || []).filter((b) => !b.pending && !fltOff.has(classKey(b.class_index)))),
+    [data, fltOff]);
+  // Выбранный трек снятого класса виден, пока выбран: иначе только что обведённый пропал бы с дорожек
+  const laneTracks = useMemo(
+    () => (data?.tracks || []).filter((t) => !fltOff.has(classKey(t.class_index)) || t.id === pickedTrack),
+    [data, fltOff, pickedTrack]);
   const editable = !readOnly && !unplayable;
   const autoTitle = auto.state === "ready" ? undefined
     : auto.state === "error" ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}` : "Модель готовится…";
@@ -1458,7 +1493,7 @@ export default function VideoAnnotator({
         {!clip.preparing && clip.loading && <span className="ve-prep"><i />Читаю ролик…</span>}
         {data?.editable && <SaveNote state={saveState} error={error} note={editNote} />}
         <i className="ed-vsep" />
-        {scout.length > 0 && (
+        {scoutAll.length > 0 && (
           <Button variant="ghost" size="sm" icon="scan" kbd="R" aria-pressed={scoutOn} onClick={toggleScout}
             title={scoutOn ? "Вернуть треки на дорожки" : "Разведка агента по классам вместо треков"}>Разведка</Button>
         )}
@@ -1611,7 +1646,7 @@ export default function VideoAnnotator({
               <AutoBar onCommit={commitAuto} onCancel={clearAuto} />
             </Float>
           )}
-          {!autoPrev && !viewOnly && agentFrames.length > 0 && (reviewHere > 0 || !ghosts.length) && (
+          {!autoPrev && !viewOnly && (reviewHere > 0 || (agentFrames.length > 0 && !ghosts.length)) && (
             <ReviewBar count={reviewHere} left={agentFrames.length} disabled={!frameLoaded}
               onPrev={() => goReview(-1)} onNext={() => goReview(1)} onConfirm={confirmFrame} onReject={rejectFrame}
               agents={agentsHere.map((g) => ({ agent: g.agent, count: g.idx.length }))}
@@ -1636,10 +1671,11 @@ export default function VideoAnnotator({
             onGo={go} onPlay={togglePlay} onSpeed={(v) => changeSpeed(v, frame)} onQuality={setQuality}
             onEmpty={toggleEmpty} onKey={putKey}
             zoom={<ZoomBar view={shownView} last={lastFrame} onZoom={zoomStep} onFit={() => setView(null)} />} />
-          <Lanes tracks={data?.tracks || []} numbers={numbers} frame={frame} lastFrame={lastFrame} fps={fps}
+          <Lanes tracks={laneTracks} numbers={numbers} filter={filter} frame={frame} lastFrame={lastFrame} fps={fps}
             labelOf={labelOf} selected={pickedTrack} editable={!viewOnly} hidden={hiddenTracks}
             covered={covered} marks={marks} plan={plan ? plan.frames : null} singles={ticks} agent={agentFrames}
-            scout={scout} scoutDots={scoutDots} scoutOpen={scoutOn && scout.length > 0} onScout={toggleScout}
+            scout={scout} scouted={scoutAll.length > 0} scoutDots={scoutDots} scoutOpen={scoutOn && scoutAll.length > 0}
+            onScout={toggleScout}
             view={shownView} onView={setView} onWidth={setLaneW}
             chunks={chunks ?? []} loaded={loaded} inFlight={fetching} loading={!!skel && (chunks === null || loaded.size < chunks.length)}
             onSelect={selectTrack} onHide={(id) => toggleHidden(`t:${id}`)} onAction={onLane} onSeek={seek} />

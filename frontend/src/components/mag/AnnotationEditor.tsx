@@ -30,7 +30,7 @@ import AutoStatus from "./AutoStatus";
 import { useLive } from "../../live/LiveProvider";
 import type { AutoRefine } from "../../auth/api";
 import type { TaskBox, TaskPerson } from "../../auth/api";
-import { Button, Notice, StackBar, Switch } from "../../ui";
+import { Button, Notice, StackBar, Switch, cx } from "../../ui";
 import { plural, ru } from "../ru";
 import AutoSettings from "../editor/AutoSettings";
 import ClassPicker from "../editor/ClassPicker";
@@ -38,6 +38,8 @@ import { EditorHead, Float, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip
 import { useAuth } from "../auth/AuthGate";
 import { AutoBar, FrameBar, FrameSide, Who, agentKeyOf } from "../editor/FramePanels";
 import { ReviewBar } from "../editor/ReviewBars";
+import { ClassFilter, shownOf, useClassFilter } from "../editor/ClassFilter";
+import { classKey, countClasses, frameShown } from "../editor/filter";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
 import AgentSetupDialog from "../agents/AgentSetupDialog";
 import {
@@ -92,6 +94,7 @@ const KEYS: KeyGroup[] = [
 
 const GREY = { name: "", color: "#9aa4ae" };
 const SIDE_W = 280;
+const NO_OFF = new Set<string>();
 
 // Последняя запись разметки, в том числе ушедшая при закрытии редактора.
 // Страница таски ждёт её перед тем, как перечитать кадры: иначе чтение,
@@ -313,6 +316,22 @@ export default function AnnotationEditor({
 
   const progress = useMemo(() => progressOf(images), [images]);
 
+  // Фильтр классов (решения 14.10.2026): лента и все переходы — только по кадрам с отмеченными классами.
+  const [fltOff, setFltOff] = useClassFilter(`mag.filter.frames.${taskId}`);
+  const fltEntries = useMemo(() => {
+    const n = countClasses(images.flatMap((im) => [...new Set((im.boxes || []).map((b) => b.class_index))]));
+    return classes.filter((c) => n.has(c.class_index))
+      .map((c) => ({ key: classKey(c.class_index), name: c.name, color: c.color, n: n.get(c.class_index) ?? 0 }));
+  }, [images, classes]);
+  // Снятый класс, которого в кадрах нет, фильтра не включает: иначе пустые кадры выпали бы молча
+  const off = useMemo(() => (fltEntries.some((e) => fltOff.has(e.key)) ? fltOff : NO_OFF), [fltEntries, fltOff]);
+  const fltOn = off.size > 0;
+  /** Кадр в работе: подходит фильтру; текущий — всегда, выпадает при уходе с него. */
+  const passes = useCallback((i: number) => i === index || frameShown(images[i]?.boxes, off), [images, index, off]);
+  const shown = useMemo(() => images.map((_, i) => i).filter(passes), [images, passes]);
+  const none = fltOn && !shown.some((i) => frameShown(images[i].boxes, off));
+  const pos = none ? -1 : shown.indexOf(index);
+
   // Всё, что нужно записи, — через ref: запись стоит в очереди и может
   // выполниться после следующей отрисовки, а брать ей надо свежее.
   const live = useRef({ image, labelOf, meta, onChanged });
@@ -527,16 +546,16 @@ export default function AnnotationEditor({
     }).catch(() => undefined);
   });
 
-  // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет.
+  // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет. Не прошедшие фильтр — тоже.
   const go = useCallback(
     (delta: number) => {
       let i = navAt.current + delta;
-      while (i >= 0 && i < images.length && images[i].task_status === "deleted") {
+      while (i >= 0 && i < images.length && (images[i].task_status === "deleted" || !passes(i))) {
         i += delta;
       }
       return jump(i);
     },
-    [images, jump]
+    [images, jump, passes]
   );
 
   const verdict = useCallback(
@@ -586,8 +605,8 @@ export default function AnnotationEditor({
   /** Кадры на проверке в открытом списке — у текущего по живой разметке. */
   const flagged = useCallback(
     () => images.map((im, i) => (i === index ? pendingCount(boxesRef.current) > 0
-      : im.task_status !== "deleted" && (im.boxes || []).some((b) => b.pending))),
-    [images, index]
+      : im.task_status !== "deleted" && passes(i) && (im.boxes || []).some((b) => b.pending))),
+    [images, index, passes]
   );
 
   // Сколько кадров списка ещё на проверке — для сжатой плашки на кадре без непроверенного
@@ -672,9 +691,11 @@ export default function AnnotationEditor({
 
   // --- полуавтоматическая разметка ---------------------------------------- #
 
+  // Прогреваем тот кадр, куда поведёт «Далее», — с фильтром это не обязательно соседний
+  const ahead = shown.find((i) => i > index);
   const auto = useAutoLabel(
     image ? { image_id: image.id } : null,
-    images[index + 1] ? { image_id: images[index + 1].id } : null,
+    ahead !== undefined ? { image_id: images[ahead].id } : null,
     undefined,
     null,
     code
@@ -1164,8 +1185,8 @@ export default function AnnotationEditor({
   if (!image) return null;
 
   const pad = stagePad({ panels, film: filmW, side: SIDE_W });
-  const canPrev = images.slice(0, index).some((im) => im.task_status !== "deleted");
-  const canNext = images.slice(index + 1).some((im) => im.task_status !== "deleted");
+  const canPrev = !none && shown.some((i) => i < index && images[i].task_status !== "deleted");
+  const canNext = !none && shown.some((i) => i > index && images[i].task_status !== "deleted");
   const autoTitle = auto.state === "ready" ? undefined
     : auto.state === "error" ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}` : "Модель готовится…";
 
@@ -1175,7 +1196,10 @@ export default function AnnotationEditor({
         onBack={() => void close()}
         backLabel="К таске (Esc)"
         title={taskName}
-        sub={<>Кадр <span className="ui-mono">{ru(index + 1)}</span> из <span className="ui-mono">{ru(images.length)}</span> · {image.file_name}</>}
+        sub={<>
+          Кадр <span className="ui-mono">{pos < 0 ? "—" : ru(pos + 1)}</span> из <span className="ui-mono">{ru(none ? 0 : shown.length)}</span>
+          {fltOn && <span className="t-faint"> (в таске {ru(images.length)})</span>} · {image.file_name}
+        </>}
         extra={
           <div className="ed-prog" title={STATUS_LOOK.map((s) => `${s.label}: ${progress.counts[s.id]}`).join(" · ")}>
             <StackBar label="Прогресс" parts={STATUS_LOOK.map((s) => ({ label: s.label, value: progress.counts[s.id], color: s.color }))} />
@@ -1305,20 +1329,43 @@ export default function AnnotationEditor({
 
         {panels && (
           <Float className="fe-film" label="Кадры таски">
-            <FilmStrip
-              vertical
-              items={images.map((im, i) => ({
-                id: im.id,
-                width: im.width,
-                height: im.height,
-                boxes: im.boxes,
-                ring: im.task_status + ((i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending)) ? " agent" : ""),
-                title: `${im.file_name} — ${im.annotations} разметок`,
-              }))}
-              index={index}
-              onPick={jump}
-              onSize={setFilmW}
-            />
+            <div className="fe-film-h">
+              <ClassFilter side="right" title="Кадры с классами" classes={fltEntries} unit="кадров с этим классом"
+                off={fltOff} onChange={setFltOff}
+                trigger={
+                  <Button variant="outline" size="sm" icon="filter" iconEnd="chevD" className={cx("fe-flt", fltOn && "on")}
+                    title={fltOn ? `Классы: ${shownOf(fltEntries, fltOff).shown} из ${fltEntries.length}` : "Отобрать кадры по классам"}>
+                    Классы{fltOn && <span className="fr-fcount">{shownOf(fltEntries, fltOff).shown}</span>}
+                  </Button>
+                } />
+            </div>
+            {none ? (
+              <div className="fe-film-none" style={{ width: filmW }}>
+                Нет кадров с выбранными классами
+                <Button variant="outline" size="sm" onClick={() => setFltOff(new Set())}>Сбросить</Button>
+              </div>
+            ) : (
+              <FilmStrip
+                vertical
+                items={shown.map((i) => {
+                  const im = images[i];
+                  const out = i === index && !frameShown(im.boxes, off);
+                  return {
+                    id: im.id,
+                    width: im.width,
+                    height: im.height,
+                    boxes: im.boxes,
+                    n: i + 1,
+                    ring: im.task_status + ((i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending)) ? " agent" : "")
+                      + (out ? " out" : ""),
+                    title: `${im.file_name} — ${im.annotations} разметок${out ? " · не по фильтру, уйдёт из ленты" : ""}`,
+                  };
+                })}
+                index={pos}
+                onPick={(k) => void jump(shown[k])}
+                onSize={setFilmW}
+              />
+            )}
           </Float>
         )}
 
@@ -1361,7 +1408,8 @@ export default function AnnotationEditor({
             {autoPrev ? (
               <AutoBar onCommit={commitAuto} onCancel={clearAuto} />
             ) : (
-              <FrameBar index={index} total={images.length} canPrev={canPrev} canNext={canNext}
+              <FrameBar index={pos} total={none ? 0 : shown.length} of={fltOn ? images.length : undefined}
+                canPrev={canPrev} canNext={canNext}
                 actions={actions} status={image.task_status}
                 onPrev={() => void go(-1)} onNext={() => void go(1)}
                 onToggle={(s) => void toggle(s)} onTrash={() => void trash()} onGo={() => void go(1)} />

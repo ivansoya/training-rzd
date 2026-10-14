@@ -21,6 +21,8 @@ export interface FilmItem {
   boxes?: FilmBox[];
   /** Класс обводки: состояние кадра. */
   ring?: string;
+  /** Номер на превью — кадра в таске, когда лента показывает не все кадры. */
+  n?: number;
   title?: string;
 }
 
@@ -139,7 +141,7 @@ export default function FilmStrip({
           >
             <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
             <ShapeMini boxes={im.boxes || []} width={im.width} height={im.height} />
-            <span className="mag-fs-n">{i + 1}</span>
+            <span className="mag-fs-n">{im.n ?? i + 1}</span>
           </button>
         ))}
       </div>

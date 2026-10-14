@@ -6,7 +6,7 @@ export interface Chunk { from: number; to: number }
 
 /** Куски по ~`limit` рамок: граница всегда между кадрами, кадр целиком в одном куске.
  *  Покрывают [0, last] без дыр — новая рамка на любом кадре попадает в известный кусок. */
-export function chunkPlan(marks: [number, number, number][], last: number, limit = 1500): Chunk[] {
+export function chunkPlan(marks: [number, number, number, ...unknown[]][], last: number, limit = 1500): Chunk[] {
   const sorted = [...marks].sort((a, b) => a[0] - b[0]);
   if (!sorted.length) return [];
   const end = Math.max(last + 1, sorted[sorted.length - 1][0] + 1);

@@ -8,6 +8,9 @@ import type { ScoutLane } from "../agents/scout";
 import { hiddenRanges, keyAt, trackEnd } from "../mag/trackMath";
 import { extensionFrame, visibleSpans } from "../mag/timelineMath";
 import { ru } from "../ru";
+import { ClassFilter, shownOf } from "./ClassFilter";
+import type { FilterEntry } from "./ClassFilter";
+import { classKey } from "./filter";
 import { nearestTick } from "./review";
 import { clampView, clockText, scoutHeat, timeTicks, zoomAt, zoomText } from "./video";
 import type { View } from "./video";
@@ -26,9 +29,10 @@ export interface LaneAction {
 type Drag = { kind: "key" | "start" | "end" | "hide" | "seek"; trackId: string; from: number; x: number };
 type Label = (ci: number) => { name: string; color: string };
 
-export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selected, editable, hidden,
-  covered, marks, plan, singles, agent, scout, scoutDots, scoutOpen, view, onView, onWidth, chunks, loaded, inFlight, loading,
+export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selected, editable, hidden, filter,
+  covered, marks, plan, singles, agent, scout, scouted, scoutDots, scoutOpen, view, onView, onWidth, chunks, loaded, inFlight, loading,
   onScout, onSelect, onHide, onAction, onSeek }: {
+  /** Треки, прошедшие фильтр классов (выбранный — всегда). */
   tracks: VideoTrack[];
   numbers: Map<string, number>;
   frame: number;
@@ -39,6 +43,8 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   editable: boolean;
   /** Треки, погашенные на кадре глазом. */
   hidden: Set<string>;
+  /** Фильтр классов дорожек: что в списке, что снято; `cut` — сколько треков он спрятал. */
+  filter: { classes: FilterEntry[]; agent: FilterEntry[]; off: Set<string>; onChange: (next: Set<string>) => void; cut: number };
   covered: [number, number][];
   /** Фоновые кадры; `on` — пометка действует, кадр свободен. */
   marks: { frame: number; on: boolean }[];
@@ -47,7 +53,10 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   singles: { frame: number; ci: number }[];
   /** Кадры с непроверенной разметкой агента. */
   agent: number[];
+  /** Полосы разведки, прошедшие фильтр. */
   scout: ScoutLane[];
+  /** Разведка у ролика есть — строка «Разведка» стоит, даже если фильтр снял все её классы. */
+  scouted: boolean;
   /** Проверенные разведкой кадры с находками: все классы и по классу агента. */
   scoutDots?: { all: number[]; by: Map<string, number[]> };
   /** R: разведка по классам вместо треков. */
@@ -162,6 +171,9 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   ));
   const tickLane = { frame, view, head, hatch, onSeek, fallback: seekHere, pointer };
   const zoomed = view.len < Math.max(1, lastFrame);
+  const flt = shownOf([...filter.classes, ...filter.agent], filter.off);
+  const fltOn = flt.shown < flt.total;
+  const showAll = <Button variant="ghost" size="sm" onClick={() => filter.onChange(new Set())}>Показать все</Button>;
 
   return (
     <div className="ve-tl" aria-label="Дорожки" ref={root}>
@@ -169,7 +181,22 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
         <div className="ve-r ve-ruler">
           {loading
             ? <div className="ve-n ve-loading"><i className="ui-spin" aria-hidden="true" />Разметка грузится</div>
-            : <div className="ve-n t-faint">Дорожки <span className="ui-mono">{tracks.length}</span></div>}
+            : (
+              <div className="ve-n">
+                <ClassFilter title="Классы на дорожках" classes={filter.classes} agent={filter.agent}
+                  unit="треков и одиночных на дорожках" agentUnit="кадров с находками разведки"
+                  off={filter.off} onChange={filter.onChange}
+                  trigger={
+                    <button type="button" className={cx("ve-n-b", "ve-flt", fltOn && "on")} title="Какие классы показывать на дорожках">
+                      <Icon name="filter" size={14} />
+                      {fltOn
+                        ? <>Классы<span className="fr-fcount">{flt.shown}</span><span className="ui-mono t-faint">из {flt.total}</span></>
+                        : <>Дорожки<span className="ui-mono t-faint">{tracks.length}</span></>}
+                      <Icon name="chevD" size={13} />
+                    </button>
+                  } />
+              </div>
+            )}
           <div className="ve-l" ref={lane} role="slider" tabIndex={0} aria-label="Кадр" aria-valuemin={0}
             aria-valuemax={lastFrame} aria-valuenow={frame} onPointerDown={seekHere} {...pointer}
             onKeyDown={(e) => {
@@ -205,7 +232,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
           </Row>
         )}
 
-        {scout.length > 0 && (
+        {scouted && (
           <Row on={scoutOpen} title={scoutOpen ? "Разведка по классам — R вернёт треки" : "Где агент что-то нашёл; R — по классам"}
             name={<button type="button" className="ve-n-b" aria-pressed={scoutOpen} onClick={onScout}>
               <Icon name="scan" size={14} />Разведка<span className="ve-k">R</span>
@@ -251,6 +278,9 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
               <button type="button" className="ve-n-b" aria-pressed={on} title={name} onClick={() => onSelect(t.id)}>
                 <Swatch color={c.color} /><span className="t-ell">{name}</span>
                 <span className="ui-mono t-faint">#{numbers.get(t.id)}</span>
+                {filter.off.has(classKey(t.class_index)) && (
+                  <span title="Класс снят фильтром — трек виден, пока выбран"><Icon name="funnelx" size={13} className="flt-x" /></span>
+                )}
               </button>
               <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
                 aria-label={off ? `Показать «${name}» на кадре` : `Скрыть «${name}» на кадре`} onClick={() => onHide(t.id)} />
@@ -311,9 +341,10 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
           </div>
         );
       })}
-      {!scoutOpen && !tracks.length && (
-        <p className="ve-none"><Icon name="route" size={14} />Нажмите T и обведите объект — он поедет по ролику дорожкой здесь.</p>
-      )}
+      {!scoutOpen && !tracks.length && (filter.cut > 0
+        ? <p className="ve-none"><Icon name="filter" size={14} />Треки скрыты фильтром{showAll}</p>
+        : <p className="ve-none"><Icon name="route" size={14} />Нажмите T и обведите объект — он поедет по ролику дорожкой здесь.</p>)}
+      {scoutOpen && !scout.length && <p className="ve-none"><Icon name="filter" size={14} />Классы разведки скрыты фильтром{showAll}</p>}
       {zoomed && <Scrollbar view={view} last={lastFrame} onView={(v) => onView(clampView(v, lastFrame, width))} />}
     </div>
   );

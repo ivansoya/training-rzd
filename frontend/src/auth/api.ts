@@ -1433,9 +1433,10 @@ export async function getVideoAnnotations(
   return asJson(await fetch(`/api/tasks/${taskId}/videos/${videoId}/annotations`));
 }
 
-/** Каркас разметки ролика: всё, кроме одиночных фигур. `marks` — [кадр, рамок, из них на проверке]:
- *  по ним редактор режет ролик на куски и сразу знает кадры на проверке. */
-export type VideoSkeleton = Omit<VideoAnnotations, "singles"> & { marks: [number, number, number][] };
+/** Каркас разметки ролика: всё, кроме одиночных фигур. `marks` — [кадр, рамок, из них на проверке,
+ *  классы рамок на проверке]: по ним редактор режет ролик на куски, сразу знает кадры на проверке
+ *  и гасит фильтром классов риски «Агента» ещё до прихода кусков. */
+export type VideoSkeleton = Omit<VideoAnnotations, "singles"> & { marks: [number, number, number, number[]?][] };
 
 export async function getVideoSkeleton(taskId: string, videoId: string): Promise<VideoSkeleton> {
   return asJson(await fetch(`/api/tasks/${taskId}/videos/${videoId}/annotations?singles=0`));

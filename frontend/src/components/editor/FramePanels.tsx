@@ -6,6 +6,7 @@ import { Button, Dot, Icon, Select, Swatch, cx } from "../../ui";
 import { fmtConf } from "../mag/BoxCanvas";
 import type { CanvasShape } from "../mag/BoxCanvas";
 import type { FrameAction } from "../mag/frameActions";
+import { ru } from "../ru";
 import { statusLook } from "./look";
 import { agentGroups, type AgentKey } from "./review";
 
@@ -163,10 +164,13 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
   );
 }
 
-export function FrameBar({ index, total, canPrev, canNext, actions, status, onPrev, onNext,
+export function FrameBar({ index, total, of, canPrev, canNext, actions, status, onPrev, onNext,
   onToggle, onTrash, onGo }: {
+  /** Место в показанных кадрах; −1 — фильтр не оставил ни одного. */
   index: number;
   total: number;
+  /** Кадров в таске, когда показаны не все. */
+  of?: number;
   canPrev: boolean;
   canNext: boolean;
   actions: FrameAction[];
@@ -180,7 +184,8 @@ export function FrameBar({ index, total, canPrev, canNext, actions, status, onPr
   return (
     <>
       <Button variant="ghost" size="sm" icon="chevL" aria-label="Предыдущий кадр (←)" disabled={!canPrev} onClick={onPrev} />
-      <span className="ui-mono t-sm fe-pos">{index + 1} / {total}</span>
+      <span className="ui-mono t-sm fe-pos">{index < 0 ? "—" : index + 1} / {total}</span>
+      {of !== undefined && <span className="t-xs fe-of">из {ru(of)}</span>}
       <Button variant="ghost" size="sm" icon="chevR" aria-label="Следующий кадр (→)" disabled={!canNext} onClick={onNext} />
       <i className="ed-vsep" />
       {actions.includes("empty") && (
