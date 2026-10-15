@@ -14,7 +14,8 @@ import ClassMap, { guess, useAutoMapped } from "./ClassMap";
 import { verdictLook } from "./GpuVerdict";
 
 export default function AgentSetupDialog({ taskId, tool, onClose, onRunAll }: {
-  taskId: string;
+  /** Таска или датасет проекта: сопоставление всё равно помнится на пару «агент + проект». */
+  taskId: api.AgentScope;
   tool: AgentToolState;
   onClose: () => void;
   /** Полное окно запуска — «по всей таске сразу». */
@@ -57,7 +58,7 @@ export default function AgentSetupDialog({ taskId, tool, onClose, onRunAll }: {
   };
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()} width={640} title="Агент таски"
+    <Dialog open onOpenChange={(v) => !v && onClose()} width={640} title={typeof taskId === "string" ? "Агент таски" : "Агент датасета"}
       desc="Его зовут меню блоков и кнопка G в редакторах — сразу, без вопросов. Рамки агента встают на проверку"
       footer={<>
         {onRunAll && <Button variant="agent" icon="sparkle" onClick={onRunAll}>Разметить агентом…</Button>}

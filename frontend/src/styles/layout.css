@@ -279,17 +279,89 @@ a.pcard:hover { border-color: var(--input); }
   border-radius: var(--r-md); background: var(--stage); color: var(--on-frame); cursor: pointer;
   outline: 1px solid var(--border); outline-offset: -1px; font: inherit;
 }
-.fr-tile > img { display: block; width: 100%; height: 100%; object-fit: cover; transition: scale .35s ease; }
-.fr-tile > .mag-shp { transition: scale .35s ease; }
+.fr-tile > img, .fr-open > img { display: block; width: 100%; height: 100%; object-fit: cover; transition: scale .35s ease; }
+.fr-open > .mag-shp { transition: scale .35s ease; }
+/* Кадр открывает кнопка во всю плитку; подписи поверх не ловят мышь */
+.fr-open { position: absolute; inset: 0; padding: 0; border: 0; background: none; cursor: pointer; }
+.fr-open:focus-visible { outline: none; }
+.fr-tile > span { pointer-events: none; }
 /* Наведение — рамка и лёгкое приближение, без подъёма и тени */
-.fr-tile:hover, .fr-tile:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
-.fr-tile:hover > img, .fr-tile:hover > .mag-shp,
-.fr-tile:focus-visible > img, .fr-tile:focus-visible > .mag-shp { scale: 1.05; }
+.fr-tile:hover, .fr-tile:focus-visible, .fr-tile:has(.fr-open:focus-visible) { outline: 2px solid var(--ring); outline-offset: -2px; }
+.fr-tile:hover .fr-open > img, .fr-tile:hover .fr-open > .mag-shp,
+.fr-open:focus-visible > img, .fr-open:focus-visible > .mag-shp { scale: 1.05; }
+
+/* Выбор для таски из датасета (решения 14.10.2026): флажок при наведении, а пока выбрано хоть что-то — везде */
+.fr-sel {
+  position: absolute; left: 4px; top: 4px; width: 26px; height: 26px; padding: 0; border: 0; background: none;
+  display: grid; place-items: center; opacity: 0; transition: opacity .12s;
+}
+.fr-sel i {
+  width: 16px; height: 16px; border-radius: var(--r-sm); border: 1.5px solid var(--input);
+  background: var(--on-frame-bg); display: grid; place-items: center;
+}
+.fr-tile:hover .fr-sel, .fr-sel:focus-visible, .fr-groups.picking .fr-sel, .fr-tile.on .fr-sel { opacity: 1; }
+.fr-tile.on .fr-sel i { border-color: var(--ring); background: color-mix(in srgb, var(--primary) 40%, var(--stage)); }
+.fr-tile.on .fr-sel i::after { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--fg); }
+.fr-sel:disabled { cursor: not-allowed; }
+.fr-sel:disabled i { opacity: .4; }
+.fr-tile.on { outline: 2px solid var(--ring); outline-offset: -2px; }
+.fr-tile.on::before, .fr-tile.agent::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
+.fr-tile.on::before { background: color-mix(in srgb, var(--primary) 16%, transparent); }
+.fr-tile.agent::after { box-shadow: inset 0 0 0 2px var(--agent-hi); }
+.fr-agt {
+  display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 5px;
+  border-radius: var(--r-sm); background: var(--agent); color: var(--primary-fg); font: 500 10px var(--mono);
+}
+.fr-tile.held .fr-open > img { filter: saturate(.4) brightness(.7); }
+.fr-held {
+  position: absolute; left: 5px; right: 5px; bottom: 5px; display: flex; align-items: center; gap: 5px; width: fit-content; max-width: calc(100% - 10px);
+  padding: 2px 7px 2px 5px; border-radius: var(--r-sm); background: var(--on-frame-bg); color: var(--on-frame); font-size: 11px;
+}
+.fr-held .ui-ic { flex: none; }
+/* Флажок группы: вся группа под отбором, и не подгруженные тоже */
+.fr-gsel { width: 26px; height: 26px; padding: 0; border: 0; background: none; display: grid; place-items: center; flex: none; }
+.fr-gsel i { width: 16px; height: 16px; border-radius: var(--r-sm); border: 1.5px solid var(--input); display: grid; place-items: center; }
+.fr-gsel:hover i { border-color: var(--ring); }
+.fr-gsel.on i, .fr-gsel.part i { border-color: var(--ring); background: color-mix(in srgb, var(--primary) 40%, var(--bg)); }
+.fr-gsel.on i::after { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--fg); }
+.fr-gsel.part i::after { content: ""; width: 8px; height: 2px; border-radius: 1px; background: var(--fg); }
+.fr-gsel:disabled { cursor: progress; opacity: .6; }
+
+/* Полоса «В таску» внизу галереи: держится у нижнего края при прокрутке */
+.fr-take {
+  position: sticky; bottom: 16px; z-index: 20; align-self: center; margin-top: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none;
+}
+.fr-take > * { pointer-events: auto; }
+.fr-take-bar {
+  display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 16px; white-space: nowrap; font-size: 13.5px;
+  background: var(--card); border: 1px solid var(--input); border-radius: var(--r-lg); box-shadow: var(--shadow-float);
+  animation: fr-take-in .2s var(--ease);
+}
+.fr-take-bar b { font-weight: 600; }
+.fr-take-sep { width: 1px; height: 20px; background: var(--border); }
+.fr-take-done {
+  display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; font-size: 13.5px;
+  background: var(--card); border: 1px solid color-mix(in srgb, var(--st-done) 50%, var(--border)); border-radius: var(--r-md);
+  box-shadow: var(--shadow-float); animation: fr-take-in .2s var(--ease);
+}
+.fr-take-done > .ui-ic { color: var(--st-done); }
+@keyframes fr-take-in { from { opacity: 0; translate: 0 8px; } }
+
+/* Окно «Новая таска» из датасета: что уйдёт копиями */
+.ct-from {
+  display: flex; flex-direction: column; gap: 9px; padding: 12px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--c1) 5%, var(--card));
+}
+.ct-from-h { display: flex; align-items: center; gap: 8px; }
+.ct-from-h b { font-weight: 600; }
+.fr-tr { position: absolute; right: 6px; top: 6px; display: flex; align-items: center; gap: 5px; }
+.fr-tr .fr-split { position: static; }
 .fr-split {
   position: absolute; left: 6px; top: 6px; padding: 2px 5px; border-radius: var(--r-sm);
   background: var(--on-frame-bg); color: var(--on-frame); font: 600 9.5px var(--mono); letter-spacing: .04em; text-transform: uppercase;
 }
-.fr-state { position: absolute; right: 6px; top: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--t); box-shadow: 0 0 0 2px var(--on-frame-bg); }
+.fr-state { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--t); box-shadow: 0 0 0 2px var(--on-frame-bg); }
 .fr-name {
   position: absolute; left: 6px; right: 6px; bottom: 5px; text-align: left;
   font: 500 10px var(--mono); color: var(--on-frame); text-shadow: 0 1px 2px var(--on-frame-bg);
@@ -369,7 +441,6 @@ a.pcard:hover { border-color: var(--input); }
 }
 .lbx-h { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .lbx-name { font-size: 13.5px; font-weight: 500; max-width: 40ch; }
-.lbx-pill-a { margin-left: 6px; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; cursor: pointer; }
 .lbx-b { display: grid; grid-template-columns: 40px minmax(0, 1fr) 40px 280px; gap: 12px; align-items: center; min-height: 0; }
 .lbx-stage { position: relative; height: 100%; min-width: 0; min-height: 0; display: flex; }
 .lbx-stage > .mag-cv { border-radius: var(--r-lg); }
@@ -384,16 +455,6 @@ a.pcard:hover { border-color: var(--input); }
   background: var(--card); border: 1px solid var(--border); border-radius: var(--r-lg);
 }
 .lbx-st { display: flex; justify-content: space-between; align-items: center; padding-bottom: 4px; font-size: 12px; font-weight: 500; color: var(--faint); }
-.lbx-obj {
-  display: flex; align-items: center; gap: 10px; width: 100%; height: 32px; padding: 0 8px; flex: none;
-  border: 0; border-radius: var(--r); background: none; color: var(--fg); font-size: 13px; text-align: left; cursor: pointer;
-}
-.lbx-obj:hover { background: var(--hover); }
-.lbx-obj > .ui-ic { color: var(--faint); }
-.lbx-obj.off { opacity: .45; }
-.lbx-s .ui-meta { padding: 4px 0; }
-.lbx-keys { margin: 0; font-size: 11.5px; line-height: 2; color: var(--muted-fg); }
-.lbx > .mag-fs { margin: 0 -16px; }
 
 /* ---------- таски: доска ---------- */
 .tb-q { width: 220px; max-width: 100%; }

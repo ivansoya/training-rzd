@@ -183,7 +183,12 @@ export interface RunContext {
   can_run: boolean;
 }
 
-export const runContext = (taskId: string) => get<RunContext>(`agents/tasks/${taskId}`);
+/** Где зовут агента на кадре: id таски или датасет проекта (G в «Фокусе» датасета, решения 14.10.2026). */
+export type AgentScope = string | { code: string };
+const at = (s: AgentScope, tail: string) => (typeof s === "string"
+  ? `agents/tasks/${s}${tail}` : `projects/${encodeURIComponent(s.code)}/agents${tail || "/context"}`);
+
+export const runContext = (scope: AgentScope) => get<RunContext>(at(scope, ""));
 
 export const startRun = (
   taskId: string,
@@ -202,13 +207,13 @@ export const startRun = (
 ) => post<RunView>(`agents/tasks/${taskId}/runs`, body);
 
 /** Окно «Агент таски»: сопоставление классов без запуска — помнится на пару «агент + проект». */
-export const saveMapping = (taskId: string, body: { graph_id: string; mapping: Record<string, string | null> }) =>
-  put<{ mapping: Record<string, string | null> }>(`agents/tasks/${taskId}/mapping`, body);
+export const saveMapping = (scope: AgentScope, body: { graph_id: string; mapping: Record<string, string | null> }) =>
+  put<{ mapping: Record<string, string | null> }>(at(scope, "/mapping"), body);
 
 /** Агент на одном кадре из редактора: изображение таски или кадр ролика.
  *  Рамки встают на проверку; для изображения ответ несёт разметку кадра целиком. */
 export const applyAgent = (
-  taskId: string,
+  scope: AgentScope,
   body: { graph_id: string; version_id: string } & ({ image_id: string } | { video_id: string; frame_no: number })
 ) => post<{
   put: number;
@@ -217,7 +222,7 @@ export const applyAgent = (
   rev?: number;
   task_status?: string;
   ms?: number;
-}>(`agents/tasks/${taskId}/apply`, body);
+}>(at(scope, "/apply"), body);
 
 /** Разведка ролика: участки по классам агента, кадры включительно. */
 export interface Scout {

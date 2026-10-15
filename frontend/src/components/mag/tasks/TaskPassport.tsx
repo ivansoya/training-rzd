@@ -44,7 +44,8 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
   const share = frames ? decided / frames : 0;
   const shownPct = useTween(Math.floor(share * 100));
   // Уйдёт в датасет: решённое вкладки «Кадры» плюс кадры роликов, когда придут их сводки
-  const toAccept = c && pendingFrames !== null ? Math.max(0, decided - c.accepted) + pendingFrames : null;
+  // Копии кадров датасета ложатся на исходники — в «уйдёт в датасет» их нет
+  const toAccept = c && pendingFrames !== null ? Math.max(0, decided - c.accepted - (c.copies_decided ?? 0)) + pendingFrames : null;
   const objects = classes.reduce((s, x) => s + x.annotations, 0);
   const maxCls = Math.max(1, ...classes.map((x) => x.annotations));
   // Главный переход страницы — если он мне разрешён; закрытие отдельной кнопкой внизу

@@ -157,6 +157,7 @@ export const boxedRecently = (t: TaskLight) => !!t.last_box_at && Date.now() - D
 export function sourceLine(s: TaskStats["sources"]): string {
   const parts = [
     s.files ? count(s.files, "изображение", "изображения", "изображений") : "",
+    s.dataset ? `${count(s.dataset, "кадр", "кадра", "кадров")} из датасета` : "",
     s.cut ? `${count(s.cut, "ролик", "ролика", "роликов")} на нарезку${s.uncut ? ` (${s.uncut} не ${plural(s.uncut, "нарезан", "нарезаны", "нарезаны")})` : ""}` : "",
     s.annotate ? `${count(s.annotate, "ролик", "ролика", "роликов")} на разметку` : "",
   ].filter(Boolean);
@@ -192,7 +193,8 @@ export function requestOrder(tasks: TaskLight[], me: string | null): string[] {
 
 /** Что сделает закрытие: что уйдёт в датасет, что удалится навсегда. */
 export function closePlan(c: TaskCounts, videos: number) {
-  const accept = Math.max(0, c.annotated + c.empty - c.accepted);
+  // Решённые копии кадров датасета ложатся на исходники — в «уйдёт в датасет» их нет
+  const accept = Math.max(0, c.annotated + c.empty - c.accepted - (c.copies_decided ?? 0));
   const drafts = Math.max(0, c.total + c.deleted - c.accepted - accept);
   return { accept, drafts, videos };
 }
@@ -206,7 +208,18 @@ export function handoverText(r: StatusResult): string {
     r.kept_edited ? `${count(r.kept_edited, "кадр правили", "кадра правили", "кадров правили")} в датасете — ${plural(r.kept_edited, "оставлен", "оставлены", "оставлены")} как есть.` : "",
     waiting ? `${count(waiting, "кадр ждёт", "кадра ждут", "кадров ждут")} проверки агента — в датасет не ${plural(waiting, "ушёл", "ушли", "ушли")}.` : "",
     r.removed_images ? `${plural(r.removed_images, "Удалён", "Удалено", "Удалено")} ${count(r.removed_images, "черновой кадр", "черновых кадра", "черновых кадров")}.` : "",
+    ...copiesText(r.copies),
   ].filter(Boolean).join(" ") || "Размеченных кадров пока нет — принимать нечего.";
+}
+
+/** Копии кадров датасета на сдаче (решения 14.10.2026): что легло на место и что нет. */
+function copiesText(c: StatusResult["copies"]): string[] {
+  if (!c) return [];
+  return [
+    c.placed || c.removed ? `Копии из датасета: на место ${ru(c.placed)}${c.removed ? `, убрано из датасета ${ru(c.removed)}` : ""}.` : "",
+    c.edited ? `${count(c.edited, "исходник правили", "исходника правили", "исходников правили")} в датасете — ${plural(c.edited, "оставлен", "оставлены", "оставлены")} как есть.` : "",
+    c.waiting ? `${count(c.waiting, "копия ждёт", "копии ждут", "копий ждут")} проверки агента.` : "",
+  ];
 }
 
 export function closeText(p: ReturnType<typeof closePlan>, dataset: string | null): string[] {
@@ -230,7 +243,7 @@ export interface SourceCounts extends Counts {
 export interface SourceBlock {
   key: string;
   title: string;
-  kind: "files" | "cut";
+  kind: "files" | "cut" | "dataset";
   /** Нарезаемые ролики таски — блок у них общий, план у каждого свой. */
   videos?: TaskVideoItem[];
   counts: SourceCounts;
@@ -240,6 +253,8 @@ export interface SourceBlock {
   total: number;
   /** Когда источник появился: по нему блоки идут во времени. */
   bornAt: number;
+  /** Копии кадров датасета: из каких датасетов исходники. */
+  datasets?: { id: string; name: string; n: number }[];
 }
 
 const SUM_KEYS = ["new", "annotated", "empty", "skipped", "deleted", "accepted", "agent"] as const;
@@ -259,6 +274,11 @@ export function buildSources(task: TaskDetail, by: TaskNumbers["by_source"] | nu
   if (has("files")) {
     out.push({ key: "files", title: "Изображения", kind: "files", counts: of("files"), known,
       total: frames("files"), bornAt: at(task.sources.files.first_at) });
+  }
+  // Копии кадров датасета: правки лягут на исходники при сдаче (решения 14.10.2026)
+  if (has("dataset")) {
+    out.push({ key: "dataset", title: "Из датасета", kind: "dataset", counts: of("dataset"), known,
+      total: frames("dataset"), bornAt: at(task.sources.dataset.first_at), datasets: task.sources.dataset.datasets });
   }
 
   // Ролики на нарезку видны всегда: с этого блока в нарезку и заходят

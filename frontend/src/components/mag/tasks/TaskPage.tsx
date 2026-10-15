@@ -454,7 +454,8 @@ export default function TaskPage() {
         onTagCreated={(t) => setTags((p) => [...p, t])} />
     ) : (
       <FramesCard key={b.key} block={b} look={numbersLook} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
-        run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)} />
+        run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)}
+        code={task.project.code} fillable={fillable} />
     ) })),
     ...(annotateVideos.length ? [{ key: "annotate", born: Math.min(...annotateVideos.map((v) => Date.parse(v.created_at))), node: (
       <AnnotateCard key="annotate" videos={annotateVideos} working={opened.length > 0} handing={!!handJob || !!watched} pending={pending} fresh={page.fresh.videos} at={page.at}
@@ -546,7 +547,7 @@ export default function TaskPage() {
           onClose={() => { setAnnotating(null); void load(); }} />
       )}
       {editing && editing.list[editing.index] && (
-        <AnnotationEditor code={code!} taskId={task.id} taskName={task.name} images={editing.list} index={editing.index}
+        <AnnotationEditor code={code!} scope={{ kind: "task", taskId: task.id, taskName: task.name }} images={editing.list} index={editing.index}
           readOnly={!editable} canTag={task.rights.tag_frames} tags={tags} people={members}
           onTags={(imageId, ids) => void saveImageTags(imageId, ids)}
           onTagCreated={(tag) => setTags((prev) => [...prev, tag])}

@@ -20,7 +20,9 @@ import { VerdictChip, gb, short, verdictLook } from "./GpuVerdict";
 import ScoutOverview from "./ScoutOverview";
 import { sampledCount } from "./scoutMath";
 
-const SOURCE_TITLE: Record<"files" | "videos", string> = { files: "Загружено файлами", videos: "Нарезано из роликов" };
+const SOURCE_TITLE: Record<"files" | "videos" | "dataset", string> = {
+  files: "Загружено файлами", videos: "Нарезано из роликов", dataset: "Из датасета",
+};
 const toggled = <T,>(set: Set<T>, v: T, on: boolean) => {
   const next = new Set(set);
   if (on) next.add(v); else next.delete(v);
@@ -58,7 +60,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
         setAgentId(first.id);
         setVersionId(first.head);
       }
-      setSources(new Set(initial?.sources ?? ["files", "videos"].filter((s) => (got.sources[s]?.new ?? 0) > 0)));
+      setSources(new Set(initial?.sources ?? ["files", "videos", "dataset"].filter((s) => (got.sources[s]?.new ?? 0) > 0)));
     }).catch((e) => setError(e.message));
   }, [taskId]);
 
@@ -86,7 +88,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
   const pickMode = (m: api.RunMode) => { setMode(m); setVideos(new Set(initial?.videos)); };
   const shows = (m: api.RunMode) => !initial?.modes || initial.modes.includes(m);
   const sourceKeys = ctx ? Object.keys(ctx.sources) : [];
-  const sourceTitle = (s: string) => SOURCE_TITLE[s as "files" | "videos"]
+  const sourceTitle = (s: string) => SOURCE_TITLE[s as keyof typeof SOURCE_TITLE]
     ?? `Из разметки «${ctx?.videos.find((v) => v.id === s)?.file_name ?? "ролика"}»`;
 
   // Вердикт сервера — у текущей версии агента; у старой версии памяти может нужно другое.

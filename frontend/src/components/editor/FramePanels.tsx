@@ -164,8 +164,19 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
   );
 }
 
+/** Сведения о кадре строками «подпись — значение» в блоке «Кадр»: датасет, сплит, исходник копии. */
+export function FrameInfo({ rows }: { rows: ([ReactNode, ReactNode] | null | undefined | false | "")[] }) {
+  return (
+    <dl className="fe-info">
+      {rows.filter((r): r is [ReactNode, ReactNode] => Array.isArray(r)).map(([k, v], i) => (
+        <div key={i}><dt>{k}</dt><dd className="t-ell">{v ?? "—"}</dd></div>
+      ))}
+    </dl>
+  );
+}
+
 export function FrameBar({ index, total, of, canPrev, canNext, actions, status, onPrev, onNext,
-  onToggle, onTrash, onGo }: {
+  onToggle, onTrash, onGo, trashLabel = "Брак", goLabel = "Далее" }: {
   /** Место в показанных кадрах; −1 — фильтр не оставил ни одного. */
   index: number;
   total: number;
@@ -180,6 +191,10 @@ export function FrameBar({ index, total, of, canPrev, canNext, actions, status, 
   onToggle: (s: "empty" | "skipped") => void;
   onTrash: () => void;
   onGo: () => void;
+  /** В датасете брак — «Удалить из датасета». */
+  trashLabel?: string;
+  /** Нетронутая копия кадра датасета: «Далее» принимает её как есть. */
+  goLabel?: string;
 }) {
   return (
     <>
@@ -197,12 +212,12 @@ export function FrameBar({ index, total, of, canPrev, canNext, actions, status, 
           onClick={() => onToggle("skipped")}>Отложить</Button>
       )}
       {actions.includes("trash") && (
-        <Button variant="ghost" size="sm" kbd="X" className="fe-v deleted" onClick={onTrash}>Брак</Button>
+        <Button variant="ghost" size="sm" kbd="X" className="fe-v deleted" onClick={onTrash}>{trashLabel}</Button>
       )}
       {actions.includes("restore") && (
         <Button variant="ghost" size="sm" kbd="X" icon="undo" onClick={onTrash}>Вернуть</Button>
       )}
-      <Button variant="primary" size="sm" kbd="Пробел" onClick={onGo}>Далее</Button>
+      <Button variant="primary" size="sm" kbd="Пробел" onClick={onGo}>{goLabel}</Button>
     </>
   );
 }

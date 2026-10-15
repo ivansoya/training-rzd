@@ -11,14 +11,16 @@ export interface Filters {
   tags: Record<string, "in" | "ex">;
   q: string;
   empty: boolean;
+  /** «На проверке»: непроверенное агента, позванного в датасете (решения 14.10.2026). */
+  pending: boolean;
 }
 
-export const NO_FILTERS: Filters = { classes: [], split: "", tags: {}, q: "", empty: false };
+export const NO_FILTERS: Filters = { classes: [], split: "", tags: {}, q: "", empty: false, pending: false };
 
 export const SPLIT_LABEL: Record<string, string> = { train: "train", val: "val", test: "test", other: "без сплита" };
 
 export const hasFilters = (f: Filters) =>
-  f.classes.length > 0 || f.split !== "" || Object.keys(f.tags).length > 0 || f.q.trim() !== "" || f.empty;
+  f.classes.length > 0 || f.split !== "" || Object.keys(f.tags).length > 0 || f.q.trim() !== "" || f.empty || f.pending;
 
 /** Фильтры галереи: классы, сплит, таги, имя файла — и под ними итог отбора. */
 export function FrameFilters({ f, set, classes, tags, splits, matched, total, summary }: {
@@ -107,6 +109,11 @@ export function FrameFilters({ f, set, classes, tags, splits, matched, total, su
           Без разметки
         </ChipToggle>
 
+        <ChipToggle pressed={f.pending} onToggle={() => set({ pending: !f.pending, empty: false })}
+          title="Кадры с рамками агента, которые ещё не проверили">
+          <Icon name="bot" size={14} />На проверке
+        </ChipToggle>
+
         <Input icon="search" className="fr-q" placeholder="Имя файла" aria-label="Имя файла" type="search"
           value={f.q} onChange={(e) => set({ q: e.target.value })} />
       </div>
@@ -141,6 +148,7 @@ export function FrameFilters({ f, set, classes, tags, splits, matched, total, su
           </Chip>
         ))}
         {f.empty && <Chip onRemove={() => set({ empty: false })} removeLabel="Убрать условие">без разметки</Chip>}
+        {f.pending && <Chip onRemove={() => set({ pending: false })} removeLabel="Убрать условие">на проверке</Chip>}
         {f.q.trim() && <Chip onRemove={() => set({ q: "" })} removeLabel="Убрать поиск"><Icon name="search" size={12} />{f.q.trim()}</Chip>}
         {hasFilters(f) && <Button variant="ghost" size="sm" onClick={() => set(NO_FILTERS)}>Сбросить</Button>}
       </div>

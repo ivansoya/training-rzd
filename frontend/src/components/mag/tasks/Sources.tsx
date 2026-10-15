@@ -4,7 +4,7 @@ import { useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentClearScope, PendingObject, PendingVideo, TaskNumbers, TaskVideoItem, VideoPrepare } from "../../../auth/api";
 import type { Tag } from "../../../api/tags";
-import { Badge, Button, Card, Icon, Legend, MenuItem, Popover, StackBar, Swatch, cx } from "../../../ui";
+import { Badge, Button, Card, Icon, Legend, LinkButton, MenuItem, Popover, StackBar, Swatch, cx } from "../../../ui";
 import { count, plural, ru } from "../../ru";
 import type { RunMode, RunView } from "../../../api/agents";
 import type { AgentToolState } from "../../editor/AgentTool";
@@ -174,8 +174,8 @@ export function AgentLine({ run }: { run?: RunView | null }) {
   );
 }
 
-/** Изображения, загруженные файлами. */
-export function FramesCard({ block, look, editable, run, agent, onAnnotate, onReview }: {
+/** Изображения, загруженные файлами, и копии кадров датасета (решения 14.10.2026). */
+export function FramesCard({ block, look, editable, run, agent, onAnnotate, onReview, code, fillable }: {
   block: SourceBlock;
   /** Как рисовать числа блока: заготовка, бледное из кеша, переливание в пути. */
   look: Look;
@@ -185,13 +185,21 @@ export function FramesCard({ block, look, editable, run, agent, onAnnotate, onRe
   agent: AgentHooks;
   onAnnotate: () => void;
   onReview?: () => void;
+  /** У копий датасета: ссылки на датасеты и «Добрать из датасета». */
+  code?: string;
+  fillable?: boolean;
 }) {
-  const files = block.kind === "files";
+  const files = block.kind !== "cut";
+  const copies = block.kind === "dataset";
+  const c = block.counts;
   return (
     <Card className="tp-src"
-      title={<><Icon name={files ? "images" : "eye"} />{block.title}<Badge variant="secondary">{ru(block.total)}</Badge></>}
+      title={<><Icon name={copies ? "database" : files ? "images" : "eye"} />{block.title}<Badge variant="secondary">{ru(block.total)}</Badge></>}
       desc={block.counts.first_at ? `с ${dayOf(block.counts.first_at)}` : undefined}
       actions={<>
+        {copies && fillable && code && (
+          <LinkButton size="sm" variant="ghost" icon="plus" to={`/projects/${code}/datasets`}>Добрать из датасета</LinkButton>
+        )}
         {editable && <ReviewAgent n={block.counts.agent} onReview={onReview} />}
         {editable && <AgentButton agent={agent} ask={{ mode: "frames", sources: [block.key], modes: ["frames"] }} />}
         {block.total > 0 && (
@@ -206,7 +214,23 @@ export function FramesCard({ block, look, editable, run, agent, onAnnotate, onRe
         )}
       </>}>
       <AgentLine run={run} />
+      {copies && code && !!block.datasets?.length && (
+        <div className="row wrap">
+          {block.datasets.map((d) => (
+            <LinkButton key={d.id} size="sm" variant="ghost" icon="database" to={`/projects/${code}/datasets?ds=${d.id}`}>
+              {d.name}<span className="ui-mono t-faint"> · {ru(d.n)}</span>
+            </LinkButton>
+          ))}
+        </div>
+      )}
       <Progress c={block.counts} known={block.known} look={look} />
+      {copies && block.known && (
+        <span className="t-xs t-muted">
+          При сдаче: на место <b className="ui-mono">{ru((c.annotated || 0) + (c.empty || 0))}</b>
+          {" · "}уберём из датасета <b className="ui-mono">{ru(c.deleted || 0)}</b>
+          {" · "}не тронем <b className="ui-mono">{ru((c.new || 0) + (c.skipped || 0))}</b>
+        </span>
+      )}
     </Card>
   );
 }

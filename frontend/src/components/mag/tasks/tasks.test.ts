@@ -43,6 +43,19 @@ describe("источники таски", () => {
     expect(cut).toMatchObject({ kind: "cut", total: 7 });
     expect(cut.counts.agent).toBe(2);
   });
+
+  it("копии кадров датасета — свой блок с раскладкой по датасетам", () => {
+    const task = {
+      videos: [],
+      sources: {
+        files: { total: 1, frames: 1, first_at: "2026-10-02T00:00:00Z" },
+        dataset: { total: 7, frames: 6, first_at: "2026-10-01T00:00:00Z", datasets: [{ id: "d1", name: "Инициализация", n: 6 }] },
+      },
+    } as unknown as TaskDetail;
+    const [copies, files] = buildSources(task, { dataset: { annotated: 3, deleted: 1 }, files: { new: 1 } });
+    expect(copies).toMatchObject({ key: "dataset", kind: "dataset", total: 6, datasets: [{ name: "Инициализация", n: 6 }] });
+    expect(files.key).toBe("files");
+  });
 });
 
 describe("доля решённого", () => {
@@ -61,6 +74,11 @@ describe("закрытие", () => {
       "Будут удалены 6 черновых кадров и исходное видео — это необратимо.",
     ]);
   });
+
+  it("решённые копии датасета ложатся на исходники — в «уйдёт в датасет» их нет", () => {
+    const p = closePlan(counts({ total: 7, annotated: 4, empty: 1, new: 2, copies_decided: 3 }), 0);
+    expect(p.accept).toBe(2);
+  });
 });
 
 describe("итог сдачи", () => {
@@ -73,6 +91,9 @@ describe("итог сдачи", () => {
     expect(handoverText({ accepted: 0 })).toBe("Размеченных кадров пока нет — принимать нечего.");
     expect(handoverText({ accepted: 2, removed_images: 5, removed_videos: 1 }))
       .toBe("В датасет ушло 2 кадра. Удалено 5 черновых кадров.");
+    expect(handoverText({ accepted: 0, copies: { placed: 4, removed: 1, edited: 2, waiting: 1 } }))
+      .toBe("Копии из датасета: на место 4, убрано из датасета 1. 2 исходника правили в датасете — оставлены как есть. "
+        + "1 копия ждёт проверки агента.");
   });
 });
 

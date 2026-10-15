@@ -4,31 +4,37 @@
 // проверку тем же порядком, что после агента на блоке. Какого агента звать —
 // во всплывашке у кнопки; выбор помнится на таску.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as api from "../../api/agents";
 import { Button, Field, Select } from "../../ui";
 import { count } from "../ru";
 import { verdictLook } from "../agents/GpuVerdict";
 import { ToolButton, ToolMenu } from "./Chrome";
 
-const keyOf = (taskId: string) => `mag.agent.tool.${taskId}`;
+// Выбор помнится на таску, а в датасете — на проект
+const keyOf = (scope: api.AgentScope) => `mag.agent.tool.${typeof scope === "string" ? scope : `p.${scope.code}`}`;
 
-function storedPick(taskId: string): { agent: string; version: string } | null {
-  try { return JSON.parse(window.localStorage.getItem(keyOf(taskId)) || "null"); } catch { return null; }
+function storedPick(scope: api.AgentScope): { agent: string; version: string } | null {
+  try { return JSON.parse(window.localStorage.getItem(keyOf(scope)) || "null"); } catch { return null; }
 }
 
-/** Агент для кнопки: что выбрано, сколько классов сопоставлено, и сам вызов. */
-export function useAgentTool(taskId: string) {
+/** Агент для кнопки: что выбрано, сколько классов сопоставлено, и сам вызов.
+ *  `taskId` — id таски или `{ code }` проекта для кадров датасета. */
+export function useAgentTool(taskId: api.AgentScope) {
+  // Объект области пересоздаётся каждой отрисовкой — эффекты держатся за строку
+  const key = keyOf(taskId);
   const [ctx, setCtx] = useState<api.RunContext | null>(null);
   const [pick, setPick] = useState(() => storedPick(taskId));
+  const scope = useRef(taskId);
+  scope.current = taskId;
   const [busy, setBusy] = useState(false);
   const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    api.runContext(taskId).then((c) => alive && setCtx(c)).catch(() => alive && setCtx(null));
+    api.runContext(scope.current).then((c) => alive && setCtx(c)).catch(() => alive && setCtx(null));
     return () => { alive = false; };
-  }, [taskId, tick]);
+  }, [key, tick]);
 
   const agent = ctx?.agents.find((a) => a.id === pick?.agent) ?? ctx?.agents[0] ?? null;
   const version = agent?.versions.find((v) => v.id === pick?.version)
@@ -44,18 +50,18 @@ export function useAgentTool(taskId: string) {
     const a = ctx?.agents.find((x) => x.id === agentId);
     const next = { agent: agentId, version: versionId ?? a?.head ?? "" };
     setPick(next);
-    try { window.localStorage.setItem(keyOf(taskId), JSON.stringify(next)); } catch { /* не запомнится */ }
-  }, [ctx, taskId]);
+    try { window.localStorage.setItem(key, JSON.stringify(next)); } catch { /* не запомнится */ }
+  }, [ctx, key]);
 
   const apply = useCallback(async (target: { image_id: string } | { video_id: string; frame_no: number }) => {
     if (!agent || !version) throw new Error("Агентов с сохранённой версией нет.");
     setBusy(true);
     try {
-      return await api.applyAgent(taskId, { graph_id: agent.id, version_id: version.id, ...target });
+      return await api.applyAgent(scope.current, { graph_id: agent.id, version_id: version.id, ...target });
     } finally {
       setBusy(false);
     }
-  }, [taskId, agent, version]);
+  }, [agent, version]);
 
   /** Прогон по блоку из меню: сопоставление — запомненное, окна нет. */
   const start = useCallback(async (body: { mode: api.RunMode; sources?: string[]; videos?: string[]; step: number; device?: "cpu" }) => {
@@ -63,6 +69,7 @@ export function useAgentTool(taskId: string) {
     const saved = ctx.mappings[agent.id];
     const mapping: Record<string, string | null> = {};
     for (const c of version.classes) mapping[c.id] = c.lock ?? saved?.[c.id] ?? saved?.[c.name] ?? null;
+    if (typeof taskId !== "string") throw new Error("Прогон по блоку — только в таске.");
     return api.startRun(taskId, {
       graph_id: agent.id, version_id: version.id, mode: body.mode, sources: body.sources ?? [],
       videos: body.videos ?? [], step: body.step, gap: 2, mapping, ...(body.device ? { device: body.device } : {}),
@@ -70,7 +77,7 @@ export function useAgentTool(taskId: string) {
   }, [ctx, agent, version, taskId]);
 
   const reason = !ctx ? "Загружаю агентов…"
-    : !ctx.can_run ? "Звать агента можно в своей таске"
+    : !ctx.can_run ? (typeof taskId === "string" ? "Звать агента можно в своей таске" : "Звать агента в датасете может редактор")
     : !agent || !version ? "Агентов с сохранённой версией нет"
     : mapped === 0 ? "Классы агента не сопоставлены с проектом — откройте ▾"
     : version.id === agent.head && agent.verdict.state === "never" ? agent.verdict.reason : null;

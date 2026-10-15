@@ -68,6 +68,18 @@ export function describeTaskEvent(kind: string, payload: Record<string, unknown>
           {n("waiting") + n("unchecked") ? `, ждут проверки агента ${n("waiting") + n("unchecked")}` : ""}
         </>
       );
+    // Таска из датасета (решения 14.10.2026): кадры пришли копиями и сданы на место
+    case "from_dataset":
+      return <>Из датасета <b>+{count(n("added"), "кадр", "кадра", "кадров")}</b></>;
+    case "copies_handed":
+      return (
+        <>
+          Сдано в датасет: на место <b>{n("placed")}</b>
+          {n("removed") ? <>, убрано из датасета <b>{n("removed")}</b></> : ""}
+          {n("edited") ? `, правили в датасете — оставлено ${n("edited")}` : ""}
+          {n("waiting") ? `, ждут проверки агента ${n("waiting")}` : ""}
+        </>
+      );
     // Ручное закрытие разметки убрано 14.10.2026; события остались в истории старых тасок
     case "video_annotation_closed":
       return (

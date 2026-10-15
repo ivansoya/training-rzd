@@ -824,6 +824,8 @@ export interface TaskCounts {
   empty: number;
   deleted: number;
   accepted: number;
+  /** Решённые копии кадров датасета: лягут на исходники, а не уйдут в датасет таски. */
+  copies_decided?: number;
   /** Кадры размечаемых роликов в датасете: во вкладку «Кадры» они не входят, и счёт у них свой. */
   video_accepted?: number;
   /** Часть «new»: кадры с рамками агента, которые ещё никто не принял. */
@@ -876,12 +878,14 @@ export interface TaskLight extends Omit<TaskSummary, "counts" | "rights"> {
   last_at: string;
   /** Куда карточку можно перетащить — те же переходы, что у кнопок таски. */
   moves: TaskStatus[];
+  /** Можно ли пополнять — «В таску ▾» в датасете. */
+  fill?: boolean;
 }
 
 /** Счётчики карточки доски: по одному запросу на таску. */
 export interface TaskStats {
   counts: TaskCounts;
-  sources: { files: number; cut: number; uncut: number; annotate: number };
+  sources: { files: number; dataset?: number; cut: number; uncut: number; annotate: number };
   /** Ролики на разметку: треки, проверенные рамки и проверка агента по кадрам. */
   videos: { tracks: number; boxes: number; agent_done: number; agent_left: number };
   /** Работа идущей сдачи; null — не сдаётся. */
@@ -981,7 +985,9 @@ export interface TaskDetail extends Omit<TaskSummary, "counts"> {
   videos: TaskVideoItem[];
   /** Какие блоки есть: кадров у источника всего (`total`, с бракованными), без брака (`frames`)
    *  и когда пришёл первый. Ключ — «files» или идентификатор ролика. Блоки встают сразу и не прыгают. */
-  sources: Record<string, { total: number; frames: number; first_at: string | null }>;
+  sources: Record<string, { total: number; frames: number; first_at: string | null;
+    /** У копий кадров датасета — из каких датасетов исходники. */
+    datasets?: { id: string; name: string; n: number }[] }>;
   /** Справочник тагов проекта. Едет вместе с таской: его спрашивают три места
    *  на одной странице — карточка ролика, карточка загрузки и редактор. */
   tags: { id: string; name: string }[];
@@ -1046,6 +1052,13 @@ export interface TaskImage {
   boxes: TaskBox[];
   /** Версия разметки: запись с устаревшей получает 409 «stale». */
   rev?: number;
+  /** Копия кадра датасета: что она правит (решения 14.10.2026). */
+  origin?: { image_id: string; dataset_id: string | null; dataset_name: string | null };
+  /** Кадр датасета в «Фокусе» датасета: сплит, датасет, откуда пришёл и чья копия его держит. */
+  split?: string;
+  dataset_name?: string;
+  origin_task?: { id: string; name: string; status: string } | null;
+  held?: { task_id: string; name: string } | null;
 }
 
 /** Рамка кадра таски с подписью. `agent` — версия агента: при `source`
@@ -1094,8 +1107,10 @@ export async function createTask(
     assignees?: string[];
     target_dataset_id?: string | null;
     target_dataset_name?: string | null;
+    /** Таска из датасета: кадры уходят в неё копиями той же записью. */
+    image_ids?: string[];
   }
-): Promise<TaskSummary> {
+): Promise<TaskSummary & { taken?: { added: number; busy: { task_id: string; name: string; n: number }[] } }> {
   return asJson(await post(`projects/${encodeURIComponent(code)}/tasks`, body));
 }
 
@@ -1128,6 +1143,8 @@ export interface StatusResult {
   /** Ждут проверки агента: бывшие в датасете остались прежними, новые — черновиками. */
   waiting?: number;
   unchecked?: number;
+  /** Копии кадров датасета: легли на место, убраны из датасета (брак), правленые в датасете, ждут агента. */
+  copies?: { placed: number; removed: number; edited: number; waiting: number };
 }
 
 export async function setTaskStatus(id: string, status: TaskStatus): Promise<StatusResult> {

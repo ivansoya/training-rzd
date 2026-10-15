@@ -5,11 +5,10 @@
 // всех групп; каждая группа грузит свои кадры сама и только когда раскрыта.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import { useSearchParams } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import type { LabelClass } from "../../../auth/api";
 import { classesIn } from "../../../api/datasets";
-import { projectImages } from "../../../api/gallery";
+import { projectImageIds, projectImages } from "../../../api/gallery";
 import type { ImagesQuery, ProjectImage, ProjectImages } from "../../../api/gallery";
 import { listTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
@@ -17,13 +16,15 @@ import { useLive } from "../../../live/LiveProvider";
 import { Button, Empty, LinkButton, Notice, PageHeader, Range, Select, ToggleGroup, Icon } from "../../../ui";
 import { count } from "../../ru";
 import ExportModal from "../ExportModal";
-import ImageViewer from "../ImageViewer";
 import { useProject } from "../ProjectShell";
+import { CreateTaskModal } from "../tasks/CreateTaskModal";
 import DatasetDialog from "./DatasetDialog";
+import { DatasetFocus } from "./DatasetFocus";
 import { FrameFilters, NO_FILTERS, SPLIT_LABEL, hasFilters } from "./FrameFilters";
 import type { Filters } from "./FrameFilters";
 import { FrameGroup } from "./FrameGroup";
-import type { GroupDef } from "./FrameGroup";
+import type { GroupDef, Picking } from "./FrameGroup";
+import { TakeBar } from "./TakeBar";
 import type { Overlays } from "./FrameTile";
 
 type GroupBy = "dataset" | "split" | "none";
@@ -75,10 +76,10 @@ export default function ProjectFrames() {
   }, [f.q]);
 
   const base = useMemo<ImagesQuery>(() => ({
-    classes: f.classes, split: f.split || undefined, empty: f.empty, sort: view.sort, q,
+    classes: f.classes, split: f.split || undefined, empty: f.empty, pending: f.pending, sort: view.sort, q,
     tags: Object.keys(f.tags).filter((k) => f.tags[k] === "in"),
     notags: Object.keys(f.tags).filter((k) => f.tags[k] === "ex"),
-  }), [f.classes, f.split, f.empty, f.tags, view.sort, q]);
+  }), [f.classes, f.split, f.empty, f.pending, f.tags, view.sort, q]);
   const [rev, setRev] = useState(0);
   const filterKey = `${JSON.stringify(base)}#${rev}`;
 
@@ -158,6 +159,30 @@ export default function ProjectFrames() {
   };
   const linkedEdited = useRef(false);
 
+  // Выбор кадров для таски из датасета (решения 14.10.2026): по id, смену отбора переживает
+  const [sel, setSel] = useState<Set<string>>(() => new Set());
+  const picking = useMemo<Picking | undefined>(() => (canEdit ? {
+    has: (id) => sel.has(id),
+    any: sel.size > 0,
+    set: (ids, on) => setSel((cur) => {
+      const next = new Set(cur);
+      ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
+      return next;
+    }),
+  } : undefined), [canEdit, sel]);
+  // Выбранные, но не видные под нынешним отбором: уйдут тоже — полоса говорит, сколько их
+  const picked = sel.size > 0;
+  const [seen, setSeen] = useState<Set<string> | null>(null);
+  useEffect(() => {
+    if (!picked) { setSeen(null); return; }
+    let alive = true;
+    projectImageIds(code, base).then((r) => alive && setSeen(new Set(r.ids))).catch(() => {});
+    return () => { alive = false; };
+  }, [code, base, rev, picked]);
+  const unseen = seen ? [...sel].filter((id) => !seen.has(id)).length : 0;
+  const [creating, setCreating] = useState<string[] | null>(null);
+  const navigate = useNavigate();
+
   const [exporting, setExporting] = useState(false);
   const [dsEdit, setDsEdit] = useState<{ id: string; name: string; mode: "rename" | "delete" } | null>(null);
 
@@ -233,24 +258,36 @@ export default function ProjectFrames() {
         <Empty icon="search" title="Под отбор не подошёл ни один кадр"
           action={<Button size="sm" onClick={() => set(NO_FILTERS)}>Сбросить фильтры</Button>} />
       ) : (
-        <div className="fr-groups">
+        <div className={picked ? "fr-groups picking" : "fr-groups"}>
           {sum && groups.map((g) => (
             <FrameGroup key={g.key} def={g} code={code} base={base} filterKey={filterKey} ov={view.ov}
               tile={view.tile} collapsed={Boolean(collapsed[g.key])}
               onCollapse={(v) => setCollapsed((c) => ({ ...c, [g.key]: v }))}
-              classes={classes} canEdit={canEdit} onEdited={afterEdit}
-              canDelete={isAdmin}
+              tags={tags} onTagCreated={(t) => setTags((prev) => [...prev, t])}
+              onEdited={afterEdit} onError={setError}
+              canDelete={isAdmin} picking={picking}
               onDataset={g.dataset && canEdit ? (mode) => setDsEdit({ ...g.dataset!, mode }) : undefined} />
           ))}
         </div>
       )}
 
-      {linked && linked[0] && createPortal(
-        <ImageViewer images={linked} index={0} total={1} classes={classes} canEdit={canEdit}
+      {canEdit && sum && (sum.matched > 0 || picked) && (
+        <TakeBar code={code} selected={sel.size} unseen={unseen} matched={sum.matched}
+          ids={async () => (picked ? [...sel] : (await projectImageIds(code, base)).ids)}
+          onClear={() => setSel(new Set())} onNew={setCreating} onError={setError} />
+      )}
+      {creating && (
+        <CreateTaskModal isAdmin={isAdmin} fromDataset={creating} onClose={() => setCreating(null)}
+          onCreated={(id) => { setCreating(null); setSel(new Set()); navigate(`/projects/${code}/tasks/${id}`); }} />
+      )}
+
+      {linked && linked[0] && (
+        <DatasetFocus title={linked[0].dataset_name} items={linked} index={0} total={1} tags={tags}
           onIndex={() => {}}
+          onTagCreated={(t) => setTags((prev) => [...prev, t])}
           onClose={() => { closeLinked(); if (linkedEdited.current) { linkedEdited.current = false; afterEdit(); } }}
-          onSaved={(u) => { linkedEdited.current = true; setLinked([{ ...linked[0], ...u } as ProjectImage]); }} />,
-        document.body,
+          onPatch={(id, patch) => { linkedEdited.current = true; setLinked((cur) => cur && cur.map((x) => (x.id === id ? { ...x, ...patch } : x))); }}
+          onRemoved={() => { linkedEdited.current = true; setLinked([]); closeLinked(); afterEdit(); }} />
       )}
       {exporting && <ExportModal detail={detail} onClose={() => setExporting(false)} />}
       {dsEdit && (

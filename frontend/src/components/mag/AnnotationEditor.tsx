@@ -4,6 +4,7 @@ import {
   deleteImage,
   getClasses,
   getTaskImages,
+  imageFileUrl,
   saveAnnotations,
   setImageTaskStatus,
 } from "../../auth/api";
@@ -28,15 +29,21 @@ import type { Tag } from "../../api/tags";
 import { useAutoLabel } from "./useAutoLabel";
 import AutoStatus from "./AutoStatus";
 import { useLive } from "../../live/LiveProvider";
+import { asFrame, projectImages } from "../../api/gallery";
+import { useConfirm } from "./tasks/Confirm";
+import { fmtBytes } from "./VideoCutModal";
+import { SPLIT_LABEL } from "./frames/FrameFilters";
 import type { AutoRefine } from "../../auth/api";
 import type { TaskBox, TaskPerson } from "../../auth/api";
-import { Button, Notice, StackBar, Switch, cx } from "../../ui";
+import { Link } from "react-router-dom";
+import { AnchorButton, Button, LinkButton, Notice, StackBar, Switch, cx } from "../../ui";
 import { plural, ru } from "../ru";
 import AutoSettings from "../editor/AutoSettings";
 import ClassPicker from "../editor/ClassPicker";
 import { EditorHead, Float, KeysDialog, SaveNote, ToolButton, ToolMenu, ZoomChip, editedBy, lostTo, useEditNote } from "../editor/Chrome";
 import { useAuth } from "../auth/AuthGate";
-import { AutoBar, FrameBar, FrameSide, Who, agentKeyOf } from "../editor/FramePanels";
+import { AutoBar, FrameBar, FrameInfo, FrameSide, Who, agentKeyOf } from "../editor/FramePanels";
+import type { FrameAction } from "./frameActions";
 import { ReviewBar } from "../editor/ReviewBars";
 import { ClassFilter, shownOf, useClassFilter } from "../editor/ClassFilter";
 import { classKey, countClasses, frameShown } from "../editor/filter";
@@ -120,10 +127,26 @@ function boxRing(b: { x: number; y: number; w: number; h: number }): Ring {
   ];
 }
 
+/** Где работает «Фокус»: в таске или в датасете (решения 14.10.2026). В датасете нет «Отложить»
+ *  и прогресса, «Пусто» и «Удалить из датасета» спрашивают окном, агент G помнится на проект. */
+export type EditorScope =
+  | { kind: "task"; taskId: string; taskName: string }
+  | {
+      kind: "dataset";
+      /** Группа галереи: датасет или сплит. */
+      title: string;
+      /** Кадров группы под отбором и сквозной номер первого загруженного. */
+      total: number;
+      base: number;
+      /** Подгрузить следующую порцию группы. */
+      onNeedMore?: () => void;
+      /** Кадр ушёл из датасета — галерея убирает его из списка. */
+      onRemoved: (imageId: string) => void;
+    };
+
 export default function AnnotationEditor({
   code,
-  taskId,
-  taskName,
+  scope,
   images,
   index,
   readOnly,
@@ -137,9 +160,7 @@ export default function AnnotationEditor({
   people,
 }: {
   code: string;
-  /** Таска — для агента на кадре (G). */
-  taskId: string;
-  taskName: string;
+  scope: EditorScope;
   images: TaskImage[];
   index: number;
   readOnly: boolean;
@@ -157,12 +178,17 @@ export default function AnnotationEditor({
   onChanged: (imageId: string, patch: Partial<TaskImage>) => void;
   /** Таги этого кадра. Единственное место, где их правят после того, как
    *  кадр ушёл в датасет, — и правят по одному кадру. */
-  onTags: (imageId: string, tagIds: string[]) => void;
+  onTags: (imageId: string, tagIds: string[]) => void | Promise<void>;
   onTagCreated: (tag: Tag) => void;
   /** Участники проекта — имя соседа, чью правку подтянули. */
   people: TaskPerson[];
 }) {
   const image = images[index];
+  const taskId = scope.kind === "task" ? scope.taskId : null;
+  const ds = scope.kind === "dataset" ? scope : null;
+  // Исходник с живой копией в таске — только чтение, правят там (решение 14.10.2026)
+  const held = ds ? image?.held ?? null : null;
+  const ro = readOnly || held != null;
 
   const [classes, setClasses] = useState<LabelClass[]>([]);
   const [active, setActive] = useState<number | null>(null);
@@ -237,7 +263,7 @@ export default function AnnotationEditor({
   // Итог агента на кадре — плашкой на несколько секунд
   const [agentNote, setAgentNote] = useState<string | null>(null);
   const [mapOpen, setMapOpen] = useState(false);
-  const agentTool = useAgentTool(taskId);
+  const agentTool = useAgentTool(taskId ?? { code });
 
   const canvas = useRef<CanvasHandle>(null);
   // Разметка «как сейчас» — синхронно, мимо отрисовки: запись, отмена и уход
@@ -252,7 +278,7 @@ export default function AnnotationEditor({
   const iw = image?.width || 1;
   const ih = image?.height || 1;
   // Забракованный кадр смотрим, но не правим: иначе он оживёт незаметно.
-  const frozen = readOnly || image?.task_status === "deleted";
+  const frozen = ro || image?.task_status === "deleted";
 
   const loadClasses = useCallback(() => {
     getClasses(code).then((c) => {
@@ -306,9 +332,10 @@ export default function AnnotationEditor({
     () => new Map((image?.boxes || []).map((b) => [b.id, b])),
     [image?.boxes]
   );
-  const actions = image
-    ? frameActions({ status: image.task_status, objects: boxes.length, readOnly })
-    : [];
+  // В датасете откладывать нечего, «Пусто» стирает объекты после вопроса — есть всегда
+  const actions: FrameAction[] = !image ? []
+    : ds ? (ro ? ["next"] : ["empty", "trash", "next"])
+      : frameActions({ status: image.task_status, objects: boxes.length, readOnly: ro });
   const unchecked = pendingCount(boxes);
   // Агенты кадра — для групп на проверке и подписи «класс · агент» при двух и больше.
   const agentsHere = useMemo(() => agentGroups(boxes, (b) => agentKeyOf(meta.get(b.id ?? ""))), [boxes, meta]);
@@ -317,7 +344,7 @@ export default function AnnotationEditor({
   const progress = useMemo(() => progressOf(images), [images]);
 
   // Фильтр классов (решения 14.10.2026): лента и все переходы — только по кадрам с отмеченными классами.
-  const [fltOff, setFltOff] = useClassFilter(`mag.filter.frames.${taskId}`);
+  const [fltOff, setFltOff] = useClassFilter(`mag.filter.frames.${taskId ?? `ds.${code}`}`);
   const fltEntries = useMemo(() => {
     const n = countClasses(images.flatMap((im) => [...new Set((im.boxes || []).map((b) => b.class_index))]));
     return classes.filter((c) => n.has(c.class_index))
@@ -531,19 +558,29 @@ export default function AnnotationEditor({
   }, [saveState, fresh]); // eslint-disable-line react-hooks/exhaustive-deps
   const stateRef = useRef(saveState);
   stateRef.current = saveState;
-  useLive("task", (e) => {
+  const peer = (u: string | null, fetchOne: (id: string) => Promise<TaskImage | undefined>) => {
     const img = live.current.image;
-    if (!img || e.i !== img.id || e.u === me.user.id) return;
-    by.current = e.u ?? null;
+    if (!img) return;
+    by.current = u;
     // Своя правка в пути — её запись получит «stale», и чужая версия встанет тем путём
     if (dirty.current || stateRef.current !== "saved") return;
-    void getTaskImages(taskId, { image: img.id, limit: 1 }).then(({ images: [got] }) => {
+    void fetchOne(img.id).then((got) => {
       if (!got || live.current.image?.id !== got.id || dirty.current) return;
       live.current.onChanged(got.id, got);
       settle(got.rev);
       setReloadKey((k) => k + 1);
-      say(editedBy(nameOf(e.u ?? null)));
+      say(editedBy(nameOf(u)));
     }).catch(() => undefined);
+  };
+  useLive("task", (e) => {
+    if (!taskId || e.i !== live.current.image?.id || e.u === me.user.id) return;
+    peer(e.u ?? null, (id) => getTaskImages(taskId, { image: id, limit: 1 }).then((r) => r.images[0]));
+  });
+  // Кадр датасета: своё событие — сосед правил в датасете
+  useLive("frame", (e) => {
+    if (!ds || e.id !== live.current.image?.id || e.u === me.user.id) return;
+    peer(e.u ?? null, (id) => projectImages(code, { image: id, limit: 1 })
+      .then((r) => (r.images[0] ? asFrame(r.images[0]) : undefined)));
   });
 
   // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет. Не прошедшие фильтр — тоже.
@@ -560,7 +597,7 @@ export default function AnnotationEditor({
 
   const verdict = useCallback(
     async (status: ImageTaskStatus, advance: boolean) => {
-      if (!image || readOnly) return;
+      if (!image || ro) return;
       if (!(await flush())) return;
       try {
         const res = await setImageTaskStatus(image.id, status);
@@ -571,7 +608,7 @@ export default function AnnotationEditor({
         setError((e as Error).message);
       }
     },
-    [image, readOnly, flush, onChanged, go]
+    [image, ro, flush, onChanged, go]
   );
 
   // «Пусто» и «Отложить» — переключатели: нажал случайно, нажми ещё раз.
@@ -586,7 +623,7 @@ export default function AnnotationEditor({
   );
 
   const trash = useCallback(async () => {
-    if (!image || readOnly) return;
+    if (!image || ro) return;
     // Прежнее состояние и датасет восстановит сервер; присланное — запасное.
     if (image.task_status === "deleted") {
       return verdict(image.annotations > 0 ? "annotated" : "new", false);
@@ -600,7 +637,56 @@ export default function AnnotationEditor({
     } catch (e) {
       setError((e as Error).message);
     }
-  }, [image, readOnly, flush, onChanged, go, verdict]);
+  }, [image, ro, flush, onChanged, go, verdict]);
+
+  // --- решения по кадру датасета: окном, «Отложить» нет ------------------- #
+  const [confirm, confirmNode] = useConfirm();
+
+  /** «Пусто» в датасете: объекты стираются, кадр остаётся фоновым примером. */
+  const emptyInDataset = useCallback(async () => {
+    if (!ds || frozen) return;
+    const n = boxesRef.current.length;
+    if (n && !(await confirm({
+      title: "Сделать кадр фоновым?", ok: "Стереть и сделать фоном",
+      desc: `Объектов на кадре: ${n}. Они будут стёрты, кадр останется в датасете как фон.`,
+    }))) return;
+    edit([]);
+    pick(null);
+    if (await flush()) void go(1);
+  }, [ds, frozen, confirm, edit, pick, flush, go]);
+
+  /** «Удалить из датасета»: мягко, если таска-происхождение жива, иначе насовсем. */
+  const dropFromDataset = useCallback(async () => {
+    const img = live.current.image;
+    if (!ds || !img || frozen) return;
+    const origin = img.origin_task && img.origin_task.status !== "closed" ? img.origin_task : null;
+    if (!(await confirm({
+      title: "Удалить кадр из датасета?", ok: "Удалить из датасета", danger: true, icon: "trash",
+      desc: origin
+        ? `Кадр из таски «${origin.name}». Вернуть его можно там кнопкой «Вернуть», пока таску не закрыли.`
+        : "Кадр удалится насовсем вместе с файлами. Отменить удаление будет нельзя.",
+    }))) return;
+    if (!(await flush())) return;
+    try {
+      await deleteImage(img.id);
+      setError(null);
+      ds.onRemoved(img.id);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  }, [ds, frozen, confirm, flush]);
+
+  // Нетронутая копия кадра датасета: «Далее» принимает её как есть (решение 14.10.2026)
+  const acceptCopy = !!image?.origin && image.task_status === "new" && !frozen;
+  const next = useCallback(() => (acceptCopy
+    ? verdict(boxesRef.current.length ? "annotated" : "empty", true)
+    : go(1)), [acceptCopy, verdict, go]);
+
+  // В датасете группа грузится порциями: к краю ленты просим следующую заранее
+  const needMore = ds?.onNeedMore;
+  useEffect(() => {
+    if (needMore && index >= images.length - 3) needMore();
+  }, [needMore, index, images.length]);
 
   /** Кадры на проверке в открытом списке — у текущего по живой разметке. */
   const flagged = useCallback(
@@ -1011,7 +1097,7 @@ export default function AnnotationEditor({
         case "Space":
           // Пробел закрепляет показанное, и только без него листает дальше.
           if (autoPrev) commitAuto();
-          else go(1);
+          else void next();
           break;
         // Enter нативно нажал бы кнопку в фокусе — «Удалить» забраковала бы следующий кадр.
         // Свой смысл у него один: подтвердить кадр агента; рисуемый контур он замыкает на холсте.
@@ -1036,9 +1122,15 @@ export default function AnnotationEditor({
           break;
         case "KeyA": if (!frozen && auto.state === "ready") pickAuto(); break;
         // Фоновым кадр с объектом не бывает — клавиша молчит, как и плашка.
-        case "KeyE": if (canEmpty) toggle("empty"); break;
-        case "KeyS": if (!frozen) toggle("skipped"); break;
-        case "KeyX": trash(); break;
+        case "KeyE":
+          if (ds) void emptyInDataset();
+          else if (canEmpty) toggle("empty");
+          break;
+        case "KeyS": if (!frozen && !ds) toggle("skipped"); break;
+        case "KeyX":
+          if (ds) void dropFromDataset();
+          else trash();
+          break;
         case "Digit0": canvas.current?.fit(); break;
         case "Delete":
         case "Backspace":
@@ -1083,10 +1175,10 @@ export default function AnnotationEditor({
       window.removeEventListener("keyup", onKeyUp);
       document.body.style.overflow = "";
     };
-  }, [go, close, step, selected, selPart, splitParts, classes, tool, autoOn,
+  }, [go, next, close, step, selected, selPart, splitParts, classes, tool, autoOn,
       addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
       pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty,
-      confirmFrame, goReview, runAgent]);
+      confirmFrame, goReview, runAgent, ds, emptyInDataset, dropFromDataset]);
 
   /** Что можно сделать с объектом под правой кнопкой, кроме смены класса.
    *
@@ -1187,6 +1279,13 @@ export default function AnnotationEditor({
   const pad = stagePad({ panels, film: filmW, side: SIDE_W });
   const canPrev = !none && shown.some((i) => i < index && images[i].task_status !== "deleted");
   const canNext = !none && shown.some((i) => i > index && images[i].task_status !== "deleted");
+  // Номер в датасете — сквозной по группе, пока фильтр классов не сузил ленту
+  const whole = ds && !fltOn;
+  const at = whole ? ds.base + index : pos;
+  const of = whole ? ds.total : none ? 0 : shown.length;
+  const title = ds ? ds.title : scope.kind === "task" ? scope.taskName : "";
+  // У кадра архива состояния нет — с объектами он «размечен»
+  const shownStatus = ds && image.task_status === "new" && boxes.length ? "annotated" : image.task_status;
   const autoTitle = auto.state === "ready" ? undefined
     : auto.state === "error" ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}` : "Модель готовится…";
 
@@ -1194,13 +1293,13 @@ export default function AnnotationEditor({
     <div className="ed fe" role="dialog" aria-modal="true" aria-label="Разметка кадров">
       <EditorHead
         onBack={() => void close()}
-        backLabel="К таске (Esc)"
-        title={taskName}
+        backLabel={ds ? "К датасетам (Esc)" : "К таске (Esc)"}
+        title={title}
         sub={<>
-          Кадр <span className="ui-mono">{pos < 0 ? "—" : ru(pos + 1)}</span> из <span className="ui-mono">{ru(none ? 0 : shown.length)}</span>
-          {fltOn && <span className="t-faint"> (в таске {ru(images.length)})</span>} · {image.file_name}
+          Кадр <span className="ui-mono">{at < 0 ? "—" : ru(at + 1)}</span> из <span className="ui-mono">{ru(of)}</span>
+          {fltOn && <span className="t-faint"> ({ds ? "в группе" : "в таске"} {ru(ds ? ds.total : images.length)})</span>} · {image.file_name}
         </>}
-        extra={
+        extra={ds ? undefined :
           <div className="ed-prog" title={STATUS_LOOK.map((s) => `${s.label}: ${progress.counts[s.id]}`).join(" · ")}>
             <StackBar label="Прогресс" parts={STATUS_LOOK.map((s) => ({ label: s.label, value: progress.counts[s.id], color: s.color }))} />
             <div className="row t-xs t-muted">
@@ -1218,8 +1317,16 @@ export default function AnnotationEditor({
           title={panels ? "Спрятать панели" : "Показать панели"} onClick={() => setPanels((v) => !v)}>Панели</Button>
       </EditorHead>
 
-      {error && (
-        <div className="ed-notes"><Notice tone="error" onClose={() => setError(null)}>{error}</Notice></div>
+      {(error || held) && (
+        <div className="ed-notes">
+          {held && (
+            <Notice tone="info" action={<LinkButton size="sm" iconEnd="forward" to={`/projects/${code}/tasks/${held.task_id}`}>
+              Открыть в таске</LinkButton>}>
+              В таске «{held.name}» — правьте кадр там
+            </Notice>
+          )}
+          {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+        </div>
       )}
 
       <div
@@ -1328,7 +1435,7 @@ export default function AnnotationEditor({
         </div>
 
         {panels && (
-          <Float className="fe-film" label="Кадры таски">
+          <Float className="fe-film" label={ds ? "Кадры группы" : "Кадры таски"}>
             <div className="fe-film-h">
               <ClassFilter side="right" title="Кадры с классами" classes={fltEntries} unit="кадров с этим классом"
                 off={fltOff} onChange={setFltOff}
@@ -1355,7 +1462,7 @@ export default function AnnotationEditor({
                     width: im.width,
                     height: im.height,
                     boxes: im.boxes,
-                    n: i + 1,
+                    n: (ds ? ds.base : 0) + i + 1,
                     ring: im.task_status + ((i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending)) ? " agent" : "")
                       + (out ? " out" : ""),
                     title: `${im.file_name} — ${im.annotations} разметок${out ? " · не по фильтру, уйдёт из ленты" : ""}`,
@@ -1372,11 +1479,28 @@ export default function AnnotationEditor({
         {panels && (
           <Float className="fe-side" label="Кадр и объекты">
             <FrameSide
-              status={image.task_status}
-              tags={
-                <TagPicker code={code} all={tags} value={image.tag_ids || []} disabled={!canTag} compact
-                  placeholder="таг кадра" onChange={(next) => onTags(image.id, next)} onCreated={onTagCreated} />
-              }
+              status={shownStatus}
+              tags={<>
+                {ds ? (
+                  <FrameInfo rows={[
+                    ["Датасет", image.dataset_name],
+                    ["Сплит", SPLIT_LABEL[image.split ?? ""] ?? image.split],
+                    ["Размер", <span className="ui-mono">{image.width} × {image.height}</span>],
+                    ["Вес", <span className="ui-mono">{fmtBytes(image.size_bytes)}</span>],
+                    image.origin_task && ["Из таски", <Link className="fe-link" to={`/projects/${code}/tasks/${image.origin_task.id}`}>{image.origin_task.name}</Link>],
+                  ]} />
+                ) : image.origin && (
+                  <FrameInfo rows={[["Исходник", <Link className="fe-link" to={`/projects/${code}/datasets?frame=${image.origin.image_id}`}>
+                    {image.origin.dataset_name ?? "удалён из датасета"}</Link>]]} />
+                )}
+                <TagPicker code={code} all={tags} value={image.tag_ids || []} disabled={!canTag || held != null} compact
+                  placeholder="таг кадра" onCreated={onTagCreated}
+                  onChange={(next) => void Promise.resolve(onTags(image.id, next)).catch((e) => setError((e as Error).message))} />
+                {ds && (
+                  <AnchorButton variant="outline" size="sm" icon="download" href={imageFileUrl(image.id)}
+                    download={image.file_name} className="fe-dl">Скачать оригинал</AnchorButton>
+                )}
+              </>}
               boxes={boxes}
               labelOf={labelOf}
               meta={meta}
@@ -1408,11 +1532,14 @@ export default function AnnotationEditor({
             {autoPrev ? (
               <AutoBar onCommit={commitAuto} onCancel={clearAuto} />
             ) : (
-              <FrameBar index={pos} total={none ? 0 : shown.length} of={fltOn ? images.length : undefined}
+              <FrameBar index={at} total={of} of={fltOn ? (ds ? ds.total : images.length) : undefined}
                 canPrev={canPrev} canNext={canNext}
                 actions={actions} status={image.task_status}
+                trashLabel={ds ? "Удалить из датасета" : undefined}
+                goLabel={acceptCopy ? "Принять и далее" : undefined}
                 onPrev={() => void go(-1)} onNext={() => void go(1)}
-                onToggle={(s) => void toggle(s)} onTrash={() => void trash()} onGo={() => void go(1)} />
+                onToggle={(s) => void (ds ? emptyInDataset() : toggle(s))}
+                onTrash={() => void (ds ? dropFromDataset() : trash())} onGo={() => void next()} />
             )}
           </Float>
         )}
@@ -1430,7 +1557,8 @@ export default function AnnotationEditor({
       </div>
 
       <KeysDialog open={keysOpen} onOpenChange={setKeysOpen} groups={KEYS} />
-      {mapOpen && <AgentSetupDialog taskId={taskId} tool={agentTool} onClose={() => setMapOpen(false)} />}
+      {mapOpen && <AgentSetupDialog taskId={taskId ?? { code }} tool={agentTool} onClose={() => setMapOpen(false)} />}
+      {confirmNode}
 
       {menu && (
         <ObjectMenu

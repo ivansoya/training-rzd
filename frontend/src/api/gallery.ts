@@ -1,7 +1,13 @@
 // Кадры всего проекта разом — с пометкой, из какого они датасета.
 
-import { get } from "./http";
-import type { Box } from "../auth/api";
+import { get, post } from "./http";
+import type { ImageTaskStatus, TaskBox, TaskImage } from "../auth/api";
+
+/** Таска, держащая живую копию кадра: исходник только для чтения (решения 14.10.2026). */
+export interface HeldBy {
+  task_id: string;
+  name: string;
+}
 
 export interface ProjectImage {
   id: string;
@@ -12,11 +18,17 @@ export interface ProjectImage {
   height: number | null;
   size_bytes: number | null;
   annotations: number;
-  boxes: Box[];
+  /** В виде редактора: автор, агент, проверка — «Фокус» датасета их подписывает. */
+  boxes: TaskBox[];
   dataset_id: string;
   dataset_name: string;
+  /** Имена тагов — подпись; id — для правки в «Фокусе». */
   tags: string[];
+  tag_ids?: string[];
   rev?: number;
+  held?: HeldBy | null;
+  /** Таска, из которой кадр пришёл; у кадров архива её нет. */
+  origin_task?: { id: string; name: string; status: string } | null;
 }
 
 /** Сводка отбора: кадры по группам и рамки по классам. */
@@ -51,6 +63,8 @@ export interface ImagesQuery {
   notags?: string[];
   /** Один кадр по id — ссылка на кадр. */
   image?: string;
+  /** «На проверке»: непроверенное агента, позванного в датасете. */
+  pending?: boolean;
   summary?: boolean;
   limit?: number;
   offset?: number;
@@ -67,6 +81,7 @@ export function imagesQuery(q: ImagesQuery): string {
   if (q.tags?.length) p.set("tags", q.tags.join(","));
   if (q.notags?.length) p.set("notags", q.notags.join(","));
   if (q.image) p.set("image", q.image);
+  if (q.pending) p.set("pending", "1");
   if (q.summary) p.set("summary", "1");
   if (q.limit !== undefined) p.set("limit", String(q.limit));
   if (q.offset) p.set("offset", String(q.offset));
@@ -79,3 +94,38 @@ export const projectImages = (code: string, q: ImagesQuery = {}) => {
     `projects/${encodeURIComponent(code)}/images${suffix ? `?${suffix}` : ""}`
   );
 };
+
+/** Только id кадров отбора — выбрать группу целиком или отдать весь отбор в таску. */
+export const projectImageIds = (code: string, q: ImagesQuery = {}, free = false) => {
+  const suffix = imagesQuery({ ...q, limit: undefined, offset: undefined, summary: false });
+  // free — без кадров с живой копией в таске: выбрать их нельзя
+  return get<{ ids: string[]; matched: number }>(
+    `projects/${encodeURIComponent(code)}/images?ids_only=1${free ? "&free=1" : ""}${suffix ? `&${suffix}` : ""}`
+  );
+};
+
+/** Что уйдёт в таску копиями: по датасетам и сколько пропустим из-за живых копий. */
+export interface TakePreview {
+  take: number;
+  by_dataset: { id: string; name: string; n: number }[];
+  busy: { task_id: string; name: string; n: number }[];
+}
+
+export const takePreview = (code: string, ids: string[]) =>
+  post<TakePreview>(`projects/${encodeURIComponent(code)}/images/take`, { image_ids: ids });
+
+/** Пополнить открытую таску копиями кадров датасета. */
+export const takeIntoTask = (taskId: string, ids: string[]) =>
+  post<{ added: number; busy: TakePreview["busy"] }>(`tasks/${taskId}/from-dataset`, { image_ids: ids });
+
+/** Кадр галереи в виде кадра редактора: «Фокус» датасета работает с тем же, что в таске. */
+export function asFrame(p: ProjectImage): TaskImage {
+  return {
+    ...p,
+    task_status: p.task_status as ImageTaskStatus,
+    accepted: true,
+    source_video_id: null,
+    source_time_ms: null,
+    tag_ids: p.tag_ids ?? [],
+  };
+}

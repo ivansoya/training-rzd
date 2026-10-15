@@ -167,6 +167,14 @@
 .fe-obj-r:hover .ui-btn, .fe-obj.on .ui-btn, .fe-obj.off .ui-btn, .fe-obj-r .ui-btn:focus-visible { opacity: 1; }
 .fe-obj.off .fe-obj-r > :not(.ui-btn) { opacity: .45; }
 .fe-obj-b { display: flex; flex-direction: column; gap: 8px; padding: 2px 8px 10px; }
+/* Сведения о кадре в блоке «Кадр»: датасет, сплит, исходник копии (решения 14.10.2026) */
+.fe-info { display: flex; flex-direction: column; gap: 4px; margin: 0; font-size: 12.5px; }
+.fe-info > div { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 8px; }
+.fe-info dt { color: var(--faint); }
+.fe-info dd { margin: 0; }
+.fe-link { color: var(--fg); text-decoration: underline; text-decoration-color: var(--input); text-underline-offset: 3px; }
+.fe-link:hover { text-decoration-color: var(--ring); }
+.fe-dl { align-self: flex-start; }
 .fe-xywh { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0; }
 .fe-xywh > div { display: flex; gap: 5px; padding: 3px 6px; border: 1px solid var(--input); border-radius: var(--r); font: 500 12px var(--mono); }
 .fe-xywh dt { color: var(--faint); }

@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import { imageThumbUrl } from "../../../auth/api";
-import type { LabelClass } from "../../../auth/api";
-import { projectImages } from "../../../api/gallery";
+import { projectImageIds, projectImages } from "../../../api/gallery";
 import type { ImagesQuery, ProjectImage } from "../../../api/gallery";
+import type { Tag } from "../../../api/tags";
 import { Button, Icon, MenuItem, Popover, cx } from "../../../ui";
 import type { IconName } from "../../../ui";
 import { count, ru } from "../../ru";
-import ImageViewer from "../ImageViewer";
+import { DatasetFocus } from "./DatasetFocus";
 import { FrameTile } from "./FrameTile";
-import type { Overlays } from "./FrameTile";
+import type { Overlays, TilePick } from "./FrameTile";
 import { GAP, gridLayout, visibleRows } from "./layout";
 import { MORE, useGroupFrames } from "./useGroupFrames";
 
@@ -24,9 +23,17 @@ export interface GroupDef {
   dataset?: { id: string; name: string };
 }
 
+/** Выбор кадров для таски из датасета (решения 14.10.2026): общий на все группы, по id кадра. */
+export interface Picking {
+  has: (id: string) => boolean;
+  set: (ids: string[], on: boolean) => void;
+  /** Выбрано хоть что-то — флажки видны на всех плитках. */
+  any: boolean;
+}
+
 /** Группа галереи: сворачивается, грузит кадры порциями, в DOM держит только видимые ряды. */
-export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, onCollapse, classes, canEdit,
-  onEdited, onDataset, canDelete }: {
+export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, onCollapse, tags, onTagCreated,
+  onEdited, onDataset, canDelete, picking, onError }: {
   def: GroupDef;
   code: string;
   base: ImagesQuery;
@@ -35,12 +42,16 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
   tile: number;
   collapsed: boolean;
   onCollapse: (v: boolean) => void;
-  classes: LabelClass[];
-  canEdit: boolean;
+  /** Справочник тагов проекта — для «Фокуса». */
+  tags: Tag[];
+  onTagCreated: (tag: Tag) => void;
   onEdited: () => void;
   /** Правка датасета группы — только у группировки по датасетам и у редактора. */
   onDataset?: (mode: "rename" | "delete") => void;
   canDelete?: boolean;
+  /** Выбор кадров — только у редактора. */
+  picking?: Picking;
+  onError: (message: string) => void;
 }) {
   const load = useCallback(async (offset: number, limit: number) => {
     const got = await projectImages(code, { ...base, ...def.query, offset, limit });
@@ -52,10 +63,51 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
 
   const [viewer, setViewer] = useState<number | null>(null);
   const edited = useRef(false);
+  // Кадры, ушедшие из датасета, пока открыт «Фокус»: группа перечитается после закрытия
+  const [gone, setGone] = useState(0);
+
+  // Shift-щелчок выбирает от прошлого отмеченного до этого — внутри группы
+  const last = useRef<number | null>(null);
+  const pickAt = useCallback((i: number, shift: boolean) => {
+    if (!picking) return;
+    const im = g.items[i];
+    if (!im || im.held) return;
+    if (shift && last.current !== null) {
+      const [a, b] = [Math.min(last.current, i), Math.max(last.current, i)];
+      picking.set(g.items.slice(a, b + 1).filter((x) => !x.held).map((x) => x.id), true);
+    } else {
+      picking.set([im.id], !picking.has(im.id));
+    }
+    last.current = i;
+  }, [picking, g.items]);
+
+  // Флажок группы: вся группа под отбором, и не подгруженные тоже — их id спрашиваем у сервера
+  const free = g.items.filter((x) => !x.held);
+  const chosen = picking ? free.filter((x) => picking.has(x.id)).length : 0;
+  const groupState = !chosen ? "" : chosen === free.length && rest === 0 ? "on" : "part";
+  const [fetching, setFetching] = useState(false);
+  const pickGroup = async () => {
+    if (!picking || fetching) return;
+    setFetching(true);
+    try {
+      const { ids } = await projectImageIds(code, { ...base, ...def.query }, true);
+      picking.set(ids, groupState !== "on");
+    } catch (e) {
+      onError((e as Error).message);
+    } finally {
+      setFetching(false);
+    }
+  };
 
   return (
     <section className={cx("fr-g", collapsed && "col")} id={`fr-g-${def.key}`}>
       <header className="fr-gh">
+        {picking && (
+          <button type="button" className={cx("fr-gsel", groupState)} role="checkbox"
+            aria-checked={groupState === "on" ? true : groupState ? "mixed" : false} disabled={fetching || total === 0}
+            aria-label={`Выбрать всю группу «${def.title}»`} title="Выбрать всю группу, включая не показанные"
+            onClick={() => void pickGroup()}><i /></button>
+        )}
         <button type="button" className="fr-gt" aria-expanded={!collapsed} onClick={() => onCollapse(!collapsed)}>
           <Icon name="chevD" className="fr-chev" />
           <Icon name={def.icon} />
@@ -90,36 +142,42 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
             : total === 0 ? <p className="fr-note">Под отбор не подошёл ни один кадр группы.</p>
               : (
                 <VirtualGrid items={g.items} rest={rest} tile={tile} ov={ov} loading={g.loading}
-                  onOpen={setViewer} onMore={() => g.more()} />
+                  onOpen={setViewer} onMore={() => g.more()}
+                  pick={picking ? (i) => ({ on: picking.has(g.items[i].id), onPick: (shift) => pickAt(i, shift) }) : undefined} />
               )}
         </div>
       </div>
-      {viewer !== null && g.items[viewer] && createPortal(
-        <ImageViewer
-          images={g.items}
-          index={viewer}
-          total={total}
-          classes={classes}
-          canEdit={canEdit}
+      {viewer !== null && g.items[viewer] && (
+        <DatasetFocus title={def.title} items={g.items} index={viewer} total={total - gone} tags={tags}
           onIndex={setViewer}
           onNeedMore={() => g.more()}
+          onTagCreated={onTagCreated}
           onClose={() => {
             setViewer(null);
+            setGone(0);
             if (edited.current) { edited.current = false; onEdited(); }
           }}
-          onSaved={(updated) => {
+          onPatch={(id, patch) => {
             edited.current = true;
-            g.setItems((prev) => prev.map((x) => (x.id === updated.id ? { ...x, ...updated } : x)));
+            g.setItems((prev) => prev.map((x) => (x.id === id
+              ? { ...x, ...patch, ...(patch.boxes ? { annotations: patch.boxes.length } : {}) } : x)));
           }}
-        />,
-        document.body,
+          onRemoved={(id) => {
+            edited.current = true;
+            setGone((n) => n + 1);
+            const left = g.items.filter((x) => x.id !== id);
+            g.setItems(left);
+            if (!left.length) setViewer(null);
+            else setViewer((i) => (i === null ? i : Math.min(i, left.length - 1)));
+          }}
+        />
       )}
     </section>
   );
 }
 
 /** Сетка рядами: высота — за все ряды, отрисованы только попавшие в окно. */
-function VirtualGrid({ items, rest, tile, ov, loading, onOpen, onMore }: {
+function VirtualGrid({ items, rest, tile, ov, loading, onOpen, onMore, pick }: {
   items: ProjectImage[];
   rest: number;
   tile: number;
@@ -127,6 +185,7 @@ function VirtualGrid({ items, rest, tile, ov, loading, onOpen, onMore }: {
   loading: boolean;
   onOpen: (i: number) => void;
   onMore: () => void;
+  pick?: (i: number) => TilePick;
 }) {
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -184,7 +243,7 @@ function VirtualGrid({ items, rest, tile, ov, loading, onOpen, onMore }: {
             const i = from + k;
             if (i < items.length) {
               const im = items[i];
-              return <FrameTile key={im.id} im={im} ov={ov} onOpen={() => onOpen(i)} />;
+              return <FrameTile key={im.id} im={im} ov={ov} onOpen={() => onOpen(i)} pick={pick?.(i)} />;
             }
             return (
               <button key="more" type="button" className="fr-tile fr-more" disabled={loading} onClick={onMore}
