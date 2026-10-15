@@ -91,8 +91,10 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
         </div>
         {on && (
           <div className="fe-obj-b">
-            <Select full size="sm" label="Класс объекта" value={String(b.class_index)} options={options}
-              disabled={frozen} onChange={(v) => onClass(i, Number(v))} />
+            {!frozen && (
+              <Select full size="sm" label="Класс объекта" value={String(b.class_index)} options={options}
+                onChange={(v) => onClass(i, Number(v))} />
+            )}
             <dl className="fe-xywh">
               {([["x", b.x], ["y", b.y], ["w", b.w], ["h", b.h]] as const).map(([k, v]) => (
                 <div key={k}><dt>{k}</dt><dd>{Math.round(v)}</dd></div>

@@ -3,9 +3,9 @@ import type { Page } from "@playwright/test";
 import { signIn, tag } from "../helpers";
 
 /**
- * Таска из датасета и «Фокус» в датасете (решения 14.10.2026): выбранные кадры уходят новой таской копиями,
- * на странице таски — блок «Из датасета»; «Фокус» датасета без «Отложить», E и X спрашивают окном,
- * кадр с живой копией — только для чтения.
+ * Таска из датасета и «Фокус» в датасете (решения 14–15.10.2026): отбор как в Фото, выбранные кадры уходят
+ * новой таской копиями, на странице таски — блок «Из датасета»; «Фокус» датасета открыт просмотром, после
+ * «Править» — без «Отложить», E и X спрашивают окном; кадр с живой копией — только для чтения.
  */
 
 async function jpeg(page: Page, color: string): Promise<Buffer> {
@@ -40,14 +40,16 @@ test("таска из датасета и «Фокус» датасета", asyn
   }
   expect((await page.request.post(`/api/tasks/${task.id}/status`, { data: { status: "done" } })).ok()).toBeTruthy();
 
-  // Выбор двух кадров и новая таска из них
+  // Отбор как в Фото (15.10.2026): полосы до отбора нет, флажок включает, дальше щелчок по плитке выбирает
   await page.goto(`/projects/${project.code}/datasets`);
   const tiles = page.locator(".fr-tile");
   await expect(tiles).toHaveCount(3);
+  await expect(page.locator(".fr-take-bar")).toHaveCount(0);
   await tiles.nth(0).hover();
   await tiles.nth(0).locator(".fr-sel").click();
-  await tiles.nth(1).locator(".fr-sel").click({ modifiers: ["Shift"] });
-  await expect(page.locator(".fr-take-bar")).toContainText("Выбрано 2");
+  await tiles.nth(1).locator(".fr-open").click({ modifiers: ["Shift"] });
+  await expect(page.locator(".fr-take-bar")).toContainText("выбрано 2");
+  await expect(page.locator(".ed.fe")).toHaveCount(0);
   await page.locator(".fr-take-bar").getByRole("button", { name: /В таску/ }).click();
   await page.getByRole("button", { name: /Новая таска/ }).click();
   const dialog = page.getByRole("dialog", { name: "Новая таска" });
@@ -57,11 +59,14 @@ test("таска из датасета и «Фокус» датасета", asyn
   await expect(page).toHaveURL(/\/tasks\//);
   await expect(page.locator(".tp-src").filter({ hasText: "Из датасета" })).toBeVisible();
 
-  // «Фокус» датасета на свободном кадре
+  // «Фокус» датасета на свободном кадре: открыт просмотром, правка — по «Править»
   await page.goto(`/projects/${project.code}/datasets`);
   await expect(page.locator(".fr-tile.held")).toHaveCount(2);
   await tiles.nth(2).locator(".fr-open").click();
   const bar = page.getByLabel("Решение по кадру");
+  await expect(page.locator(".ed-top")).toHaveCount(0);
+  await expect(bar).not.toContainText("Удалить из датасета");
+  await page.getByRole("button", { name: "Править" }).click();
   await expect(bar).toContainText("Удалить из датасета");
   await expect(bar).not.toContainText("Отложить");
   await expect(page.locator(".ed-title")).toContainText("Кадр 3 из 3");
@@ -72,7 +77,8 @@ test("таска из датасета и «Фокус» датасета", asyn
   // Кадр с живой копией — только для чтения, плашка ведёт в таску
   await page.keyboard.press("ArrowLeft");
   await expect(page.locator(".ed-notes")).toContainText("В таске «Проверка»");
-  await expect(page.getByRole("button", { name: /^Рамка/ })).toBeDisabled();
+  await expect(page.locator(".ed-top")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Готово" })).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(page.locator(".ed.fe")).toHaveCount(0);
 });

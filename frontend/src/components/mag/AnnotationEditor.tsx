@@ -188,7 +188,11 @@ export default function AnnotationEditor({
   const ds = scope.kind === "dataset" ? scope : null;
   // Исходник с живой копией в таске — только чтение, правят там (решение 14.10.2026)
   const held = ds ? image?.held ?? null : null;
-  const ro = readOnly || held != null;
+  // Датасет открывается просмотром, правка — по кнопке и до закрытия (решение 15.10.2026)
+  const [editing, setEditing] = useState(false);
+  const ro = readOnly || held != null || (ds != null && !editing);
+  // В просмотре датасета правящее скрыто, а не погашено
+  const hide = ds != null && ro;
 
   const [classes, setClasses] = useState<LabelClass[]>([]);
   const [active, setActive] = useState<number | null>(null);
@@ -1311,6 +1315,18 @@ export default function AnnotationEditor({
         }
       >
         <SaveNote state={saveState} error={saveErr} onDiscard={discard} note={note} />
+        {ds && !readOnly && !held && (
+          <Button size="sm" variant={editing ? "outline" : "primary"} icon={editing ? "tick" : "edit"}
+            onClick={() => {
+              if (editing) {
+                void flush();
+                setTool("select"); setLock(false); setAddTo(null); setMenu(null); clearAuto();
+              }
+              setEditing(!editing);
+            }}>
+            {editing ? "Готово" : "Править"}
+          </Button>
+        )}
         <i className="ed-vsep" />
         <Button variant="ghost" size="sm" icon="keyboard" kbd="?" onClick={() => setKeysOpen(true)}>Клавиши</Button>
         <Button variant="ghost" size="sm" icon="sliders" kbd="Tab" aria-pressed={!panels}
@@ -1365,15 +1381,15 @@ export default function AnnotationEditor({
           onDrawn={() => { if (!lock) setTool("select"); }}
           onPolygon={onPolygon}
           onScale={setScale}
-          onContext={(i, x, y, at) =>
-            setMenu({ i, x, y, ...at, prev: selected })
-          }
+          onContext={(i, x, y, at) => {
+            if (!hide) setMenu({ i, x, y, ...at, prev: selected });
+          }}
           onAutoPoint={onAutoPoint}
           onAutoBox={onAutoBox}
           onAutoCommit={commitAuto}
         />
 
-        {panels && (
+        {panels && !hide && (
           <Float className="ed-top" role="toolbar" label="Инструменты">
             <ToolButton icon="pointer" label="Выбор" k="V" pressed={tool === "select"}
               onClick={() => { setTool("select"); setLock(false); setAddTo(null); }} />
@@ -1493,7 +1509,7 @@ export default function AnnotationEditor({
                   <FrameInfo rows={[["Исходник", <Link className="fe-link" to={`/projects/${code}/datasets?frame=${image.origin.image_id}`}>
                     {image.origin.dataset_name ?? "удалён из датасета"}</Link>]]} />
                 )}
-                <TagPicker code={code} all={tags} value={image.tag_ids || []} disabled={!canTag || held != null} compact
+                <TagPicker code={code} all={tags} value={image.tag_ids || []} disabled={!canTag || held != null || hide} compact
                   placeholder="таг кадра" onCreated={onTagCreated}
                   onChange={(next) => void Promise.resolve(onTags(image.id, next)).catch((e) => setError((e as Error).message))} />
                 {ds && (
