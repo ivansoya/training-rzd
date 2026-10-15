@@ -265,6 +265,8 @@ class Image(Base, AuditMixin):
         # Есть в базе с ранних миграций; без объявления autogenerate их удалил бы.
         sa.Index("ix_images_split", "project_id", "split"),
         sa.Index("ix_images_task", "task_id", "task_status"),
+        # «Есть ли у кадра датасета живая копия в таске» — на каждой плитке и правке.
+        sa.Index("ix_images_origin", "origin_image_id"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
@@ -317,6 +319,12 @@ class Image(Base, AuditMixin):
     # Кадр размечаемого ролика: каким был `annotations_rev` на прошлой сдаче таски.
     # Разошлись — кадр правили в датасете, и следующая сдача его не трогает.
     handed_rev: Mapped[int | None] = mapped_column(sa.Integer)
+    # Копия кадра датасета в таске: какой кадр она правит. Без внешнего ключа — копия
+    # остаётся копией и после того, как исходник удалили (брак, удаление в датасете).
+    origin_image_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid, nullable=True)
+    # Исходник, взятый в таску копией: `annotations_rev` на взятии или прошлой сдаче копии.
+    # Разошлись — кадр правили в датасете, и сдача копии его не трогает.
+    copy_rev: Mapped[int | None] = mapped_column(sa.Integer)
     width: Mapped[int | None] = mapped_column(sa.Integer)
     height: Mapped[int | None] = mapped_column(sa.Integer)
     size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)

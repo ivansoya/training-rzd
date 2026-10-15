@@ -19,6 +19,7 @@ import uuid
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import aliased
 
 from common import attribution, config, images, jobs, live, tags, task_frames, task_rights
 from common.auth import current_user, has_role, project_by_code, role_in
@@ -41,7 +42,7 @@ from common.models import (
 )
 from common.storage import translit_slug
 from common.web import InputError, json_body, public_error
-from datasets_svc import materialize
+from datasets_svc import copies, materialize
 from common import shapes
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
@@ -199,6 +200,14 @@ def _rights(task, user, role):
     return task_rights.rights(task.status, role, user.id, _team(task), task.created_by)
 
 
+def _ping_frame(db, image, user):
+    """Правка кадра: таске-происхождению — как прежде, кадру датасета — своё событие:
+    его открытый «Фокус» в датасете подтянет правку соседа."""
+    _ping(db, image.task_id, image.project_id, user, i=str(image.id))
+    if image.dataset_id is not None:
+        live.notify(db, "frame", image.id, image.project_id, u=str(user.id))
+
+
 def _ping(db, task_id, project_id, user, **what):
     """Живое событие таски: кто-то правил. Сосед перечитывает свой кадр, страница — числа.
     i — кадр, v и f — ролик и номер кадра в нём, s — новое состояние или состав."""
@@ -246,9 +255,16 @@ def _counts(db, task_id):
         select(func.count(Image.id).filter(~video), func.count(Image.id).filter(video))
         .where(Image.task_id == task_id, Image.dataset_id.isnot(None))
     ).one()
+    # Решённые копии кадров датасета: лягут на исходники, а не уйдут в датасет таски
+    copies_decided = db.execute(
+        select(func.count(Image.id)).where(
+            Image.task_id == task_id, Image.origin_image_id.isnot(None),
+            Image.task_status.in_(("annotated", "empty")))
+    ).scalar_one()
     return {
         **_states(db, task_id, ~video),
         "accepted": accepted,
+        "copies_decided": copies_decided,
         "video_accepted": video_accepted,
         "video": _states(db, task_id, video),
     }
@@ -274,11 +290,12 @@ def _board_extra(db, task):
         select(TaskVideo.id, TaskVideo.mode, TaskVideo.segments, TaskVideo.agent_frames)
         .where(TaskVideo.task_id == task.id)
     ).all()
-    files = db.execute(
-        select(func.count(Image.id)).where(
+    files, copied = db.execute(
+        select(func.count(Image.id).filter(Image.origin_image_id.is_(None)),
+               func.count(Image.id).filter(Image.origin_image_id.isnot(None))).where(
             Image.task_id == task.id, Image.source_video_id.is_(None),
             Image.task_status != "deleted")
-    ).scalar_one()
+    ).one()
     # Ролики на разметку и кадры, где в них ставил рамки агент
     seen = {v.id: set(v.agent_frames or []) for v in videos if v.mode == "annotate"}
     tracks = boxes = done = left = 0
@@ -296,6 +313,7 @@ def _board_extra(db, task):
     return {
         "sources": {
             "files": files,
+            "dataset": copied,
             "cut": sum(1 for v in videos if v.mode == "cut"),
             "uncut": sum(1 for v in videos if v.mode == "cut" and not v.segments),
             "annotate": len(seen),
@@ -394,6 +412,8 @@ def _light_list(db, tasks, user, role):
             "last_at": last.isoformat(),
             # Куда карточку можно перетащить по доске — те же переходы, что у кнопок таски.
             "moves": sorted(task_rights.moves(t.status, role, user.id, teams[t.id])),
+            # Можно ли пополнять — «В таску ▾» в датасете предлагает только такие
+            "fill": task_rights.can_fill(t.status, role, user.id, teams[t.id], t.created_by),
         })
     return out
 
@@ -474,8 +494,57 @@ def create_task(code):
         db.add(task)
         db.flush()
         _log(db, task, user, "created", assignees=_names(task.assignees))
-        db.commit()
-        return jsonify(_task_json(db, task, user, role)), 201
+        # Таска из датасета: копии кладутся той же транзакцией — пустой таски не останется
+        taken, made = None, []
+        if data.get("image_ids"):
+            taken, made = copies.take(db, task, user, data["image_ids"])
+            if taken["added"]:
+                _log(db, task, user, "from_dataset", added=taken["added"])
+        try:
+            db.commit()
+        except Exception:
+            copies.drop_files(task.project_id, task.id, made)
+            raise
+        out = _task_json(db, task, user, role)
+        if taken:
+            out["taken"] = taken
+        return jsonify(out), 201
+    finally:
+        db.close()
+
+
+@bp.post("/api/projects/<code>/images/take")
+def dataset_take_preview(code):
+    """Окно «В таску»: сколько кадров уйдёт копиями, из каких датасетов и сколько пропустим."""
+    db, project, user, err = _resolve_project(code, "editor")
+    if err:
+        return err
+    try:
+        return jsonify(copies.preview(db, project.id, json_body().get("image_ids")))
+    finally:
+        db.close()
+
+
+@bp.post("/api/tasks/<task_id>/from-dataset")
+def take_from_dataset(task_id):
+    """Пополнить таску копиями кадров датасета. Права — как на загрузку файлов."""
+    db, task, project, user, role, err = _resolve_task(task_id, "editor")
+    if err:
+        return err
+    try:
+        denied = _refusal(task, user, role, "fill")
+        if denied:
+            return denied
+        taken, made = copies.take(db, task, user, json_body().get("image_ids"))
+        if taken["added"]:
+            _log(db, task, user, "from_dataset", added=taken["added"])
+        try:
+            db.commit()
+        except Exception:
+            copies.drop_files(task.project_id, task.id, made)
+            raise
+        _ping(db, task.id, task.project_id, user)
+        return jsonify(taken)
     finally:
         db.close()
 
@@ -536,17 +605,31 @@ def get_task(task_id):
         ]
         # Какие блоки есть на странице: кадров у источника (с бракованными) и когда пришёл
         # первый. Числа по состояниям — в `/counts`; блоки встают сразу и не прыгают потом.
+        key = task_frames.source_key()
         data["sources"] = {
-            (str(source_id) if source_id else "files"): {
+            source: {
                 "total": total, "frames": frames, "first_at": first.isoformat() if first else None,
             }
-            for source_id, total, frames, first in db.execute(
-                select(Image.source_video_id, func.count(Image.id),
+            for source, total, frames, first in db.execute(
+                select(key, func.count(Image.id),
                        func.count(Image.id).filter(Image.task_status != "deleted"), func.min(Image.created_at))
                 .where(Image.task_id == task.id, ~task_frames.video_frame())
-                .group_by(Image.source_video_id)
+                .group_by(key)
             ).all()
         }
+        # Копии кадров датасета: из каких датасетов исходники — строки карточки «Из датасета»
+        if "dataset" in data["sources"]:
+            origin = aliased(Image)
+            data["sources"]["dataset"]["datasets"] = [
+                {"id": str(ds_id), "name": name, "n": n}
+                for ds_id, name, n in db.execute(
+                    select(Dataset.id, Dataset.name, func.count(Image.id))
+                    .join(origin, origin.id == Image.origin_image_id)
+                    .join(Dataset, Dataset.id == origin.dataset_id)
+                    .where(Image.task_id == task.id, Image.task_status != "deleted")
+                    .group_by(Dataset.id, Dataset.name).order_by(func.count(Image.id).desc())
+                ).all()
+            ]
         # Справочник тагов едет вместе с таской: его спрашивают три места на
         # этой же странице — карточка ролика, карточка загрузки и редактор.
         data["tags"] = [tags.view(t) for t in tags.project_tags(db, project.id)]
@@ -565,7 +648,7 @@ def task_counts(task_id):
         data = {"counts": _counts(db, task.id)}
         data["from_files"] = db.execute(
             select(func.count(Image.id)).where(
-                Image.task_id == task.id, Image.source_video_id.is_(None),
+                Image.task_id == task.id, task_frames.source_clause(task.id, "files"),
                 Image.task_status != "deleted",
             )
         ).scalar_one()
@@ -573,33 +656,31 @@ def task_counts(task_id):
         # Разбивка по источникам считается здесь, а не на клиенте: клиент
         # видит лишь первую страницу кадров, и его счётчики врали бы тем
         # сильнее, чем больше таска.
+        src = task_frames.source_key()
         rows = db.execute(
-            select(Image.source_video_id, Image.task_status, func.count(Image.id))
+            select(src, Image.task_status, func.count(Image.id))
             .where(Image.task_id == task.id, ~task_frames.video_frame())
-            .group_by(Image.source_video_id, Image.task_status)
+            .group_by(src, Image.task_status)
         ).all()
         buckets = {}
-        for source_id, status, count in rows:
-            key = str(source_id) if source_id else "files"
+        for key, status, count in rows:
             bucket = buckets.setdefault(key, {
                 "new": 0, "annotated": 0, "empty": 0, "skipped": 0, "deleted": 0,
             })
             bucket[status] = bucket.get(status, 0) + count
         accepted = db.execute(
-            select(Image.source_video_id, func.count(Image.id))
+            select(src, func.count(Image.id))
             .where(Image.task_id == task.id, Image.dataset_id.isnot(None), ~task_frames.video_frame())
-            .group_by(Image.source_video_id)
+            .group_by(src)
         ).all()
-        for source_id, count in accepted:
-            key = str(source_id) if source_id else "files"
+        for key, count in accepted:
             buckets.setdefault(key, {})["accepted"] = count
         agent_rows = db.execute(
-            select(Image.source_video_id, func.count(Image.id))
+            select(src, func.count(Image.id))
             .where(Image.task_id == task.id, task_frames.agent_pending(), ~task_frames.video_frame())
-            .group_by(Image.source_video_id)
+            .group_by(src)
         ).all()
-        for source_id, count in agent_rows:
-            key = str(source_id) if source_id else "files"
+        for key, count in agent_rows:
             buckets.setdefault(key, {})["agent"] = count
         data["by_source"] = buckets
 
@@ -775,6 +856,7 @@ def set_status(task_id):
 
         task.status = target
         db.commit()
+        _drop_after_commit(db)
         materialize.drop_frame_files(task.project_id, task.id, dropped)
         _ping(db, task.id, task.project_id, user, s=target)
         payload = _task_json(db, task, user, role)
@@ -845,6 +927,7 @@ def _run_handover(job_id, task_id, target, user_id, video_ids):
         task.status = target
         db.commit()
         made = []
+        _drop_after_commit(db)
         materialize.drop_frame_files(project_id, task_id, dropped)
         jobs.update(job_id, status="done", processed=base, result={**result, **sums})
         _ping(db, task_id, project_id, user, s=target)
@@ -873,17 +956,52 @@ def _accept(db, task, user):
             Image.task_id == task.id,
             Image.task_status.in_(ACCEPTABLE),
             Image.dataset_id.is_(None),
+            Image.origin_image_id.is_(None),
             ~task_frames.has_pending(),
         )
     ).scalars().all()
+    # Копии кадров датасета в датасет не идут — их правки ложатся на исходники
+    handed, files = copies.hand_over(db, task, lambda o: _drop_from_dataset(db, o, user))
+    db.info.setdefault("drop_files", []).extend(files)
+    out = {"copies": handed} if any(handed.values()) else {}
+    if out:
+        _log(db, task, user, "copies_handed", **handed)
     if not pending:
         _log(db, task, user, "done", accepted=0)
-        return {"accepted": 0}
+        return {"accepted": 0, **out}
     dataset = _target_dataset(db, task, user)
     for img in pending:
         img.dataset_id = dataset.id
     _log(db, task, user, "accepted", accepted=len(pending), dataset=dataset.name)
-    return {"accepted": len(pending), "dataset": dataset.name}
+    return {"accepted": len(pending), "dataset": dataset.name, **out}
+
+
+def _drop_from_dataset(db, image, user):
+    """Кадр уходит из датасета: при живой таске-происхождении мягко (там его вернут),
+    иначе насовсем. Отдаёт (каталог, id) — файлы стереть после коммита — или None."""
+    origin = db.get(Task, image.task_id) if image.task_id else None
+    if origin is not None and origin.status != "closed":
+        _soft_delete(db, origin, user, image)
+        return None
+    base = config.image_base_dir(image.project_id, image.task_id)
+    db.delete(image)
+    return base, image.id
+
+
+def _drop_after_commit(db):
+    """Файлы кадров, удалённых насовсем в этой транзакции: только после коммита,
+    иначе откат оставил бы строки без файлов."""
+    for base, image_id in db.info.pop("drop_files", []):
+        _drop_files(base, image_id)
+
+
+def _held(db, image):
+    """409, если у кадра датасета живая копия в таске: исходник только для чтения."""
+    held = task_frames.live_copies(db, [image.id]).get(image.id)
+    if held is None:
+        return None
+    return jsonify({"error": f"Кадр в таске «{held[1]}» — правьте его там.", "code": "in_task",
+                    "task_id": str(held[0]), "task_name": held[1]}), 409
 
 
 def _drop_files(base, image_id):
@@ -1628,6 +1746,11 @@ def task_images(task_id):
         ids = [i.id for i in images]
         by_image = _task_boxes(db, ids)
         img_tags = tags.of(db, "image", ids)
+        # Копия кадра датасета: откуда она — «Исходник» в редакторе
+        origins = {oid: (ds_id, name) for oid, ds_id, name in db.execute(
+            select(Image.id, Dataset.id, Dataset.name).join(Dataset, Dataset.id == Image.dataset_id)
+            .where(Image.id.in_([i.origin_image_id for i in images if i.origin_image_id]))
+        ).all()} if any(i.origin_image_id for i in images) else {}
         return jsonify({
             "matched": matched,
             "counts": _counts(db, task.id),
@@ -1648,6 +1771,11 @@ def task_images(task_id):
                     "tag_ids": [str(t) for t in img_tags.get(img.id, [])],
                     "annotations": len(by_image[img.id]),
                     "boxes": by_image[img.id],
+                    **({"origin": {
+                        "image_id": str(img.origin_image_id),
+                        "dataset_id": str(origins[img.origin_image_id][0]) if img.origin_image_id in origins else None,
+                        "dataset_name": origins.get(img.origin_image_id, (None, None))[1],
+                    }} if img.origin_image_id else {}),
                 }
                 for img in images
             ],
@@ -1697,11 +1825,16 @@ def _save_annotations(db, image_id):
     if not has_role(role, "editor"):
         return jsonify({"error": "Недостаточно прав в проекте."}), 403
     # Принятый кадр — данные проекта: правит любой редактор, таска тут ни при чём.
+    # Кроме исходника, чья копия сейчас в работе: у кадра один хозяин.
     if image.task_id and image.dataset_id is None:
         task = db.get(Task, image.task_id)
         denied = _refusal(task, user, role)
         if denied:
             return denied
+    elif image.dataset_id is not None:
+        held = _held(db, image)
+        if held:
+            return held
 
     data = json_body()
     # Битое тело раньше читалось как «боксов нет» и стирало разметку кадра.
@@ -1809,18 +1942,18 @@ def _save_annotations(db, image_id):
     # не откладывали осознанно. Одно непроверенное агента кадр не размечает:
     # «размечен» — это решение человека. У забракованного статус не трогаем.
     checked = any(not ann.pending for _, ann in written)
-    if image.task_id and image.task_status != "deleted":
+    if (image.task_id or image.dataset_id) and image.task_status != "deleted":
         if checked:
             image.task_status = "annotated"
         elif fresh:
             if image.task_status == "annotated":
                 image.task_status = "empty" if image.dataset_id else "new"
-        elif image.task_status == "annotated":
-            # Кадр в датасете без объектов остаётся данными — фоновым примером.
+        elif image.task_status == "annotated" or image.dataset_id:
+            # Кадр в датасете без объектов остаётся данными — фоновым примером («Пусто» в датасете).
             image.task_status = "empty" if image.dataset_id else "new"
     image.annotations_rev += 1
     db.commit()
-    _ping(db, image.task_id, image.project_id, user, i=str(image.id))
+    _ping_frame(db, image, user)
     # id и автор — по порядку присланного (null — фигура отброшена): без id
     # клиента каждая запись считалась бы новой рамкой, и settle не работал.
     saved = [None] * len(data["boxes"])
@@ -1863,7 +1996,7 @@ def set_image_status(image_id):
         project = db.get(Project, image.project_id)
         role = role_in(db, user, project)
         task = db.get(Task, image.task_id)
-        denied = _refusal(task, user, role)
+        denied = _refusal(task, user, role) or (_held(db, image) if image.dataset_id is not None else None)
         if denied:
             return denied
         status = json_body().get("status")
@@ -1924,19 +2057,27 @@ def set_image_tags(image_id):
             return jsonify({"error": "Не выполнен вход."}), 401
         iid = _uuid_or_none(image_id)
         image = db.get(Image, iid) if iid else None
-        if image is None or image.task_id is None:
-            return jsonify({"error": "Кадр не найден в таске."}), 404
+        if image is None or (image.task_id is None and image.dataset_id is None):
+            return jsonify({"error": "Кадр не найден."}), 404
         project = db.get(Project, image.project_id)
         role = role_in(db, user, project)
-        # Как разметка, но админ правит и в «Готово», и в закрытой: таг — паспорт кадра,
-        # и ошибку в нём иначе нечем исправить.
-        denied = _refusal(db.get(Task, image.task_id), user, role, "tag")
+        if image.dataset_id is not None:
+            # Кадр датасета: любой редактор, по одному кадру (решение 14.10.2026), кроме исходника в работе
+            if not has_role(role, "editor"):
+                return jsonify({"error": "Недостаточно прав в проекте."}), 403
+            denied = _held(db, image)
+            # Таг — тоже правка в датасете: сдача копии такой кадр не тронет
+            image.copy_rev = None
+        else:
+            # Как разметка, но админ правит и в «Готово», и в закрытой: таг — паспорт кадра,
+            # и ошибку в нём иначе нечем исправить.
+            denied = _refusal(db.get(Task, image.task_id), user, role, "tag")
         if denied:
             return denied
         want = tags.valid_ids(db, project.id, json_body().get("tags"))
         tags.set_for(db, "image", image.id, want)
         db.commit()
-        _ping(db, image.task_id, image.project_id, user, i=str(image.id))
+        _ping_frame(db, image, user)
         return jsonify({"tags": [str(t) for t in want]})
     finally:
         db.close()
@@ -1996,6 +2137,9 @@ def delete_image(image_id):
             denied = _refusal(task, user, role)
             if denied:
                 return denied
+        held = _held(db, image) if image.dataset_id is not None else None
+        if held:
+            return held
 
         if task is not None and task.status != "closed":
             _soft_delete(db, task, user, image)

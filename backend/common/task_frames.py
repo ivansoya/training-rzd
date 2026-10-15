@@ -6,12 +6,17 @@
 """
 import uuid
 
-from sqlalchemy import and_, case, exists, select
+from sqlalchemy import String, and_, case, cast, exists, literal, select
+from sqlalchemy.orm import aliased
 
-from common.models import Annotation, Image, TaskVideo, VideoAnnotation, VideoTrack
+from common.models import Annotation, Image, Task, TaskVideo, VideoAnnotation, VideoTrack
 
 # Блоки вкладки «Кадры». Идентификатор ролика тоже годится как источник.
-SOURCES = ("files", "videos")
+SOURCES = ("files", "videos", "dataset")
+
+# Таска держит копию кадра датасета, пока в ней работают: исходник в датасете
+# только для чтения и в другую таску не берётся (решения 14.10.2026).
+LIVE = ("queued", "in_progress", "updating")
 
 
 def video_frame():
@@ -28,19 +33,50 @@ def rev_bump():
         "annotations_rev": Image.annotations_rev + 1,
         "handed_rev": case((Image.handed_rev == Image.annotations_rev, Image.handed_rev + 1),
                            else_=Image.handed_rev),
+        "copy_rev": case((Image.copy_rev == Image.annotations_rev, Image.copy_rev + 1),
+                         else_=Image.copy_rev),
     }
+
+
+def source_key():
+    """Блок кадра одной строкой для группировок: «dataset», «files» или id ролика."""
+    return case(
+        (Image.origin_image_id.isnot(None), literal("dataset")),
+        (Image.source_video_id.isnot(None), cast(Image.source_video_id, String)),
+        else_=literal("files"),
+    )
+
+
+def live_copy():
+    """У кадра датасета есть копия в живой таске."""
+    copy = aliased(Image)
+    return exists().where(copy.origin_image_id == Image.id, copy.task_id == Task.id,
+                          Task.status.in_(LIVE))
+
+
+def live_copies(db, image_ids):
+    """{id исходника: (id таски, имя таски)} для кадров с живой копией."""
+    if not image_ids:
+        return {}
+    return {orig: (task_id, name) for orig, task_id, name in db.execute(
+        select(Image.origin_image_id, Task.id, Task.name)
+        .join(Task, Task.id == Image.task_id)
+        .where(Image.origin_image_id.in_(list(image_ids)), Task.status.in_(LIVE))
+    ).all()}
 
 
 def source_clause(task_id, source):
     """Условие на `Image` для блока; без блока — все кадры вкладки «Кадры».
 
     «files» — загруженные файлами, «videos» — все нарезаемые ролики разом,
-    иначе идентификатор одного ролика (uuid).
+    «dataset» — копии кадров датасета, иначе идентификатор одного ролика (uuid).
     """
     if not source:
         return ~video_frame()
     if source == "files":
-        return Image.source_video_id.is_(None)
+        return and_(Image.source_video_id.is_(None), Image.origin_image_id.is_(None))
+    if source == "dataset":
+        return Image.origin_image_id.isnot(None)
     if source == "videos":
         # Именно нарезаемые: кадры размечаемого ролика приходят в таску уже
         # размеченными и своим источником во вкладке «Кадры» не значатся.

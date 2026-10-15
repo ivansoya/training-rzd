@@ -433,78 +433,114 @@ def run_context(task_id):
         task, project, err = _task(db, user, task_id)
         if err:
             return err
-        agents = []
-        cards = gpu.cards(db)
-        # Две группы (решение 09.10.2026): подключённые к проекту — все, и свои
-        # неподключённые. Свой агент к проекту сам не подключается.
-        linked = set(db.execute(select(ProjectAugGraph.graph_id).where(
-            ProjectAugGraph.project_id == project.id)).scalars())
-        owners = {}
-        for graph in db.execute(
-            select(AugGraph).where(AugGraph.kind == "agent", AugGraph.archived_at.is_(None),
-                                   (AugGraph.owner_id == user.id) | AugGraph.id.in_(linked or {None}))
-            .order_by(AugGraph.name)
-        ).scalars():
-            versions = db.execute(
-                select(AugGraphVersion).where(AugGraphVersion.graph_id == graph.id)
-                .order_by(AugGraphVersion.version.desc())
-            ).scalars().all()
-            if not versions:
-                continue
-            head = next((v for v in versions if v.id == graph.head_version_id), versions[0])
-            if graph.owner_id and graph.owner_id not in owners:
-                got = db.get(User, graph.owner_id)
-                owners[graph.owner_id] = got.display_name if got else None
-            agents.append({
-                "id": str(graph.id), "name": graph.name,
-                "group": "project" if graph.id in linked else "mine",
-                "mine": graph.owner_id == user.id,
-                "owner": owners.get(graph.owner_id),
-                "verdict": _verdict(db, head.doc, cards=cards)["verdict"],
-                "head": str(head.id),
-                "versions": [
-                    {"id": str(v.id), "version": v.version,
-                     "classes": _version_classes(db, v, project),
-                     "created_at": v.created_at.isoformat()}
-                    for v in versions
-                ],
-            })
-        maps = {
-            str(m.graph_id): m.mapping
-            for m in db.execute(
-                select(AgentClassMap).where(AgentClassMap.project_id == project.id)
-            ).scalars()
-        }
-        classes = [
-            {"id": str(c.id), "class_index": c.class_index, "name": c.name, "color": c.color}
-            for c in db.execute(
-                select(LabelClass).where(LabelClass.project_id == project.id)
-                .order_by(LabelClass.class_index)
-            ).scalars()
-        ]
-        runs = db.execute(
-            select(AgentRun).where(AgentRun.task_id == task.id)
-            .order_by(AgentRun.created_at.desc()).limit(5)
-        ).scalars().all()
-        videos = [
-            {"id": str(v.id), "file_name": v.file_name, "mode": v.mode,
-             "frames": v.frame_count or (round(v.duration_ms / 1000 * v.fps) if v.duration_ms and v.fps else None)}
-            for v in db.execute(
-                select(TaskVideo).where(TaskVideo.task_id == task.id).order_by(TaskVideo.created_at)
-            ).scalars()
-        ]
-        return jsonify({
-            "agents": agents,
-            "videos": videos,
-            "classes": classes,
-            "mappings": maps,
-            "sources": _source_counts(db, task),
-            "runs": [_run_view(db, r) for r in runs],
-            "can_run": _may_work(db, user, task, project),
-            "resources": {"cards": cards, "queued": gpu.queued_count(db)},
-        })
+        return jsonify(_context(db, user, project, task))
     finally:
         db.close()
+
+
+@bp.get("/api/projects/<code>/agents/context")
+def project_agent_context(code):
+    """Агент на кадре датасета (G в «Фокусе» датасета): те же агенты, без таски."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project, err = _dataset_project(db, user, code)
+        if err:
+            return err
+        return jsonify(_context(db, user, project))
+    finally:
+        db.close()
+
+
+def _dataset_project(db, user, code):
+    """(project, ошибка) для агента в датасете: кадры датасета правит редактор."""
+    project = project_by_code(db, code)
+    if project is None:
+        return None, (jsonify({"error": "Проект не найден."}), 404)
+    if not has_role(role_in(db, user, project), "viewer"):
+        return None, (jsonify({"error": "Недостаточно прав в проекте."}), 403)
+    return project, None
+
+
+def _context(db, user, project, task=None):
+    """Агенты, классы и сопоставления проекта; с таской — ещё её ролики, блоки и прогоны."""
+    agents = []
+    cards = gpu.cards(db)
+    # Две группы (решение 09.10.2026): подключённые к проекту — все, и свои
+    # неподключённые. Свой агент к проекту сам не подключается.
+    linked = set(db.execute(select(ProjectAugGraph.graph_id).where(
+        ProjectAugGraph.project_id == project.id)).scalars())
+    owners = {}
+    for graph in db.execute(
+        select(AugGraph).where(AugGraph.kind == "agent", AugGraph.archived_at.is_(None),
+                               (AugGraph.owner_id == user.id) | AugGraph.id.in_(linked or {None}))
+        .order_by(AugGraph.name)
+    ).scalars():
+        versions = db.execute(
+            select(AugGraphVersion).where(AugGraphVersion.graph_id == graph.id)
+            .order_by(AugGraphVersion.version.desc())
+        ).scalars().all()
+        if not versions:
+            continue
+        head = next((v for v in versions if v.id == graph.head_version_id), versions[0])
+        if graph.owner_id and graph.owner_id not in owners:
+            got = db.get(User, graph.owner_id)
+            owners[graph.owner_id] = got.display_name if got else None
+        agents.append({
+            "id": str(graph.id), "name": graph.name,
+            "group": "project" if graph.id in linked else "mine",
+            "mine": graph.owner_id == user.id,
+            "owner": owners.get(graph.owner_id),
+            "verdict": _verdict(db, head.doc, cards=cards)["verdict"],
+            "head": str(head.id),
+            "versions": [
+                {"id": str(v.id), "version": v.version,
+                 "classes": _version_classes(db, v, project),
+                 "created_at": v.created_at.isoformat()}
+                for v in versions
+            ],
+        })
+    maps = {
+        str(m.graph_id): m.mapping
+        for m in db.execute(
+            select(AgentClassMap).where(AgentClassMap.project_id == project.id)
+        ).scalars()
+    }
+    classes = [
+        {"id": str(c.id), "class_index": c.class_index, "name": c.name, "color": c.color}
+        for c in db.execute(
+            select(LabelClass).where(LabelClass.project_id == project.id)
+            .order_by(LabelClass.class_index)
+        ).scalars()
+    ]
+    if task is None:
+        return {
+            "agents": agents, "videos": [], "classes": classes, "mappings": maps, "sources": {}, "runs": [],
+            "can_run": has_role(role_in(db, user, project), "editor"),
+            "resources": {"cards": cards, "queued": gpu.queued_count(db)},
+        }
+    runs = db.execute(
+        select(AgentRun).where(AgentRun.task_id == task.id)
+        .order_by(AgentRun.created_at.desc()).limit(5)
+    ).scalars().all()
+    videos = [
+        {"id": str(v.id), "file_name": v.file_name, "mode": v.mode,
+         "frames": v.frame_count or (round(v.duration_ms / 1000 * v.fps) if v.duration_ms and v.fps else None)}
+        for v in db.execute(
+            select(TaskVideo).where(TaskVideo.task_id == task.id).order_by(TaskVideo.created_at)
+        ).scalars()
+    ]
+    return {
+        "agents": agents,
+        "videos": videos,
+        "classes": classes,
+        "mappings": maps,
+        "sources": _source_counts(db, task),
+        "runs": [_run_view(db, r) for r in runs],
+        "can_run": _may_work(db, user, task, project),
+        "resources": {"cards": cards, "queued": gpu.queued_count(db)},
+    }
 
 
 @bp.post("/api/agents/tasks/<task_id>/runs")
@@ -897,26 +933,45 @@ def save_mapping(task_id):
         task, project, err = _task(db, user, task_id)
         if err:
             return err
-        data = request.get_json(silent=True) or {}
-        graph = db.get(AugGraph, _uuid(data.get("graph_id")))
-        if not agent_access.may_use(db, user, graph, project):
-            return jsonify({"error": "Агент не найден."}), 404
-        raw = data.get("mapping")
-        if not isinstance(raw, dict):
-            return jsonify({"error": "mapping: класс агента → класс проекта."}), 400
-        project_classes = {str(c) for c in db.execute(
-            select(LabelClass.id).where(LabelClass.project_id == project.id)).scalars()}
-        clean = {str(k): (v if v in project_classes else None) for k, v in raw.items()}
-        saved = db.get(AgentClassMap, (graph.id, project.id))
-        if saved is None:
-            saved = AgentClassMap(graph_id=graph.id, project_id=project.id, mapping=clean)
-            db.add(saved)
-        else:
-            saved.mapping = {**(saved.mapping or {}), **clean}
-        db.commit()
-        return jsonify({"mapping": saved.mapping})
+        return _save_map(db, user, project)
     finally:
         db.close()
+
+
+@bp.put("/api/projects/<code>/agents/mapping")
+def save_project_mapping(code):
+    """То же сопоставление из «Фокуса» датасета: оно и так помнится на пару «агент + проект»."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project, err = _dataset_project(db, user, code)
+        if err:
+            return err
+        return _save_map(db, user, project)
+    finally:
+        db.close()
+
+
+def _save_map(db, user, project):
+    data = request.get_json(silent=True) or {}
+    graph = db.get(AugGraph, _uuid(data.get("graph_id")))
+    if not agent_access.may_use(db, user, graph, project):
+        return jsonify({"error": "Агент не найден."}), 404
+    raw = data.get("mapping")
+    if not isinstance(raw, dict):
+        return jsonify({"error": "mapping: класс агента → класс проекта."}), 400
+    project_classes = {str(c) for c in db.execute(
+        select(LabelClass.id).where(LabelClass.project_id == project.id)).scalars()}
+    clean = {str(k): (v if v in project_classes else None) for k, v in raw.items()}
+    saved = db.get(AgentClassMap, (graph.id, project.id))
+    if saved is None:
+        saved = AgentClassMap(graph_id=graph.id, project_id=project.id, mapping=clean)
+        db.add(saved)
+    else:
+        saved.mapping = {**(saved.mapping or {}), **clean}
+    db.commit()
+    return jsonify({"mapping": saved.mapping})
 
 
 @bp.post("/api/agents/tasks/<task_id>/apply")
@@ -933,64 +988,97 @@ def apply_agent(task_id):
             return jsonify({"error": NOT_AT_WORK}), 409
         if not _may_work(db, user, task, project):
             return jsonify({"error": "Звать агента можно в своей таске."}), 403
-        data = request.get_json(silent=True) or {}
-        graph = db.get(AugGraph, _uuid(data.get("graph_id")))
-        if not agent_access.may_use(db, user, graph, project):
-            return jsonify({"error": "Агент не найден."}), 404
-        version = db.get(AugGraphVersion, _uuid(data.get("version_id")))
-        if version is None or version.graph_id != graph.id:
-            return jsonify({"error": "Версия не от этого агента."}), 404
-        mapping = _saved_mapping(db, graph, version, project)
-        if not any(mapping.values()):
-            return jsonify({"error": "Классы агента не сопоставлены с классами проекта — сопоставьте их в окне запуска.",
-                            "code": "unmapped"}), 400
-
-        image = video = None
-        if data.get("image_id"):
-            image = db.get(Image, _uuid(data["image_id"]))
-            if image is None or image.task_id != task.id or image.task_status == "deleted":
-                return jsonify({"error": "Кадр не найден в таске."}), 404
-            target = {"image": str(image.id)}
-        else:
-            video = db.get(TaskVideo, _uuid(data.get("video_id")))
-            if video is None or video.task_id != task.id or video.mode != "annotate":
-                return jsonify({"error": "Ролик не найден в таске."}), 404
-            try:
-                frame_no = int(data.get("frame_no"))
-            except (TypeError, ValueError):
-                return jsonify({"error": "frame_no: номер кадра."}), 400
-            target = {"video": str(video.id), "frame": frame_no}
-
-        shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)).scalars().all()
-        doc = agent_graph.prepare(version.doc)
-        try:
-            agent_graph.check(doc, clamp=True, frame=frame_sizes.largest(db, [project.id]),
-                              inputs={str(w.id): w.imgsz for w in shelf})
-        except agent_graph.AgentGraphError as exc:
-            return jsonify({"error": str(exc)}), 400
-        row = _ask_worker(db, user, image, {**doc, "apply": target, "owner": _owner_of(graph)})
-        bad = _not_done(row)
-        if bad:
-            return bad
-        found = row.result.get("found") or []
-        db.add(AgentApply(graph_id=graph.id, project_id=project.id, user_id=user.id, boxes=len(found)))
-        db.commit()
-        # Автор рамок агента — его владелец, как у прогона
-        owner = SimpleNamespace(version_id=version.id, created_by=graph.owner_id)
-        if image is not None:
-            put = agent_runner._write(db, owner, image, found, mapping)
-            db.refresh(image)
-            return jsonify({"put": put, "found": len(found), "boxes": _image_boxes(db, image),
-                            "rev": image.annotations_rev, "task_status": image.task_status,
-                            "ms": row.result.get("ms"), "device": row.result.get("device")})
-        try:
-            put = agent_runner._write_video(db, owner, video, target["frame"], found, mapping)
-        except agent_runner.VideoClosed:
-            return jsonify({"error": "Таска сдаётся или сдана — агенту писать некуда."}), 409
-        return jsonify({"put": put, "found": len(found), "ms": row.result.get("ms"),
-                        "device": row.result.get("device")})
+        return _apply(db, user, project, task)
     finally:
         db.close()
+
+
+@bp.post("/api/projects/<code>/agents/apply")
+def apply_agent_dataset(code):
+    """Агент на кадре датасета (G в «Фокусе» датасета): рамки встают на проверку прямо в кадр."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        project, err = _dataset_project(db, user, code)
+        if err:
+            return err
+        if not has_role(role_in(db, user, project), "editor"):
+            return jsonify({"error": "Звать агента в датасете может редактор."}), 403
+        return _apply(db, user, project)
+    finally:
+        db.close()
+
+
+def _apply(db, user, project, task=None):
+    data = request.get_json(silent=True) or {}
+    graph = db.get(AugGraph, _uuid(data.get("graph_id")))
+    if not agent_access.may_use(db, user, graph, project):
+        return jsonify({"error": "Агент не найден."}), 404
+    version = db.get(AugGraphVersion, _uuid(data.get("version_id")))
+    if version is None or version.graph_id != graph.id:
+        return jsonify({"error": "Версия не от этого агента."}), 404
+    mapping = _saved_mapping(db, graph, version, project)
+    if not any(mapping.values()):
+        return jsonify({"error": "Классы агента не сопоставлены с классами проекта — сопоставьте их в окне запуска.",
+                        "code": "unmapped"}), 400
+
+    image = video = None
+    if task is None:
+        # Кадр датасета: исходник с живой копией правят в таске, а не здесь
+        image = db.get(Image, _uuid(data.get("image_id")))
+        if image is None or image.project_id != project.id or image.dataset_id is None:
+            return jsonify({"error": "Кадр не найден в датасете."}), 404
+        held = task_frames.live_copies(db, [image.id]).get(image.id)
+        if held:
+            return jsonify({"error": f"Кадр в таске «{held[1]}» — правьте его там.", "code": "in_task"}), 409
+        target = {"image": str(image.id)}
+    elif data.get("image_id"):
+        image = db.get(Image, _uuid(data["image_id"]))
+        if image is None or image.task_id != task.id or image.task_status == "deleted":
+            return jsonify({"error": "Кадр не найден в таске."}), 404
+        target = {"image": str(image.id)}
+    else:
+        video = db.get(TaskVideo, _uuid(data.get("video_id")))
+        if video is None or video.task_id != task.id or video.mode != "annotate":
+            return jsonify({"error": "Ролик не найден в таске."}), 404
+        try:
+            frame_no = int(data.get("frame_no"))
+        except (TypeError, ValueError):
+            return jsonify({"error": "frame_no: номер кадра."}), 400
+        target = {"video": str(video.id), "frame": frame_no}
+
+    shelf = db.execute(select(AgentWeights).where(AgentWeights.owner_id == graph.owner_id)).scalars().all()
+    doc = agent_graph.prepare(version.doc)
+    try:
+        agent_graph.check(doc, clamp=True, frame=frame_sizes.largest(db, [project.id]),
+                          inputs={str(w.id): w.imgsz for w in shelf})
+    except agent_graph.AgentGraphError as exc:
+        return jsonify({"error": str(exc)}), 400
+    row = _ask_worker(db, user, image, {**doc, "apply": target, "owner": _owner_of(graph)})
+    bad = _not_done(row)
+    if bad:
+        return bad
+    found = row.result.get("found") or []
+    db.add(AgentApply(graph_id=graph.id, project_id=project.id, user_id=user.id, boxes=len(found)))
+    db.commit()
+    # Автор рамок агента — его владелец, как у прогона
+    owner = SimpleNamespace(version_id=version.id, created_by=graph.owner_id)
+    if image is not None:
+        put = agent_runner._write(db, owner, image, found, mapping)
+        db.refresh(image)
+        if task is None:
+            # Соседний «Фокус» датасета на этом кадре перечитает его
+            live.notify(db, "frame", image.id, project.id, u=str(user.id))
+        return jsonify({"put": put, "found": len(found), "boxes": _image_boxes(db, image),
+                        "rev": image.annotations_rev, "task_status": image.task_status,
+                        "ms": row.result.get("ms"), "device": row.result.get("device")})
+    try:
+        put = agent_runner._write_video(db, owner, video, target["frame"], found, mapping)
+    except agent_runner.VideoClosed:
+        return jsonify({"error": "Таска сдаётся или сдана — агенту писать некуда."}), 409
+    return jsonify({"put": put, "found": len(found), "ms": row.result.get("ms"),
+                    "device": row.result.get("device")})
 
 
 PREVIEW_FRAMES_MAX = 12

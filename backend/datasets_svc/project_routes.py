@@ -16,6 +16,7 @@ import zipfile
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import aliased
 
 from common import config, jobs, live, tags, task_frames
 from common.auth import current_user, has_role, project_by_code, role_in
@@ -41,6 +42,7 @@ from common.models import (
 from common.storage import load_json, save_json, translit_slug
 from common.web import InputError, color_field, json_body, public_error, str_field
 from datasets_svc import importer, upload
+from datasets_svc.task_routes import _task_boxes
 from common import shapes
 
 bp = Blueprint("projects", __name__)
@@ -857,7 +859,7 @@ def _split_arg():
 
 
 def _image_query(db, project, *, dataset_ids, split, class_ids, only_empty,
-                 name_like=None, tags_in=(), tags_ex=(), image_id=None):
+                 name_like=None, tags_in=(), tags_ex=(), image_id=None, pending=False):
     """Запрос кадров проекта под общий набор фильтров.
 
     Только кадры датасетов — данные проекта. Кадр таски без `dataset_id` —
@@ -895,6 +897,9 @@ def _image_query(db, project, *, dataset_ids, split, class_ids, only_empty,
         q = q.where(~Image.id.in_(select(ImageTag.image_id).where(ImageTag.tag_id.in_(tags_ex))))
     if image_id is not None:
         q = q.where(Image.id == image_id)
+    if pending:
+        # «На проверке»: агент, позванный в датасете, оставил непроверенное
+        q = q.where(task_frames.has_pending())
     return q
 
 
@@ -1038,13 +1043,27 @@ def project_images(code):
             db, project, dataset_ids=chosen, split=split,
             class_ids=class_ids, only_empty=only_empty,
             name_like=name_like, tags_in=tags_in, tags_ex=tags_ex, image_id=image_id,
+            pending=request.args.get("pending") == "1",
         )
+        # Выбор группы или всего отбора: только id, без кадров — их может быть десятки тысяч
+        if request.args.get("ids_only") == "1":
+            # free=1 — без кадров с живой копией: их всё равно не взять (флажок группы)
+            if request.args.get("free") == "1":
+                q = q.where(~task_frames.live_copy())
+            ids = db.execute(_ordered(q.with_only_columns(Image.id), order)).scalars().all()
+            return jsonify({"ids": [str(i) for i in ids], "matched": len(ids)})
         matched = db.execute(
             select(func.count()).select_from(q.subquery())
         ).scalar_one()
         images = db.execute(_ordered(q, order).limit(limit).offset(offset)).scalars().all() if limit else []
-        by_image = _shapes_by_image(db, [i.id for i in images])
-        tags_of = _tags_by_image(db, [i.id for i in images])
+        page_ids = [i.id for i in images]
+        # Рамки в виде редактора: «Фокус» датасета подписывает их и знает непроверенное агента
+        by_image = _task_boxes(db, page_ids)
+        tags_of = _tags_by_image(db, page_ids)
+        tag_ids = tags.of(db, "image", page_ids)
+        held = task_frames.live_copies(db, page_ids)
+        origin = {t.id: t for t in db.execute(
+            select(Task).where(Task.id.in_({i.task_id for i in images if i.task_id}))).scalars()}
 
         # Сводка отбора для галереи: сколько кадров в каждой группе и чем они размечены
         summary = None
@@ -1093,7 +1112,13 @@ def project_images(code):
             "summary": summary,
             "my_role": _role(db, project),
             "images": [
-                _image_row(img, by_image[img.id], by_id.get(img.dataset_id), tags_of[img.id])
+                {
+                    **_image_row(img, by_image[img.id], by_id.get(img.dataset_id), tags_of[img.id]),
+                    "tag_ids": [str(t) for t in tag_ids.get(img.id, [])],
+                    "held": {"task_id": str(held[img.id][0]), "name": held[img.id][1]} if img.id in held else None,
+                    "origin_task": {"id": str(img.task_id), "name": origin[img.task_id].name,
+                                    "status": origin[img.task_id].status} if img.task_id in origin else None,
+                }
                 for img in images
             ],
         })
@@ -1228,6 +1253,7 @@ def _dataset_usage(db, project, dataset):
         .join(Image, Annotation.image_id == Image.id)
         .where(Image.dataset_id == dataset.id)
     ).scalar_one()
+    copy = aliased(Image)
     holding = db.execute(
         select(Task.id, Task.name, Task.status)
         .where(
@@ -1237,6 +1263,11 @@ def _dataset_usage(db, project, dataset):
                 Task.target_dataset_id == dataset.id,
                 Task.id.in_(
                     select(Image.task_id).where(Image.dataset_id == dataset.id)
+                ),
+                # Копии его кадров: сдача положит правки на исходники
+                Task.id.in_(
+                    select(copy.task_id).where(copy.origin_image_id.in_(
+                        select(Image.id).where(Image.dataset_id == dataset.id)))
                 ),
             ),
         )
