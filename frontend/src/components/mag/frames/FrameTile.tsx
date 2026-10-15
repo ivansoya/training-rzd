@@ -14,14 +14,16 @@ export interface Overlays {
   split: boolean;
 }
 
-/** Выбор плитки для таски из датасета (решения 14.10.2026): флажок — выбор, Shift — диапазон. */
+/** Выбор плитки для таски из датасета (решения 14–15.10.2026): флажок — выбор, Shift — диапазон. */
 export interface TilePick {
   on: boolean;
+  /** Отбор включён в этом датасете: щелчок по всей плитке выбирает, кадр не открывается. */
+  active: boolean;
   onPick: (shift: boolean) => void;
 }
 
 /** Плитка кадра: превью, рамки и метки поверх по выбранным тумблерам. Щелчок по кадру открывает «Фокус»,
- *  флажок в углу выбирает; кадр с живой копией в таске не выбирается. */
+ *  флажок в углу выбирает и включает отбор; кадр с живой копией в таске не выбирается. */
 export const FrameTile = memo(function FrameTile({ im, ov, onOpen, pick }: {
   im: ProjectImage;
   ov: Overlays;
@@ -42,7 +44,8 @@ export const FrameTile = memo(function FrameTile({ im, ov, onOpen, pick }: {
     <div className={cx("fr-tile", pick && "pick", pick?.on && "on", im.held && "held", pending > 0 && "agent")}
       title={im.held ? `В таске «${im.held.name}» — правится там`
         : `${im.file_name} — ${count(im.annotations, "объект", "объекта", "объектов")}`}>
-      <button type="button" className="fr-open" onClick={onOpen} aria-label={im.file_name}>
+      <button type="button" className="fr-open" aria-label={im.file_name} aria-pressed={pick?.active ? pick.on : undefined}
+        onClick={(e) => (pick?.active ? pick.onPick(e.shiftKey) : onOpen())}>
         <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" draggable={false} />
         {ov.boxes && <ShapeMini boxes={im.boxes} width={im.width} height={im.height} />}
       </button>

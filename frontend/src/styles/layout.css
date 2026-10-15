@@ -290,24 +290,32 @@ a.pcard:hover { border-color: var(--input); }
 .fr-tile:hover .fr-open > img, .fr-tile:hover .fr-open > .mag-shp,
 .fr-open:focus-visible > img, .fr-open:focus-visible > .mag-shp { scale: 1.05; }
 
-/* Выбор для таски из датасета (решения 14.10.2026): флажок при наведении, а пока выбрано хоть что-то — везде */
+/* Отбор в таску (решения 14–15.10.2026): флажок при наведении, а в режиме отбора датасета — везде.
+   Квадрат 16 с рамкой 1 и метка 8: чётное в чётном, иначе метка съезжает на пиксель.
+   Флажок на линии меток справа: квадрат в 6 px от угла, как .fr-tr */
 .fr-sel {
-  position: absolute; left: 4px; top: 4px; width: 26px; height: 26px; padding: 0; border: 0; background: none;
+  position: absolute; left: 1px; top: 1px; width: 26px; height: 26px; padding: 0; border: 0; background: none;
   display: grid; place-items: center; opacity: 0; transition: opacity .12s;
 }
 .fr-sel i {
-  width: 16px; height: 16px; border-radius: var(--r-sm); border: 1.5px solid var(--input);
+  width: 16px; height: 16px; border-radius: var(--r-sm); border: 1px solid var(--input);
   background: var(--on-frame-bg); display: grid; place-items: center;
 }
-.fr-tile:hover .fr-sel, .fr-sel:focus-visible, .fr-groups.picking .fr-sel, .fr-tile.on .fr-sel { opacity: 1; }
-.fr-tile.on .fr-sel i { border-color: var(--ring); background: color-mix(in srgb, var(--primary) 40%, var(--stage)); }
-.fr-tile.on .fr-sel i::after { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--fg); }
+.fr-tile:hover .fr-sel, .fr-sel:focus-visible, .fr-g.picking .fr-sel, .fr-tile.on .fr-sel { opacity: 1; }
+.fr-tile.on .fr-sel i { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 40%, var(--stage)); }
+.fr-tile.on .fr-sel i::after { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--fg); }
 .fr-sel:disabled { cursor: not-allowed; }
 .fr-sel:disabled i { opacity: .4; }
-.fr-tile.on { outline: 2px solid var(--ring); outline-offset: -2px; }
-.fr-tile.on::before, .fr-tile.agent::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; }
-.fr-tile.on::before { background: color-mix(in srgb, var(--primary) 16%, transparent); }
-.fr-tile.agent::after { box-shadow: inset 0 0 0 2px var(--agent-hi); }
+/* Выбранный — рамка и затемнение кадра; рамки разметки поверх остаются яркими.
+   Рамка слоем над кнопкой-кадром: outline плитки кнопка перекрывает */
+.fr-tile.on::before {
+  content: ""; position: absolute; inset: 0; z-index: 1; border-radius: inherit; pointer-events: none;
+  box-shadow: inset 0 0 0 2px var(--ring);
+}
+.fr-tile.on .fr-open > img { filter: brightness(.65); }
+.fr-g.picking .fr-grid { user-select: none; }
+.fr-g.picking .fr-tile.held .fr-open { cursor: not-allowed; }
+.fr-tile.agent::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; box-shadow: inset 0 0 0 2px var(--agent-hi); }
 .fr-agt {
   display: inline-flex; align-items: center; gap: 3px; height: 16px; padding: 0 5px;
   border-radius: var(--r-sm); background: var(--agent); color: var(--primary-fg); font: 500 10px var(--mono);
@@ -320,10 +328,10 @@ a.pcard:hover { border-color: var(--input); }
 .fr-held .ui-ic { flex: none; }
 /* Флажок группы: вся группа под отбором, и не подгруженные тоже */
 .fr-gsel { width: 26px; height: 26px; padding: 0; border: 0; background: none; display: grid; place-items: center; flex: none; }
-.fr-gsel i { width: 16px; height: 16px; border-radius: var(--r-sm); border: 1.5px solid var(--input); display: grid; place-items: center; }
+.fr-gsel i { width: 16px; height: 16px; border-radius: var(--r-sm); border: 1px solid var(--input); display: grid; place-items: center; }
 .fr-gsel:hover i { border-color: var(--ring); }
-.fr-gsel.on i, .fr-gsel.part i { border-color: var(--ring); background: color-mix(in srgb, var(--primary) 40%, var(--bg)); }
-.fr-gsel.on i::after { content: ""; width: 7px; height: 7px; border-radius: 2px; background: var(--fg); }
+.fr-gsel.on i, .fr-gsel.part i { border-color: var(--primary); background: color-mix(in srgb, var(--primary) 40%, var(--bg)); }
+.fr-gsel.on i::after { content: ""; width: 8px; height: 8px; border-radius: 2px; background: var(--fg); }
 .fr-gsel.part i::after { content: ""; width: 8px; height: 2px; border-radius: 1px; background: var(--fg); }
 .fr-gsel:disabled { cursor: progress; opacity: .6; }
 
@@ -334,11 +342,13 @@ a.pcard:hover { border-color: var(--input); }
 }
 .fr-take > * { pointer-events: auto; }
 .fr-take-bar {
-  display: flex; align-items: center; gap: 12px; padding: 6px 6px 6px 16px; white-space: nowrap; font-size: 13.5px;
+  display: flex; align-items: center; gap: 12px; padding: 6px; white-space: nowrap; font-size: 13.5px; max-width: calc(100vw - 32px);
   background: var(--card); border: 1px solid var(--input); border-radius: var(--r-lg); box-shadow: var(--shadow-float);
   animation: fr-take-in .2s var(--ease);
 }
 .fr-take-bar b { font-weight: 600; }
+.fr-take-bar > :not(.fr-take-ds) { flex-shrink: 0; }
+.fr-take-ds { min-width: 0; max-width: 280px; margin-left: -4px; }
 .fr-take-sep { width: 1px; height: 20px; background: var(--border); }
 .fr-take-done {
   display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 12px; font-size: 13.5px;

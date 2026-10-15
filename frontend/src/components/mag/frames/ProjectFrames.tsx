@@ -159,19 +159,23 @@ export default function ProjectFrames() {
   };
   const linkedEdited = useRef(false);
 
-  // Выбор кадров для таски из датасета (решения 14.10.2026): по id, смену отбора переживает
-  const [sel, setSel] = useState<Set<string>>(() => new Set());
-  const picking = useMemo<Picking | undefined>(() => (canEdit ? {
-    has: (id) => sel.has(id),
-    any: sel.size > 0,
-    set: (ids, on) => setSel((cur) => {
-      const next = new Set(cur);
+  // Отбор в таску (решения 15.10.2026): в одном датасете за раз, по id, смену фильтров переживает.
+  // Как в Фото: снят последний — режим выключен; «Включить отбор» держит пустой до первого выбора
+  const [pick, setPick] = useState<{ ds: string; ids: Set<string> } | null>(null);
+  const pickingOf = (ds: string): Picking => ({
+    mode: !pick ? "off" : pick.ds === ds ? "here" : "away",
+    count: pick?.ds === ds ? pick.ids.size : 0,
+    has: (id) => pick?.ds === ds && pick.ids.has(id),
+    set: (ids, on) => setPick((cur) => {
+      const next = new Set(cur?.ds === ds ? cur.ids : []);
       ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
-      return next;
+      return next.size ? { ds, ids: next } : null;
     }),
-  } : undefined), [canEdit, sel]);
+    toggle: () => setPick((cur) => (cur?.ds === ds ? null : { ds, ids: new Set() })),
+  });
   // Выбранные, но не видные под нынешним отбором: уйдут тоже — полоса говорит, сколько их
-  const picked = sel.size > 0;
+  const sel = pick?.ids;
+  const picked = Boolean(sel?.size);
   const [seen, setSeen] = useState<Set<string> | null>(null);
   useEffect(() => {
     if (!picked) { setSeen(null); return; }
@@ -179,7 +183,7 @@ export default function ProjectFrames() {
     projectImageIds(code, base).then((r) => alive && setSeen(new Set(r.ids))).catch(() => {});
     return () => { alive = false; };
   }, [code, base, rev, picked]);
-  const unseen = seen ? [...sel].filter((id) => !seen.has(id)).length : 0;
+  const unseen = seen && sel ? [...sel].filter((id) => !seen.has(id)).length : 0;
   const [creating, setCreating] = useState<string[] | null>(null);
   const navigate = useNavigate();
 
@@ -249,7 +253,8 @@ export default function ProjectFrames() {
         </label>
         <Select label="Порядок" icon="list" value={view.sort} onChange={(v) => setView({ sort: v })}
           options={[{ value: "name", label: "По имени файла" }, { value: "objects", label: "Больше объектов" }]} />
-        <Select label="Группировать" icon="layers" value={view.groupBy} onChange={(v) => setView({ groupBy: v })}
+        <Select label="Группировать" icon="layers" value={view.groupBy}
+          onChange={(v) => { setView({ groupBy: v }); setPick(null); }}
           options={[{ value: "dataset", label: "По датасету" }, { value: "split", label: "По сплиту" },
             { value: "none", label: "Без групп" }]} />
       </div>
@@ -258,27 +263,27 @@ export default function ProjectFrames() {
         <Empty icon="search" title="Под отбор не подошёл ни один кадр"
           action={<Button size="sm" onClick={() => set(NO_FILTERS)}>Сбросить фильтры</Button>} />
       ) : (
-        <div className={picked ? "fr-groups picking" : "fr-groups"}>
+        <div className="fr-groups">
           {sum && groups.map((g) => (
             <FrameGroup key={g.key} def={g} code={code} base={base} filterKey={filterKey} ov={view.ov}
               tile={view.tile} collapsed={Boolean(collapsed[g.key])}
               onCollapse={(v) => setCollapsed((c) => ({ ...c, [g.key]: v }))}
               tags={tags} onTagCreated={(t) => setTags((prev) => [...prev, t])}
               onEdited={afterEdit} onError={setError}
-              canDelete={isAdmin} picking={picking}
+              canDelete={isAdmin} picking={g.dataset && canEdit ? pickingOf(g.key) : undefined}
               onDataset={g.dataset && canEdit ? (mode) => setDsEdit({ ...g.dataset!, mode }) : undefined} />
           ))}
         </div>
       )}
 
-      {canEdit && sum && (sum.matched > 0 || picked) && (
-        <TakeBar code={code} selected={sel.size} unseen={unseen} matched={sum.matched}
-          ids={async () => (picked ? [...sel] : (await projectImageIds(code, base)).ids)}
-          onClear={() => setSel(new Set())} onNew={setCreating} onError={setError} />
+      {canEdit && (
+        <TakeBar code={code} title={pick ? datasets.find((d) => d.id === pick.ds)?.name ?? "" : null}
+          ids={sel ? [...sel] : []} unseen={unseen}
+          onClear={() => setPick(null)} onNew={setCreating} onError={setError} />
       )}
       {creating && (
         <CreateTaskModal isAdmin={isAdmin} fromDataset={creating} onClose={() => setCreating(null)}
-          onCreated={(id) => { setCreating(null); setSel(new Set()); navigate(`/projects/${code}/tasks/${id}`); }} />
+          onCreated={(id) => { setCreating(null); setPick(null); navigate(`/projects/${code}/tasks/${id}`); }} />
       )}
 
       {linked && linked[0] && (
@@ -292,7 +297,10 @@ export default function ProjectFrames() {
       {exporting && <ExportModal detail={detail} onClose={() => setExporting(false)} />}
       {dsEdit && (
         <DatasetDialog code={code} dataset={dsEdit} mode={dsEdit.mode} onClose={() => setDsEdit(null)}
-          onDone={async () => { setDsEdit(null); await refresh(); setRev((n) => n + 1); }} />
+          onDone={async () => {
+            if (dsEdit.mode === "delete") setPick((p) => (p?.ds === dsEdit.id ? null : p));
+            setDsEdit(null); await refresh(); setRev((n) => n + 1);
+          }} />
       )}
     </div>
   );

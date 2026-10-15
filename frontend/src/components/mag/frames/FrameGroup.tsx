@@ -23,12 +23,17 @@ export interface GroupDef {
   dataset?: { id: string; name: string };
 }
 
-/** Выбор кадров для таски из датасета (решения 14.10.2026): общий на все группы, по id кадра. */
+/** Отбор кадров в таску (решения 15.10.2026): в одном датасете за раз и как в Фото —
+ *  первый выбор включает режим, снят последний — выключает. */
 export interface Picking {
+  /** Отбор в этом датасете, в другом или нигде. */
+  mode: "here" | "away" | "off";
+  /** Выбрано в этом датасете, и не видные под отбором тоже. */
+  count: number;
   has: (id: string) => boolean;
   set: (ids: string[], on: boolean) => void;
-  /** Выбрано хоть что-то — флажки видны на всех плитках. */
-  any: boolean;
+  /** «Включить отбор» пустым или выйти, сняв всё. */
+  toggle: () => void;
 }
 
 /** Группа галереи: сворачивается, грузит кадры порциями, в DOM держит только видимые ряды. */
@@ -49,7 +54,7 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
   /** Правка датасета группы — только у группировки по датасетам и у редактора. */
   onDataset?: (mode: "rename" | "delete") => void;
   canDelete?: boolean;
-  /** Выбор кадров — только у редактора. */
+  /** Отбор кадров — только у групп-датасетов и у редактора. */
   picking?: Picking;
   onError: (message: string) => void;
 }) {
@@ -66,8 +71,13 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
   // Кадры, ушедшие из датасета, пока открыт «Фокус»: группа перечитается после закрытия
   const [gone, setGone] = useState(0);
 
+  const here = picking?.mode === "here";
+  // Пока отбор в другом датасете, здесь флажков нет — щелчок открывает кадр
+  const pickable = picking && picking.mode !== "away" ? picking : undefined;
+
   // Shift-щелчок выбирает от прошлого отмеченного до этого — внутри группы
   const last = useRef<number | null>(null);
+  useEffect(() => { if (!here) last.current = null; }, [here]);
   const pickAt = useCallback((i: number, shift: boolean) => {
     if (!picking) return;
     const im = g.items[i];
@@ -81,17 +91,23 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
     last.current = i;
   }, [picking, g.items]);
 
-  // Флажок группы: вся группа под отбором, и не подгруженные тоже — их id спрашиваем у сервера
+  // Флажок группы: при выборе снимает всё, без него выбирает всю группу под отбором,
+  // и не подгруженные тоже — их id спрашиваем у сервера
   const free = g.items.filter((x) => !x.held);
-  const chosen = picking ? free.filter((x) => picking.has(x.id)).length : 0;
-  const groupState = !chosen ? "" : chosen === free.length && rest === 0 ? "on" : "part";
+  const chosen = here ? free.filter((x) => picking!.has(x.id)).length : 0;
+  // Сколько отдал сервер на «выбрать всё»: подгруженных мало, чтобы признать группу выбранной целиком
+  const whole = useRef(Infinity);
+  const groupState = !here || !picking!.count ? ""
+    : chosen === free.length && (rest === 0 || picking!.count >= whole.current) ? "on" : "part";
   const [fetching, setFetching] = useState(false);
   const pickGroup = async () => {
-    if (!picking || fetching) return;
+    if (!pickable || fetching) return;
+    if (groupState) { pickable.toggle(); return; }
     setFetching(true);
     try {
       const { ids } = await projectImageIds(code, { ...base, ...def.query }, true);
-      picking.set(ids, groupState !== "on");
+      whole.current = ids.length;
+      pickable.set(ids, true);
     } catch (e) {
       onError((e as Error).message);
     } finally {
@@ -100,12 +116,13 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
   };
 
   return (
-    <section className={cx("fr-g", collapsed && "col")} id={`fr-g-${def.key}`}>
+    <section className={cx("fr-g", collapsed && "col", here && "picking")} id={`fr-g-${def.key}`}>
       <header className="fr-gh">
-        {picking && (
+        {pickable && (
           <button type="button" className={cx("fr-gsel", groupState)} role="checkbox"
             aria-checked={groupState === "on" ? true : groupState ? "mixed" : false} disabled={fetching || total === 0}
-            aria-label={`Выбрать всю группу «${def.title}»`} title="Выбрать всю группу, включая не показанные"
+            aria-label={groupState ? "Снять весь выбор" : `Выбрать всю группу «${def.title}»`}
+            title={groupState ? "Снять весь выбор" : "Выбрать всю группу, включая не показанные"}
             onClick={() => void pickGroup()}><i /></button>
         )}
         <button type="button" className="fr-gt" aria-expanded={!collapsed} onClick={() => onCollapse(!collapsed)}>
@@ -126,6 +143,12 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
                 hint={rest > 0 ? `ещё ${count(rest, "кадр", "кадра", "кадров")}` : "все уже показаны"}>
                 Показать все
               </MenuItem>
+              {picking && (
+                <MenuItem icon="check" disabled={!here && total === 0}
+                  onSelect={() => { close(); if (!here) onCollapse(false); picking.toggle(); }}>
+                  {here ? "Выключить отбор" : "Включить отбор"}
+                </MenuItem>
+              )}
               {onDataset && (
                 <MenuItem icon="edit" onSelect={() => { close(); onDataset("rename"); }}>Переименовать…</MenuItem>
               )}
@@ -143,7 +166,8 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
               : (
                 <VirtualGrid items={g.items} rest={rest} tile={tile} ov={ov} loading={g.loading}
                   onOpen={setViewer} onMore={() => g.more()}
-                  pick={picking ? (i) => ({ on: picking.has(g.items[i].id), onPick: (shift) => pickAt(i, shift) }) : undefined} />
+                  pick={pickable ? (i) => ({ on: here && pickable.has(g.items[i].id), active: here,
+                    onPick: (shift) => pickAt(i, shift) }) : undefined} />
               )}
         </div>
       </div>
