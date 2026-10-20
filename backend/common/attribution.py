@@ -31,18 +31,51 @@
 
 Непроверенная рамка с `id`, которого в базе уже нет, не пишется: её стёрли
 очисткой или прогоном, а устаревший редактор вернул бы её проверенной.
+
+Ctrl+Z (решение 20.10.2026) — запись с пометкой «отмена»: рамка возвращается той прежней
+версией, что совпала с присланной (класс, фигура, флаг проверки), — автором-агентом и «на
+проверке», и своё «Принять» отменяется. Версии откладывает своя же запись кадра (`keep_versions`)
+и держит час; стёртое очисткой, прогоном агента и чужой записью отменой не воскресает.
 """
+import uuid
+from datetime import timedelta
+
+UNDO_SECONDS = 3600
+_ROW = ("class_id", "ann_type", "geometry", "source", "created_by", "agent_version_id", "attributes")
+_IDS = ("class_id", "created_by", "agent_version_id", "reviewed_by")
 
 
-def settle(existing, incoming, user_id, confirm=False):
+def _shape_same(a, b):
+    return a["class_id"] == b["class_id"] and a["ann_type"] == b["ann_type"] and a["geometry"] == b["geometry"]
+
+
+def _back(restore, item, old):
+    """Прежняя версия, которую просит отмена; None — просить нечего или рамка и так такая."""
+    if not restore or not item.get("id"):
+        return None
+    want = bool(item.get("pending"))
+    if old is not None and _shape_same(old, item) and bool(old.get("pending")) == want:
+        return None
+    return next((v for v in restore.get(item["id"], [])
+                 if _shape_same(v, item) and bool(v.get("pending")) == want), None)
+
+
+def settle(existing, incoming, user_id, confirm=False, restore=None):
     """`existing` — {id: {class_id, ann_type, geometry, source, created_by,
     agent_version_id, pending, reviewed_by}}; `incoming` — [{id, class_id, ann_type, geometry,
     source}]. Возвращает строки для вставки по порядку `incoming`: те же поля, что у
-    `existing`, или None — рамку не писать."""
+    `existing`, или None — рамку не писать. `restore` — {id: [прежние версии]} у записи-отмены."""
     used = set()
     rows = []
     for item in incoming:
         old = existing.get(item.get("id"))
+        back = _back(restore, item, old)
+        if back is not None and item["id"] not in used:
+            used.add(item["id"])
+            pending = bool(back.get("pending")) and not confirm
+            rows.append({"id": item["id"], **{k: back.get(k) for k in _ROW}, "pending": pending,
+                         "reviewed_by": back.get("reviewed_by") if pending or not back.get("pending") else user_id})
+            continue
         if old is None and item.get("id") and item.get("pending") and not confirm:
             rows.append(None)
             continue
@@ -83,6 +116,49 @@ def settle(existing, incoming, user_id, confirm=False):
             "pending": False, "reviewed_by": None,
         })
     return rows
+
+
+def keep_versions(db, existing, settled, user_id):
+    """Отложить прежние версии рамок, которые эта запись кадра стирает или меняет, — для Ctrl+Z.
+    Звать до вставки (`settled` ещё с `id`); заодно убирается отложенное старше часа."""
+    from sqlalchemy import delete
+
+    from common.models import AnnotationVersion, utcnow
+
+    now = {r["id"]: r for r in settled if r and r.get("id")}
+    for ann_id, old in existing.items():
+        new = now.get(ann_id)
+        if new is not None and all(new.get(k) == old.get(k) for k in (*_ROW, "pending", "reviewed_by")):
+            continue
+        row = {k: (str(v) if isinstance(v, uuid.UUID) else v) for k, v in old.items()}
+        db.add(AnnotationVersion(ann_id=uuid.UUID(ann_id), row=row, saved_by=user_id))
+    db.execute(delete(AnnotationVersion).where(AnnotationVersion.saved_at < utcnow() - timedelta(seconds=UNDO_SECONDS)))
+
+
+def versions(db, ids, user_id):
+    """{id: [версии]} — отложенное своими записями за час, свежие первыми; номера — снова UUID."""
+    from sqlalchemy import select
+
+    from common.models import AnnotationVersion, utcnow
+
+    want = []
+    for i in ids:
+        try:
+            want.append(uuid.UUID(str(i)))
+        except ValueError:
+            continue
+    if not want:
+        return {}
+    out = {}
+    for v in db.execute(
+        select(AnnotationVersion).where(
+            AnnotationVersion.ann_id.in_(want), AnnotationVersion.saved_by == user_id,
+            AnnotationVersion.saved_at >= utcnow() - timedelta(seconds=UNDO_SECONDS),
+        ).order_by(AnnotationVersion.saved_at.desc())
+    ).scalars():
+        row = {k: (uuid.UUID(v.row[k]) if k in _IDS and v.row.get(k) else v.row.get(k)) for k in v.row}
+        out.setdefault(str(v.ann_id), []).append(row)
+    return out
 
 
 def agent_names(db, version_ids):

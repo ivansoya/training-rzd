@@ -157,3 +157,44 @@ def test_копия_непроверенной_не_пропадает():
     first, copy = settle({"a": _old(pending=True)}, [_in("a", pending=True), _in("a", pending=True)], EDITOR)
     assert first["pending"] is True
     assert copy is not None and copy["agent_version_id"] is None
+
+
+# Ctrl+Z (20.10.2026): запись-отмена возвращает прежнюю версию, отложенную своей же записью
+# --------------------------------------------------------------------------- #
+MOVED = {"x": 50.0, "y": 20.0, "w": 100.0, "h": 50.0}
+
+
+def test_отмена_возвращает_отклонённую_рамку_агента_на_проверку():
+    was = _old(pending=True, reviewed_by=None, attributes={"conf": 0.9})
+    [row] = settle({}, [_in("a", pending=True)], EDITOR, restore={"a": [was]})
+    assert (row["id"], row["source"], row["agent_version_id"], row["pending"], row["attributes"]) == \
+        ("a", "model", AGENT, True, {"conf": 0.9})
+
+
+def test_без_пометки_отмены_стёртое_не_воскресает():
+    [row] = settle({}, [_in("a", pending=True)], EDITOR)
+    assert row is None
+
+
+def test_отмена_принятия_возвращает_на_проверку():
+    accepted = _old(pending=False, reviewed_by=EDITOR)
+    [row] = settle({"a": accepted}, [_in("a", pending=True)], EDITOR, restore={"a": [_old(pending=True, reviewed_by=None)]})
+    assert row["pending"] is True and row["reviewed_by"] is None
+
+
+def test_отмена_правки_возвращает_рамку_агенту():
+    moved = _old(source="human", created_by=EDITOR, geometry=MOVED, pending=False, reviewed_by=EDITOR)
+    [row] = settle({"a": moved}, [_in("a", pending=True)], EDITOR, restore={"a": [moved, _old(pending=True)]})
+    assert (row["source"], row["created_by"], row["pending"]) == ("model", OWNER, True)
+
+
+def test_отмена_своей_стёртой_рамки_сохраняет_номер_и_автора():
+    mine = _old(source="human", created_by=OWNER, agent_version_id=None, pending=False, reviewed_by=None)
+    [row] = settle({}, [_in("a")], EDITOR, restore={"a": [mine]})
+    assert (row["id"], row["created_by"]) == ("a", OWNER)
+
+
+def test_отмена_берёт_только_версию_с_той_же_фигурой():
+    # Просят не то, что было: отложенное не подходит — обычное правило, стёртая непроверенная не пишется
+    [row] = settle({}, [_in("a", geometry=MOVED, pending=True)], EDITOR, restore={"a": [_old(pending=True)]})
+    assert row is None

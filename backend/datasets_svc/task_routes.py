@@ -1923,7 +1923,10 @@ def _save_annotations(db, image_id):
     # нетронутая рамка агента остаётся его, поправленная — того, кто правил.
     # «Подтвердить кадр» — то же сохранение с `confirm`: так оно идёт в общей
     # очереди редактора и сверяется по версии, как любая правка.
-    settled = attribution.settle(existing, fresh, user.id, confirm=bool(data.get("confirm")))
+    # Ctrl+Z — запись с `undo`: стёртое и изменённое своей же записью возвращается прежней версией.
+    restore = attribution.versions(db, [item["id"] for item in fresh], user.id) if data.get("undo") else None
+    settled = attribution.settle(existing, fresh, user.id, confirm=bool(data.get("confirm")), restore=restore)
+    attribution.keep_versions(db, existing, settled, user.id)
     db.execute(
         Annotation.__table__.delete().where(Annotation.image_id == image.id)
     )

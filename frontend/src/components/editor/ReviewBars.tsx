@@ -7,7 +7,7 @@ import type { AgentKey } from "./review";
 
 /** На кадре непроверенное агента: принять оставшееся или отклонить. Когда агентов на кадре
  *  несколько — ещё «Принять всё от …» и «Отклонить всё от …» по одному агенту.
- *  Стрелки ‹ › — к соседнему кадру на проверке ([ и ]). Плашка видна, пока непроверенное есть
+ *  Стрелки ‹ › — к соседнему кадру с разметкой ([ и ]; только на проверке — с Shift). Плашка видна, пока непроверенное есть
  *  хоть где-то: на кадре без него она сжата до «ещё N кадров на проверке» со стрелками. */
 export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, onNext, agents, onConfirmAgent, onRejectAgent }: {
   count: number;
@@ -24,12 +24,12 @@ export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, 
   onRejectAgent?: (key: string) => void;
 }) {
   const prev = onPrev && (
-    <Button variant="ghost" size="sm" icon="chevL" className="is-agent ed-review-go" aria-label="Предыдущий кадр на проверке ([)"
-      title="Предыдущий кадр на проверке · [" onClick={onPrev} />
+    <Button variant="ghost" size="sm" icon="chevL" className="is-agent ed-review-go" aria-label="Предыдущий кадр с разметкой ([)"
+      title="Предыдущий кадр с разметкой · [ · только на проверке — Shift+[" onClick={onPrev} />
   );
   const next = onNext && (
-    <Button variant="ghost" size="sm" icon="chevR" className="is-agent ed-review-go" aria-label="Следующий кадр на проверке (])"
-      title="Следующий кадр на проверке · ]" onClick={onNext} />
+    <Button variant="ghost" size="sm" icon="chevR" className="is-agent ed-review-go" aria-label="Следующий кадр с разметкой (])"
+      title="Следующий кадр с разметкой · ] · только на проверке — Shift+]" onClick={onNext} />
   );
   if (count === 0) {
     const n = left ?? 0;

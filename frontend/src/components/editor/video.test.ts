@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { VideoSingleBox, VideoTrack } from "../../auth/api";
 import {
-  clampDock, clampView, clockText, coveredSpans, followView, fullView, mergeSpans, presenceAt, scoutHeat, seekToTrack,
+  annotatedFrames, clampDock, clampView, clockText, coveredSpans, followView, fullView, mergeSpans, presenceAt, scoutHeat, seekToTrack,
   singleTicks, timeTicks, trackNumbers, zoomAt, zoomText,
 } from "./video";
 
@@ -123,5 +123,25 @@ describe("масштаб дорожек", () => {
     expect(ticks.every((x) => x.frame >= 300 && x.frame <= 600)).toBe(true);
     // 10 с в окне на 1000 px — шаг в секунду
     expect(ticks[1].t - ticks[0].t).toBe(1);
+  });
+});
+
+describe("[ и ] — кадры с любыми одиночными", () => {
+  // Куски 0–99 пришли, 100+ — нет. Сводка: [кадр, рамок, на проверке, классы непроверенных].
+  const loaded = (f: number) => f < 100;
+  const marks: [number, number, number, number[]?][] = [[5, 1, 0], [40, 1, 0], [150, 2, 0], [160, 1, 1, [2]], [170, 2, 1, [2]]];
+  const singles = [single(5, 1), { ...single(20, 2), pending: true }];
+
+  it("принятые и свои не пропускаются, непроверенные тоже идут", () => {
+    expect(annotatedFrames(marks, singles, loaded, new Set())).toEqual([5, 20, 150, 160, 170]);
+  });
+
+  it("пришедший кусок судится по рамкам: стёртое на кадре 40 сводка ещё помнит, а ходить туда незачем", () => {
+    expect(annotatedFrames(marks, singles, loaded, new Set())).not.toContain(40);
+  });
+
+  it("фильтр классов: снятый класс прячет и пришедшие, и непроверенные из сводки; принятые неизвестного класса видны", () => {
+    const off = new Set(["c:2"]);
+    expect(annotatedFrames(marks, singles, loaded, off)).toEqual([5, 150, 170]);
   });
 });

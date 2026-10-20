@@ -55,6 +55,9 @@ import {
 import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad } from "../editor/look";
 import type { KeyGroup } from "../editor/look";
 
+/** Снимок истории правок: разметка кадра и сам кадр — история идёт сквозь кадры. */
+type Snap = { img: string; boxes: CanvasShape[] };
+
 /** Окно «Клавиши»: всё управление редактора кадров. */
 const KEYS: KeyGroup[] = [
   { title: "Инструменты", keys: [
@@ -78,11 +81,12 @@ const KEYS: KeyGroup[] = [
     ["X", "Брак; у забракованного — вернуть"],
     ["Пробел", "Далее; при показанном полуавтоматом — закрепить"],
     ["← / →", "Предыдущий и следующий кадр"],
+    ["[ / ]", "Предыдущий и следующий кадр с рамками — и принятые, и свои"],
   ] },
   { title: "Агент", keys: [
     ["G", "Агент на этом кадре: рамки встанут на проверку"],
     ["Enter", "Подтвердить кадр: оставшиеся рамки агента верны"],
-    ["[ / ]", "Предыдущий и следующий кадр на проверке"],
+    ["Shift+[ / Shift+]", "Предыдущий и следующий кадр на проверке"],
     ["Правка рамки", "Поправленная рамка агента считается проверенной"],
   ] },
   { title: "Вид", keys: [
@@ -274,7 +278,13 @@ export default function AnnotationEditor({
   // со страницы должны видеть последнюю правку, даже если React её ещё не
   // отрисовал (протяжка шлёт правки чаще, чем кадры экрана).
   const boxesRef = useRef<CanvasShape[]>(boxes);
-  const hist = useRef<History<CanvasShape[]>>(empty());
+  // История одна на редактор, сквозь кадры (решение 20.10.2026): «Отклонить» уводит на следующий,
+  // и случайное надо вернуть оттуда. Снимок помнит свой кадр — отмена сперва ведёт туда.
+  const hist = useRef<History<Snap>>(empty());
+  // Отмена ушла на другой кадр: откат — когда его разметка встанет (эффект после `step`).
+  const stepOnArrive = useRef<{ img: string; dir: "undo" | "redo" } | null>(null);
+  // Следующая запись — отмена: сервер вернёт стёртое своей записью прежней версией, агентовой и «на проверке».
+  const undoSave = useRef(false);
   // Жест мыши: «down» — нажали, «recorded» — снимок до жеста уже в истории.
   // Протяжка шлёт правку на каждое движение, а шаг отмены у неё один.
   const gesture = useRef<"none" | "down" | "recorded">("none");
@@ -298,8 +308,7 @@ export default function AnnotationEditor({
   // старыми до перечитывания кадра — их поймает отказ при сохранении.
   useLive("classes", loadClasses);
 
-  // Кадр сменился — берём его разметку как есть. История у каждого кадра
-  // своя: отмена на новом кадре не должна возвращать разметку прежнего.
+  // Кадр сменился — берём его разметку как есть. История не сбрасывается: её снимки помнят свой кадр.
   useEffect(() => {
     const next = (image?.boxes || []).map((b) => ({
       id: b.id, class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
@@ -310,7 +319,6 @@ export default function AnnotationEditor({
     }));
     boxesRef.current = next;
     setBoxes(next);
-    hist.current = empty();
     setAddTo(null);
     setSelected(null);
     setSelPart(null);
@@ -377,7 +385,12 @@ export default function AnnotationEditor({
     const { image: img } = live.current;
     if (!img) return rev;
     const snap = boxesRef.current;
-    const res = await saveAnnotations(img.id, snap, rev);
+    const undo = undoSave.current;
+    undoSave.current = false;
+    const res = await saveAnnotations(img.id, snap, rev, undo).catch((e) => {
+      if (undo) undoSave.current = true;
+      throw e;
+    });
     // id новых рамок — с сервера, к тем же объектам: иначе каждая запись делала бы их заново.
     const now = withSavedIds(snap, res.shapes, boxesRef.current);
     if (now !== boxesRef.current) {
@@ -446,7 +459,7 @@ export default function AnnotationEditor({
     // Правка рамки агента — её проверка: пунктир уходит сразу, как и на сервере.
     const next = settlePending(boxesRef.current, raw);
     if (gesture.current !== "recorded") {
-      hist.current = history.record(hist.current, boxesRef.current);
+      hist.current = history.record(hist.current, { img: live.current.image?.id ?? "", boxes: boxesRef.current });
       if (gesture.current === "down") gesture.current = "recorded";
     }
     // Номера скрытых держатся за место в списке — при смене числа объектов они съехали бы
@@ -462,8 +475,8 @@ export default function AnnotationEditor({
     const up = () => {
       if (gesture.current === "recorded") {
         hist.current = history.dropNoop(
-          hist.current, boxesRef.current,
-          (a, b) => JSON.stringify(a) === JSON.stringify(b)
+          hist.current, { img: live.current.image?.id ?? "", boxes: boxesRef.current },
+          (a, b) => a.img === b.img && JSON.stringify(a.boxes) === JSON.stringify(b.boxes)
         );
       }
       gesture.current = "none";
@@ -475,20 +488,6 @@ export default function AnnotationEditor({
       window.removeEventListener("pointercancel", up);
     };
   }, []);
-
-  /** Отмена и повтор. Результат — обычная правка: уходит автосохранением. */
-  const step = useCallback((dir: "undo" | "redo") => {
-    if (frozen) return;
-    const got = (dir === "undo" ? history.undo : history.redo)(hist.current, boxesRef.current);
-    if (!got) return;
-    hist.current = got.h;
-    boxesRef.current = got.value;
-    setBoxes(got.value);
-    touch();
-    // Номер выбранного мог указывать на объект, которого в снимке нет.
-    setSelected(null);
-    setSelPart(null);
-  }, [frozen, touch]);
 
   // Выбор класса при выделенном боксе перекрашивает его: чаще всего класс
   // выбирают именно затем, чтобы исправить уже нарисованное.
@@ -526,6 +525,40 @@ export default function AnnotationEditor({
     },
     [flush, images.length, onIndex, index]
   );
+
+  /** Отмена и повтор. Результат — обычная правка: уходит автосохранением, с пометкой «отмена».
+   *  Правка была на другом кадре — сперва туда, откат — когда его разметка встанет. */
+  const step = useCallback((dir: "undo" | "redo") => {
+    const at = live.current.image?.id ?? "";
+    const next = history.peek(hist.current, dir);
+    if (!next) return;
+    if (next.img !== at) {
+      const i = images.findIndex((im) => im.id === next.img);
+      if (i < 0) return;
+      stepOnArrive.current = { img: next.img, dir };
+      void jump(i);
+      return;
+    }
+    if (frozen) return;
+    const got = (dir === "undo" ? history.undo : history.redo)(hist.current, { img: at, boxes: boxesRef.current });
+    if (!got) return;
+    hist.current = got.h;
+    boxesRef.current = got.value.boxes;
+    setBoxes(got.value.boxes);
+    undoSave.current = true;
+    touch();
+    // Номер выбранного мог указывать на объект, которого в снимке нет.
+    setSelected(null);
+    setSelPart(null);
+  }, [frozen, touch, images, jump]);
+
+  // Отмена привела на свой кадр: его разметка встала — откатываем. Любой другой переход её снимает.
+  useEffect(() => {
+    const arrive = stepOnArrive.current;
+    if (!arrive) return;
+    stepOnArrive.current = null;
+    if (arrive.img === image?.id) step(arrive.dir);
+  }, [image?.id, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const close = useCallback(async () => {
     if (await flush()) onClose();
@@ -702,21 +735,33 @@ export default function AnnotationEditor({
   // Сколько кадров списка ещё на проверке — для сжатой плашки на кадре без непроверенного
   const reviewLeft = flagged().filter(Boolean).length;
 
-  /** К предыдущему или следующему кадру на проверке. */
-  const goReview = useCallback((dir: 1 | -1) => {
-    const i = nextFlagged(flagged(), index, dir);
-    if (i !== null && i !== index) void jump(i);
-  }, [flagged, index, jump]);
+  /** Кадры с любыми рамками — на проверке, принятыми, своими; ход [ и ] (отзыв 20.10.2026: принятые не пропускать). */
+  const annotatedFlags = useCallback(
+    () => images.map((im, i) => (i === index ? boxesRef.current.length > 0
+      : im.task_status !== "deleted" && passes(i) && (im.boxes || []).length > 0)),
+    [images, index, passes]
+  );
 
-  /** «Подтвердить кадр»: оставшееся агента верно. Дальше — следующий на проверке, иначе просто следующий. */
-  const confirmFrame = useCallback(async () => {
-    if (frozen || !pendingCount(boxesRef.current)) return;
-    edit(confirmAll(boxesRef.current));
+  /** [ ] — к соседнему кадру с разметкой; с Shift — только на проверке. */
+  const goReview = useCallback((dir: 1 | -1, onlyPending = false) => {
+    const i = nextFlagged(onlyPending ? flagged() : annotatedFlags(), index, dir);
+    if (i !== null && i !== index) void jump(i);
+  }, [flagged, annotatedFlags, index, jump]);
+
+  /** После «Принять все» и «Отклонить все»: к следующему на проверке, иначе просто к следующему. */
+  const onward = useCallback(async () => {
     if (!(await flush())) return;
     const i = nextFlagged(flagged(), index, 1);
     if (i !== null && i !== index) void jump(i);
     else void go(1);
-  }, [frozen, edit, flush, flagged, index, jump, go]);
+  }, [flush, flagged, index, jump, go]);
+
+  /** «Подтвердить кадр»: оставшееся агента верно. */
+  const confirmFrame = useCallback(async () => {
+    if (frozen || !pendingCount(boxesRef.current)) return;
+    edit(confirmAll(boxesRef.current));
+    await onward();
+  }, [frozen, edit, onward]);
 
   /** Рамки одного агента: «Принять всё от …» и «Отклонить всё от …», когда агентов на кадре несколько. */
   const ofAgent = useCallback((key: string) => (s: CanvasShape) => agentKeyOf(meta.get(s.id ?? ""))?.key === key, [meta]);
@@ -730,12 +775,13 @@ export default function AnnotationEditor({
     pick(null);
   }, [frozen, edit, ofAgent, pick]);
 
-  /** «Отклонить все»: непроверенное агента уходит с кадра, кадр остаётся. */
+  /** «Отклонить все»: непроверенное агента уходит с кадра — и дальше, как после «Принять» (отзыв 20.10.2026). */
   const rejectFrame = useCallback(() => {
     if (frozen || !pendingCount(boxesRef.current)) return;
     edit(rejectAll(boxesRef.current));
     pick(null);
-  }, [frozen, edit, pick]);
+    void onward();
+  }, [frozen, edit, pick, onward]);
 
   /** Агент на этом кадре: правки сначала записываются, ответ — разметка кадра с новыми рамками на проверке. */
   const runAgent = useCallback(async () => {
@@ -1082,6 +1128,7 @@ export default function AnnotationEditor({
       // Shift, поэтому проверяем его до общего разбора, а не заводим ветку.
       if (e.shiftKey) {
         if (e.code === "KeyP" && !frozen) { addContour(); e.preventDefault(); }
+        if (e.code === "BracketLeft" || e.code === "BracketRight") { goReview(e.code === "BracketLeft" ? -1 : 1, true); e.preventDefault(); }
         return;
       }
       switch (e.code) {

@@ -3,6 +3,7 @@
 import type { VideoSingleBox, VideoTrack } from "../../auth/api";
 import { hiddenRanges, keyAt, stateAt, trackEnd } from "../mag/trackMath";
 import { visibleSpans } from "../mag/timelineMath";
+import { agentShown, classKey } from "./filter";
 
 /** Что стоит за фигурой на кадре: трек или одиночная разметка этого кадра. */
 export type Item =
@@ -53,6 +54,23 @@ export function singleTicks(singles: VideoSingleBox[]): { frame: number; ci: num
     out.push({ frame: s.frame_no, ci: s.class_index });
   }
   return out.sort((a, b) => a.frame - b.frame);
+}
+
+/** Кадры с одиночными рамками — любыми: на проверке, принятыми, своими; ход [ и ] (отзыв 20.10.2026:
+ *  принятые не пропускать). Пришедший кусок судим по его рамкам с фильтром классов, не пришедший — по
+ *  сводке каркаса: там классы есть только у непроверенных, и принятые неизвестного класса не прячем. */
+export function annotatedFrames(
+  marks: readonly [number, number, number, number[]?][],
+  singles: readonly VideoSingleBox[],
+  loaded: (frame: number) => boolean,
+  off: Set<string>,
+): number[] {
+  const out = new Set<number>();
+  for (const s of singles) if (!off.has(classKey(s.class_index))) out.add(s.frame_no);
+  for (const [f, n, p, cis] of marks) {
+    if (n > 0 && !loaded(f) && (p < n || agentShown(cis, off))) out.add(f);
+  }
+  return [...out].sort((a, b) => a - b);
 }
 
 /** Сводная тепловая разведки: участки всех классов, яркость — по числу попаданий. */

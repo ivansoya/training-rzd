@@ -1193,8 +1193,12 @@ def put_frame_boxes(task_id, video_id, frame_no):
         # проверку, а не в датасет. Прежде `source` брался у клиента, а версия
         # агента терялась на первом же сохранении кадра.
         # «Подтвердить кадр» идёт тем же сохранением: оставшиеся рамки агента проверены.
+        # Ctrl+Z — запись с `undo`: стёртое и изменённое своей же записью возвращается прежней версией.
+        restore = (attribution.versions(db, [item["id"] for item in fresh], user.id)
+                   if json_body().get("undo") else None)
         settled = [r for r in attribution.settle(existing, fresh, user.id,
-                                                  confirm=bool(json_body().get("confirm"))) if r]
+                                                  confirm=bool(json_body().get("confirm")), restore=restore) if r]
+        attribution.keep_versions(db, existing, settled, user.id)
         db.execute(VideoAnnotation.__table__.delete().where(*single))
         for row in settled:
             ann_id = _uuid_or_none(row.pop("id"))

@@ -227,7 +227,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
 
         {agent.length > 0 && (
           <Row name={<><Icon name="bot" size={14} className="ve-agent-ic" />Агент<span className="ui-mono t-faint">{agent.length}</span></>}
-            title="Кадры с непроверенной разметкой агента; щелчок — к кадру, [ и ] — к соседнему">
+            title="Кадры с непроверенной разметкой агента; щелчок — к кадру, Shift+[ и Shift+] — к соседнему">
             <TickLane {...tickLane} hatched frames={agent} kind="agent" label={(f) => `Кадр ${f}: разметка агента на проверке`} />
           </Row>
         )}

@@ -788,6 +788,25 @@ class VideoAnnotation(Base, AuditMixin):
     )
 
 
+class AnnotationVersion(Base):
+    """Прежняя версия рамки кадра или кадра ролика, которую стёрла или изменила своя же запись.
+
+    По ней Ctrl+Z возвращает рамку как было — автором-агентом и «на проверке» (решение 20.10.2026):
+    иначе сервер не узнал бы стёртую рамку агента. Живёт час, см. ``attribution.UNDO_SECONDS``.
+    """
+
+    __tablename__ = "annotation_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    ann_id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False, index=True)
+    # Строка рамки, как её видит ``attribution.settle``; номера — строками.
+    row: Mapped[dict] = mapped_column(JsonCol, nullable=False)
+    saved_by: Mapped[uuid.UUID] = mapped_column(sa.Uuid, nullable=False)
+    saved_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow, index=True
+    )
+
+
 class TaskEvent(Base):
     """Крупные события таски: смены состояний, загрузки, принятия, удаления.
 

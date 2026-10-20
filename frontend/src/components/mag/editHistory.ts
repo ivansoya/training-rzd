@@ -21,6 +21,11 @@ export function record<T>(h: History<T>, before: T, limit = LIMIT): History<T> {
   return { past: [...h.past, before].slice(-limit), future: [] };
 }
 
+/** К какому снимку ведёт следующий шаг. Снимки сквозь кадры помнят свой кадр: туда и надо сперва попасть. */
+export function peek<T>(h: History<T>, dir: "undo" | "redo"): T | undefined {
+  return dir === "undo" ? h.past[h.past.length - 1] : h.future[0];
+}
+
 /** Отменить: вернуть последний снимок, текущее уходит в повтор. */
 export function undo<T>(h: History<T>, current: T): { h: History<T>; value: T } | null {
   if (!h.past.length) return null;

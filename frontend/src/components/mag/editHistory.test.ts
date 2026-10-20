@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dropNoop, empty, record, redo, undo } from "./editHistory";
+import { dropNoop, empty, peek, record, redo, undo } from "./editHistory";
 
 describe("история правок кадра", () => {
   it("отмена и повтор ходят по снимкам в обе стороны", () => {
@@ -34,5 +34,16 @@ describe("история правок кадра", () => {
     const same = (a: number[], b: number[]) => JSON.stringify(a) === JSON.stringify(b);
     expect(dropNoop(h, [1], same).past).toEqual([]);
     expect(dropNoop(h, [2], same).past).toEqual([[1]]);
+  });
+
+  it("сквозь кадры: шаг знает свой кадр — отмена ведёт туда, а не откатывает здешний", () => {
+    type Snap = { at: string; v: number };
+    let h = record(empty<Snap>(), { at: "кадр 1", v: 1 });  // «Отклонить» на кадре 1
+    h = record(h, { at: "кадр 2", v: 5 });                     // правка на кадре 2
+    expect(peek(h, "undo")?.at).toBe("кадр 2");
+    const u = undo(h, { at: "кадр 2", v: 6 })!;
+    expect(peek(u.h, "undo")?.at).toBe("кадр 1");
+    expect(peek(u.h, "redo")).toEqual({ at: "кадр 2", v: 6 });
+    expect(peek(empty<Snap>(), "undo")).toBeUndefined();
   });
 });

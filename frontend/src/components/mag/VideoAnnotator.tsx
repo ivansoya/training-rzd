@@ -39,6 +39,8 @@ import BoxCanvas, { fmtConf } from "./BoxCanvas";
 import { useLive } from "../../live/LiveProvider";
 import type { CanvasGhost, CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
 import * as poly from "./polygon";
+import * as history from "./editHistory";
+import type { History } from "./editHistory";
 import type { Ring } from "./polygon";
 import ObjectMenu from "../editor/ObjectMenu";
 import type { MenuAction } from "../editor/ObjectMenu";
@@ -70,7 +72,7 @@ import { agentGroups, isTaken, nextFrame, scoutFrameAt, settlePending } from "..
 import { useClassFilter } from "../editor/ClassFilter";
 import { agentKey, agentShown, classKey, countClasses } from "../editor/filter";
 import {
-  DOCK_DEFAULT, clampDock, coveredSpans, followView, fullView, itemKey, seekToTrack, singleAgent, singleTicks, trackNumbers, zoomAt,
+  DOCK_DEFAULT, annotatedFrames, clampDock, coveredSpans, followView, fullView, itemKey, seekToTrack, singleAgent, singleTicks, trackNumbers, zoomAt,
 } from "../editor/video";
 import type { Item, View } from "../editor/video";
 import { chunkAt, chunkPlan, nextChunk } from "../editor/chunks";
@@ -85,11 +87,14 @@ const KEYS: KeyGroup[] = [
     ["A", "Полуавтомат SAM2 поверх рамки, контура или трека"],
     ["1–9", "Класс: при выбранном объекте — перекрасить его"],
     ["Del", "Удалить выбранное: у трека — ключ на этом кадре"],
+    ["Ctrl+Z", "Отменить правку одиночных рамок, и «Принять/Отклонить» тоже; треки не отменяются"],
+    ["Ctrl+Shift+Z / Ctrl+Y", "Повторить"],
   ] },
   { title: "Время", keys: [
     ["Пробел", "Играть или остановить; при показанном полуавтоматом — закрепить"],
     ["← / →", "Кадр назад и вперёд"],
     ["Shift+← / Shift+→", "На 10 кадров"],
+    ["[ / ]", "Кадр с рамками назад и вперёд — и принятые, и свои"],
     ["K", "Ключ выбранного трека на этом кадре"],
     ["E", "Кадр фоновый: объектов нет (ещё раз — снять)"],
   ] },
@@ -105,7 +110,7 @@ const KEYS: KeyGroup[] = [
   { title: "Агент и разведка", keys: [
     ["G", "Агент на этом кадре: рамки встанут на проверку"],
     ["Enter", "Подтвердить кадр; при выбранной находке разведки — взять её в разметку"],
-    ["[ / ]", "Предыдущий и следующий кадр на проверке"],
+    ["Shift+[ / Shift+]", "Предыдущий и следующий кадр на проверке"],
     ["Правка рамки", "Поправленная рамка агента считается проверенной"],
   ] },
   { title: "Вид", keys: [
@@ -601,9 +606,9 @@ export default function VideoAnnotator({
   }, [load]);
 
   /** Записать одиночные кадра и перечитать его. Наткнулись на чужую правку — ставим её версию. */
-  const putFrame = useCallback(async (at: number, list: SingleWire[]) => {
+  const putFrame = useCallback(async (at: number, list: SingleWire[], undo = false) => {
     try {
-      const res = await saveFrameBoxes(taskId, video.id, at, list, revs.current.get(at) ?? null);
+      const res = await saveFrameBoxes(taskId, video.id, at, list, revs.current.get(at) ?? null, undo);
       if (res.rev) revs.current.set(at, res.rev); else revs.current.delete(at);
     } catch (e) {
       const got = (e as ApiError).code === "stale" ? (e as ApiError).data as { singles: VideoSingleBox[]; rev: string | null } : null;
@@ -639,6 +644,33 @@ export default function VideoAnnotator({
     if (sent.current && sent.current.frame === at) return sent.current;
     const now = shownNow.current;
     return now.frame === at ? { frame: at, shapes: now.boxes, items: now.items } : null;
+  }, []);
+
+  /** Список одиночных кадра для записи: как его видит холст, с поправкой `change`. */
+  const singlesOf = useCallback((was: Sent, keepIt: (s: CanvasShape, item?: Local) => CanvasShape | null) => {
+    const list: SingleWire[] = [];
+    was.shapes.forEach((box, i) => {
+      const item = was.items[i];
+      if (item.kind !== "single" && item.kind !== "new-single") return;
+      const got = keepIt(box, item);
+      if (got) list.push(wireOf(got, item.kind === "single" ? item.box.id : undefined));
+    });
+    return list;
+  }, []);
+
+  // --- отмена (Ctrl+Z): одиночные рамки, сквозь кадры (решения 20.10.2026) ----- #
+  // Снимок — список одиночных кадра целиком: запись кадра и так заменяет его целиком.
+  // Треки, заслоны и «пустой кадр» — отдельные запросы со своими обратными; их отмена не берёт.
+  const hist = useRef<History<{ frame: number; singles: SingleWire[] }>>(history.empty());
+  /** Одиночные кадра такими, какими их видит редактор: на этом — как отправлено, на чужом — как прочитано. */
+  const singlesNow = useCallback((at: number): SingleWire[] => {
+    const was = sentOf(at);
+    if (was) return singlesOf(was, (s) => s);
+    return (dataNow.current?.singles || []).filter((s) => s.frame_no === at)
+      .map((s) => ({ ...asWire(s), ...(s.pending ? { pending: true } : {}) }));
+  }, [sentOf, singlesOf, asWire]);
+  const remember = useCallback((at: number, before: SingleWire[]) => {
+    hist.current = history.record(hist.current, { frame: at, singles: before });
   }, []);
 
   const askDrop = useCallback(async (track: VideoTrack) => {
@@ -753,11 +785,12 @@ export default function VideoAnnotator({
           if (item.kind === "single") list.push(wireOf(box, item.box.id));
           else if (item.kind === "new-single") list.push(wireOf(box));
         });
+        remember(frame, singlesOf(was, (s) => s));
         saveSingles(frame, list);
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [frozen, active, boxes, items, tool, frame, guard, taskId, video.id, load, saveSingles, sentOf]
+    [frozen, active, boxes, items, tool, frame, guard, taskId, video.id, load, saveSingles, sentOf, remember, singlesOf]
   );
 
   /** Отправить осевшую рамку сейчас, не дожидаясь таймера. Уход с кадра отправляет,
@@ -794,6 +827,7 @@ export default function VideoAnnotator({
         return;
       }
       if (sent.current?.frame === box.frame_no) sent.current = null;
+      remember(box.frame_no, singlesNow(box.frame_no));
       guard(async () => {
         const list = (dataNow.current?.singles || [])
           .filter((s) => s.frame_no === box.frame_no)
@@ -805,7 +839,7 @@ export default function VideoAnnotator({
         await putFrame(box.frame_no, list);
       });
     },
-    [frame, apply, guard, putFrame, asWire]
+    [frame, apply, guard, putFrame, asWire, remember, singlesNow]
   );
 
   /** Замкнутый контур — одиночная разметка кадра: треком контур не становится,
@@ -924,18 +958,6 @@ export default function VideoAnnotator({
   // Кадр ещё не пришёл — число рамок на проверке из сводки, кнопки погашены
   const reviewHere = frameLoaded ? pendingHere : marked.get(frame)?.p || 0;
 
-  /** Список одиночных кадра для записи: как его видит холст, с поправкой `change`. */
-  const singlesOf = useCallback((was: Sent, keepIt: (s: CanvasShape, item?: Local) => CanvasShape | null) => {
-    const list: SingleWire[] = [];
-    was.shapes.forEach((box, i) => {
-      const item = was.items[i];
-      if (item.kind !== "single" && item.kind !== "new-single") return;
-      const got = keepIt(box, item);
-      if (got) list.push(wireOf(got, item.kind === "single" ? item.box.id : undefined));
-    });
-    return list;
-  }, []);
-
   /** Записать одиночные кадра целиком и перечитать — подтверждение и отклонение. */
   const rewrite = useCallback((keepIt: (s: CanvasShape, item?: Local) => CanvasShape | null) => {
     flushDraft();
@@ -943,20 +965,43 @@ export default function VideoAnnotator({
     if (!was || frozen) return false;
     const list = singlesOf(was, keepIt);
     const at = frame;
+    remember(at, singlesOf(was, (s) => s));
     sent.current = null;
     setDraft(was.shapes.flatMap((s, i) => { const g = keepIt(s, was.items[i]); return g ? [g] : []; }));
     guard(() => putFrame(at, list));
     return true;
-  }, [flushDraft, sentOf, frame, frozen, singlesOf, guard, putFrame]);
+  }, [flushDraft, sentOf, frame, frozen, singlesOf, guard, putFrame, remember]);
 
-  /** «Подтвердить кадр»: оставшиеся рамки агента верны. Дальше — к следующему на проверке. */
+  /** Отмена и повтор: правка была на другом кадре — туда, и кадр пишется прежним списком с пометкой «отмена»,
+   *  сервер вернёт стёртое своей записью прежней версией — агентовой и «на проверке». */
+  const undoStep = useCallback((dir: "undo" | "redo") => {
+    if (frozen) return;
+    flushDraft();
+    const next = history.peek(hist.current, dir);
+    if (!next) return;
+    const got = (dir === "undo" ? history.undo : history.redo)(hist.current, { frame: next.frame, singles: singlesNow(next.frame) });
+    if (!got) return;
+    hist.current = got.h;
+    const at = got.value.frame;
+    if (at !== frame) { stop(); setFrame(at); }
+    if (sent.current?.frame === at) sent.current = null;
+    pick(null);
+    guard(() => putFrame(at, got.value.singles, true));
+  }, [frozen, flushDraft, singlesNow, frame, stop, pick, guard, putFrame]);
+
+  /** После «Принять все» и «Отклонить все» — к следующему кадру на проверке. */
+  const toNextPending = useCallback(() => {
+    const to = nextFrame(agentFrames.filter((f) => f !== frame), frame, 1);
+    if (to !== null) { stop(); setFrame(to); }
+  }, [agentFrames, frame, stop]);
+
+  /** «Подтвердить кадр»: оставшиеся рамки агента верны. */
   const confirmFrame = useCallback(() => {
     if (!pendingHere) return;
     if (!rewrite((s) => (s.pending ? { ...s, pending: false } : s))) return;
     pick(null);
-    const to = nextFrame(agentFrames.filter((f) => f !== frame), frame, 1);
-    if (to !== null) { stop(); setFrame(to); }
-  }, [pendingHere, rewrite, pick, agentFrames, frame, stop]);
+    toNextPending();
+  }, [pendingHere, rewrite, pick, toNextPending]);
 
   /** «Принять всё от …» / «Отклонить всё от …»: рамки одного агента, когда их на кадре несколько. */
   const ofAgent = (key: string) => (item?: Local) => singleAgent(item)?.key === key;
@@ -970,16 +1015,24 @@ export default function VideoAnnotator({
     () => agentGroups(items.map((it, i) => ({ pending: boxes[i]?.pending, it })), (x) => singleAgent(x.it)),
     [items, boxes]);
 
-  /** «Отклонить все»: непроверенное агента уходит с кадра. */
+  /** «Отклонить все»: непроверенное агента уходит с кадра — и дальше, как после «Принять» (отзыв 20.10.2026). */
   const rejectFrame = useCallback(() => {
     if (!pendingHere) return;
-    if (rewrite((s) => (s.pending ? null : s))) pick(null);
-  }, [pendingHere, rewrite, pick]);
+    if (!rewrite((s) => (s.pending ? null : s))) return;
+    pick(null);
+    toNextPending();
+  }, [pendingHere, rewrite, pick, toNextPending]);
 
-  const goReview = useCallback((dir: 1 | -1) => {
-    const to = nextFrame(agentFrames, frame, dir);
+  /** Кадры с любыми одиночными рамками — ход [ и ]. */
+  const annotated = useMemo(
+    () => annotatedFrames(skel?.marks || [], data?.singles || [], (f) => loaded.has(chunkAt(chunks ?? [], f)), fltOff),
+    [skel, data, loaded, chunks, fltOff]);
+
+  /** [ ] — к соседнему кадру с разметкой; с Shift — только на проверке. */
+  const goReview = useCallback((dir: 1 | -1, onlyPending = false) => {
+    const to = nextFrame(onlyPending ? agentFrames : annotated, frame, dir);
     if (to !== null) { stop(); setFrame(to); }
-  }, [agentFrames, frame, stop]);
+  }, [agentFrames, annotated, frame, stop]);
 
   // Открыли «на проверку» — встаём на первый кадр с непроверенным, один раз
   const reviewed = useRef(!review);
@@ -1342,6 +1395,12 @@ export default function VideoAnnotator({
       if (hasLayer()) return;
       if (isTyping(e.target) || ownsArrows(e.target, e.key)) return;
       if (e.key === "?") { setKeysOpen(true); e.preventDefault(); return; }
+      // По коду клавиши, а не по букве: в русской раскладке e.key у Z — «я».
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.code === "KeyZ" || e.code === "KeyY")) {
+        undoStep(e.code === "KeyY" || e.shiftKey ? "redo" : "undo");
+        e.preventDefault();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const step = e.shiftKey ? 10 : 1;
       switch (e.code) {
@@ -1364,8 +1423,8 @@ export default function VideoAnnotator({
           if (ghostOn !== null) take("one");
           else confirmFrame();
           break;
-        case "BracketLeft": goReview(-1); break;
-        case "BracketRight": goReview(1); break;
+        case "BracketLeft": goReview(-1, e.shiftKey); break;
+        case "BracketRight": goReview(1, e.shiftKey); break;
         case "KeyG": void runAgent(); break;
         case "ArrowRight": go(step); break;
         case "ArrowLeft": go(-step); break;
@@ -1410,7 +1469,7 @@ export default function VideoAnnotator({
     };
   }, [tool, frozen, autoPrev, autoPts, clearAuto, closeEditor, togglePlay, go, auto.state, pickAuto,
       selected, pickedTrack, pick, apply, items, classes, pickClass, commitAuto, toggleEmpty, putKey,
-      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent]);
+      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent, undoStep]);
 
   // --- масштаб дорожек ------------------------------------------------------ #
   // Окно масштаба; null — весь ролик. Ширина дорожек — от самих дорожек (ограничение 12 px на кадр).

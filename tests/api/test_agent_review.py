@@ -222,3 +222,37 @@ def test_агент_таски_сохраняет_сопоставление_б�
     ctx = api.get(f"{BASE_URL}/api/agents/tasks/{task['id']}").json()
     assert set(ctx["mappings"][graph["id"]]) == {"cls-a", "cls-b", "cls-c"}
     api.delete(f"{BASE_URL}/api/aug/graphs/{graph['id']}")
+
+
+# --- Ctrl+Z (20.10.2026): отмена возвращает рамку агента как было ---------- #
+def test_отмена_отклонения_возвращает_рамку_агента(api, db, task, image, label_class):
+    agent_box(db, image["id"], label_class)
+    b = frame(api, task, image["id"])["boxes"][0]
+    save(api, image["id"], [])  # «Отклонить все»
+    assert frame(api, task, image["id"])["boxes"] == []
+    res = api.put(f"{BASE_URL}/api/images/{image['id']}/annotations",
+                  json={"boxes": [wire(b, pending=True)], "undo": True})
+    assert res.status_code == 200, res.text
+    [got] = frame(api, task, image["id"])["boxes"]
+    assert (got["id"], got["pending"], got["source"]) == (b["id"], True, "model")
+
+
+def test_отмена_не_воскрешает_стёртое_очисткой(api, db, task, image, label_class):
+    ann = agent_box(db, image["id"], label_class)
+    b = frame(api, task, image["id"])["boxes"][0]
+    with db.cursor() as cur:  # так стирает «Очистить непроверенное агентов» — мимо записи кадра
+        cur.execute("DELETE FROM annotations WHERE id = %s", (ann,))
+    api.put(f"{BASE_URL}/api/images/{image['id']}/annotations", json={"boxes": [wire(b, pending=True)], "undo": True})
+    assert frame(api, task, image["id"])["boxes"] == []
+
+
+def test_ролик_отмена_отклонения_возвращает_рамку(api, db, task, video, label_class):
+    video_agent_box(db, video, label_class, 7)
+    [s] = singles(api, task, video)
+    url = f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/frames/7/boxes"
+    assert api.put(url, json={"boxes": []}).status_code == 200
+    one = {"id": s["id"], **s["shape"], "class_index": s["class_index"], "pending": True}
+    res = api.put(url, json={"boxes": [one], "undo": True})
+    assert res.status_code == 200 and res.json()["pending"] == 1, res.text
+    [got] = singles(api, task, video)
+    assert (got["id"], got["pending"], got["conf"]) == (s["id"], True, 0.8)

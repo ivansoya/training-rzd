@@ -1559,7 +1559,7 @@ export interface SingleWire {
   parts?: [number, number][][];
   /** Новая фигура полуавтомата — «model»; у прежних авторство сверяет сервер по id. */
   source?: "human" | "model";
-  /** false снимает проверку с рамки агента; поставить её клиент не может. */
+  /** false снимает проверку с рамки агента; поставить её клиент не может — кроме записи-отмены. */
   pending?: boolean;
 }
 
@@ -1569,10 +1569,13 @@ export async function saveFrameBoxes(
   frameNo: number,
   boxes: SingleWire[],
   /** Версия кадра, которую видели: запись поверх чужой правки получит 409 «stale» со свежими фигурами. */
-  rev?: string | null
+  rev?: string | null,
+  /** Ctrl+Z: сервер вернёт стёртое и изменённое своей записью прежней версией — агентовой, «на проверке». */
+  undo?: boolean
 ): Promise<{ saved: number; rev: string | null }> {
   return asJson(
-    await put(`tasks/${taskId}/videos/${videoId}/frames/${frameNo}/boxes`, rev === undefined ? { boxes } : { boxes, rev })
+    await put(`tasks/${taskId}/videos/${videoId}/frames/${frameNo}/boxes`,
+      { boxes, ...(rev === undefined ? {} : { rev }), ...(undo ? { undo: true } : {}) })
   );
 }
 
@@ -1740,7 +1743,9 @@ export async function saveAnnotations(
     pending?: boolean;
   }[],
   /** Версия, которую видел клиент; без неё сервер не сверяет. */
-  rev?: number
+  rev?: number,
+  /** Ctrl+Z: сервер вернёт стёртое и изменённое своей записью прежней версией — агентовой, «на проверке». */
+  undo?: boolean
 ): Promise<{
   saved: number; clamped: number; task_status: string; rev: number;
   /** id и автор каждой присланной фигуры по порядку, null — отброшена. */
@@ -1750,7 +1755,7 @@ export async function saveAnnotations(
     await fetch(`/api/images/${imageId}/annotations`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ boxes, rev }),
+      body: JSON.stringify({ boxes, rev, ...(undo ? { undo: true } : {}) }),
     })
   );
 }
