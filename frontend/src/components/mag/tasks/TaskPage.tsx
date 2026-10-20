@@ -35,6 +35,7 @@ import type { FrameState } from "./tasks";
 import { buildSources, closePlan, closeText, handoverText } from "./tasks";
 import { look } from "./useTaskBoard";
 import { openVideos, useTaskPage } from "./useTaskPage";
+import { dismissUploadError, enqueueUpload, uploading, useUpload } from "./uploads";
 
 /** Кадров в таске без брака — из лёгкой части, известно сразу. */
 const framesTotal = (t: TaskDetail) => Object.values(t.sources || {}).reduce((s, x) => s + (x.frames || 0), 0);
@@ -71,7 +72,7 @@ export default function TaskPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [uploadPct, setUploadPct] = useState<number | null>(null);
+  const upload = useUpload(taskId || "");
   const [tags, setTags] = useState<Tag[]>([]);
   const [picked, setPicked] = useState<File[] | null>(null);
   const [history, setHistory] = useState(false);
@@ -129,6 +130,15 @@ export default function TaskPage() {
   }, [pageLoad]);
   const taskTags = task?.tags;
   useEffect(() => { if (taskTags) setTags(taskTags); }, [taskTags]);
+
+  // Лёг очередной файл — перечитываем: свои живые события страница пропускает, а загрузка могла начаться до неё
+  const landed = upload?.landed ?? 0;
+  const seenLanded = useRef(landed);
+  useEffect(() => {
+    if (landed === seenLanded.current) return;
+    seenLanded.current = landed;
+    void load().catch(() => undefined);
+  }, [landed, load]);
 
   const projectCode = task?.project.code;
   useEffect(() => {
@@ -306,45 +316,34 @@ export default function TaskPage() {
   const review = (source: string) => openFiltered({ status: "agent", source });
   const openVideo = (v: TaskVideoItem, forReview = false) => { setReviewing(forReview); setAnnotating(v); };
 
+  // Отказ загрузки показывает полоса из очереди — он виден и после ухода со страницы
   async function sendFiles(files: File[], perFile: string[][]) {
     if (!taskId) return;
     setPicked(null);
-    setUploadPct(0);
     setError(null);
-    try {
-      const got = await uploadTaskImages(taskId, files, setUploadPct, perFile);
-      await load();
-      const skipped = `${count(got.skipped, "файл", "файла", "файлов")} — не изображения или не читаются`;
-      if (!got.added && got.skipped) setError(`Ни один файл не принят: ${skipped}.`);
-      else if (got.skipped) setNotice(`Принято ${got.added}, пропущено ${skipped}.`);
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setUploadPct(null);
-    }
+    const name = count(files.length, "изображение", "изображения", "изображений");
+    const [got] = await enqueueUpload(taskId, [{ name, send: (onPct) => uploadTaskImages(taskId, files, onPct, perFile) }])
+      .catch(() => [null]);
+    if (!got) return;
+    const skipped = `${count(got.skipped, "файл", "файла", "файлов")} — не изображения или не читаются`;
+    if (!got.added && got.skipped) setError(`Ни один файл не принят: ${skipped}.`);
+    else if (got.skipped) setNotice(`Принято ${got.added}, пропущено ${skipped}.`);
   }
 
-  /** Ролики по одному и по очереди: канал и так занят целиком. */
+  /** Ролики встают в очередь вкладки и уходят по одному. */
   async function onVideo(files: FileList | null, mode: "cut" | "annotate") {
     const list = Array.from(files || []);
     if (!list.length || !taskId) return;
-    setUploadPct(0);
     setError(null);
-    let current = list[0];
-    try {
-      for (const [i, file] of list.entries()) {
-        current = file;
-        await uploadTaskVideo(taskId, file, (pct) => setUploadPct((i + pct) / list.length), mode);
-      }
-      if (list.length > 1) setNotice(`Загружено ${count(list.length, "ролик", "ролика", "роликов")}.`);
-      await load();
-    } catch (e) {
-      await load().catch(() => {});
-      const raw = (e as Error).message;
-      setError(/\[Errno|Invalid data found|\/app\//.test(raw) ? `«${current.name}» не читается как видео.` : raw);
-    } finally {
-      setUploadPct(null);
-    }
+    const items = list.map((file) => ({
+      name: file.name,
+      send: (onPct: (pct: number) => void) => uploadTaskVideo(taskId, file, onPct, mode).catch((e) => {
+        const raw = (e as Error).message;
+        throw new Error(/\[Errno|Invalid data found|\/app\//.test(raw) ? `«${file.name}» не читается как видео.` : raw);
+      }),
+    }));
+    const ok = await enqueueUpload(taskId, items).then(() => true, () => false);
+    if (ok && list.length > 1) setNotice(`Загружено ${count(list.length, "ролик", "ролика", "роликов")}.`);
   }
 
   async function saveVideoTags(video: TaskVideoItem, tagIds: string[]) {
@@ -488,10 +487,17 @@ export default function TaskPage() {
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
       {notice && <Notice tone="ok" onClose={() => setNotice(null)}>{notice}</Notice>}
       {agentRun && <AgentRunBar taskId={task.id} run={agentRun} onRun={setAgentRun} onFinished={load} />}
-      {uploadPct !== null && (
+      {upload?.error && <Notice tone="error" onClose={() => dismissUploadError(task.id)}>{upload.error}</Notice>}
+      {uploading(upload) && (
         <div className="tp-upload" role="status">
-          <span className="t-sm">{uploadPct >= 0.999 ? "Обрабатываю на сервере…" : `Передаю файлы · ${Math.round(uploadPct * 100)} %`}</span>
-          <Progress value={uploadPct >= 0.999 ? 1 : uploadPct} label="Загрузка" />
+          <span className="t-sm tp-upload-l">
+            {!upload.name ? <span>В очереди</span> : <>
+              <span>{upload.pct >= 0.999 ? "Обрабатываю на сервере" : "Передаю"}{upload.total > 1 && ` ${upload.done + 1} из ${upload.total}`} · </span>
+              <span className="t-ell">{upload.name}</span>
+              {upload.pct < 0.999 && <span> · {Math.round(upload.pct * 100)} %</span>}
+            </>}
+          </span>
+          <Progress value={upload.pct >= 0.999 ? 1 : upload.pct} label="Загрузка" />
         </div>
       )}
 
