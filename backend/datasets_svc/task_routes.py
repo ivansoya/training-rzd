@@ -1035,12 +1035,14 @@ def _prepare_state(db, video):
     """
     progress = queue.progress_of(db, video.id)
     stage = (progress or {}).get("kind")
+    # Ждёт чужие ролики — так и пишем, без процента: иначе все карточки разом «клеят ленту».
+    waiting = (progress or {}).get("status") == "queued"
     state = {
         "busy": progress is not None,
         "stage": stage,
-        "stage_text": STAGE_TEXT.get(stage) if stage else None,
-        "processed": (progress or {}).get("processed", 0),
-        "total": (progress or {}).get("total", 0),
+        "stage_text": "в очереди" if waiting else STAGE_TEXT.get(stage) if stage else None,
+        "processed": 0 if waiting else (progress or {}).get("processed", 0),
+        "total": 0 if waiting else (progress or {}).get("total", 0),
         "ready": True,
         "error": None,
     }

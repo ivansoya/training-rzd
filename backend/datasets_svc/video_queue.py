@@ -23,7 +23,7 @@ from datetime import timedelta
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
-from common.models import VideoAsset, VideoJob, utcnow
+from common.models import TaskVideo, VideoAsset, VideoJob, utcnow
 
 KIND_INDEX = "index"
 KIND_STRIP = "strip"
@@ -132,12 +132,15 @@ def claim(db, kinds):
     ``SKIP LOCKED`` пропускает строки, которые уже держит другой воркер:
     иначе второй воркер ждал бы первого, вместо того чтобы взять следующую.
     """
+    query = select(VideoJob).where(VideoJob.status == "queued", VideoJob.kind.in_(kinds))
+    if set(kinds) <= set(SLOW_KINDS):
+        # Ролик за роликом в порядке загрузки, каждый со всеми ступенями. Слоями по всем
+        # роликам разом не готов ни один: первый ждал, пока склеятся ленты остальных.
+        query = query.join(TaskVideo, TaskVideo.id == VideoJob.video_id).order_by(TaskVideo.created_at)
     job = db.execute(
-        select(VideoJob)
-        .where(VideoJob.status == "queued", VideoJob.kind.in_(kinds))
-        .order_by(VideoJob.priority, VideoJob.created_at)
+        query.order_by(VideoJob.priority, VideoJob.created_at)
         .limit(1)
-        .with_for_update(skip_locked=True)
+        .with_for_update(skip_locked=True, of=VideoJob)
     ).scalar_one_or_none()
     if job is None:
         return None
@@ -255,8 +258,9 @@ def progress_of(db, video_id, kinds=None):
     )
     if kinds:
         query = query.where(VideoJob.kind.in_(kinds))
+    # Идущая — впереди стоящей: между шагами ролика иначе мигало бы «в очереди».
     job = db.execute(
-        query.order_by(VideoJob.priority, VideoJob.created_at).limit(1)
+        query.order_by((VideoJob.status == "running").desc(), VideoJob.priority, VideoJob.created_at).limit(1)
     ).scalar_one_or_none()
     if job is None:
         return None

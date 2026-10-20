@@ -193,6 +193,36 @@ STRIP_FRAMES = 20
 STRIP_HEIGHT = 90
 
 
+# Сколько кадров разжимать от опорного до нужного места. Ролик почти без опорных
+# иначе стоил бы на каждой перемотке дороже прохода целиком; кадр чуть раньше ленте не беда.
+SEEK_DECODE_LIMIT = 300
+
+
+def frames_at(video_path, moments_ms, limit=SEEK_DECODE_LIMIT):
+    """Кадры в заданные моменты — перемоткой к опорному и разжатием до места.
+
+    Ради двадцати картинок ленты разжимать весь ролик незачем: на 20-минутном
+    1080p это 50 с против 0,6 (замер на voran, 20.10.2026).
+    """
+    images = []
+    with open_video(video_path) as container:
+        stream = container.streams.video[0]
+        start = stream.start_time or 0
+        for ms in moments_ms:
+            target = start + int(ms / 1000 / stream.time_base)
+            container.seek(target, stream=stream, backward=True)
+            got = None
+            for n, frame in enumerate(container.decode(stream), 1):
+                if frame.pts is None:
+                    continue
+                got = frame
+                if frame.pts >= target or n >= limit:
+                    break
+            if got is not None:
+                images.append(got.to_image())
+    return images
+
+
 def make_strip(video_path, dest_path, duration_ms, fps=None):
     """Склеивает STRIP_FRAMES кадров в одну широкую картинку.
 
@@ -204,25 +234,29 @@ def make_strip(video_path, dest_path, duration_ms, fps=None):
     """
     if not duration_ms:
         raise VideoError("У ролика нет длительности — ленты не будет.")
-    fps = fps or (probe(video_path).get("fps") or 25)
     step = max(1, duration_ms // STRIP_FRAMES)
-    numbers = sorted({int(i * step * fps / 1000)
-                      for i in range(STRIP_FRAMES) if i * step < duration_ms})
+    moments = [i * step for i in range(STRIP_FRAMES) if i * step < duration_ms]
+    try:
+        images = frames_at(video_path, moments)
+    except Exception:  # noqa: BLE001
+        # Файл не перематывается — тогда полным проходом, как раньше.
+        images = []
+    if not images:
+        fps = fps or (probe(video_path).get("fps") or 25)
+        numbers = sorted({int(ms * fps / 1000) for ms in moments})
+        try:
+            extract_frames(video_path, numbers, lambda _n, _t, img: images.append(img))
+        except VideoError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            raise VideoError("Ролик не декодируется — ленты не будет.") from exc
+    if not images:
+        raise VideoError("Ролик не дал ни кадра — ленты не будет.")
     tiles = []
-
-    def collect(_index, _time_ms, img):
+    for img in images:
         small = img.convert("RGB")
         w = max(1, int(small.width * STRIP_HEIGHT / small.height))
         tiles.append(small.resize((w, STRIP_HEIGHT), PilImage.LANCZOS))
-
-    try:
-        extract_frames(video_path, numbers, collect)
-    except VideoError:
-        raise
-    except Exception as exc:  # noqa: BLE001
-        raise VideoError("Ролик не декодируется — ленты не будет.") from exc
-    if not tiles:
-        raise VideoError("Ролик не дал ни кадра — ленты не будет.")
     total = sum(t.width for t in tiles)
     strip = PilImage.new("RGB", (total, STRIP_HEIGHT))
     x = 0

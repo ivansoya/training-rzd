@@ -86,6 +86,9 @@ def _do_index(db, job, video, path):
     index = video_index.ensure(db, video, path)
 
     queue.enqueue(db, video.id, queue.KIND_STRIP)
+    if video.mode != "annotate":
+        # Окно нарезки играет сам файл — копии и перегоны ему ни к чему.
+        return {"frames": index["count"]}
     default = chunklib.default_for(index["height"])
     for quality in chunklib.ladder_for(index["height"]):
         # Ступень по умолчанию готовится первой: с неё ролик и откроют.
