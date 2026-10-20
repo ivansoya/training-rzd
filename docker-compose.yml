@@ -139,6 +139,9 @@ services:
       # Дешёвый запрос раз в десять секунд; дольше держать ролик
       # недорезанным незачем.
       - VIDEO_WORKER_REAP=10
+      # Копии ступеней на карте (NVENC): video — библиотеки кодировщика в контейнере, по умолчанию их нет.
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+      - CUDA_DEVICE_ORDER=PCI_BUS_ID
     depends_on:
       db:
         condition: service_healthy
@@ -146,6 +149,13 @@ services:
         condition: service_healthy
     volumes:
       - yolo-data:/app/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
 
   # Подготовка данных: графы аугментаций и сборка обучающих наборов.
   dataprep:

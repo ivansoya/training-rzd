@@ -31,6 +31,9 @@
 """
 import hashlib
 import os
+import shutil
+import subprocess
+import tempfile
 import threading
 from fractions import Fraction
 
@@ -321,7 +324,7 @@ def leftovers(video_path):
         # Индекс лежал файлом до переезда в базу; у старых роликов он ещё тут.
         base + "_index.json",
     ]
-    files += [variant_path(video_path, str(step)) for step in LADDER]
+    files += [variant_path(video_path, q) for q in [str(step) for step in LADDER] + [SOURCE]]
     return dirs, sorted(set(files))
 
 
@@ -616,6 +619,92 @@ def make_variant(video_path, index, quality, dest_path, progress=None):
         "height": params["size"][1],
         "size_bytes": os.path.getsize(dest_path),
     }
+
+
+# --------------------------------------------------------------------------- #
+# Копия на видеокарте
+# --------------------------------------------------------------------------- #
+# PyAV кодировщика карты не знает — здесь системный ffmpeg (пакет Debian, в нём NVENC и scale_cuda).
+FFMPEG = os.environ.get("VIDEO_FFMPEG", "ffmpeg")
+
+
+def _cq(height):
+    """Качество NVENC — выше, чем у libx264 с _crf, ценой +11-17 % места (замер на voran, 20.10.2026,
+    SSIM к оригиналу): 720 на всём 20-минутном ролике — 0,962 против 0,954 (1789 МБ против 1535);
+    по 3000 кадров 1080 — 0,978 против 0,976, 480 — 0,939 против 0,933. cq 23 уже хуже x264 (0,950)."""
+    return "21" if height >= 720 else "22"
+
+
+def gpu_ready():
+    return shutil.which(FFMPEG) is not None
+
+
+def _check_aligned(path, total):
+    """Копия годится под перекладывание: кадров ровно total, опорный на каждой границе перегона.
+
+    Кадры ffmpeg не видны по одному, как в make_variant, — поэтому сверяем готовый файл.
+    Потерянный или лишний кадр увёл бы разметку на соседний, и молча его отдать нельзя.
+    """
+    av = _av()
+    count = 0
+    with open_video(path) as container:
+        stream = container.streams.video[0]
+        for n, packet in enumerate(_packets(container, stream)):
+            if n % CHUNK_FRAMES == 0 and not packet.is_keyframe:
+                raise VideoError(f"Копия на карте не выровнена: на кадре {n} нет опорного.")
+            count += 1
+    if count != total:
+        raise VideoError(f"В копии на карте {count} кадров вместо {total}.")
+
+
+def make_variant_gpu(video_path, index, quality, dest_path, device=0, progress=None):
+    """То же, что make_variant, но разжатие, масштаб и сжатие — на видеокарте. Впятеро быстрее
+    (копия 720 двадцатиминутного 1080p — ~40 с против 208) и почти без процессора.
+
+    «Исходное» тоже можно: копия в рост оригинала, из неё перегоны режутся перекладыванием.
+    Любой сбой — VideoError, и вызывающий делает работу по-старому, на процессоре.
+    """
+    params = _params(quality, index["width"], index["height"])
+    w, h = params["size"]
+    num, den = index["rate"]
+    total = index["count"]
+    tmp = f"{dest_path}.{os.getpid()}.{threading.get_ident()}.part"
+    cmd = [
+        FFMPEG, "-nostdin", "-hide_banner", "-loglevel", "error", "-y",
+        "-hwaccel", "cuda", "-hwaccel_output_format", "cuda", "-hwaccel_device", str(device),
+        "-i", video_path, "-map", "0:v:0",
+        # Время кадра — номер по частоте из таблицы, как у _Writer; passthrough не теряет и не множит кадры.
+        "-vf", f"scale_cuda={w}:{h}:format=yuv420p,setpts=N*{den}/{num}/TB",
+        "-fps_mode", "passthrough", "-enc_time_base", f"{den}/{num}",
+        "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", _cq(h), "-b:v", "0",
+        # Без явного потолка vbr упирался в свой и держал сходство на 0,957 при любом cq.
+        "-maxrate", "60M", "-bufsize", "120M", "-spatial-aq", "1", "-temporal-aq", "1",
+        # Опорный ровно на границе перегона и без B-кадров — как _VARIANT_X264.
+        "-g", str(CHUNK_FRAMES), "-bf", "0", "-forced-idr", "1", "-no-scenecut", "1", "-strict_gop", "1",
+        "-movflags", "+faststart", "-f", "mp4", "-progress", "pipe:1", "-nostats", tmp,
+    ]
+    # Ошибки — в файл, а не в трубу: битый ролик пишет их на каждый кадр, и полная труба повесила бы ffmpeg.
+    with tempfile.TemporaryFile() as err:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err, text=True)
+        try:
+            for line in proc.stdout:
+                if progress and line.startswith("frame=") and line[6:].strip().isdigit():
+                    progress(int(line[6:]), total)
+            if proc.wait() != 0:
+                err.seek(0)
+                raise VideoError(f"ffmpeg на карте: {err.read().decode(errors='replace').strip()[-300:]}")
+            _check_aligned(tmp, total)
+            os.replace(tmp, dest_path)
+        except BaseException:
+            proc.kill()
+            proc.wait()
+            if os.path.exists(tmp):
+                os.remove(tmp)
+            raise
+    if progress:
+        progress(total, total)
+    return {"path": dest_path, "count": total, "width": w, "height": h,
+            "size_bytes": os.path.getsize(dest_path)}
 
 
 # --------------------------------------------------------------------------- #

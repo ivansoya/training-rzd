@@ -5,6 +5,11 @@ FROM python:3.12-slim
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PYTHONPATH=/app
 
+# Копии ступеней на видеокарте: в PyAV кодировщика NVENC нет, в ffmpeg Debian есть (и scale_cuda).
+# Образ тяжелее на ~630 МБ — решение 20.10.2026, статическая сборка весила бы 172 МБ.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY datasets_svc/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 

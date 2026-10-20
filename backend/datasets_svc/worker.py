@@ -22,11 +22,11 @@ import signal
 import threading
 import time
 
-from common import config, db as dblib
+from common import config, db as dblib, gpu
 from sqlalchemy import select
 
 from common.db import SessionLocal
-from common.models import TaskVideo
+from common.models import Task, TaskVideo
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
 from datasets_svc import video_index
@@ -44,6 +44,8 @@ IDLE_SLEEP = float(os.environ.get("VIDEO_WORKER_IDLE", "0.5"))
 REAP_EVERY = float(os.environ.get("VIDEO_WORKER_REAP", "30"))
 # Отметка о ходе работы стоит записи в базу; чаще этого она не нужна никому.
 BEAT_EVERY = 5.0
+# Бронь карты под копию: замер 20.10.2026 — 310-400 МиБ на 1080p и 2520×1080, запас под 2688×1520.
+GPU_MB = int(os.environ.get("VIDEO_GPU_MB", "768"))
 
 _stop = threading.Event()
 
@@ -59,8 +61,10 @@ def _rel(path):
 class _Beat:
     """Отметка о ходе работы — не чаще, чем раз в несколько секунд."""
 
-    def __init__(self, db, job, total):
+    def __init__(self, db, job, total, lease_id=None):
         self.db, self.job, self.total, self.at = db, job, total, 0.0
+        # Бронь карты продлевается тем же ходом: без отметок аренда истекает посреди копии.
+        self.lease_id, self.lease_at = lease_id, time.monotonic()
 
     def __call__(self, processed, total=None):
         now = time.monotonic()
@@ -70,12 +74,40 @@ class _Beat:
         job_id = self.job.id
         try:
             queue.beat(self.db, self.job, processed, total or self.total)
+            if self.lease_id and now - self.lease_at >= gpu.BEAT_EVERY:
+                self.lease_at = now
+                gpu.beat(self.db, self.lease_id)
         except Exception:  # noqa: BLE001
             # Отметка — удобство, а не условие работы. Не смогли записать —
             # работа всё равно должна доделаться; сессию откатываем, иначе
             # следующий же запрос упал бы PendingRollbackError.
             self.db.rollback()
             log.warning("не удалось отметить ход задачи %s", job_id)
+
+
+def _on_card(db, job, video, title, run):
+    """Сделать работу на видеокарте, если карту дают сразу: ``run(номер карты, бронь)``.
+
+    None — делай на процессоре. Карту не ждём (решение 20.10.2026): занята обучением или агентом —
+    копия на процессоре за ~3,5 мин предсказуемее очереди, которая может стоять часами.
+    """
+    if not chunklib.gpu_ready() or not gpu.cards(db):
+        return None
+    project_id = db.execute(select(Task.project_id).where(Task.id == video.task_id)).scalar()
+    lease = gpu.request(db, holder="video", kind="video", want_mb=GPU_MB, ref_id=job.id,
+                        project_id=project_id, user_id=video.created_by, title=title)
+    device = gpu.torch_index(db, lease) if lease.status == "held" else None
+    if device is None:
+        gpu.cancel(db, lease.id, "Карта занята — копия на процессоре")
+        return None
+    try:
+        return run(device, lease.id)
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        log.warning("на карте не вышло, делаю на процессоре: %s", exc)
+        return None
+    finally:
+        gpu.release(db, lease.id)
 
 
 # --------------------------------------------------------------------------- #
@@ -125,9 +157,13 @@ def _do_variant(db, job, video, path):
     asset.error = None
     db.commit()
 
-    made = chunklib.make_variant(
-        path, index, job.quality, dest, progress=_Beat(db, job, index["count"])
-    )
+    made = _on_card(db, job, video, f"Копия ролика {job.quality}", lambda device, lease_id: chunklib.make_variant_gpu(
+        path, index, job.quality, dest, device, progress=_Beat(db, job, index["count"], lease_id)))
+    on_card = made is not None
+    if made is None:
+        made = chunklib.make_variant(
+            path, index, job.quality, dest, progress=_Beat(db, job, index["count"])
+        )
     asset.file_status = "ready"
     asset.file_path = _rel(made["path"])
     asset.width, asset.height = made["width"], made["height"]
@@ -143,7 +179,7 @@ def _do_variant(db, job, video, path):
     queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=job.quality,
                   priority=queue.PRIORITY_CHUNKSET_NOW if first else None,
                   total=index["count"])
-    return {"quality": job.quality, "bytes": made["size_bytes"]}
+    return {"quality": job.quality, "bytes": made["size_bytes"], "карта": on_card}
 
 
 def _source_for(db, video, path, quality):
@@ -163,6 +199,17 @@ def _source_for(db, video, path, quality):
 
 
 def _do_chunkset(db, job, video, path):
+    try:
+        return _cut_chunkset(db, job, video, path)
+    finally:
+        # Копия «Исходного» нужна только на время нарезки, а весит как сам ролик.
+        try:
+            os.remove(chunklib.variant_path(path, chunklib.SOURCE))
+        except OSError:
+            pass
+
+
+def _cut_chunkset(db, job, video, path):
     """Все перегоны ступени. Из копии это перекладывание пакетов, и оно
     настолько дешевле перекодирования, что нарезать всё разом проще, чем
     заводить машинерию «по требованию»."""
@@ -173,6 +220,12 @@ def _do_chunkset(db, job, video, path):
     asset = queue.ensure_asset(db, video.id, quality)
     total = chunklib.chunk_count(index["count"])
     source, positional = _source_for(db, video, path, quality)
+    if quality == chunklib.SOURCE:
+        # «Исходное» на карте: копия в рост оригинала, а из неё — перекладыванием, как у ступеней.
+        copy = chunklib.variant_path(path, quality)
+        if _on_card(db, job, video, "«Исходное» ролика", lambda device, lease_id: chunklib.make_variant_gpu(
+                path, index, quality, copy, device, progress=_Beat(db, job, index["count"], lease_id))):
+            source, positional = copy, True
 
     asset.chunks_status = "building"
     asset.chunks_total = total
@@ -203,6 +256,8 @@ def _do_chunkset(db, job, video, path):
                 raise chunklib.VideoError(
                     f"Копия {quality} переделывается."
                 ) from exc
+            # Копию «Исходного» не переделывают — режем из оригинала, а не пережимаем пережатое.
+            source, positional = path, False
             made = 0
     if not made:
         made = chunklib.cut_all(
