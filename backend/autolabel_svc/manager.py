@@ -24,7 +24,8 @@ USERS_PER_WORKER = int(os.environ.get("AUTOLABEL_USERS_PER_WORKER", "5"))
 # Потолок процессов с моделью: каждый держит 0,6–1,1 ГБ видеопамяти.
 MAX_WORKERS = int(os.environ.get("AUTOLABEL_MAX_WORKERS", "3"))
 SESSION_TTL = int(os.environ.get("AUTOLABEL_SESSION_TTL", "600"))
-REQUEST_TIMEOUT = int(os.environ.get("AUTOLABEL_TIMEOUT", "180"))
+# Клик ждёт минуту: дольше — процесс повис, его снимают (решение 21.10.2026, раньше ждали 180 с и не снимали).
+REQUEST_TIMEOUT = int(os.environ.get("AUTOLABEL_TIMEOUT", "60"))
 SWEEP_EVERY = 30
 # Сколько памяти держит прогретый воркер, если замер меньше: CUDA-контекст и
 # кэш кадров в memory_reserved не видны (замер: пустой 0,6 ГБ, прогретый 1,1).
@@ -44,7 +45,7 @@ class WorkerError(RuntimeError):
 class Worker:
     """Один процесс с загруженной моделью."""
 
-    def __init__(self, model: str, params: dict, on_ready=None):
+    def __init__(self, model: str, params: dict, on_ready=None, on_hang=None):
         self.model = model
         self.params = params
         self.id = uuid.uuid4().hex[:8]
@@ -52,7 +53,7 @@ class Worker:
         # starting → ready | failed. Упавший на загрузке сессий не получает.
         self.state = "starting"
         self.gpu: dict = {}
-        self.on_ready = on_ready
+        self.on_ready, self.on_hang = on_ready, on_hang
         # spawn, а не fork: CUDA-контекст не переживает fork.
         ctx = mp.get_context("spawn")
         self._requests = ctx.Queue()
@@ -113,7 +114,15 @@ class Worker:
         got = event.wait(timeout)
         with self._lock:
             slot = self._slots.pop(req_id, None)
-        if not got or slot is None or slot["reply"] is None:
+        if not got:
+            # Повис: живым он держал бы карту и принимал новые сессии. Убить, а сессии — на свежий процесс.
+            log.error("Воркер %s не ответил на %s за %s с — снимаю", self.id, op, timeout)
+            self.state = "failed"
+            self._proc.kill()
+            if self.on_hang:
+                self.on_hang(self)
+            raise WorkerError("Модель не ответила вовремя — процесс перезапускается, повторите.")
+        if slot is None or slot["reply"] is None:
             raise WorkerError("Модель не ответила вовремя.")
         reply = slot["reply"]
         if not reply.get("ok"):
@@ -176,7 +185,7 @@ class Manager:
                 return w
         if len(self._workers) >= MAX_WORKERS:
             raise WorkerError("Полуавтомат занят: все места заняты. Попробуйте через пару минут.")
-        worker = Worker(model, params, on_ready=self._worker_ready)
+        worker = Worker(model, params, on_ready=self._worker_ready, on_hang=self._worker_hung)
         self._workers.append(worker)
         return worker
 
@@ -192,6 +201,19 @@ class Manager:
                 if worker in self._workers:
                     self._workers.remove(worker)
                     threading.Thread(target=worker.stop, daemon=True).start()
+        self._note_memory(worker.gpu.get("uuid"))
+
+    def _worker_hung(self, worker: Worker):
+        """Процесс снят по таймауту: его сессии забываем — следующий клик получит 404,
+        клиент откроет сессию заново, и она сядет на свежий процесс."""
+        with self._lock:
+            for sid in list(worker.sessions):
+                self._sessions.pop(sid, None)
+            worker.sessions.clear()
+            if worker not in self._workers:
+                return  # соседний запрос на том же процессе уже снял его
+            self._workers.remove(worker)
+        threading.Thread(target=worker.stop, daemon=True).start()
         self._note_memory(worker.gpu.get("uuid"))
 
     def _note_memory(self, device_uuid=None):
