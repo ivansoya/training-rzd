@@ -91,7 +91,14 @@ def reap_orphans(db, fresh_start=False):
         )
         if verdict is not None:
             log.warning("ран %s без исполнителя (%s) — %s", run.id, run.status, verdict)
-            trainer.close_orphan(db, run, verdict, now)
+            lease_id = run.gpu_lease_id
+            if verdict == "error" and trainer.auto_resume(run, now):
+                db.commit()
+                if lease_id:
+                    gpu.cancel(db, lease_id, trainer.ORPHAN_TEXT)
+                live.notify(db, "run", run.id, run.project_id, s="queued")
+            else:
+                trainer.close_orphan(db, run, verdict, now)
             closed += 1
     return closed + agent_runner.reap_orphans(db, me(), fresh_start)
 
@@ -285,7 +292,11 @@ def start_run(db, run) -> bool:
 
 
 def watch_run(run_id, proc, lease_id, sig):
-    """Следить за процессом обучения: продлевать бронь и снимать по просьбе."""
+    """Следить за процессом обучения: продлевать бронь, снимать по просьбе и по молчанию.
+
+    `lease_until` пишем сами — он про то, что исполнитель есть, и ход не показывает. Ход — поля,
+    которые бегун пишет на каждом батче; до первой эпохи (набор, веса) — порог загрузки."""
+    mark, last, slowest, hung = None, time.monotonic(), 0.0, None
     while proc.poll() is None and not _stop.is_set():
         db = SessionLocal()
         try:
@@ -299,6 +310,17 @@ def watch_run(run_id, proc, lease_id, sig):
                 run.status = "stopping"
                 db.commit()
                 _terminate(proc)
+            now, loading = time.monotonic(), run.phase in (None, "weights")
+            seen = (run.current_epoch, run.current_batch, run.val_batch, run.phase)
+            if seen != mark:
+                if mark is not None and not loading:
+                    slowest = max(slowest, now - last)
+                mark, last = seen, now
+            elif supervise.stalled(now, last, slowest, loading, supervise.FLOOR_S, supervise.LOAD_S,
+                                   supervise.FACTOR):
+                hung = int(now - last)
+                log.warning("ран %s молчит %s с — снимаю", run_id, hung)
+                _terminate(proc, hard_after=5)
         except Exception:
             log.exception("не удалось продлить бронь рана %s", run_id)
         finally:
@@ -310,13 +332,18 @@ def watch_run(run_id, proc, lease_id, sig):
         run = db.get(TrainRun, run_id)
         if run is not None:
             if run.status in ("running", "preparing", "stopping"):
-                # Процесс кончился, а статус не проставлен — значит его убили
-                # снаружи или он умер молча.
-                run.status = "stopped" if run.cancel_requested else "error"
-                if run.status == "error":
-                    run.error = "Процесс обучения завершился неожиданно."
-                trainer.adopt_weights(run)
-                run.finished_at = utcnow()
+                # Процесс кончился, а статус не проставлен — его снял сторож, убили снаружи
+                # или он умер молча. Один раз — продолжаем с last.pt сами.
+                why = (f"Обучение замолчало на {hung} с — снято сторожем." if hung is not None
+                       else "Процесс обучения завершился неожиданно.")
+                if trainer.auto_resume(run, utcnow()):
+                    log.warning("ран %s: %s Продолжаю с last.pt.", run_id, why)
+                else:
+                    run.status = "stopped" if run.cancel_requested else "error"
+                    if run.status == "error":
+                        run.error = why
+                    trainer.adopt_weights(run)
+                    run.finished_at = utcnow()
                 db.commit()
             if run.peak_vram_mb and sig:
                 gpu.remember(db, "train", sig, run.peak_vram_mb)

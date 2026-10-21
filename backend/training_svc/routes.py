@@ -712,21 +712,7 @@ def resume_run(code, run_id):
         why = _resumable(run, dig.get("done", 0))
         if why:
             return jsonify({"error": why}), 409
-        run.status = "queued"
-        run.queued_at = utcnow()
-        run.cancel_requested = False
-        run.error = None
-        run.queue_reason = None
-        run.finished_at = None
-        run.phase = None
-        run.pid = None
-        run.worker_id = None
-        run.gpu_lease_id = None
-        run.current_batch = 0
-        run.total_batches = None
-        run.val_batch = 0
-        run.val_total = None
-        run.batch_metrics = None
+        trainer.requeue(run, utcnow())
         db.commit()
         live.notify(db, "run", run.id, project.id, s="queued")
         return jsonify(_run_view(db, run)), 202

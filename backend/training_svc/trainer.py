@@ -550,6 +550,29 @@ def adopt_weights(run) -> bool:
     return False
 
 
+def requeue(run, now):
+    """Ран — в конец очереди продолжать с last.pt: ход и исполнитель с нуля. Общее у кнопки и сторожа."""
+    run.status, run.queued_at, run.cancel_requested = "queued", now, False
+    run.error = run.queue_reason = run.finished_at = run.phase = run.pid = run.worker_id = None
+    run.gpu_lease_id = run.total_batches = run.val_total = run.batch_metrics = None
+    run.current_batch = run.val_batch = 0
+
+
+AUTO_RESUMES = 1  # решение 21.10.2026: одно продолжение с last.pt без человека
+
+
+def auto_resume(run, now) -> bool:
+    """Процесс обучения пропал — сторож снял, упал, воркер перезапущен. Один раз продолжаем сами;
+    нечем (нет last.pt, набора) или уже продолжали — False, ран закрывается ошибкой."""
+    tries = int((run.params or {}).get("auto_resumes") or 0)
+    if run.cancel_requested or run.status == "stopping" or tries >= AUTO_RESUMES or run.set_id is None \
+            or not os.path.isfile(last_checkpoint(run)):
+        return False
+    requeue(run, now)
+    run.params = {**(run.params or {}), "auto_resumes": tries + 1}
+    return True
+
+
 def close_orphan(db, run, verdict, now):
     """Закрыть ран без исполнителя: состояние, причина, бронь, событие."""
     from common import gpu, live
