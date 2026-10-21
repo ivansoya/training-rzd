@@ -19,7 +19,7 @@ import time
 
 from sqlalchemy import select
 
-from common import config, gpu, live
+from common import alive, config, gpu, live
 from common.db import SessionLocal, wait_for_db
 from common.models import DataprepJob, GpuLease, TrainRun, TrainSet, utcnow
 from common import prep_queue
@@ -55,7 +55,9 @@ def me():
 # --------------------------------------------------------------------------- #
 def discover_loop():
     global _devices
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         db = SessionLocal()
         try:
             _devices = gpu.discover(db)
@@ -95,7 +97,9 @@ def reap_orphans(db, fresh_start=False):
 
 
 def reaper():
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         db = SessionLocal()
         try:
             reap_orphans(db)
@@ -346,7 +350,9 @@ def _terminate(proc, hard_after=10):
 
 def runs_loop():
     _discovered.wait()
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         started = False
         db = SessionLocal()
         try:
@@ -488,7 +494,9 @@ def agents_loop():
     кому дали — уходит в свою нить. Прогон по тысяче кадров не держит ни
     обучение, ни счёт признаков: у каждого своя очередь к карте."""
     _discovered.wait()
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         started = False
         db = SessionLocal()
         try:
@@ -532,7 +540,9 @@ def _agent_run(run_id, ctx):
 
 def prep_loop():
     _discovered.wait()
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         db = SessionLocal()
         job = None
         try:
@@ -563,6 +573,7 @@ def prep_loop():
 
 # --------------------------------------------------------------------------- #
 def main():
+    alive.start()
     wait_for_db()
     config.ensure_dirs()
     db = SessionLocal()

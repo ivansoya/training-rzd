@@ -20,7 +20,7 @@ import time
 
 from sqlalchemy import select, update
 
-from common import agent_graph, agent_memory, config, gpu, live, settings, video_frames
+from common import agent_graph, agent_memory, alive, config, gpu, live, settings, video_frames
 from common.db import SessionLocal
 from common.models import AgentPreview, AgentWeights, GpuLease, Image, TaskVideo
 from training_svc import agent_runner
@@ -283,7 +283,9 @@ def _trim(warm):
 def loop(stop):
     """Нить воркера. `stop` — общее событие остановки."""
     warm = _Warm()
+    alive.loop()
     for _ in live.wakeups(CHANNEL, stop):
+        alive.stamp()
         db = SessionLocal()
         try:
             while (row := _take(db)) is not None:

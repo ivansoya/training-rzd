@@ -18,7 +18,7 @@ import socket
 import threading
 import time
 
-from common import config, live
+from common import alive, config, live
 from common.db import SessionLocal, wait_for_db
 from common.models import TrainSet
 from common import prep_queue as queue
@@ -100,7 +100,9 @@ def _delete_set(db, job):
 def loop(n, kinds):
     me = worker_id(n)
     log.info("полоса %s взяла %s", me, ", ".join(kinds))
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         db = SessionLocal()
         job = None
         try:
@@ -153,7 +155,9 @@ def _mark_broken(db, job, exc):
 
 
 def reaper():
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         db = SessionLocal()
         try:
             freed = queue.reap(db)
@@ -167,6 +171,7 @@ def reaper():
 
 
 def main():
+    alive.start()
     wait_for_db()
     config.ensure_dirs()
 

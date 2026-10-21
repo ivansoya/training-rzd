@@ -22,7 +22,7 @@ import signal
 import threading
 import time
 
-from common import config, db as dblib, gpu
+from common import alive, config, db as dblib, gpu
 from sqlalchemy import select
 
 from common.db import SessionLocal
@@ -494,7 +494,9 @@ def _mark_failed(db, job, exc):
 
 def loop(kinds, name):
     """Один воркер: берёт задачу, делает, отчитывается. И так до остановки."""
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         db = SessionLocal()
         try:
             job = queue.claim(db, kinds)
@@ -539,7 +541,9 @@ def loop(kinds, name):
 
 def reaper():
     """Возвращает в очередь всё, чью аренду никто не продлил."""
+    alive.loop()
     while not _stop.is_set():
+        alive.stamp()
         _stop.wait(REAP_EVERY)
         if _stop.is_set():
             return
@@ -559,6 +563,7 @@ def main():
         level=os.environ.get("LOG_LEVEL", "INFO"),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
+    alive.start()
     config.ensure_dirs()
     dblib.wait_for_db()
 

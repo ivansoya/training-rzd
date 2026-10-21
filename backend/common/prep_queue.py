@@ -14,6 +14,7 @@ from datetime import timedelta
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 
+from common import alive
 from common.models import DataprepJob, utcnow
 
 KIND_BUILD = "build_set"
@@ -134,6 +135,7 @@ def beat(db, job, processed=None, total=None, stage=None, stage_text=None):
     Возвращает ``False``, если работу попросили снять: флаг читается тем же
     запросом, что и продление, — одна поездка в базу на пачку.
     """
+    alive.stamp()  # ход работы — ход цикла, который её ведёт
     db.refresh(job)
     job.lease_until = utcnow() + timedelta(seconds=LEASE_SECONDS)
     if processed is not None:

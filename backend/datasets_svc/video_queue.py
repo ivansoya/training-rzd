@@ -23,6 +23,7 @@ from datetime import timedelta
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 
+from common import alive
 from common.models import TaskVideo, VideoAsset, VideoJob, utcnow
 
 KIND_INDEX = "index"
@@ -154,6 +155,7 @@ def claim(db, kinds):
 
 def beat(db, job, processed=None, total=None):
     """Продлить аренду и заодно отметить, куда дошли."""
+    alive.stamp()  # ход работы — ход цикла, который её ведёт
     job.lease_until = utcnow() + timedelta(seconds=LEASE_SECONDS)
     if processed is not None:
         job.progress = int(processed)

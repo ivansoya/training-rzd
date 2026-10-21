@@ -6,6 +6,15 @@
 # разметка резервируют GPU безусловно. Для разработки на Mac (Apple Silicon)
 # рядом лежит docker-compose.mac.yml — тот же набор сервисов на CPU/arm64.
 # Правки сервисов нужно вносить в оба файла.
+# Висящий процесс Docker не поднимает (voran, 21.10.2026): проверка сама убивает воркер с молчащим
+# циклом (common/alive.py), restart поднимает заново. init — иначе python это PID 1, а его изнутри не убить.
+x-alive: &alive
+  init: true
+  healthcheck:
+    test: ["CMD", "python", "-m", "common.alive"]
+    interval: 30s
+    timeout: 10s
+
 services:
   db:
     image: postgres:16-alpine
@@ -124,6 +133,7 @@ services:
     image: yolo-datasets
     container_name: yolo-video-worker
     command: ["python", "-m", "datasets_svc.worker"]
+    <<: *alive
     restart: unless-stopped
     # Потолок: утечка декодера или сбежавшая работа не съест память стенда.
     mem_limit: ${VIDEO_WORKER_MEM:-6g}
@@ -188,6 +198,7 @@ services:
     image: yolo-dataprep
     container_name: yolo-dataprep-worker
     command: ["python", "-m", "dataprep_svc.worker"]
+    <<: *alive
     restart: unless-stopped
     environment:
       - DATABASE_URL=postgresql+psycopg2://app:app@db:5432/app
@@ -242,6 +253,7 @@ services:
     image: yolo-training
     container_name: yolo-training-worker
     command: ["python", "-m", "training_svc.worker"]
+    <<: *alive
     restart: unless-stopped
     # Загрузчики обмениваются батчами через /dev/shm: обучение yolo11n b16 — до 1,25 ГБ (замер 11.10.2026), два в 2 ГБ
     # падали с Bus error. Здесь обучения всех карт и ранги DDP; tmpfs берёт память по мере заполнения.

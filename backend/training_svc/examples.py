@@ -22,7 +22,7 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from common import agent_examples as ax, agent_graph, config, gpu, live
+from common import agent_examples as ax, agent_graph, alive, config, gpu, live
 from common.db import SessionLocal
 from common.models import (
     AgentExamples, Annotation, AugGraph, AugGraphVersion, GpuLease, Image, utcnow,
@@ -393,7 +393,9 @@ def gc(db):
 def loop(stop):
     """Нить воркера. `stop` — общее событие остановки."""
     last_gc = 0.0
+    alive.loop()
     for _ in live.wakeups(CHANNEL, stop):
+        alive.stamp()
         db = SessionLocal()
         try:
             while (row := _take(db)) is not None:
