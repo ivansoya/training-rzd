@@ -205,6 +205,23 @@ def ghosts_of(rows, chosen, item):
     ]
 
 
+def parse_smi(out):
+    """Карты из `nvidia-smi --query-gpu=index,name,uuid,memory.total,memory.reserved` (csv, без единиц).
+
+    Под задачи — total − reserved: ровно это отдавал torch (voran: 8192 − 361 = 7831), модель памяти не сдвигается.
+    Под WSL2 torch отдавал total целиком — там выходит на резерв меньше, в безопасную сторону."""
+    found = []
+    for line in out.splitlines():
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) != 5 or not parts[0].isdigit() or not parts[3].isdigit():
+            continue
+        index, name, uuid_, total, reserved = parts
+        # Старый драйвер отвечает «[N/A]» — тогда вся память.
+        found.append({"index": int(index), "name": name, "uuid": uuid_,
+                      "total_mb": int(total) - (int(reserved) if reserved.isdigit() else 0)})
+    return found
+
+
 def fresh_enough(seen_at, now, stale_seconds) -> bool:
     """Карту перечисляли недавно — она есть."""
     seen = _aware(seen_at)

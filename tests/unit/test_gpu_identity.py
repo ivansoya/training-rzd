@@ -57,6 +57,18 @@ def test_призраки_это_старые_записи_той_же_карт�
     assert got == [ghost1, ghost2]
 
 
+def test_ёмкость_из_nvidia_smi_как_у_torch():
+    # voran 21.10.2026: smi 8192 и 361 в резерве, torch давал 7831 — модель памяти не должна сдвинуться.
+    out = ("0, NVIDIA GeForce RTX 3060, GPU-9c68daa8-84e8-483a-f50d-91ab189d67ed, 8192, 361\n"
+           "1, Tesla T4, GPU-aaaa, 15360, [N/A]\n"
+           "No devices were found\n")
+    assert gpu.parse_smi(out) == [
+        {"index": 0, "name": "NVIDIA GeForce RTX 3060", "uuid": "GPU-9c68daa8-84e8-483a-f50d-91ab189d67ed",
+         "total_mb": 7831},
+        {"index": 1, "name": "Tesla T4", "uuid": "GPU-aaaa", "total_mb": 15360},
+    ]
+
+
 def test_uuid_torch_27_без_приставки_узнаёт_запись_от_nvidia_smi():
     # 11.10.2026: torch 2.7 дал «0cc67fd8-…», запись хранила «GPU-0cc67fd8-…» — карта
     # подхватила выключенного призрака без UUID, и живая карта оказалась выключенной.

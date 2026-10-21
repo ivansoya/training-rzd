@@ -33,8 +33,8 @@ from sqlalchemy.exc import IntegrityError
 import uuid
 
 from common.gpu_rules import (  # noqa: F401
-    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, norm_uuid, pick_device, place, settle_hint,
-    signature,
+    _gb, choose_row, fits, for_tasks_mb, fresh_enough, ghosts_of, norm_uuid, parse_smi, pick_device, place,
+    settle_hint, signature,
 )
 from common.models import (
     AgentRun, DataprepJob, GpuDevice, GpuLease, GpuUsageHint, ModelCheck, TrainRun, utcnow,
@@ -83,7 +83,7 @@ def _aware(dt):
 def discover(db, host=None):
     """Записать карты, какими их видит этот процесс.
 
-    Зовут только те, у кого есть torch и доступ к железу. HTTP-сервис карт не
+    Зовут только те, у кого есть доступ к железу. HTTP-сервис карт не
     перечисляет: он читает таблицу, поэтому экран железа отвечает даже когда
     воркер лежит, и честно пишет, как давно карта отзывалась.
 
@@ -91,24 +91,7 @@ def discover(db, host=None):
     уезжает на процессор.
     """
     host = host or host_name()
-    found = []
-    try:
-        import torch
-
-        if torch.cuda.is_available():
-            uuids = _smi_uuids()
-            for i in range(torch.cuda.device_count()):
-                props = torch.cuda.get_device_properties(i)
-                found.append({
-                    "index": i,
-                    "name": props.name,
-                    "total_mb": int(props.total_memory // (1024 * 1024)),
-                    "uuid": str(getattr(props, "uuid", "") or "")
-                    or (uuids[i] if i < len(uuids) else None),
-                })
-    except Exception:
-        found = []
-
+    found = _smi()
     ids = []
     for item in found:
         rows = db.execute(select(GpuDevice)).scalars().all()
@@ -151,6 +134,18 @@ def discover(db, host=None):
     return ids
 
 
+def _smi():
+    """Карты от nvidia-smi по порядку индексов. Не torch: перекличку ведёт тонкий родитель воркера."""
+    try:
+        return parse_smi(subprocess.run(
+            ["nvidia-smi", "--query-gpu=index,name,uuid,memory.total,memory.reserved",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+        ).stdout)
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+
 def note_sam2(db, device_uuid, mb) -> bool:
     """Постоянная бронь полуавтомата на карте: память его живых воркеров.
 
@@ -170,18 +165,6 @@ def note_sam2(db, device_uuid, mb) -> bool:
     # Память освободилась — ждущие могли стать допустимыми.
     pump(db)
     return True
-
-
-def _smi_uuids():
-    """UUID карт от nvidia-smi по порядку индексов. torch 2.3 их не отдаёт."""
-    try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
-            capture_output=True, text=True, timeout=10,
-        ).stdout
-    except (OSError, subprocess.SubprocessError):
-        return []
-    return [line.strip() for line in out.splitlines() if line.strip()]
 
 
 # --------------------------------------------------------------------------- #
@@ -441,7 +424,7 @@ def torch_index(db, lease):
         return None
     if dev.host == host_name():
         return dev.device_index
-    uuids = [norm_uuid(u) for u in _smi_uuids()]
+    uuids = [norm_uuid(c["uuid"]) for c in _smi()]
     want = norm_uuid(dev.uuid_str)
     if want and want in uuids:
         return uuids.index(want)
