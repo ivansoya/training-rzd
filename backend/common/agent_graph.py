@@ -1049,6 +1049,20 @@ def sampled(last_frame, step, skip=()):
     return [f for f in range(0, int(last_frame) + 1, step) if f not in skip]
 
 
+def frames_left(ids, cursor):
+    """Кадры [(id, имя)] после курсора [имя, id] — что осталось прогону после сбоя."""
+    after = tuple(cursor or ())
+    return [(i, name) for i, name in ids if not after or (name, str(i)) > after]
+
+
+def video_left(cursor, pos, wanted):
+    """Кадры ролика номер `pos` после курсора [ролик, кадр]; None — ролик пройден целиком.
+    Уборка в конце ролика идёт по `wanted`, а не по остатку."""
+    at, after = cursor or (-1, -1)
+    if pos < at:
+        return None
+    return [f for f in wanted if f > after] if pos == at else list(wanted)
+
 def segments(hits, step, gap_frames, last_frame):
     """Попадания разведки → участки по классам агента.
 

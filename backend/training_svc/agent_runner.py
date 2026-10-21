@@ -128,26 +128,57 @@ def reap_orphans(db, worker_id, fresh_start=False):
         alive = lease is not None and lease.status in gpu.ACTIVE
         if alive and not (fresh_start and run.worker_id == worker_id):
             continue
-        log.warning("прогон агента %s без исполнителя — ошибка", run.id)
-        _finish(db, run, "error", ORPHAN_TEXT)
+        log.warning("прогон агента %s без исполнителя", run.id)
         if alive:
             gpu.cancel(db, lease.id, ORPHAN_TEXT)
+        _retry_or_fail(db, run, ORPHAN_TEXT)
         closed += 1
     return closed
 
 
+RETRIES = 1  # решение 21.10.2026: один повтор с места остановки, дальше — ошибка с местом
+
+
+def _retry_or_fail(db, run, text):
+    """Процесс прогона пропал — сторож снял, воркер перезапущен. Прогон встаёт в очередь
+    и продолжает с курсора; второй раз — ошибка с роликом и кадром."""
+    stats = dict(run.stats or {})
+    if stats.get("retries", 0) >= RETRIES:
+        _finish(db, run, "error", f"{text} Повтор с места остановки тоже не дошёл: {_where(db, run)}.")
+        return
+    stats["retries"] = stats.get("retries", 0) + 1
+    run.stats, run.status, run.queue_reason = stats, "queued", None
+    db.commit()
+    live.notify(db, "agent", run.id, run.project_id, s="queued")
+    log.warning("прогон %s: %s — повтор с места остановки (%s)", run.id, text, _where(db, run))
+
+
+def _where(db, run):
+    """Где встал прогон: человеку — имя кадра или ролик и кадр."""
+    cursor = (run.stats or {}).get("cursor")
+    if not cursor:
+        return "в самом начале"
+    if (run.params.get("mode") or "frames") == "frames":
+        return f"после кадра «{cursor[0]}»"
+    videos = run.params.get("videos") or []
+    pos, frame = cursor
+    video = db.get(TaskVideo, _uuid(videos[pos])) if pos < len(videos) else None
+    name = video.file_name if video is not None else "?"
+    return f"ролик «{name}», после кадра {frame}" if frame >= 0 else f"в начале ролика «{name}»"
+
+
 def frames(db, run):
-    """Кадры прогона: новые, из выбранных блоков, по имени файла."""
-    ids = []
+    """Кадры прогона [(id, имя)]: новые, из выбранных блоков. Порядок — (имя, id) по всем блокам сразу:
+    по нему курсор продолжения после сбоя, а склейка блоков по очереди его ломала."""
+    found = {}
     for source in run.params.get("sources") or []:
         clause = task_frames.source_clause(run.task_id, source)
-        q = select(Image.id).where(Image.task_id == run.task_id,
-                                   Image.task_status == "new")
+        q = select(Image.id, Image.file_name).where(Image.task_id == run.task_id,
+                                                   Image.task_status == "new")
         if clause is not None:
             q = q.where(clause)
-        ids.extend(db.execute(q.order_by(Image.file_name)).scalars())
-    seen = set()
-    return [i for i in ids if not (i in seen or seen.add(i))]
+        found.update(db.execute(q).all())
+    return sorted(found.items(), key=lambda pair: (pair[1], str(pair[0])))
 
 
 def _largest(db, run, mode):
@@ -293,7 +324,7 @@ def prepare(db, run):
     run.gpu_lease_id = lease.id
     run.queue_reason = None
     run.started_at = run.started_at or utcnow()
-    run.stats = {"res": info}
+    run.stats = {**(run.stats or {}), "res": info}  # курсор и счёт повтора — не затирать
     db.commit()
     live.notify(db, "agent", run.id, run.project_id, s="running")
     # Блок → карта: при дележе — карта его части, иначе все на одной.
@@ -376,9 +407,9 @@ def after_child(db, run_id, lease_id, *, hung_s=None, exitcode=None, error=None)
     if run.cancel_requested:
         _finish(db, run, "stopped")
     elif hung_s is not None:
-        _finish(db, run, "error", f"Прогон замолчал на {hung_s} с — снят сторожем.")
+        _retry_or_fail(db, run, f"Прогон замолчал на {hung_s} с — снят сторожем.")
     else:
-        _finish(db, run, "error", error or f"Процесс прогона упал (код {exitcode}).")
+        _retry_or_fail(db, run, error or f"Процесс прогона упал (код {exitcode}).")
 
 
 def _gb(mb):
@@ -498,26 +529,29 @@ def _frames(db, run, ids, work, mapping, tick):
     бы стопорить запись человека и ловить взаимную блокировку. Писать — под замком
     и только если кадр за это время не тронули (статус и версия разметки прежние)."""
     seen = {}
-    stats = {"boxes": 0, "frames": 0}
+    prev = {k: v for k, v in (run.stats or {}).items() if k != "res"}
+    stats = {"boxes": 0, "frames": 0, **prev}
 
     def handle(image_id, found):
         image = db.execute(select(Image).where(Image.id == image_id).with_for_update()).scalar_one_or_none()
-        if image is None or image.task_status != "new" or image.annotations_rev != seen[image_id]:
+        if image is None or image.task_status != "new" or image.annotations_rev != seen[image_id][0]:
             db.rollback()
             put = 0
         else:
             put = _write(db, run, image, found, mapping)
         stats["boxes"] += put
         stats["frames"] += bool(put)
+        # Только здесь: поочерёдно кадры ждут пачку, и курсор не должен обогнать непосчитанные.
+        stats["cursor"] = [seen[image_id][1], str(image_id)]
         tick(dict(stats))
 
-    for image_id in ids:
+    for image_id, _name in agent_graph.frames_left(ids, prev.get("cursor")):
         image = db.get(Image, image_id)
         if image is None or image.task_status != "new":
             db.rollback()
             tick(dict(stats))
             continue
-        seen[image_id] = image.annotations_rev
+        seen[image_id] = (image.annotations_rev, image.file_name)
         path, name = os.path.join(config.DATA_DIR, image.file_path), image.file_name
         db.rollback()
         work.frame(image_id, path, None, name, True, handle)
@@ -902,7 +936,8 @@ def _ticker(db, run, lease_id, devices=(), info=None):
         db.refresh(run)
         if run.cancel_requested:
             raise Stopped()
-        run.processed += 1
+        # Пропущенные между курсором и сбоем после повтора считаются ещё раз — счёт не выше итога.
+        run.processed = min(run.processed + 1, run.total or run.processed + 1)
         run.stats = {**stats, "res": info} if info else stats
         run.lease_until = utcnow()
         db.commit()
@@ -967,15 +1002,24 @@ def _videos(db, run, mode, plan, work, mapping, tick):
     gap_s = float(run.params.get("gap") if run.params.get("gap") is not None else agent_graph.SCOUT_GAP_S)
     version = db.get(AugGraphVersion, run.version_id)
     graph = db.get(AugGraph, version.graph_id) if version else None
-    stats = {"videos": 0, "boxes": 0, "frames": 0}
+    prev = {k: v for k, v in (run.stats or {}).items() if k != "res"}
+    stats = {"videos": 0, "boxes": 0, "frames": 0, **prev}
+    # Курсор — [номер ролика в params.videos, последний посчитанный кадр]; -1 — ролик не начат.
+    order = {str(v): i for i, v in enumerate(run.params.get("videos") or [])}
     for video, wanted in plan:
+        pos = order[str(video.id)]
+        todo = agent_graph.video_left(prev.get("cursor"), pos, wanted)
+        if todo is None:
+            continue  # пройден до сбоя вместе с уборкой
         hits, seen = {}, {}
 
-        def handle(frame_no, found, video=video, hits=hits, seen=seen):
+        def handle(frame_no, found, video=video, hits=hits, seen=seen, pos=pos):
             if mode == "annotate":
                 put = _write_video(db, run, video, frame_no, found, mapping)
                 stats["boxes"] += put
                 stats["frames"] += bool(put)
+                # Разведка курсора внутри ролика не держит: её находки копятся до конца ролика.
+                stats["cursor"] = [pos, frame_no]
             else:
                 seen[str(frame_no)] = [[d["cls"], round(d["conf"], 3), *[round(v, 1) for v in d["box"]]]
                                        for d in found]
@@ -988,21 +1032,23 @@ def _videos(db, run, mode, plan, work, mapping, tick):
             work.frame(frame_no, None, picture, f"{video.file_name} #{frame_no}", mode == "annotate", handle)
 
         try:
-            if wanted:
+            if todo:
                 # Номера — по таблице кадров ролика, как у разметки и закрытия.
-                video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted,
+                video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), todo,
                                             on_frame, pts=video_frames.unpack_pts(video.frame_index),
                                             alive=supervise.touch)
             # Поочерёдно хвост ролика ещё в пачке — досчитать до итогов ролика.
             work.flush()
             if mode == "annotate":
                 # Ролик пройден целиком: прежние рамки этого агента вне плана больше не нужны.
+                # План — полный, а не остаток после повтора: иначе стёрлись бы рамки, написанные до сбоя.
                 _lock_open(db, video)
                 db.execute(_agent_rows(video, _own_versions(db, run.version_id))
                            .where(VideoAnnotation.frame_no.notin_(wanted or [-1])))
         except VideoClosed:
             log.warning("прогон %s: таску ролика %s сдают или сдали — дальше без него", run.id, video.id)
             stats["closed"] = stats.get("closed", 0) + 1
+            stats["cursor"] = [pos + 1, -1]
             continue
         if mode == "scout":
             last = _last_frame(video)
@@ -1014,6 +1060,7 @@ def _videos(db, run, mode, plan, work, mapping, tick):
                 segments=agent_graph.segments(hits, step, round(gap_s * (video.fps or 25)), last),
             ))
         stats["videos"] += 1
+        stats["cursor"] = [pos + 1, -1]
         run.stats = {**stats, "res": (run.stats or {}).get("res")}
         db.commit()
 
