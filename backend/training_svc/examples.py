@@ -342,7 +342,7 @@ def _answer(db, row):
         gpu.try_grant(db, lease.id)
         db.refresh(lease)
     elif lease is None or lease.status != "held":
-        lease = gpu.request(db, holder="training", kind="agent-examples", want_mb=VRAM_MB,
+        lease = gpu.request(db, holder="training", kind="agent-examples", want_mb=VRAM_MB + gpu.CONTEXT_MB,
                             priority=20, allow_cpu=False, title="Образцы агента")
     if lease.status == "denied":
         _waiting.pop(row.id, None)

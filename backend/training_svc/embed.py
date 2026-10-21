@@ -381,3 +381,96 @@ def vectors_for(paths, device="cpu", on_progress=None, on_download=None):
             if on_progress is not None:
                 on_progress(min(start + size, len(paths)), len(paths))
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Счёт в своём процессе (`supervise.Child`): бронь и очередь ведёт родитель.
+# --------------------------------------------------------------------------- #
+def run_job(job_id, image_ids, index, lease_id):
+    from sqlalchemy import select
+
+    from common import gpu, live, prep_queue, similarity
+    from common.db import SessionLocal
+    from common.models import DataprepJob, Image
+    from training_svc import supervise
+
+    db = SessionLocal()
+    try:
+        job = db.get(DataprepJob, job_id)
+        rows = db.execute(select(Image).where(Image.id.in_(image_ids))).scalars().all()
+        device = "cpu"
+        if index is not None:
+            import torch
+
+            # Карта брони; объектом, а не строкой — см. agent_runner._device.
+            torch.cuda.set_device(index)
+            device = torch.device(f"cuda:{index}")
+        paths = [os.path.join(config.DATA_DIR, r.file_path) for r in rows]
+
+        def tick(done, total):
+            supervise.step()
+            gpu.beat(db, lease_id)
+            if not prep_queue.beat(
+                db, job, processed=done, total=total,
+                stage="embed", stage_text="Считаю признаки кадров",
+            ):
+                raise RuntimeError("Счёт признаков сняли.")
+
+        # Пока модель грузится, полоса стоит на нуле — человек должен видеть,
+        # что она стоит на скачивании весов, а не на его кадрах. Подпись
+        # меняет загрузчик, а продлевает аренду отдельный поток: скачивание
+        # может висеть минутами без единого байта, и без пульса бронь карты
+        # истекала бы прямо под работающей работой.
+        stage_text = ["Загружаю модель DINOv2"]
+
+        def fetching(have, total):
+            supervise.touch()
+            stage_text[0] = (
+                f"Скачиваю веса DINOv2: {have >> 20} из {max(1, total) >> 20} МБ"
+            )
+
+        prep_queue.beat(db, job, processed=0, total=len(paths),
+                        stage="load", stage_text=stage_text[0])
+        with _pulse(lease_id, job_id, stage_text):
+            vectors = vectors_for(
+                paths, device, on_progress=tick, on_download=fetching
+            )
+        similarity.save_vectors(db, list(zip([r.id for r in rows], vectors)))
+        live.notify(db, "prep", job.id, job.project_id, s="done")
+    finally:
+        db.close()
+
+
+class _pulse:
+    """Пульс на время загрузки модели: своя сессия, своя нить, раз в 20 с."""
+
+    def __init__(self, lease_id, job_id, text):
+        self.lease_id, self.job_id, self.text = lease_id, job_id, text
+        self.stop = threading.Event()
+
+    def _run(self):
+        from common import gpu, prep_queue
+        from common.db import SessionLocal
+        from common.models import DataprepJob
+
+        while not self.stop.wait(20):
+            db = SessionLocal()
+            try:
+                gpu.beat(db, self.lease_id)
+                job = db.get(DataprepJob, self.job_id)
+                if job is not None:
+                    prep_queue.beat(db, job, stage="weights"
+                                    if "Скачиваю" in self.text[0] else "load",
+                                    stage_text=self.text[0])
+            except Exception:
+                log.exception("пульс загрузки модели")
+            finally:
+                db.close()
+
+    def __enter__(self):
+        threading.Thread(target=self._run, name="model-pulse", daemon=True).start()
+        return self
+
+    def __exit__(self, *_):
+        self.stop.set()
+        return False

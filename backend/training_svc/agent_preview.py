@@ -192,7 +192,7 @@ def _answer(db, warm, row):
     cards = gpu.cards(db)
     mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None,
                             nets=agent_memory.net_info(weights), sam3_cpu_half=settings.get(db, settings.SAM3_CPU_HALF))
-    verdict = agent_memory.verdict(mem["total_mb"], mem["heaviest"], cards, mem["units"])
+    verdict = agent_memory.verdict(mem["total_mb"], mem["heaviest"], cards, mem["units"], gpu.CONTEXT_MB)
     if verdict["state"] == agent_memory.NEVER:
         raise agent_graph.AgentGraphError(verdict["reason"])
     agent_memory.fix_words(doc, mem["words"])

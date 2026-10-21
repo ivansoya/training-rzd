@@ -1561,7 +1561,7 @@ def _verdict(db, doc, scout=False, cards=None):
     measured = int(hint.samples) if hint is not None and hint.samples else 0
     total = int(hint.high_mb) if measured else mem["total_mb"]
     return {
-        "verdict": agent_memory.verdict(total, mem["heaviest"], cards, mem["units"]),
+        "verdict": agent_memory.verdict(total, mem["heaviest"], cards, mem["units"], gpu.CONTEXT_MB),
         "total_mb": total, "estimate_mb": mem["total_mb"], "measured": measured,
         "units": mem["units"], "heaviest": mem["heaviest"], "nodes": mem["nodes"], "words": mem["words"],
         "sam3_cpu_half": cpu_half,

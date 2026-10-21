@@ -163,7 +163,7 @@ def _cards_word(n):
         "карты" if n % 10 in (2, 3, 4) and n % 100 not in (12, 13, 14) else "карт")
 
 
-def verdict(total_mb, heaviest, cards, units=None):
+def verdict(total_mb, heaviest, cards, units=None, context_mb=0):
     """Влезет ли агент. `cards` — живые карты [{index, name, cap_mb, free_mb}]
     (`gpu.cards`), `heaviest` — блок из `plan`, `units` — все его блоки.
 
@@ -171,22 +171,25 @@ def verdict(total_mb, heaviest, cards, units=None):
     (поочерёдно — самый тяжёлый блок), `card` — где влезает сейчас. Целиком на одну
     не влезает, а блоками по картам да — `split` (решения 10.10.2026): `parts` — МБ по
     блокам, `ready` — свободно ли сейчас, `placement` — какой блок на какую карту ляжет;
-    карты заняты — прогон ждёт их, поочерёдно на одной не уходит."""
-    top = heaviest["mb"] if heaviest else 0
+    карты заняты — прогон ждёт их, поочерёдно на одной не уходит. `context_mb` — CUDA-контекст своего
+    процесса на каждой карте: в замерах пиков его нет, а прогон и превью теперь отдельные процессы."""
+    top = (heaviest["mb"] if heaviest else 0) + context_mb
+    need = total_mb + context_mb
     if not cards:
-        return {"state": NEVER, "want_mb": total_mb, "card": None,
+        return {"state": NEVER, "want_mb": need, "card": None,
                 "reason": "На сервере нет видеокарт, а на процессоре агенты не считают."}
     cap = max(c["cap_mb"] for c in cards)
-    if total_mb <= cap:
-        now = [c for c in cards if total_mb <= c["free_mb"]]
+    if need <= cap:
+        now = [c for c in cards if need <= c["free_mb"]]
         if now:
             card = max(now, key=lambda c: c["free_mb"])
-            return {"state": FITS, "want_mb": total_mb, "card": card["name"],
+            return {"state": FITS, "want_mb": need, "card": card["name"],
                     "reason": f"Влезает: {card['name']}, свободно {_gb(card['free_mb'])} из {_gb(card['cap_mb'])}."}
         free = max(c["free_mb"] for c in cards)
-        return {"state": WAIT, "want_mb": total_mb, "card": None,
-                "reason": f"Придётся ждать: свободно {_gb(free)} из нужных {_gb(total_mb)}."}
-    parts = scaled(units, total_mb) if units and len(units) > 1 else None
+        return {"state": WAIT, "want_mb": need, "card": None,
+                "reason": f"Придётся ждать: свободно {_gb(free)} из нужных {_gb(need)}."}
+    # ponytail: контекст на каждый блок, хотя блоки одной карты делят один — с запасом, точнее — по карте после place.
+    parts = [mb + context_mb for mb in scaled(units, total_mb)] if units and len(units) > 1 else None
     by_cap = place(parts, _slots(cards, False), spread=False, heavy_request=False, busy_kind=True)[0] if parts else None
     if by_cap is not None:
         right_now = place(parts, _slots(cards, True), spread=False, heavy_request=False, busy_kind=True)[0]
@@ -195,15 +198,15 @@ def verdict(total_mb, heaviest, cards, units=None):
         placement = [{"card": cards[i]["name"], "index": cards[i].get("index", i),
                       "units": [{"label": u["label"], "mb": mb} for u, mb, at in zip(units, parts, chosen) if at == i]}
                      for i in sorted(set(chosen), key=chosen.index)]
-        head = f"Целиком нужно {_gb(total_mb)}, а одна карта отдаёт не больше {_gb(cap)}"
-        return {"state": SPLIT, "want_mb": total_mb, "card": None, "parts": parts, "ready": right_now is not None,
+        head = f"Целиком нужно {_gb(need)}, а одна карта отдаёт не больше {_gb(cap)}"
+        return {"state": SPLIT, "want_mb": need, "card": None, "parts": parts, "ready": right_now is not None,
                 "cards": n, "placement": placement,
                 "reason": f"{head}: блоки разойдутся по {n} картам." if right_now is not None
                 else f"{head}: ждёт {n} {_cards_word(n)} сразу под все блоки."}
     if top <= cap:
         return {"state": SEQUENTIAL, "want_mb": top, "card": None,
-                "reason": f"Целиком нужно {_gb(total_mb)}, а карта отдаёт не больше {_gb(cap)}: "
+                "reason": f"Целиком нужно {_gb(need)}, а карта отдаёт не больше {_gb(cap)}: "
                           f"модели пойдут по очереди, медленнее."}
-    return {"state": NEVER, "want_mb": total_mb, "card": None,
+    return {"state": NEVER, "want_mb": need, "card": None,
             "reason": f"Не запустится: «{heaviest['label']}» один требует {_gb(top)}, "
                       f"а карта отдаёт не больше {_gb(cap)}."}

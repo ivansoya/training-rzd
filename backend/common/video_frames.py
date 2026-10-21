@@ -116,14 +116,15 @@ class FrameClock:
         return None
 
 
-def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None):
+def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None, alive=None):
     """Достаёт кадры по номерам за один проход контейнера.
 
     ``pts`` — таблица кадров ролика: номер кадра берётся по ней. Без таблицы
     номер — порядок кадра в декодере (тот же, если в файле нет битых пакетов).
 
     ``on_frame(frame_no, time_ms, img)`` вызывается по возрастанию номера;
-    ``time_ms`` — от первого кадра ролика.
+    ``time_ms`` — от первого кадра ролика. ``alive()`` — раз в 100 декодированных кадров:
+    путь до дальнего кадра идёт минутами, и сторож хода не должен счесть его зависанием.
     """
     try:
         import av
@@ -150,6 +151,8 @@ def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None):
             if frame.pts is None:
                 continue
             ordinal += 1
+            if alive and ordinal % 100 == 0:
+                alive()
             if first is None:
                 first = frame.pts
             number = by_pts.get(frame.pts) if by_pts is not None else ordinal

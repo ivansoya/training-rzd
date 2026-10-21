@@ -21,9 +21,9 @@ from sqlalchemy import select
 
 from common import alive, config, gpu, live
 from common.db import SessionLocal, wait_for_db
-from common.models import DataprepJob, GpuLease, TrainRun, TrainSet, utcnow
+from common.models import GpuLease, TrainRun, TrainSet, utcnow
 from common import prep_queue
-from training_svc import agent_preview, agent_runner, embed, examples, trainer
+from training_svc import agent_preview, agent_runner, embed, examples, supervise, trainer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -380,7 +380,6 @@ def runs_loop():
 # --------------------------------------------------------------------------- #
 def do_embed(db, job):
     from common.models import Image
-    from common import similarity
 
     ids = [i for i in (job.payload or {}).get("images", [])]
     if not ids:
@@ -390,7 +389,7 @@ def do_embed(db, job):
         return
 
     lease = gpu.request(
-        db, holder="dataprep", kind="embed", want_mb=embed.VRAM_MB,
+        db, holder="dataprep", kind="embed", want_mb=embed.VRAM_MB + gpu.CONTEXT_MB,
         ref_id=job.id, project_id=job.project_id, user_id=job.created_by,
         priority=30, allow_cpu=True, title="Признаки кадров",
     )
@@ -409,78 +408,26 @@ def do_embed(db, job):
         raise RuntimeError("Счёт признаков сняли." if job.cancel_requested
                            else lease.reason or "Видеокарту не дали.")
 
-    index = gpu.torch_index(db, lease)
-    device = "cpu"
-    if index is not None:
-        import torch
-
-        # Карта брони этой нити; объектом, а не строкой — см. agent_runner._device.
-        torch.cuda.set_device(index)
-        device = torch.device(f"cuda:{index}")
-    try:
-        paths = [os.path.join(config.DATA_DIR, r.file_path) for r in rows]
-
-        def tick(done, total):
+    def beat():
+        # Аренду работы в очереди — тоже родитель: иначе уборка вернула бы её в очередь под висящим ребёнком.
+        try:
             gpu.beat(db, lease.id)
-            if not prep_queue.beat(
-                db, job, processed=done, total=total,
-                stage="embed", stage_text="Считаю признаки кадров",
-            ):
-                raise RuntimeError("Счёт признаков сняли.")
+            prep_queue.beat(db, job)
+        except Exception:
+            db.rollback()
+            raise
 
-        # Пока модель грузится, полоса стоит на нуле — человек должен видеть,
-        # что она стоит на скачивании весов, а не на его кадрах. Подпись
-        # меняет загрузчик, а продлевает аренду отдельный поток: скачивание
-        # может висеть минутами без единого байта, и без пульса бронь карты
-        # истекала бы прямо под работающей работой.
-        stage_text = ["Загружаю модель DINOv2"]
-
-        def fetching(have, total):
-            stage_text[0] = (
-                f"Скачиваю веса DINOv2: {have >> 20} из {max(1, total) >> 20} МБ"
-            )
-
-        prep_queue.beat(db, job, processed=0, total=len(paths),
-                        stage="load", stage_text=stage_text[0])
-        with _pulse(lease.id, job.id, stage_text):
-            vectors = embed.vectors_for(
-                paths, device, on_progress=tick, on_download=fetching
-            )
-        similarity.save_vectors(db, list(zip([r.id for r in rows], vectors)))
-        live.notify(db, "prep", job.id, job.project_id, s="done")
+    index = gpu.torch_index(db, lease)
+    try:
+        child = supervise.Child("embed", embed.run_job, job.id, [r.id for r in rows], index, lease.id)
+        hung = _watch(child, beat)
+        error = child.result()
     finally:
         gpu.release(db, lease.id)
-
-
-class _pulse:
-    """Пульс на время загрузки модели: своя сессия, своя нить, раз в 20 с."""
-
-    def __init__(self, lease_id, job_id, text):
-        self.lease_id, self.job_id, self.text = lease_id, job_id, text
-        self.stop = threading.Event()
-
-    def _run(self):
-        while not self.stop.wait(20):
-            db = SessionLocal()
-            try:
-                gpu.beat(db, self.lease_id)
-                job = db.get(DataprepJob, self.job_id)
-                if job is not None:
-                    prep_queue.beat(db, job, stage="weights"
-                                    if "Скачиваю" in self.text[0] else "load",
-                                    stage_text=self.text[0])
-            except Exception:
-                log.exception("пульс загрузки модели")
-            finally:
-                db.close()
-
-    def __enter__(self):
-        threading.Thread(target=self._run, name="model-pulse", daemon=True).start()
-        return self
-
-    def __exit__(self, *_):
-        self.stop.set()
-        return False
+    if hung is not None:
+        raise RuntimeError(f"Счёт признаков замолчал на {hung} с — снят сторожем.")
+    if error or child.proc.exitcode:
+        raise RuntimeError(error or f"Счёт признаков упал (код {child.proc.exitcode}).")
 
 
 # Сколько прогонов агентов идёт разом, решает память карт — диспетчер. Раньше это
@@ -528,13 +475,47 @@ def agents_loop():
 
 
 def _agent_run(run_id, ctx):
+    """Прогон идёт своим процессом, эта нить — его сторож."""
+    child = supervise.Child(f"agent-{str(run_id)[:8]}", agent_runner.child_run, run_id, ctx)
+    hung = _watch(child, lambda: _lease_beat(ctx["lease_id"]))
+    error = child.result()
     db = SessionLocal()
     try:
-        agent_runner.run_held(db, run_id, ctx)
+        agent_runner.after_child(db, run_id, ctx["lease_id"], hung_s=hung,
+                                 exitcode=child.proc.exitcode, error=error)
     except Exception:
-        log.exception("прогон агента %s не удался", run_id)
+        log.exception("не удалось закрыть прогон агента %s", run_id)
     finally:
         agent_runner.release(run_id)
+        db.close()
+
+
+def _watch(child, beat):
+    """Ждать ребёнка. Брони и аренду продлевает родитель (`beat`), пока ребёнок жив: память держит процесс.
+    Замолчал дольше порога — убить; вернуть, сколько секунд молчал. Кончился сам — None."""
+    beat_at = 0.0
+    while child.alive():
+        alive.stamp()
+        if child.stalled():
+            silent = child.silent_s()
+            log.warning("%s молчит %s с — снимаю", child.proc.name, silent)
+            child.kill()
+            return silent
+        if time.monotonic() - beat_at >= gpu.BEAT_EVERY / 2:
+            beat_at = time.monotonic()
+            try:
+                beat()
+            except Exception:
+                log.exception("пульс %s не прошёл", child.proc.name)
+        _stop.wait(1.0)
+    return None
+
+
+def _lease_beat(lease_id):
+    db = SessionLocal()
+    try:
+        gpu.beat(db, lease_id)
+    finally:
         db.close()
 
 
@@ -587,6 +568,7 @@ def main():
     def bye(*_):
         log.info("остановка")
         _stop.set()
+        supervise.kill_all()
 
     signal.signal(signal.SIGTERM, bye)
     signal.signal(signal.SIGINT, bye)

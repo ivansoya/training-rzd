@@ -1,8 +1,7 @@
-"""Прогон агента по блокам таски — внутри процесса воркера.
+"""Прогон агента по блокам таски — своим процессом под сторожем хода (`supervise`).
 
-Не отдельным процессом, как обучение: прогон короткий, падать ему нечему
-кроме сети, а отдельный процесс стоил бы секунд на импорт torch на каждый
-запуск. Тот же приём, что у счёта признаков (`worker.do_embed`).
+Раньше — нитью воркера: «падать нечему, кроме сети». 21.10.2026 прогон повис на
+закрытии ролика (PyAV/GIL) и остановил весь воркер; процесс стоит секунд на импорт torch.
 
 Что пишется в базу — по решению владельца:
 
@@ -23,6 +22,7 @@
 человек мог открыть и сохранить кадр, пока агент шёл к нему.
 """
 import ctypes
+import fcntl
 import gc
 import logging
 import os
@@ -42,6 +42,7 @@ from common.models import (
     AgentRun, AgentWeights, Annotation, AugGraph, AugGraphVersion, GpuDevice, GpuLease, Image,
     Task, TaskVideo, VideoAnnotation, VideoScout, utcnow,
 )
+from training_svc import supervise
 
 log = logging.getLogger("training")
 
@@ -229,7 +230,7 @@ def prepare(db, run):
         views = agent_memory.frame_views(doc, *size, agent_memory.net_info(weights)) if size else None
         sig = agent_memory.signature(doc, mem["words"], scout=scout, sam3_cpu_half=cpu_half, views=views)
         total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
-        verdict = agent_memory.verdict(total, mem["heaviest"], cards, mem["units"])
+        verdict = agent_memory.verdict(total, mem["heaviest"], cards, mem["units"], gpu.CONTEXT_MB)
         if verdict["state"] == agent_memory.NEVER:
             if run.gpu_lease_id:
                 gpu.cancel(db, run.gpu_lease_id, verdict["reason"])
@@ -237,11 +238,11 @@ def prepare(db, run):
             return None
         sequential = verdict["state"] == agent_memory.SEQUENTIAL
         split = verdict["state"] == agent_memory.SPLIT
-        parts = list(verdict["parts"]) if split else [total]
+        parts = list(verdict["parts"]) if split else [total + gpu.CONTEXT_MB]
         if sequential:
             sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout, sam3_cpu_half=cpu_half,
                                          views=views)
-            parts = [gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])[0]]
+            parts = [gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])[0] + gpu.CONTEXT_MB]
     agent_memory.fix_words(doc, mem["words"])
     # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла бы место
     # в очереди и «сколько ждёт».
@@ -297,6 +298,7 @@ def prepare(db, run):
     live.notify(db, "agent", run.id, run.project_id, s="running")
     # Блок → карта: при дележе — карта его части, иначе все на одной.
     return {"doc": doc, "order": order, "units": mem["units"], "sig": sig, "want": sum(parts),
+            "context": 0 if cpu else gpu.CONTEXT_MB * len(parts),
             "lease_id": lease.id, "sequential": sequential, "mode": mode, "owner": owner, "info": info,
             "weights": {nid: row.id for nid, row in weights.items()},
             "unit_index": {u["key"]: indices[i if split else 0] for i, u in enumerate(mem["units"])},
@@ -338,7 +340,8 @@ def run_held(db, run_id, ctx):
         message = str(exc)[:500]
         if _is_oom(exc):
             # Оценка соврала — следующий запуск попросит больше, а не упадёт так же.
-            peak = max(tick.peak() if tick else 0, int(want * 1.25))
+            # Контекст в замер не идёт: его прибавит следующий запуск.
+            peak = max(tick.peak() if tick else 0, int((want - ctx.get("context", 0)) * 1.25))
             message = (f"Не хватило памяти карты{' ' + info['card'] if info['card'] else ''}: "
                        f"просили {_gb(want)}. Следующий запуск попросит {_gb(peak)}.")
         _finish(db, run, "error", message)
@@ -353,6 +356,29 @@ def run_held(db, run_id, ctx):
             # После OOM `shared` ложно: подъём ×1,25 обязан лечь и поверх одиночного замера.
             gpu.remember(db, "agent", ctx["sig"], peak, shared=shared)
         gpu.release(db, ctx["lease_id"], peak_mb=peak or None)
+
+
+def child_run(run_id, ctx):
+    """Прогон в своём процессе (`supervise.Child`)."""
+    db = SessionLocal()
+    try:
+        run_held(db, run_id, ctx)
+    finally:
+        db.close()
+
+
+def after_child(db, run_id, lease_id, *, hung_s=None, exitcode=None, error=None):
+    """Процесс прогона кончился. Сам закрыл прогон — делать нечего; нет — его убили или он упал."""
+    gpu.release(db, lease_id)  # убитый не отпустил; повторный release ничего не делает
+    run = db.get(AgentRun, run_id)
+    if run is None or run.status != "running":
+        return
+    if run.cancel_requested:
+        _finish(db, run, "stopped")
+    elif hung_s is not None:
+        _finish(db, run, "error", f"Прогон замолчал на {hung_s} с — снят сторожем.")
+    else:
+        _finish(db, run, "error", error or f"Процесс прогона упал (код {exitcode}).")
 
 
 def _gb(mb):
@@ -449,7 +475,7 @@ class _Work:
         """Модели блоков: {узел сети или «Сети по тексту»: модель, имя SAM: предиктор}.
         Узлы SAM 3 одного блока делят одну модель — у них разные только промты."""
         out = {}
-        with _beating(self.lease_id):
+        with _beating(self.lease_id), supervise.loading():
             for unit in units:
                 device = self.devices[unit["key"]]
                 if unit["kind"] == "net":
@@ -712,7 +738,7 @@ def load_text(node, device, sets=None, shared=None):
             predictor = sam3_predictor_class(on_cpu)(overrides=dict(
                 task="segment", mode="predict", model=config.SAM3_WEIGHTS, save=False, verbose=False,
                 imgsz=side, quantize=32 if on_cpu else 16, device=device))
-            with _SAM3_BUILD:
+            with _sam3_build():
                 predictor.setup_model(verbose=False)  # сразу, а не на первом кадре: под замком
                 _trim()
             if shared is not None:
@@ -871,6 +897,7 @@ def _ticker(db, run, lease_id, devices=(), info=None):
         gpu.beat(db, lease_id)
 
     def tick(stats):
+        supervise.step()
         measure()
         db.refresh(run)
         if run.cancel_requested:
@@ -964,7 +991,8 @@ def _videos(db, run, mode, plan, work, mapping, tick):
             if wanted:
                 # Номера — по таблице кадров ролика, как у разметки и закрытия.
                 video_frames.extract_frames(os.path.join(config.DATA_DIR, video.file_path), wanted,
-                                            on_frame, pts=video_frames.unpack_pts(video.frame_index))
+                                            on_frame, pts=video_frames.unpack_pts(video.frame_index),
+                                            alive=supervise.touch)
             # Поочерёдно хвост ролика ещё в пачке — досчитать до итогов ролика.
             work.flush()
             if mode == "annotate":
@@ -1117,7 +1145,7 @@ def sam_weights(name):
     if expected is None:
         raise RuntimeError(f"Весов {file_name} нет на томе, а HuggingFace не отвечает. "
                            f"Положите файл руками в {folder}.")
-    got = embed._download(url, path + ".part", expected, "hub", None)
+    got = embed._download(url, path + ".part", expected, "hub", lambda *_: supervise.touch())
     if got is None:
         raise RuntimeError(f"Не удалось скачать {file_name} с HuggingFace. "
                            f"Положите файл руками в {folder}.")
@@ -1146,9 +1174,13 @@ def _free():
     _trim()
 
 
-# SAM 3 собирается на процессоре: чекпойнт 3,45 ГБ читается целиком и модель строится в fp32 —
-# пик 7,3 ГБ памяти хоста на загрузку (замер 11.10.2026). Две разом — вдвое; собираем по одной.
-_SAM3_BUILD = threading.Lock()
+@contextmanager
+def _sam3_build():
+    """SAM 3 собирается на процессоре: пик 7,3 ГБ памяти хоста (замер 11.10.2026), две разом — вдвое.
+    По одной на контейнер — замком файла: прогоны и превью теперь разные процессы."""
+    with open("/tmp/sam3-build.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # убитый процесс отпускает его сам
+        yield
 
 
 def _trim():

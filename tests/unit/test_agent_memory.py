@@ -139,6 +139,21 @@ def test_без_карт_не_запустится():
     assert am.verdict(100, {"mb": 100, "label": "x"}, [])["state"] == am.NEVER
 
 
+def test_контекст_процесса_в_вердикте_и_в_брони():
+    # voran: под задачи 6807. Прогон 21.10.2026 просил 6197 — с контекстом 6697, ещё влезает.
+    voran = [card("RTX 3060", cap=6807, free=6807)]
+    got = am.verdict(6197, {"mb": 6197, "label": "SAM 3"}, voran, context_mb=500)
+    assert got["state"] == am.FITS and got["want_mb"] == 6697
+    # 6400 + 500 целиком уже нет; самый тяжёлый блок с контекстом влезает — поочерёдно.
+    got = am.verdict(6400, {"mb": 4000, "label": "SAM 3"}, voran, context_mb=500)
+    assert got["state"] == am.SEQUENTIAL and got["want_mb"] == 4500
+    # Без контекста тот же агент «влезал» — и падал бы OOM рядом с превью.
+    assert am.verdict(6400, {"mb": 4000, "label": "SAM 3"}, voran)["state"] == am.FITS
+    parts = am.verdict(13810, UNITS[0], [card("A", cap=11263), card("B", cap=11263)], UNITS, context_mb=500)["parts"]
+    assert parts == [p + 500 for p in am.verdict(13810, UNITS[0], [card("A", cap=11263), card("B", cap=11263)],
+                                                 UNITS)["parts"]]
+
+
 # ---- делёж по картам (решения 10.10.2026) ------------------------------------
 UNITS = [{"label": "SAM 3 · вход 1008", "mb": 8830}, {"label": "YOLOE-l", "mb": 4340},
          {"label": "Уточнение SAM", "mb": 640}]
