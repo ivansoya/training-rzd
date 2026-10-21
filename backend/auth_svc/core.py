@@ -362,14 +362,17 @@ def project_detail(code):
             .where(ProjectMember.project_id == project.id)
             .order_by(ProjectMember.created_at)
         ).scalars().all()
-        # Вклад — боксы человека во всех кадрах проекта, и в тасках тоже: это тоже работа
+        # Вклад — боксы человека во всех кадрах проекта, и в тасках тоже: это тоже работа.
+        # Принятая рамка агента — того, кто проверил (решение 21.10.2026); непроверенная — ничья.
+        # Время принятия видно без своей колонки: запись кадра перевставляет рамки, created_at — её время.
+        worker = func.coalesce(Annotation.reviewed_by, Annotation.created_by)
         work = {
             uid: (n, last)
             for uid, n, last in db.execute(
-                select(Annotation.created_by, func.count(), func.max(Annotation.created_at))
+                select(worker, func.count(), func.max(Annotation.created_at))
                 .join(Image, Annotation.image_id == Image.id)
-                .where(Image.project_id == project.id, Annotation.created_by.isnot(None))
-                .group_by(Annotation.created_by)
+                .where(Image.project_id == project.id, worker.isnot(None), Annotation.pending.is_(False))
+                .group_by(worker)
             ).all()
         }
         members_json = []
