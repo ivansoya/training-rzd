@@ -9,6 +9,7 @@ import logging
 import multiprocessing as mp
 import os
 import signal
+import threading
 import time
 from contextlib import contextmanager
 
@@ -20,8 +21,9 @@ LOAD_S = float(os.environ.get("WATCH_LOAD", "600"))
 FACTOR = float(os.environ.get("WATCH_FACTOR", "10"))
 
 _spawn = mp.get_context("spawn")  # CUDA-контекст не переживает fork
-LAST, SLOWEST, LOADING = 0, 1, 2
+LAST, SLOWEST, LOADING, BUSY = 0, 1, 2, 3
 _mine = None     # ход этого процесса, если он ребёнок
+_busy_lock = threading.Lock()
 _children = set()
 
 
@@ -35,7 +37,7 @@ class Child:
 
     def __init__(self, name, target, *args, floor=None):
         # Старт — как загрузка: импорт torch и модели идут до первого шага.
-        self.ticks = _spawn.Array("d", [time.monotonic(), 0.0, 1.0], lock=False)
+        self.ticks = _spawn.Array("d", [time.monotonic(), 0.0, 1.0, 0.0], lock=False)
         self.floor = FLOOR_S if floor is None else floor
         self._result, send = _spawn.Pipe(duplex=False)
         self.proc = _spawn.Process(target=_main, args=(target, args, self.ticks, send), name=name)
@@ -107,6 +109,37 @@ def touch():
     """Ход без шага: байты весов, кадры декодера по пути к нужному."""
     if _mine is not None:
         _mine[LAST] = time.monotonic()
+
+
+def ready():
+    """Процесс поднялся: дальше порог шага, а не загрузки (тёплому превью — простой)."""
+    if _mine is not None:
+        _mine[LOADING] = 0.0
+        touch()
+
+
+def idle_tick():
+    """Ход простоя тёплого процесса: цикл проснулся. Пока идёт запрос — не в счёт,
+    иначе соседняя нить простоя прятала бы зависший запрос."""
+    if _mine is not None and not _mine[BUSY]:
+        touch()
+
+
+@contextmanager
+def busy():
+    """Запрос в работе: от начала до конца — один шаг."""
+    if _mine is None:
+        yield
+        return
+    with _busy_lock:
+        _mine[BUSY] += 1
+        touch()
+    try:
+        yield
+    finally:
+        with _busy_lock:
+            step()
+            _mine[BUSY] -= 1
 
 
 @contextmanager

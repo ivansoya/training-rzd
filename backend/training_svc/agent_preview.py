@@ -1,4 +1,4 @@
-"""Превью агента — нить `training-worker`: один кадр через черновик графа.
+"""Превью агента — тёплый процесс `training-worker` (`warm_main`): один кадр через черновик графа.
 
 Решения владельца (24.09.2026): считать на карте с тёплыми моделями, живой
 пересчёт; бронь отпускается после трёх минут тишины, а если карту кто-то ждёт — после
@@ -20,10 +20,10 @@ import time
 
 from sqlalchemy import select, update
 
-from common import agent_graph, agent_memory, alive, config, gpu, live, settings, video_frames
+from common import agent_graph, agent_memory, config, gpu, live, settings, video_frames
 from common.db import SessionLocal
-from common.models import AgentPreview, AgentWeights, GpuLease, Image, TaskVideo
-from training_svc import agent_runner
+from common.models import AgentExamples, AgentPreview, AgentWeights, GpuLease, Image, TaskVideo
+from training_svc import agent_runner, supervise
 
 log = logging.getLogger("training.preview")
 
@@ -209,7 +209,7 @@ def _answer(db, warm, row):
         models = None
     else:
         # SAM 3 грузится десятки секунд — бронь продлевает своя нить, иначе истекла бы под загрузкой.
-        with agent_runner._beating(warm.lease_id):
+        with agent_runner._beating(warm.lease_id), supervise.loading():
             models = warm.models(doc, weights, sets, on)
 
     def frames_out(items):
@@ -220,6 +220,7 @@ def _answer(db, warm, row):
                 predict, segment = agent_runner.frame_fns(path, name, models, weights, on, picture=picture)
                 trace = {}
                 got[i] = (agent_graph.run(doc, predict, order, segment, trace), trace)
+                supervise.touch()
             return got
         work = agent_runner._Work(doc, order, mem["units"], weights, sets, devices, warm.lease_id, True, _NoTick())
         for i, (path, picture, name) in enumerate(items):
@@ -283,14 +284,14 @@ def _trim(warm):
 def loop(stop):
     """Нить воркера. `stop` — общее событие остановки."""
     warm = _Warm()
-    alive.loop()
     for _ in live.wakeups(CHANNEL, stop):
-        alive.stamp()
+        supervise.idle_tick()
         db = SessionLocal()
         try:
             while (row := _take(db)) is not None:
                 try:
-                    row.result = _answer(db, warm, row)
+                    with supervise.busy():
+                        row.result = _answer(db, warm, row)
                     row.status = "done"
                 except Waiting as exc:
                     # Не процессор: человек видит причину, бронь ждёт в очереди следующего запроса.
@@ -317,3 +318,35 @@ def loop(stop):
             db.rollback()
         finally:
             db.close()
+
+
+def warm_main():
+    """Тёплый процесс (`supervise.Child`): превью и образцы, модели живут между запросами."""
+    import threading
+
+    from training_svc import examples
+
+    stop = threading.Event()
+    supervise.ready()
+    threads = [threading.Thread(target=loop, args=(stop,), name="agent-preview", daemon=True),
+               threading.Thread(target=examples.loop, args=(stop,), name="agent-examples", daemon=True)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+
+HUNG = "Превью зависло — модели перезагружаются, повторите."
+
+
+def abandon(db, cutoff):
+    """Тёплый процесс снят или упал: запросы, ушедшие в него, — ошибка (человек повторит), брони — снять."""
+    db.execute(update(AgentPreview).where(AgentPreview.status == "queued", AgentPreview.created_at <= cutoff)
+               .values(status="error", error=HUNG))
+    db.execute(update(AgentExamples).where(AgentExamples.status == "queued", AgentExamples.created_at <= cutoff)
+               .values(status="error", error="Сборка образцов зависла — повторите."))
+    db.commit()
+    for lease_id in db.execute(select(GpuLease.id).where(
+            GpuLease.holder == "training", GpuLease.kind.in_(("agent-preview", "agent-examples")),
+            GpuLease.status.in_(gpu.ACTIVE))).scalars().all():
+        gpu.cancel(db, lease_id, "Тёплый процесс превью снят")

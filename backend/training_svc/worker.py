@@ -23,7 +23,7 @@ from common import alive, config, gpu, live
 from common.db import SessionLocal, wait_for_db
 from common.models import GpuLease, TrainRun, TrainSet, utcnow
 from common import prep_queue
-from training_svc import agent_preview, agent_runner, embed, examples, supervise, trainer
+from training_svc import agent_preview, agent_runner, embed, supervise, trainer
 
 logging.basicConfig(
     level=logging.INFO,
@@ -519,6 +519,36 @@ def _lease_beat(lease_id):
         db.close()
 
 
+# Тёплому превью — минута на запрос: человек ждёт G, а веб сдаётся через 180 с (решение 21.10.2026).
+WARM_FLOOR = float(os.environ.get("WARM_FLOOR", "60"))
+
+
+def warm_loop():
+    """Превью и образцы — тёплым процессом: модели живут между запросами. Замолчал на запросе или
+    упал — снять, начатое в нём — ошибкой («повторите»), поднять заново."""
+    alive.loop()
+    while not _stop.is_set():
+        child = supervise.Child("warm", agent_preview.warm_main, floor=WARM_FLOOR)
+        while child.alive() and not _stop.is_set():
+            alive.stamp()
+            if child.stalled():
+                log.warning("тёплый процесс молчит %s с — снимаю", child.silent_s())
+                break
+            _stop.wait(1.0)
+        child.kill()
+        child.result()
+        if _stop.is_set():
+            return
+        db = SessionLocal()
+        try:
+            agent_preview.abandon(db, utcnow())
+        except Exception:
+            log.exception("не удалось закрыть начатое тёплым процессом")
+        finally:
+            db.close()
+        _stop.wait(5.0)  # падает на старте — не поднимать сотни раз в секунду
+
+
 def prep_loop():
     _discovered.wait()
     alive.loop()
@@ -579,8 +609,7 @@ def main():
         threading.Thread(target=runs_loop, name="runs", daemon=True),
         threading.Thread(target=prep_loop, name="embed", daemon=True),
         threading.Thread(target=agents_loop, name="agents", daemon=True),
-        threading.Thread(target=agent_preview.loop, args=(_stop,), name="agent-preview", daemon=True),
-        threading.Thread(target=examples.loop, args=(_stop,), name="agent-examples", daemon=True),
+        threading.Thread(target=warm_loop, name="warm", daemon=True),
     ]
     for t in threads:
         t.start()

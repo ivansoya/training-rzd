@@ -22,11 +22,12 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from common import agent_examples as ax, agent_graph, alive, config, gpu, live
+from common import agent_examples as ax, agent_graph, config, gpu, live
 from common.db import SessionLocal
 from common.models import (
     AgentExamples, Annotation, AugGraph, AugGraphVersion, GpuLease, Image, utcnow,
 )
+from training_svc import supervise
 
 log = logging.getLogger("training.examples")
 
@@ -106,6 +107,7 @@ def _vectors(jobs, device):
             "task": "segment", "mode": "predict", "save": False, "verbose": False,
             "batch": 1, "device": device, "imgsz": agent_graph.TEXT_IMGSZ})
         pred.setup_model(model=model.model)
+        supervise.touch()
         vecs, cached = [], (None, None)
         for path, (x, y, w, h) in jobs:
             if cached[0] != path:
@@ -114,6 +116,7 @@ def _vectors(jobs, device):
             pred.set_prompts({"bboxes": np.array([[x, y, x + w, y + h]], np.float32),
                               "cls": np.zeros(1, int)})
             vecs.append(pred.get_vpe(cached[1])[0, 0].float().cpu().numpy())
+            supervise.touch()
         out[size] = np.stack(vecs).astype(np.float32)
         del pred, model
     return out
@@ -393,14 +396,15 @@ def gc(db):
 def loop(stop):
     """Нить воркера. `stop` — общее событие остановки."""
     last_gc = 0.0
-    alive.loop()
     for _ in live.wakeups(CHANNEL, stop):
-        alive.stamp()
+        supervise.idle_tick()
         db = SessionLocal()
         try:
             while (row := _take(db)) is not None:
                 try:
-                    if not _answer(db, row):
+                    with supervise.busy():
+                        done = _answer(db, row)
+                    if not done:
                         break  # ждёт карту — снова через одно пробуждение, без холостого круга
                 except Exception as exc:  # noqa: BLE001 — человеку нужен текст
                     log.exception("набор образцов не собран")

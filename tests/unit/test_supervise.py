@@ -6,6 +6,7 @@
 """
 import os
 import signal
+import threading
 import time
 
 from training_svc import supervise
@@ -69,6 +70,39 @@ def test_шагающий_ребёнок_не_снят(monkeypatch):
         time.sleep(0.05)
     assert not seen
     assert child.result() is None and child.proc.exitcode == 0
+
+
+def _warm(request_hangs):
+    supervise.ready()
+
+    def idle():
+        while True:
+            supervise.idle_tick()
+            time.sleep(0.1)
+
+    threading.Thread(target=idle, daemon=True).start()
+    if request_hangs:
+        with supervise.busy():
+            time.sleep(60)  # запрос завис в нативном коде, GIL отпущен — соседняя нить тикает
+    time.sleep(60)
+
+
+def test_простой_соседней_нити_не_прячет_зависший_запрос():
+    child = supervise.Child("t-warm-hang", _warm, True, floor=1.0)
+    _wait(child, 10)
+    assert child.alive() and child.stalled()
+    child.kill()
+    child.result()
+
+
+def test_тёплый_процесс_в_простое_не_снимается():
+    child = supervise.Child("t-warm-idle", _warm, False, floor=1.0)
+    end = time.monotonic() + 3
+    while time.monotonic() < end:
+        assert not child.stalled()
+        time.sleep(0.05)
+    child.kill()
+    child.result()
 
 
 def test_текст_ошибки_доходит_до_родителя():
