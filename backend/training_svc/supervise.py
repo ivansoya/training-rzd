@@ -44,6 +44,7 @@ class Child:
         self.proc.start()
         send.close()
         _children.add(self)
+        log.info("%s: процесс %s", name, self.proc.pid)  # по этой строке py-spy и учения находят ребёнка
 
     def alive(self):
         return self.proc.is_alive()

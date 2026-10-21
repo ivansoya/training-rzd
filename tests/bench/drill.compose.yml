@@ -1,0 +1,17 @@
+# Учения сторожа (tests/bench/watchdog_drill.sh): пороги — секунды, а не минуты.
+# Поверх основного файла (на сервере — и поверх override), после учений поднять без этого файла:
+#   docker compose -f docker-compose.yml -f tests/bench/drill.compose.yml up -d --no-deps training-worker video-worker autolabel
+services:
+  training-worker:
+    environment:
+      - WATCH_FLOOR=15
+      - WATCH_FACTOR=5
+      - WATCH_LOAD=120
+      - WARM_FLOOR=15
+      - ALIVE_STALE=90  # больше круга переклички карт (60 с), иначе healthcheck убивает здоровый воркер
+  video-worker:
+    environment:
+      - ALIVE_STALE=90  # больше круга переклички карт (60 с), иначе healthcheck убивает здоровый воркер
+  autolabel:
+    environment:
+      - AUTOLABEL_TIMEOUT=15
