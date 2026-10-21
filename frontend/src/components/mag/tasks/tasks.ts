@@ -2,6 +2,7 @@
 
 import type { StatusResult, TaskCounts, TaskDetail, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
 import type { IconName, StackPart } from "../../../ui";
+import type { RunView } from "../../../api/agents";
 import { ago, count, plural, ru } from "../../ru";
 
 export const STATUS: Record<TaskStatus, { label: string; tone: string }> = {
@@ -307,3 +308,8 @@ export function coverage(v: TaskVideoItem, objects?: { start: number; end: numbe
   return (objects || []).map((o) => [o.start / n, Math.max(o.end, o.start + n * 0.004) / n]);
 }
 
+/** Ролик, по которому агент идёт сейчас: курсор прогона роликов — [номер в videos, кадр], пройденный ролик сдвигает его на следующий. */
+export function agentVideo(run: Pick<RunView, "status" | "mode" | "videos" | "stats"> | null | undefined): string | undefined {
+  if (run?.status !== "running" || run.mode === "frames") return undefined;
+  return run.videos[Number(run.stats.cursor?.[0] ?? 0)];
+}

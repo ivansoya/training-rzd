@@ -77,6 +77,7 @@ import {
 import type { Item, View } from "../editor/video";
 import { chunkAt, chunkPlan, nextChunk } from "../editor/chunks";
 import type { Chunk } from "../editor/chunks";
+import { useHereBeat } from "./here";
 
 const KEYS: KeyGroup[] = [
   { title: "Инструменты", keys: [
@@ -315,6 +316,7 @@ export default function VideoAnnotator({
   const chunkHere = chunkAt(chunks ?? [], frame);
   const frameLoaded = !!skel && chunks !== null && (chunkHere < 0 || loaded.has(chunkHere));
   const viewOnly = readOnly || !data?.editable || unplayable;
+  useHereBeat(taskId, video.id, !viewOnly);
   const frozen = viewOnly || !frameLoaded;
   const onPlayFrame = useCallback((f: number) => setFrame(f), []);
   // Проигрывание ждёт картинку: иначе полоса убегает вперёд, кадр замирает, и кусок ролика проходит незамеченным.

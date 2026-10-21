@@ -16,7 +16,7 @@ from flask import Blueprint, jsonify, request, send_file
 from PIL import Image as PilImage
 from sqlalchemy import distinct, func, or_, select, update
 
-from common import attribution, config, task_frames
+from common import attribution, config, live, task_frames
 from common import scout as scout_lib
 from common.db import SessionLocal
 from common.models import (
@@ -445,6 +445,24 @@ def _want_quality(db, video, index, quality):
     queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=quality,
                   priority=queue.PRIORITY_CHUNKSET_NOW, total=index["count"])
     return state
+
+
+@bp.post("/api/tasks/<task_id>/videos/<video_id>/here")
+def video_here(task_id, video_id):
+    """Человек в редакторе ролика: пульс раз в 20 с, `?off=1` — ушёл. Не хранится —
+    страница таски держит «размечает Имя» по событиям и гасит сама через минуту тишины.
+    Имени в событии нет: потолок уведомления 200 байт, имя страница знает по участникам."""
+    db, task, project, user, role, video = _resolve_video(task_id, video_id)
+    if db is None:
+        return video
+    try:
+        if not _can(task, user, role, "edit"):
+            return jsonify({"error": "Это не ваша таска."}), 403
+        off = {"s": "off"} if request.args.get("off") else {}
+        live.notify(db, "here", video.id, project.id, u=str(user.id), **off)
+        return "", 204
+    finally:
+        db.close()
 
 
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/clip")

@@ -193,7 +193,8 @@ test("ролик виден в таске как размечаемый и от�
 
   const card = reel(page);
   await expect(card).toBeVisible();
-  await expect(card.getByText("размечается")).toBeVisible();
+  // «размечает Имя» — только пока кто-то в редакторе ролика (21.10.2026); сейчас там никого
+  await expect(card.locator(".tp-here")).toHaveCount(0);
   // Таска не сдана, поэтому кадров ролика в таске нет, а работа уже видна.
   await expect(card.getByText(/объектов ведётся/)).toBeVisible();
 
@@ -323,7 +324,7 @@ test("режим ролика задаёт пункт, которым его д�
   const first = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: /^Видео на разметку/ }).click();
   await (await first).setFiles(SAMPLE);
-  await expect(reel(page).getByText("размечается")).toBeVisible();
+  await expect(reel(page).getByRole("button", { name: "Размечать ролик" })).toBeVisible();
 
   const second = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Добавить" }).click();

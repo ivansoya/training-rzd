@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import type { ReactNode } from "react";
-import type { AgentClearScope, PendingObject, PendingVideo, TaskNumbers, TaskVideoItem, VideoPrepare } from "../../../auth/api";
+import type { AgentClearScope, PendingObject, PendingVideo, TaskNumbers, TaskPerson, TaskVideoItem, VideoPrepare } from "../../../auth/api";
 import type { Tag } from "../../../api/tags";
 import { Badge, Button, Card, Icon, Legend, LinkButton, MenuItem, Popover, StackBar, Swatch, cx } from "../../../ui";
 import { count, plural, ru } from "../../ru";
@@ -14,7 +14,9 @@ import TagPicker from "../TagPicker";
 import VideoStrip from "../VideoStrip";
 import { fmtBytes, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
 import type { SourceBlock, SourceCounts } from "./tasks";
-import { STATES, coverage, dayOf, stateParts } from "./tasks";
+import { STATES, agentVideo, coverage, dayOf, stateParts } from "./tasks";
+import { hereNames } from "../here";
+import type { Here } from "../here";
 import { look as lookOf } from "./useTaskBoard";
 import type { Fresh, Look } from "./useTaskBoard";
 
@@ -401,8 +403,8 @@ function classOf(classes: TaskClass[], o: PendingObject): { name: string; color:
 }
 
 /** Ролики на разметку: каждый со своей шкалой, объектами и тем, что уйдёт при сдаче. */
-export function AnnotateCard({ videos, working, handing, pending, fresh, at, classes, taskId, code, tags, editable, fillable, run, agent, onAdd, onOpen, onReview,
-  onDelete, onVideoTags, onTagCreated }: {
+export function AnnotateCard({ videos, working, handing, pending, fresh, at, classes, taskId, code, tags, editable, fillable, run, here, people, agent, onAdd,
+  onOpen, onReview, onDelete, onVideoTags, onTagCreated }: {
   videos: TaskVideoItem[];
   /** Таска не сдана: разметка роликов ещё уйдёт при сдаче, и у них есть сводка. */
   working: boolean;
@@ -421,6 +423,9 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
   /** Источники: добавить, удалить, таги ролика — на очереди тоже. */
   fillable: boolean;
   run?: RunView | null;
+  /** Кто сейчас в редакторе какого ролика; имена — по участникам. */
+  here: Here;
+  people: TaskPerson[];
   agent: AgentHooks;
   onAdd: () => void;
   onOpen: (v: TaskVideoItem) => void;
@@ -431,6 +436,7 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
   onTagCreated: (t: Tag) => void;
 }) {
   const unchecked = videos.reduce((s, v) => s + (pending[v.id]?.unchecked || 0), 0);
+  const agentOn = agentVideo(run);
   return (
     <Card className="tp-src" flush
       title={<><Icon name="film" />Ролики на разметку<Badge variant="secondary">{videos.length}</Badge></>}
@@ -451,6 +457,8 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
         const p = pending[v.id] ?? undefined;
         const l = lookOf(known ? true : undefined, fresh[v.id], at);
         const zone = cx(l.stale && "tp-stale", l.loading && "ui-shim");
+        const names = hereNames(here, v.id, people);
+        const who = `${names.length > 1 ? "размечают" : "размечает"} ${names.join(", ")}`;
         return (
           <div key={v.id} className="tp-vid">
             <VideoStrip className="tp-poster big" taskId={taskId} videoId={v.id} />
@@ -458,8 +466,11 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
               <div className="tp-vid-h">
                 <b className="t-ell" title={v.file_name}>{v.file_name}</b>
                 {handing ? <Badge tone="var(--c1)" live>сдаётся</Badge>
-                  : working ? <Badge tone="var(--c1)" live>размечается</Badge>
-                  : <Badge tone="var(--st-done)" icon="tick">сдан</Badge>}
+                  : !working ? <Badge tone="var(--st-done)" icon="tick">сдан</Badge>
+                  : <>
+                    {names.length > 0 && <span className="tp-here"><Badge tone="var(--c1)" live title={who}><span className="t-ell">{who}</span></Badge></span>}
+                    {agentOn === v.id && <Badge tone="var(--agent)" live>агент {run?.mode === "scout" ? "разведывает" : "размечает"}</Badge>}
+                  </>}
                 <span className="grow" />
                 {editable && !known && (
                   <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled>Проверить <span className="ui-sk pill" style={{ width: 34 }} /></Button>

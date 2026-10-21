@@ -698,6 +698,38 @@ def stop_agent_run(run_id):
         db.close()
 
 
+@bp.post("/api/agents/runs/<run_id>/resume")
+def resume_agent_run(run_id):
+    """Остановленный или упавший прогон — снова в очередь, с места остановки: курсор в `stats` пишется каждым кадром."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        run = db.get(AgentRun, _uuid(run_id))
+        project = db.get(Project, run.project_id) if run else None
+        task = db.get(Task, run.task_id) if run else None
+        if run is None or project is None or task is None:
+            return jsonify({"error": "Прогон не найден."}), 404
+        if run.created_by != user.id and role_in(db, user, project) != "admin":
+            return jsonify({"error": "Продолжить может тот, кто запустил."}), 403
+        if task.status not in task_rights.WORK:
+            return jsonify({"error": NOT_AT_WORK}), 409
+        if run.status not in ("stopped", "error"):
+            return jsonify(_run_view(db, run))
+        # Свой повтор после сбоя у продолженного снова есть.
+        run.stats = {k: v for k, v in (run.stats or {}).items() if k != "retries"}
+        run.status, run.cancel_requested, run.error, run.finished_at, run.queue_reason = "queued", False, None, None, None
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return jsonify({"error": "По этой таске агент уже идёт."}), 409
+        live.notify(db, "agent", run.id, project.id, s="queued")
+        return jsonify(_run_view(db, run)), 202
+    finally:
+        db.close()
+
+
 # --------------------------------------------------------------------------- #
 # Превью агента в редакторе
 #

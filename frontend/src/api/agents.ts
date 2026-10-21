@@ -67,7 +67,8 @@ export interface RunView {
   status: "queued" | "waiting_gpu" | "running" | "done" | "error" | "stopped";
   processed: number;
   total: number | null;
-  stats: { boxes?: number; frames?: number; videos?: number };
+  /** cursor — где прогон: у роликов [номер в videos, кадр], у кадров [имя, id]. */
+  stats: { boxes?: number; frames?: number; videos?: number; cursor?: [number | string, number | string] };
   error: string | null;
   queue_reason: string | null;
   agent: string | null;
@@ -277,6 +278,7 @@ export const scoutStats = (taskId: string, videoId: string) =>
   get<ScoutStats>(`agents/tasks/${taskId}/scouts/${videoId}`);
 
 export const stopRun = (runId: string) => post<RunView>(`agents/runs/${runId}/stop`);
+export const resumeRun = (runId: string) => post<RunView>(`agents/runs/${runId}/resume`);
 
 export const ACTIVE: RunView["status"][] = ["queued", "waiting_gpu", "running"];
 

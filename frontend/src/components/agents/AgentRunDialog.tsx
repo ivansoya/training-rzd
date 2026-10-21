@@ -335,7 +335,7 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
       <span className="t-sm">{run.status === "running" && run.mode === "scout" ? "разведывает" : run.cpu && run.status === "waiting_gpu" ? "ждёт процессор" : STATUS[run.status]}</span>
       {result && <span className="t-sm t-muted">{result}</span>}
       {run.error && <span className="t-sm ge-warn">{run.error}</span>}
-      {stopError && <span className="t-sm ge-warn">Не остановился: {stopError}</span>}
+      {stopError && <span className="t-sm ge-warn">{stopError}</span>}
       {run.queue_reason && (run.status === "waiting_gpu" || run.status === "queued") && <span className="t-xs t-muted">{run.queue_reason}</span>}
       {active && <span className="ar-prog"><Progress value={run.total ? run.processed / run.total : 0} label="Ход прогона" color="var(--agent)" /></span>}
       <span className="grow" />
@@ -346,11 +346,17 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
         // Без catch отказ сервера уходил в pageerror, а кнопка «ничего не делала».
         <Button size="sm" variant="ghost" icon="stop" onClick={() => {
           setStopError(null);
-          api.stopRun(run.id).then(onRun, (e: Error) => setStopError(e.message));
+          api.stopRun(run.id).then(onRun, (e: Error) => setStopError(`Не остановился: ${e.message}`));
         }}>Остановить</Button>
-      ) : (
+      ) : <>
+        {(run.status === "stopped" || run.status === "error") && (
+          <Button size="sm" variant="ghost" icon="play" onClick={() => {
+            setStopError(null);
+            api.resumeRun(run.id).then(onRun, (e: Error) => setStopError(`Не продолжился: ${e.message}`));
+          }}>Продолжить</Button>
+        )}
         <Button size="sm" variant="ghost" icon="x" onClick={() => onRun(null)}>Скрыть</Button>
-      )}
+      </>}
       {statsOpen && <ScoutOverview taskId={taskId} onClose={() => setStatsOpen(false)} />}
     </div>
   );

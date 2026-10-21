@@ -36,6 +36,7 @@ import { buildSources, closePlan, closeText, handoverText } from "./tasks";
 import { look } from "./useTaskBoard";
 import { openVideos, useTaskPage } from "./useTaskPage";
 import { dismissUploadError, enqueueUpload, uploading, useUpload } from "./uploads";
+import { useHere } from "../here";
 
 /** Кадров в таске без брака — из лёгкой части, известно сразу. */
 const framesTotal = (t: TaskDetail) => Object.values(t.sources || {}).reduce((s, x) => s + (x.frames || 0), 0);
@@ -112,6 +113,7 @@ export default function TaskPage() {
   const [setupOpen, setSetupOpen] = useState(false);
   const agentTool = useAgentTool(taskId || "");
   const [agentRun, setAgentRun] = useState<RunView | null>(null);
+  const here = useHere();
   // Быстрый запуск из меню блока упёрся в карту — окно «на процессоре или отменить».
   const [cpuAsk, setCpuAsk] = useState<{ refusal: CardRefusal; body: Parameters<AgentHooks["start"]>[0] } | null>(null);
   const scouted = Object.keys(useScouts(taskId || "")).length > 0;
@@ -171,14 +173,19 @@ export default function TaskPage() {
     wasEditing.current = !!editing;
   }, [editing, load]);
 
-  // Идущий прогон агента видно и после перезагрузки
+  // Идущий прогон агента видно и после перезагрузки; остановленный и упавший — тоже, ради «Продолжить», пока не скрыли
   useEffect(() => {
     if (!taskId) return;
     runContext(taskId).then((ctx) => {
       const last = ctx.runs[0];
-      if (last && ACTIVE_RUN.includes(last.status)) setAgentRun(last);
+      if (last && (ACTIVE_RUN.includes(last.status)
+        || ((last.status === "stopped" || last.status === "error") && hiddenRun(taskId) !== last.id))) setAgentRun(last);
     }).catch(() => undefined);
   }, [taskId]);
+  const onRun = useCallback((run: RunView | null) => {
+    if (!run && agentRun && taskId) hideRun(taskId, agentRun.id);
+    setAgentRun(run);
+  }, [agentRun, taskId]);
 
   // Пока ролик готовится на сервере — переспрашиваем таску
   const preparing = (task?.videos || []).some((v) => v.prepare && (v.prepare.busy || (!v.prepare.ready && !v.prepare.error)));
@@ -460,7 +467,7 @@ export default function TaskPage() {
       <AnnotateCard key="annotate" videos={annotateVideos} working={opened.length > 0} handing={!!handJob || !!watched} pending={pending} fresh={page.fresh.videos} at={page.at}
         classes={numbers?.classes ?? []}
         taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable}
-        run={runOn(null, annotateVideos.map((v) => v.id), ["annotate", "scout"])} agent={agent}
+        run={runOn(null, annotateVideos.map((v) => v.id), ["annotate", "scout"])} here={here} people={members} agent={agent}
         onAdd={() => onAdd("annotate")} onOpen={(v) => openVideo(v)} onReview={(v) => openVideo(v, true)}
         onDelete={removeVideo} onVideoTags={saveVideoTags}
         onTagCreated={(t) => setTags((p) => [...p, t])} />
@@ -486,7 +493,7 @@ export default function TaskPage() {
 
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
       {notice && <Notice tone="ok" onClose={() => setNotice(null)}>{notice}</Notice>}
-      {agentRun && <AgentRunBar taskId={task.id} run={agentRun} onRun={setAgentRun} onFinished={load} />}
+      {agentRun && <AgentRunBar taskId={task.id} run={agentRun} onRun={onRun} onFinished={load} />}
       {upload?.error && <Notice tone="error" onClose={() => dismissUploadError(task.id)}>{upload.error}</Notice>}
       {uploading(upload) && (
         <div className="tp-upload" role="status">
@@ -567,4 +574,13 @@ export default function TaskPage() {
       )}
     </div>
   );
+}
+
+// «Скрыть» у плашки прогона помнится в браузере: остановленный не всплывает снова при каждом заходе
+const HIDDEN_RUN = "mag.run.hidden.";
+function hiddenRun(taskId: string): string | null {
+  try { return localStorage.getItem(HIDDEN_RUN + taskId); } catch { return null; }
+}
+function hideRun(taskId: string, runId: string) {
+  try { localStorage.setItem(HIDDEN_RUN + taskId, runId); } catch { /* без памяти — всплывёт при следующем заходе */ }
 }

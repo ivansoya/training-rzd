@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { TaskCounts, TaskDetail, TaskLight, TaskStats } from "../../../auth/api";
 import {
-  boardColumns, buildSources, cardLook, closePlan, closeText, dayOf, handoverText, percentOf, requestOrder, sourceLine, teamLine, waitingOf,
+  agentVideo, boardColumns, buildSources, cardLook, closePlan, closeText, dayOf, handoverText, percentOf, requestOrder, sourceLine, teamLine, waitingOf,
 } from "./tasks";
 
 const video = (id: string, mode: string, created = "2026-10-01T10:00:00Z") =>
@@ -183,5 +183,19 @@ describe("карточка таски (решения 14.10.2026)", () => {
     expect(text(l.line)).toBe("430 изображений · 426 в датасете");
     expect(badges(l)).toEqual(["4 ждут проверки"]);
     expect(text(cardLook("closed", { counts: counts({ total: 3, annotated: 3, accepted: 3 }), sources: src() }).line)).toBe("3 изображения в датасете");
+  });
+});
+
+describe("agentVideo", () => {
+  const run = (over: object) => ({ status: "running", mode: "annotate", videos: ["a", "b"], stats: {}, ...over }) as never;
+  it("ролик под курсором; до первого кадра — первый; после последнего — никакой", () => {
+    expect(agentVideo(run({}))).toBe("a");
+    expect(agentVideo(run({ stats: { cursor: [1, 250] } }))).toBe("b");
+    expect(agentVideo(run({ stats: { cursor: [2, -1] } }))).toBeUndefined();
+  });
+  it("только идущий прогон роликов", () => {
+    expect(agentVideo(run({ status: "waiting_gpu" }))).toBeUndefined();
+    expect(agentVideo(run({ mode: "frames", stats: { cursor: ["x.jpg", "id"] } }))).toBeUndefined();
+    expect(agentVideo(run({ mode: "scout", stats: { cursor: [1, -1] } }))).toBe("b");
   });
 });
