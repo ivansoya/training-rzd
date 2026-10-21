@@ -24,3 +24,12 @@ def test_открытие_ролика_выключает_журнал_pyav():
     extract_frames(sample.ensure(), [3], lambda n, _ms, _img: got.append(n))
     assert got == [3]
     assert av.logging.get_level() is None
+
+
+def test_журнал_включили_посреди_ролика_к_закрытию_выключен():
+    # Свежий воркер грузит модель (и torchvision) на первом кадре — уже после открытия (voran, 21.10.2026).
+    def on_frame(n, _ms, _img):
+        av.logging.set_level(av.logging.ERROR)
+
+    extract_frames(sample.ensure(), [3, 7], on_frame)
+    assert av.logging.get_level() is None

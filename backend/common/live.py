@@ -200,6 +200,37 @@ class Listener:
 LISTENER = Listener()
 
 
+def wakeups(channel, stop, every=5.0):
+    """Будить цикл по NOTIFY канала или раз в `every` с. Обрыв базы — переподключение:
+    нить превью с `conn.poll()` без защиты умирала молча, а процесс жил дальше."""
+    import psycopg2
+
+    backoff = 1.0
+    while not stop.is_set():
+        conn = None
+        try:
+            conn = psycopg2.connect(dsn())
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(f"LISTEN {channel}")
+            backoff = 1.0
+            while not stop.is_set():
+                select.select([conn], [], [], every)
+                conn.poll()
+                conn.notifies.clear()
+                yield
+        except Exception:
+            if stop.wait(backoff):
+                return
+            backoff = min(backoff * 2, 30.0)
+        finally:
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+
 # --------------------------------------------------------------------------- #
 # Растущий пул мест под живую связь
 # --------------------------------------------------------------------------- #

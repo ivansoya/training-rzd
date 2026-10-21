@@ -16,13 +16,12 @@
 """
 import logging
 import os
-import select as selectlib
 import time
 
 from sqlalchemy import select, update
 
-from common import agent_graph, agent_memory, config, gpu, settings, video_frames
-from common.db import SessionLocal, engine
+from common import agent_graph, agent_memory, config, gpu, live, settings, video_frames
+from common.db import SessionLocal
 from common.models import AgentPreview, AgentWeights, GpuLease, Image, TaskVideo
 from training_svc import agent_runner
 
@@ -284,13 +283,7 @@ def _trim(warm):
 def loop(stop):
     """Нить воркера. `stop` — общее событие остановки."""
     warm = _Warm()
-    conn = engine.raw_connection()
-    conn.set_isolation_level(0)   # LISTEN вне транзакции
-    conn.cursor().execute(f"LISTEN {CHANNEL}")
-    while not stop.is_set():
-        selectlib.select([conn], [], [], 5)
-        conn.poll()
-        conn.notifies.clear()
+    for _ in live.wakeups(CHANNEL, stop):
         db = SessionLocal()
         try:
             while (row := _take(db)) is not None:

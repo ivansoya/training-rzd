@@ -38,6 +38,8 @@ def open_video(path):
     try:
         yield container
     finally:
+        # Ещё раз перед закрытием: torchvision мог включить журнал посреди ролика (voran, 21.10.2026).
+        av.logging.set_level(None)
         for stream in container.streams.video:
             try:
                 stream.codec_context.close()

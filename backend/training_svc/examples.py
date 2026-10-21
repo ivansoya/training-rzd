@@ -15,7 +15,6 @@
 """
 import logging
 import os
-import select as selectlib
 import shutil
 import time
 import uuid
@@ -23,8 +22,8 @@ from datetime import timedelta
 
 from sqlalchemy import select
 
-from common import agent_examples as ax, agent_graph, config, gpu
-from common.db import SessionLocal, engine
+from common import agent_examples as ax, agent_graph, config, gpu, live
+from common.db import SessionLocal
 from common.models import (
     AgentExamples, Annotation, AugGraph, AugGraphVersion, GpuLease, Image, utcnow,
 )
@@ -393,14 +392,8 @@ def gc(db):
 
 def loop(stop):
     """Нить воркера. `stop` — общее событие остановки."""
-    conn = engine.raw_connection()
-    conn.set_isolation_level(0)   # LISTEN вне транзакции
-    conn.cursor().execute(f"LISTEN {CHANNEL}")
     last_gc = 0.0
-    while not stop.is_set():
-        selectlib.select([conn], [], [], 5)
-        conn.poll()
-        conn.notifies.clear()
+    for _ in live.wakeups(CHANNEL, stop):
         db = SessionLocal()
         try:
             while (row := _take(db)) is not None:
