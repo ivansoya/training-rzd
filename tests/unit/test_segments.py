@@ -11,6 +11,7 @@ from datasets_svc.video_chunks import (
     SEGMENT_FRAMES,
     SOURCE,
     SOURCE_DEFAULT_BPS,
+    _cq,
     _params,
     codec_string,
     default_for,
@@ -151,6 +152,15 @@ def test_по_умолчанию_лёгкий_оригинал_а_тяжёлый
     assert default_for(src(1080, why="кодек mpeg4")) == "720"
     assert default_for(src(600, bitrate=30_000_000)) == "480"
     assert default_for(src(240, why="кодек mpeg4")) == "240"
+
+
+def test_тяжёлому_оригиналу_ступени_на_карте_жмутся_слабее():
+    """Решение 22.10.2026: у монтажа 20-26 Мбит/с потолок не режет — cq 26 вместо 21."""
+    assert _cq(720, 26_000_000) == "26"
+    assert _cq(480, SOURCE_DEFAULT_BPS + 1) == "26"
+    assert _cq(720, 2_100_000) == "21"
+    assert _cq(480, 2_100_000) == "22"
+    assert _cq(720) == "21"
 
 
 @pytest.mark.parametrize("size", [(1024, 768), (2688, 1520), (1921, 1081), (641, 481)])

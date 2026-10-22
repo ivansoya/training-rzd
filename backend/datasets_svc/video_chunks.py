@@ -646,10 +646,16 @@ def make_variant(video_path, index, quality, dest_path, progress=None, maxrate=N
 FFMPEG = os.environ.get("VIDEO_FFMPEG", "ffmpeg")
 
 
-def _cq(height):
+def _cq(height, maxrate=None):
     """Качество NVENC — выше, чем у libx264 с _crf, ценой +11-17 % места (замер на voran, 20.10.2026,
     SSIM к оригиналу): 720 на всём 20-минутном ролике — 0,962 против 0,954 (1789 МБ против 1535);
-    по 3000 кадров 1080 — 0,978 против 0,976, 480 — 0,939 против 0,933. cq 23 уже хуже x264 (0,950)."""
+    по 3000 кадров 1080 — 0,978 против 0,976, 480 — 0,939 против 0,933. cq 23 уже хуже x264 (0,950).
+
+    Тяжёлому оригиналу (монтаж 20-26 Мбит/с) — cq 26 (решение 22.10.2026): потолок там не режет, и cq 21
+    давал ступени втрое тяжелее x264. 858f67b8, 720p: 1692 → 989 МБ, SSIM лёгкой/тяжёлой минуты 0,978/0,971 → 0,973/0,956.
+    """
+    if maxrate and maxrate > SOURCE_DEFAULT_BPS:
+        return "26"
     return "21" if height >= 720 else "22"
 
 
@@ -696,7 +702,7 @@ def make_variant_gpu(video_path, index, quality, dest_path, device=0, progress=N
         # Время кадра — номер по частоте из таблицы, как у _Writer; passthrough не теряет и не множит кадры.
         "-vf", f"scale_cuda={w}:{h}:format=yuv420p,setpts=N*{den}/{num}/TB",
         "-fps_mode", "passthrough", "-enc_time_base", f"{den}/{num}",
-        "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", _cq(h), "-b:v", "0",
+        "-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr", "-cq", _cq(h, maxrate), "-b:v", "0",
         "-maxrate", str(cap), "-bufsize", str(2 * cap), "-spatial-aq", "1", "-temporal-aq", "1",
         # Опорный ровно через SEGMENT_FRAMES и без B-кадров — как _VARIANT_X264.
         "-g", str(SEGMENT_FRAMES), "-bf", "0", "-forced-idr", "1", "-no-scenecut", "1", "-strict_gop", "1",
