@@ -52,14 +52,13 @@ ANN_SOURCE_ENUM = sa.Enum("human", "model", name="annotation_source")
 # не меняется: «cut» — нарезаем кадры и размечаем их, «annotate» — размечаем
 # сам ролик по кадрам, а кадры появляются при сдаче таски.
 VIDEO_MODE_ENUM = sa.Enum("cut", "annotate", name="video_mode")
-# Готовность ступени качества: файла копии и набора перегонов.
+# Готовность файла ступени качества.
 VIDEO_ASSET_STATUS_ENUM = sa.Enum(
     "pending", "building", "ready", "error", name="video_asset_status"
 )
-# Что за работа над роликом. «index» — таблица кадров, без неё ролик не
-# открыть; «strip» — кинолента под таймлайн; «variant» — полная копия
-# ступени; «chunkset» — все перегоны ступени; «chunk» — один перегон,
-# которого прямо сейчас ждёт разметчик.
+# Что за работа над роликом. «index» — таблицы кадров и пакетов, без них ролик
+# не открыть; «strip» — кинолента под таймлайн; «variant» — файл ступени.
+# «chunkset» и «chunk» — перегоны, которых с 22.10.2026 нет; в типе базы остались.
 VIDEO_JOB_KIND_ENUM = sa.Enum(
     "index", "strip", "variant", "chunkset", "chunk", name="video_job_kind"
 )
@@ -569,15 +568,11 @@ class TaskVideo(Base, AuditMixin):
 
 
 class VideoAsset(Base, AuditMixin):
-    """Ступень качества ролика: полная копия и нарезанные из неё перегоны.
+    """Ступень качества ролика: один файл и его таблица пакетов для Range.
 
-    Копия — не украшение. Перегон, вырезанный из копии 480p, стоит
-    перекладывания пакетов: копия пишется с опорным кадром ровно на границе
-    каждого перегона, поэтому кусок берётся без разжатия и сжатия заново.
-    Из оригинала 2688×1520 тот же перегон стоил бы полного перекодирования.
-
-    Исходное качество копии не имеет — оно и есть оригинал; его перегоны
-    режутся перекодированием и только по требованию.
+    У «Исходного» файл — сам оригинал, у ступеней — копия с битрейтом не выше
+    оригинала. Браузер просит у файла объявленные сервером отрезки (22.10.2026;
+    до того были перегоны по 120 кадров отдельными файлами).
     """
 
     __tablename__ = "video_assets"
@@ -592,7 +587,7 @@ class VideoAsset(Base, AuditMixin):
     # «src» или высота ступени строкой: «1080», «720», «480».
     quality: Mapped[str] = mapped_column(sa.String(16), nullable=False)
 
-    # Полная копия ступени. Путь хранится, а не вычисляется: файл появляется
+    # Файл ступени. Путь хранится, а не вычисляется: файл появляется
     # фоновой задачей, и по наличию пути в базе видно, что она дошла до конца.
     file_status: Mapped[str] = mapped_column(
         VIDEO_ASSET_STATUS_ENUM, nullable=False,
@@ -602,21 +597,9 @@ class VideoAsset(Base, AuditMixin):
     width: Mapped[int | None] = mapped_column(sa.Integer)
     height: Mapped[int | None] = mapped_column(sa.Integer)
     size_bytes: Mapped[int | None] = mapped_column(sa.BigInteger)
-
-    # Перегоны этой ступени. Готовность — числом, а не обходом каталога:
-    # у часового ролика перегонов под тысячу, и `os.path.exists` по ним на
-    # каждый запрос стоил дороже самого ответа.
-    chunks_status: Mapped[str] = mapped_column(
-        VIDEO_ASSET_STATUS_ENUM, nullable=False,
-        default="pending", server_default="pending",
-    )
-    chunks_dir: Mapped[str | None] = mapped_column(sa.String(1024))
-    chunks_ready: Mapped[int] = mapped_column(
-        sa.Integer, nullable=False, default=0, server_default="0"
-    )
-    chunks_total: Mapped[int] = mapped_column(
-        sa.Integer, nullable=False, default=0, server_default="0"
-    )
+    # Таблица пакетов файла (`video_chunks.pack_table`): размеры, зазоры, опорные, кодек.
+    # Не в `task_videos`: там она утроила бы строку, которую читает каждый список роликов.
+    frame_index: Mapped[dict | None] = mapped_column(JsonCol)
 
     error: Mapped[str | None] = mapped_column(sa.Text)
     updated_at: Mapped[datetime] = mapped_column(

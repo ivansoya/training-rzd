@@ -20,9 +20,9 @@ from collections import OrderedDict
 from datasets_svc import video_chunks as chunklib
 
 # Сколько развёрнутых таблиц держим. Часовой ролик — это около 90 000 чисел,
-# примерно 3-4 МБ в памяти; восьми хватает, чтобы бригада разметчиков ходила
-# по своим роликам, не выбивая друг друга из кэша.
-CACHE_SIZE = int(os.environ.get("VIDEO_INDEX_CACHE", "8"))
+# примерно 3-4 МБ в памяти. Таблицы пакетов ступеней живут здесь же — по
+# паре на открытый ролик, отсюда 16.
+CACHE_SIZE = int(os.environ.get("VIDEO_INDEX_CACHE", "16"))
 
 _cache = OrderedDict()
 _guard = threading.Lock()
@@ -104,6 +104,22 @@ def store(db, video, index):
     forget(video.id)
     _remember((str(video.id), index["version"]), index)
     return index
+
+
+def table(asset):
+    """Развёрнутая таблица пакетов ступени (у «Исходного» — оригинала) или None.
+
+    Ключ — строка ступени и вес файла: пересжатая ступень получает новую запись.
+    """
+    if asset is None or asset.frame_index is None:
+        return None
+    key = (f"t:{asset.id}", str(asset.size_bytes))
+    cached = _recall(key)
+    if cached is None:
+        cached = chunklib.unpack_table(asset.frame_index)
+        if cached is not None:
+            _remember(key, cached)
+    return cached
 
 
 def ensure(db, video, video_path):

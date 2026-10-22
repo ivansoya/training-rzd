@@ -13,7 +13,7 @@ from fractions import Fraction
 import av
 import pytest
 from datasets_svc.video_chunks import (
-    CHUNK_FRAMES, FFMPEG, VideoError, _check_aligned, _params, build_index, gpu_ready, make_variant_gpu,
+    SEGMENT_FRAMES, FFMPEG, VideoError, _check_aligned, _params, build_index, gpu_ready, make_variant_gpu,
 )
 from PIL import Image
 
@@ -50,7 +50,7 @@ def test_копия_без_опорного_на_границе_отвергае
 
 def test_копия_с_чужим_числом_кадров_отвергается(tmp_path):
     good = str(tmp_path / "gop120.mp4")
-    encode(good, keyint=CHUNK_FRAMES, bframes=0, frames=240)
+    encode(good, keyint=SEGMENT_FRAMES, bframes=0, frames=240)
     _check_aligned(good, 240)
     with pytest.raises(VideoError, match="кадров вместо"):
         _check_aligned(good, 241)
@@ -66,7 +66,7 @@ def nvenc_works():
 
 
 @pytest.mark.skipif(not nvenc_works(), reason="нет видеокарты с NVENC")
-@pytest.mark.parametrize("quality", ["480", "src"])
+@pytest.mark.parametrize("quality", ["480", "720"])
 def test_копия_на_карте_кадр_в_кадр(tmp_path, quality):
     src = str(tmp_path / "src.mp4")
     encode(src, keyint=50)

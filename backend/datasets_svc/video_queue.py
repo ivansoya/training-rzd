@@ -29,28 +29,21 @@ from common.models import TaskVideo, VideoAsset, VideoJob, utcnow
 KIND_INDEX = "index"
 KIND_STRIP = "strip"
 KIND_VARIANT = "variant"
-KIND_CHUNKSET = "chunkset"
-KIND_CHUNK = "chunk"
 
 # Меньше число — раньше очередь. Значения с зазором: между ступенью по
 # умолчанию и остальными есть место, и добавить работу посередине можно, не
 # перенумеровывая всё.
 PRIORITY = {
-    KIND_INDEX: 10,     # без таблицы кадров ролик не открывается вовсе
-    KIND_CHUNK: 20,     # перегон, на который прямо сейчас смотрит человек
+    KIND_INDEX: 10,     # без таблиц кадров и пакетов ролик не открывается вовсе
     KIND_STRIP: 25,     # кинолента под таймлайном
-    KIND_VARIANT: 30,   # полная копия ступени
-    KIND_CHUNKSET: 40,  # все перегоны ступени
+    KIND_VARIANT: 30,   # файл ступени
 }
-# Нарезка ступени, с которой ролик откроют (или которую уже ждёт человек):
-# впереди копий чужих ступеней. На 40 она стояла за всеми variant всех роликов.
-PRIORITY_CHUNKSET_NOW = 28
 
 # Быстрые работы — секунды, и их кто-то ждёт. Медленные — минуты, и их никто
 # не ждёт. Пулы разделены жёстко: будь он общий, все воркеры однажды оказались
-# бы заняты копиями, и живой запрос перегона встал бы за ними.
-FAST_KINDS = (KIND_INDEX, KIND_CHUNK)
-SLOW_KINDS = (KIND_STRIP, KIND_VARIANT, KIND_CHUNKSET)
+# бы заняты копиями, и таблица только что загруженного ролика встала бы за ними.
+FAST_KINDS = (KIND_INDEX,)
+SLOW_KINDS = (KIND_STRIP, KIND_VARIANT)
 
 # Три попытки: первая могла попасть на перезапуск, вторая — на нехватку места.
 # Третья означает, что дело в самом ролике.
@@ -66,44 +59,43 @@ COOLDOWN_SECONDS = int(os.environ.get("VIDEO_JOB_COOLDOWN", "300"))
 ACTIVE = ("queued", "running")
 
 
-def _target(query, video_id, kind, quality, chunk_no):
+def _target(query, video_id, kind, quality):
     return query.where(
         VideoJob.video_id == video_id,
         VideoJob.kind == kind,
         VideoJob.quality == quality,
-        VideoJob.chunk_no == chunk_no,
     )
 
 
-def find_active(db, video_id, kind, quality="", chunk_no=-1):
+def find_active(db, video_id, kind, quality=""):
     return db.execute(
-        _target(select(VideoJob), video_id, kind, quality, chunk_no)
+        _target(select(VideoJob), video_id, kind, quality)
         .where(VideoJob.status.in_(ACTIVE))
     ).scalar_one_or_none()
 
 
-def last_failure(db, video_id, kind, quality="", chunk_no=-1):
+def last_failure(db, video_id, kind, quality=""):
     """Последний отказ этой работы, если он ещё не остыл."""
     since = utcnow() - timedelta(seconds=COOLDOWN_SECONDS)
     return db.execute(
-        _target(select(VideoJob), video_id, kind, quality, chunk_no)
+        _target(select(VideoJob), video_id, kind, quality)
         .where(VideoJob.status == "error", VideoJob.finished_at >= since)
         .order_by(VideoJob.finished_at.desc())
         .limit(1)
     ).scalar_one_or_none()
 
 
-def enqueue(db, video_id, kind, quality="", chunk_no=-1, priority=None, total=0):
+def enqueue(db, video_id, kind, quality="", priority=None, total=0):
     """Поставить работу в очередь.
 
     Возвращает задачу — новую или уже стоящую. ``None`` значит «эта работа
     недавно провалилась и повторять её рано»: вызывающий покажет человеку
     причину вместо того, чтобы бесконечно просить одно и то же.
     """
-    active = find_active(db, video_id, kind, quality, chunk_no)
+    active = find_active(db, video_id, kind, quality)
     if active is not None:
         return active
-    failed = last_failure(db, video_id, kind, quality, chunk_no)
+    failed = last_failure(db, video_id, kind, quality)
     if failed is not None:
         return None
 
@@ -111,7 +103,6 @@ def enqueue(db, video_id, kind, quality="", chunk_no=-1, priority=None, total=0)
         video_id=video_id,
         kind=kind,
         quality=quality,
-        chunk_no=chunk_no,
         priority=PRIORITY[kind] if priority is None else priority,
         total=total,
     )
@@ -123,7 +114,7 @@ def enqueue(db, video_id, kind, quality="", chunk_no=-1, priority=None, total=0)
         # уникальный индекс поймал повтор. Это не ошибка, а гонка, и правильный
         # ответ на неё — чужая задача.
         db.rollback()
-        return find_active(db, video_id, kind, quality, chunk_no)
+        return find_active(db, video_id, kind, quality)
     return job
 
 
@@ -173,12 +164,12 @@ def finish(db, job, error=None):
 
 
 def drop_siblings(db, job, error):
-    """Остальные копии и нарезки того же ролика в очереди — туда же: файл тот же."""
+    """Остальные ступени того же ролика в очереди — туда же: файл тот же."""
     db.execute(
         update(VideoJob)
         .where(
             VideoJob.video_id == job.video_id, VideoJob.id != job.id,
-            VideoJob.kind.in_((KIND_VARIANT, KIND_CHUNKSET)), VideoJob.status == "queued",
+            VideoJob.kind == KIND_VARIANT, VideoJob.status == "queued",
         )
         .values(status="error", error=str(error)[:2000], finished_at=utcnow())
     )

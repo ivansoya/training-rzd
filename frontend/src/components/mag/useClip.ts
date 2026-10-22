@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { fetchClip } from "../../auth/api";
-import type { ClipManifest, ClipPreparing, ClipProgress } from "../../auth/api";
+import type { ClipAnswer, ClipManifest, ClipPreparing, ClipProgress } from "../../auth/api";
 import { ClipPending, ClipReader, ClipStalled, webCodecsMissing } from "./clipReader";
 import { clipLog } from "./clipLog";
 import { frameAt, tickClock } from "./playback";
@@ -66,6 +66,7 @@ export function useClip(taskId: string, videoId: string): Clip {
      *  висел бы занятый поток на сервере. */
     const ask = () => {
       fetchClip(taskId, videoId, undefined, stop.signal)
+        .then((body): ClipAnswer | Promise<ClipAnswer> => (body.status === "ready" ? browserFits(body) : body))
         .then((body) => {
           if (!live) return;
           if (body.status === "preparing") {
@@ -96,13 +97,12 @@ export function useClip(taskId: string, videoId: string): Clip {
           }
           setLoading(false);
           // Ступени доготавливаются уже после того, как ролик открылся.
-          // Читатель при этом не пересоздаётся: перечень перегонов и номера
-          // кадров у ролика одни, меняется только готовность ступеней —
-          // обновляем манифест, чтобы меню качества перестало врать.
+          // Читатель при этом не пересоздаётся: номера кадров у ролика одни,
+          // меняется только готовность ступеней — обновляем манифест, чтобы
+          // меню качества перестало врать.
           //
-          // «Исходное» из условия исключено намеренно: его готовят только по
-          // просьбе, само оно готовым не станет никогда, и опрос из-за него
-          // не прекращался бы до закрытия вкладки.
+          // «Исходное» из условия исключено: оно готово сразу с таблицей или не
+          // будет готово никогда (кодек, контейнер), и опрос шёл бы вечно.
           const waiting = body.qualities.some(
             (q) => q.id !== "src" && !q.ready && !q.failed
           );
@@ -126,6 +126,32 @@ export function useClip(taskId: string, videoId: string): Clip {
   }, [taskId, videoId, attempt]);
 
   return { manifest, reader, loading, error, preparing, progress, retry };
+}
+
+const decodable = new Map<string, Promise<boolean>>();
+
+/** Разжимает ли этот браузер кодек «Исходного». HEVC Chrome умеет только видеокартой. */
+function canDecode(codec: string): Promise<boolean> {
+  let answer = decodable.get(codec);
+  if (!answer) {
+    answer = VideoDecoder.isConfigSupported({ codec })
+      .then((r) => r.supported !== false)
+      .catch(() => false);
+    decodable.set(codec, answer);
+  }
+  return answer;
+}
+
+/** Не разжимает — «Исходное» в меню с пометкой, открываем ступень (решение 5, 22.10.2026). */
+async function browserFits(body: ClipManifest): Promise<ClipManifest> {
+  const src = body.qualities.find((q) => q.id === "src");
+  if (!src?.ready || !src.codec || (await canDecode(src.codec))) return body;
+  const qualities = body.qualities.map((q) =>
+    q.id === "src" ? { ...q, ready: false, reason: "браузер не разжимает" } : q
+  );
+  const rung = qualities.find((q) => q.id === "720") ?? qualities.find((q) => q.id !== "src");
+  const swap = (id: string) => (id === "src" && rung ? rung.id : id);
+  return { ...body, qualities, quality: swap(body.quality), default_quality: swap(body.default_quality) };
 }
 
 export interface ShownFrame {

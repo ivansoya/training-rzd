@@ -28,6 +28,7 @@ from api_conftest import (  # noqa: E402,F401  — импорт ради рег�
     cleanup,
     clip_url,
     db,
+    get_table,
     jobs_of,
     label_class,
     project,

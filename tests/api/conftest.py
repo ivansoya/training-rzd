@@ -8,11 +8,13 @@
 можно, но это добавило бы к каждому прогону зависимость от почтовика ради
 одного поля.
 """
+import base64
 import os
 import shutil
 import time
 import uuid
 
+import av
 import psycopg2
 import pytest
 import requests
@@ -172,12 +174,12 @@ def clip_url(task_id, video_id):
     return f"{BASE_URL}/api/tasks/{task_id}/videos/{video_id}"
 
 
-def wait_clip(api, task_id, video_id, quality=None, chunks=True, timeout=300):
+def wait_clip(api, task_id, video_id, quality=None, ready=True, timeout=300):
     """Ждём, пока ролик станет пригоден для разметки.
 
-    Готовность спрашивается у самого ролика, а не у номера задачи: подготовка
-    теперь не одна работа, а несколько (таблица кадров, копия ступени,
-    перегоны), и снаружи важно ровно одно — можно ли уже размечать.
+    Готовность спрашивается у самого ролика: есть таблицы кадров и пакетов, и
+    названная ступень (по умолчанию — та, с которой ролик откроют) готова.
+    ``ready=False`` — хватит таблиц.
     """
     deadline = time.time() + timeout
     last = None
@@ -189,25 +191,66 @@ def wait_clip(api, task_id, video_id, quality=None, chunks=True, timeout=300):
         if res.status_code == 409:
             raise AssertionError(f"Ролик подготовить не удалось: {last}")
         if res.status_code == 200:
-            if not chunks or last["state"]["chunks"] == "ready":
+            want = quality or last["quality"]
+            item = next((q for q in last["qualities"] if q["id"] == want), None)
+            if not ready or (item and item["ready"]):
                 return last
-            if last["state"]["chunks"] == "error":
-                raise AssertionError(f"Перегоны не нарезались: {last['state']}")
+            if item and item["failed"]:
+                raise AssertionError(f"Ступень {want} не вышла: {item}")
         time.sleep(0.5)
     raise AssertionError(f"Ролик не подготовился за {timeout} с: {last}")
 
 
-def jobs_of(db, video_id, kind=None, chunk_no=None, statuses=None):
+def get_table(api, task_id, video_id, quality, timeout=240):
+    """Таблица пакетов ступени — как её берёт браузер: «202» значит «ещё готовится»."""
+    deadline = time.time() + timeout
+    while True:
+        res = api.get(clip_url(task_id, video_id) + "/table", params={"q": quality})
+        if res.status_code != 202:
+            assert res.status_code == 200, res.text
+            return res.json()
+        assert time.time() < deadline, f"ступень {quality} не подготовилась: {res.text}"
+        time.sleep(res.json().get("retry_after_ms", 700) / 1000)
+
+
+def get_segment(api, task_id, video_id, table, n):
+    """Отрезок по Range ровно по объявленным границам."""
+    seg = table["segments"][n]
+    res = api.get(clip_url(task_id, video_id) + "/source",
+                  params={"q": table["quality"], "v": table["tag"]},
+                  headers={"Range": f"bytes={seg['start']}-{seg['end']}"})
+    assert res.status_code == 206, res.text
+    assert len(res.content) == seg["end"] - seg["start"] + 1
+    return res
+
+
+def decode_segment(table, n, payload):
+    """Разжать отрезок, как браузер: кадры вырезаются по таблице, декодер — по описанию потока."""
+    seg = table["segments"][n]
+    pos, at = [], 0
+    for size, gap in zip(table["sizes"], table["gaps"]):
+        at += gap
+        pos.append(at)
+        at += size
+    ctx = av.CodecContext.create("hevc" if table["codec"].startswith(("hvc1", "hev1")) else "h264", "r")
+    ctx.extradata = base64.b64decode(table["description"])
+    out = []
+    for i in range(seg["count"]):
+        no = seg["first"] + i
+        offset = pos[no] - seg["start"]
+        out += [f.to_image() for f in ctx.decode(av.Packet(payload[offset:offset + table["sizes"][no]]))]
+    out += [f.to_image() for f in ctx.decode(None)]
+    return out
+
+
+def jobs_of(db, video_id, kind=None, statuses=None):
     """Задачи очереди по этому ролику — тестам нужна не только выдача API,
     но и то, сколько работы она за собой завела."""
-    sql = "SELECT kind, quality, chunk_no, status, attempts, error FROM video_jobs WHERE video_id = %s"
+    sql = "SELECT kind, quality, status, attempts, error FROM video_jobs WHERE video_id = %s"
     args = [video_id]
     if kind is not None:
         sql += " AND kind = %s"
         args.append(kind)
-    if chunk_no is not None:
-        sql += " AND chunk_no = %s"
-        args.append(chunk_no)
     if statuses is not None:
         # Колонка — перечисление postgres, и сравнивать её с массивом текста
         # без приведения нельзя: «operator does not exist». Приводим явно.
@@ -220,11 +263,11 @@ def jobs_of(db, video_id, kind=None, chunk_no=None, statuses=None):
 
 
 def assets_of(db, video_id):
-    """Ступени качества ролика: пути к копиям и готовность перегонов."""
+    """Ступени качества ролика: файлы и их размеры."""
     with db.cursor() as cur:
         cur.execute(
-            "SELECT quality, file_status, file_path, width, height,"
-            " chunks_status, chunks_ready, chunks_total, error"
+            "SELECT quality, file_status, file_path, width, height, size_bytes, error,"
+            " frame_index IS NOT NULL AS has_table"
             " FROM video_assets WHERE video_id = %s ORDER BY quality",
             (video_id,),
         )
@@ -234,6 +277,7 @@ def assets_of(db, video_id):
 
 __all__ = [
     "BASE_URL", "wait_job", "hand_over", "wait_clip", "clip_url", "jobs_of", "assets_of", "tag",
+    "get_table", "get_segment", "decode_segment",
 ]
 
 

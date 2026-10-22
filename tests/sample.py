@@ -10,11 +10,11 @@ import os
 PATH = os.environ.get("TEST_SAMPLE_VIDEO", "/tmp/magistral-sample-30f.mp4")
 WIDTH, HEIGHT, FPS, FRAMES = 320, 240, 10, 30
 
-# Длинный ролик — для перегонов: в коротком все кадры умещаются в один, и
-# проверять там нечего. 300 кадров при 120 в перегоне дают три штуки, включая
-# неполный последний.
+# Длинный ролик — для отрезков по Range: H.264 без B-кадров, опорный через 50,
+# как у камер «Искры». 300 кадров дают два отрезка по 150 (целые группы, не
+# короче 120). До 22.10.2026 он был mpeg4 — старый файл в /tmp надо стереть.
 LONG_PATH = os.environ.get("TEST_SAMPLE_LONG", "/tmp/magistral-sample-300f.mp4")
-LONG_FPS, LONG_FRAMES = 25, 300
+LONG_FPS, LONG_FRAMES, LONG_GOP = 25, 300, 50
 
 # Высокий ролик — для ступеней качества. Лестница спускается до 480p и ниже не
 # идёт, поэтому у ролика 240 строк ступеней нет вовсе: он и так меньше самой
@@ -77,9 +77,10 @@ def ensure_long(path: str = LONG_PATH) -> str:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     tmp = path + ".part"
     container = av.open(tmp, mode="w", format="mp4")
-    stream = container.add_stream("mpeg4", rate=LONG_FPS)
+    stream = container.add_stream("libx264", rate=LONG_FPS)
     stream.width, stream.height = WIDTH, HEIGHT
     stream.pix_fmt = "yuv420p"
+    stream.options = {"x264-params": f"keyint={LONG_GOP}:min-keyint={LONG_GOP}:scenecut=0:bframes=0"}
 
     for i in range(LONG_FRAMES):
         canvas = Image.new("RGB", (WIDTH, HEIGHT), (18, 22, 28))

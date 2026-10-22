@@ -1019,8 +1019,6 @@ STAGE_TEXT = {
     "index": "разбираю на кадры",
     "strip": "клею киноленту",
     "variant": "готовлю ступень качества",
-    "chunkset": "нарезаю на куски",
-    "chunk": "готовлю кусок",
 }
 
 
@@ -1028,10 +1026,10 @@ def _prepare_state(db, video):
     """Готов ли ролик к работе и что с ним делают прямо сейчас.
 
     У нарезки требований нет: участки выбирают по самому файлу, а кинолента —
-    удобство. У разметки требования жёсткие: без таблицы кадров ролик не
-    открыть, а без перегонов нечего показывать. Пока их нет, пускать в
-    редактор нельзя — он честно скажет «готовится», но человек уже решит, что
-    сломалось.
+    удобство. У разметки требования жёсткие: без таблиц кадров и пакетов ролик
+    не открыть, а без качества по умолчанию нечего показывать. Пока их нет,
+    пускать в редактор нельзя — он честно скажет «готовится», но человек уже
+    решит, что сломалось.
     """
     progress = queue.progress_of(db, video.id)
     stage = (progress or {}).get("kind")
@@ -1049,12 +1047,13 @@ def _prepare_state(db, video):
     if video.mode != "annotate":
         return state
 
-    default = chunklib.default_for(video.height)
-    asset = queue.asset(db, video.id, default)
+    src = video_index.table(queue.asset(db, video.id, chunklib.SOURCE))
+    default = chunklib.default_for(src) if src else None
+    asset = queue.asset(db, video.id, default) if default else None
     state["ready"] = bool(
-        video.frame_count and asset and asset.chunks_status == "ready"
+        video.frame_count and asset and asset.file_status == "ready" and asset.file_path
     )
-    if asset and (asset.chunks_status == "error" or asset.file_status == "error"):
+    if asset and asset.file_status == "error":
         state["ready"] = False
         state["error"] = asset.error or "Подготовить ролик не удалось."
     elif not state["ready"] and not state["busy"]:

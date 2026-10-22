@@ -9,10 +9,12 @@
 вовсе. Быстрая перемотка держится на прогреве окна кадров одним проходом
 декодера — подряд идущие кадры дешевле одиночных примерно в восемьдесят раз.
 """
+import gzip
 import io
+import json
 import os
 
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, Response, jsonify, request, send_file
 from PIL import Image as PilImage
 from sqlalchemy import distinct, func, or_, select, update
 
@@ -54,13 +56,11 @@ bp = Blueprint("video_annotation", __name__)
 # Сколько распакованных кадров держим на томе. Кадры эти нужны только
 # полуавтомату: он читает их файлами с общего тома.
 #
-# Потолок был в полторы тысячи, когда кадр доставали перемоткой по исходнику и
-# это стоило секунд — тогда кэш окупал любое место. Сейчас кадр берётся из
-# готового перегона за десятые доли секунды, и промах почти ничего не стоит, а
-# место стоит по-прежнему: на реальном ролике 1080p кадр весит около 840 КБ,
-# и полторы тысячи — это 1.2 ГБ на один ролик.
+# Потолок был в полторы тысячи, когда кадр доставался секундами. Сейчас — 57-91 мс
+# перемоткой к ближайшему опорному, промах почти ничего не стоит, а место стоит:
+# на реальном ролике 1080p кадр весит около 840 КБ, полторы тысячи — 1.2 ГБ.
 #
-# Ста двадцати (ровно перегон) хватает на то, ради чего кэш и заведён: вернуться
+# Ста двадцати (около отрезка) хватает на то, ради чего кэш и заведён: вернуться
 # к кадру, с которым только что работали.
 FRAME_CACHE_PER_VIDEO = 120
 
@@ -230,28 +230,12 @@ def _grab(db, video, source, frame_no):
     что оказалось в двух третях пути к цели, и ответ возвращала в чужих
     пикселях. Снаружи это выглядело как «модель вернула бесформенное тело».
 
-    Быстрый путь остался, но только тот, что не меняет размер: перегон ступени
-    ``src`` — это и есть источник, разложенный по кускам. Его готовят лишь по
-    просьбе, поэтому обычный случай — разжатие из самого файла: перемотка на
-    опорный кадр слева и проход вперёд. Боязнь, что это дорого, не оправдалась:
-    замер на боевом ролике (1920×1080, 20 минут, 29 150 кадров, опорные через
-    50) — 57-91 мс на кадр, то есть вровень с перегоном. Дорого было бы на
-    ролике с редкими опорными кадрами; там же и выручит ``src``.
+    Разжатие из самого файла: перемотка на опорный кадр слева и проход вперёд.
+    Замер на боевом ролике (1920×1080, 20 минут, опорные через 50) — 57-91 мс
+    на кадр.
     """
     index = video_index.get(db, video, source)
     if index is not None:
-        asset = queue.asset(db, video.id, chunklib.SOURCE)
-        if asset is not None and asset.chunks_status == "ready":
-            chunk_no = chunklib.chunk_of(frame_no)
-            first = chunklib.chunk_bounds(chunk_no, index["count"])[0]
-            path = chunklib.chunk_path(source, chunk_no, chunklib.SOURCE)
-            if os.path.exists(path):
-                try:
-                    return chunklib.grab_in(path, frame_no - first)
-                except chunklib.VideoError:
-                    # Перегон битый — не повод отказывать: возьмём из
-                    # исходника, а перегон перережут заново.
-                    pass
         try:
             return chunklib.grab_at(source, index, frame_no)
         except chunklib.VideoError:
@@ -332,16 +316,11 @@ def video_frame(task_id, video_id):
 
 
 # --------------------------------------------------------------------------- #
-# Перегоны: видео кусками, разжимает их браузер
+# Ролик для браузера: таблицы ступеней и отрезки по Range
 # --------------------------------------------------------------------------- #
-# Ничего тяжёлого здесь больше не происходит. Перегоны режет отдельный процесс
-# (``worker``), а веб-сервис только смотрит, готов ли файл, и ставит работу в
-# очередь, если нет. Так и задумано: перекодирование ролика — минуты счёта, и
-# пока оно шло внутри gunicorn, оно занимало поток, который в это время не
-# отвечал ни на список тасок, ни на сохранение бокса.
-#
-# Отсюда и «202»: неготовый перегон — это не ошибка и не повод держать
-# соединение. Клиенту говорят, что готовится и насколько, и он приходит снова.
+# Ничего тяжёлого здесь не происходит. Таблицы и ступени готовит отдельный
+# процесс (``worker``), а веб-сервис только смотрит, готово ли, и ставит работу
+# в очередь, если нет. Неготовое — это «202», а не ожидание на соединении.
 RETRY_AFTER_MS = 700
 
 
@@ -377,74 +356,52 @@ def _failed(message, quality=None):
 
 
 def _clip_index(db, video):
-    """Таблица кадров ролика, если она уже построена.
+    """Таблица кадров ролика и таблица пакетов оригинала, если они построены.
 
     Строить здесь нельзя: демукс большого файла — это секунды в потоке,
-    который в это время не отвечает никому. Нет таблицы — ставим работу в
+    который в это время не отвечает никому. Нет таблиц — ставим работу в
     очередь и честно говорим, что ролик готовится.
     """
     path = _video_file(video)
     if not os.path.exists(path):
-        return None, (jsonify({"error": "Файл видео не найден."}), 404)
+        return None, None, (jsonify({"error": "Файл видео не найден."}), 404)
     index = video_index.get(db, video, path)
-    if index is not None:
-        return index, None
+    src = video_index.table(queue.asset(db, video.id, chunklib.SOURCE))
+    if index is not None and src is not None:
+        return index, src, None
 
     job = queue.enqueue(db, video.id, queue.KIND_INDEX)
     if job is None:
         failure = queue.last_failure(db, video.id, queue.KIND_INDEX)
-        return None, _failed(
+        return None, None, _failed(
             (failure.error if failure else None)
             or "Ролик не удалось разобрать на кадры."
         )
-    return None, _preparing(db, video, stage=queue.KIND_INDEX)
+    return None, None, _preparing(db, video, stage=queue.KIND_INDEX)
 
 
-def _quality_state(db, video, index, quality):
-    """Готовность ступени: сколько перегонов уже лежит и что с ней делается."""
-    asset = queue.asset(db, video.id, quality)
-    return {
-        "quality": quality,
-        "ready": int(asset.chunks_ready) if asset else 0,
-        "total": chunklib.chunk_count(index["count"]),
-        "file": asset.file_status if asset else "pending",
-        "chunks": asset.chunks_status if asset else "pending",
-        "error": asset.error if asset else None,
-    }
+def _rung(db, video, quality):
+    """Ступень, её таблица пакетов (если файл готов) и отказ (если не вышло).
 
-
-def _want_quality(db, video, index, quality):
-    """Заказать подготовку ступени, если её ещё нет.
-
-    Ступень готовится целиком и один раз: резать по перегону в момент запроса
-    — худшее из возможного, каждый переход через границу стоил бы полной
-    работы. Поэтому первое же обращение к качеству заводит подготовку всей
-    ступени, а ждать приходится только текущий перегон.
+    Нет и не готовится — заказать. Упала недавно — отказ, а не новая попытка:
+    иначе каждый взгляд на ролик заводил бы новое сжатие. У «Исходного» файл —
+    сам оригинал, он готов вместе с таблицей кадров.
     """
-    state = _quality_state(db, video, index, quality)
-    if state["chunks"] == "ready":
-        return state
+    asset = queue.asset(db, video.id, quality)
+    if asset is not None and asset.file_status == "ready" and asset.file_path:
+        return asset, video_index.table(asset), None
+    if asset is not None and asset.file_status == "error":
+        return asset, None, asset.error or f"Ступень {quality} подготовить не удалось."
+    if quality != chunklib.SOURCE and not (asset and asset.file_status == "building"):
+        if queue.enqueue(db, video.id, queue.KIND_VARIANT, quality=quality) is None:
+            failure = queue.last_failure(db, video.id, queue.KIND_VARIANT, quality)
+            return asset, None, (failure.error if failure else None) or f"Ступень {quality} подготовить не удалось."
+    return asset, None, None
 
-    if quality == chunklib.SOURCE:
-        # У исходного копии нет — оно и есть оригинал. Режем из него самого.
-        queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=quality,
-                      priority=queue.PRIORITY_CHUNKSET_NOW, total=index["count"])
-        return state
 
-    if state["file"] != "ready":
-        # Сперва копия, и только потом нарезка. Заказать оба разом нельзя:
-        # два медленных воркера взялись бы за них одновременно, и нарезка,
-        # не найдя копии, пошла бы самым дорогим путём — перекодированием
-        # оригинала. Ровно то, ради чего копия и делается.
-        if state["file"] != "building":
-            queue.enqueue(db, video.id, queue.KIND_VARIANT, quality=quality,
-                          total=index["count"])
-        return state
-
-    # Ступень запросил человек — её нарезка впереди фоновых копий.
-    queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=quality,
-                  priority=queue.PRIORITY_CHUNKSET_NOW, total=index["count"])
-    return state
+def _tag(table, asset):
+    """Метка файла ступени для адреса: пересжатая ступень не возьмёт байты из кэша браузера."""
+    return f"{table['version']}-{asset.size_bytes}"
 
 
 @bp.post("/api/tasks/<task_id>/videos/<video_id>/here")
@@ -469,9 +426,8 @@ def video_here(task_id, video_id):
 def video_clip(task_id, video_id):
     """Всё, что клиенту нужно знать о ролике, чтобы начать разметку.
 
-    Перечень перегонов отдаётся явно — какие кадры лежат в каждом. Клиент
-    номер кадра не вычисляет ни здесь, ни при разжатии: i-й кадр перегона есть
-    ``chunks[k].first + i``, и это объявление сервера, а не арифметика.
+    Отрезки и кадры в них — в таблице каждой ступени (``/table``): у оригинала
+    группы кадров свои, у ступеней — по 120.
     """
     db, task, project, user, role, video = _resolve_video(task_id, video_id)
     if db is None:
@@ -479,33 +435,32 @@ def video_clip(task_id, video_id):
     try:
         if video.mode != "annotate":
             return jsonify({"error": "Это видео загружено для нарезки на кадры."}), 409
-        index, err = _clip_index(db, video)
+        index, src, err = _clip_index(db, video)
         if err:
             return err
         body = chunklib.manifest(index)
-        # Ответ подписан состоянием: тот же адрес отдаёт и готовый манифест, и
-        # «ещё готовится», и клиент не должен угадывать по набору полей.
         body["status"] = "ready"
+        body["default_quality"] = chunklib.default_for(src)
         quality = request.args.get("q") or body["default_quality"]
-        if not chunklib.known(quality, index["height"]):
-            quality = body["default_quality"]
-        body["quality"] = quality
-        # Каждая ступень идёт со своей готовностью. Предлагать выбор из
-        # неготового — обман: разметчик переключается и получает пустой экран
-        # с бесконечной полосой, потому что копии ещё нет.
-        states = {a.quality: a for a in queue.assets(db, video.id)}
-        total_chunks = chunklib.chunk_count(index["count"])
-        for item in body["qualities"]:
-            asset = states.get(item["id"])
-            item["ready"] = bool(asset and asset.chunks_status == "ready")
-            item["prepared"] = int(asset.chunks_ready) if asset else 0
-            item["chunks"] = total_chunks
-            item["failed"] = bool(
-                asset and (asset.chunks_status == "error" or asset.file_status == "error")
-            )
-        body["state"] = _want_quality(db, video, index, quality)
-        body["ready"] = body["state"]["ready"]
-        body["progress"] = queue.progress_of(db, video.id)
+        body["quality"] = quality if chunklib.known(quality, src) else body["default_quality"]
+        progress = queue.progress_of(db, video.id)
+        # Предлагать выбор из неготового — обман: пустой экран с бесконечной полосой.
+        items = []
+        for item in chunklib.qualities(src):
+            asset, table, error = _rung(db, video, item["id"])
+            why = src["range_why"] if item["id"] == chunklib.SOURCE else None
+            busy = progress if progress and progress.get("quality") == item["id"] else None
+            items.append({
+                **item,
+                "ready": table is not None and not why,
+                "failed": bool(error),
+                "reason": why,
+                "percent": round(100 * busy["processed"] / busy["total"]) if busy and busy["total"] else None,
+                "codec": table["codec_string"] if table else None,
+                "bitrate": table["bitrate"] if table else None,
+            })
+        body["qualities"] = items
+        body["progress"] = progress
         body["fps"] = video.fps
         body["file_name"] = video.file_name
         return jsonify(body)
@@ -513,68 +468,84 @@ def video_clip(task_id, video_id):
         db.close()
 
 
-@bp.get("/api/tasks/<task_id>/videos/<video_id>/chunks/<int:chunk_no>")
-def video_chunk(task_id, video_id, chunk_no):
-    """Перегон: кусок ролика в 120 кадров, который браузер разожмёт сам.
+@bp.get("/api/tasks/<task_id>/videos/<video_id>/table")
+def video_table(task_id, video_id):
+    """Таблица пакетов ступени: отрезки, размеры и зазоры пакетов, кодек.
 
-    Обычно он уже нарезан фоновой работой. Если нет — заказываем его вне
-    очереди и отвечаем «готовится»: держать соединение, пока идёт нарезка,
-    значит занимать поток, нужный всем остальным.
+    Один раз на ступень. Браузер по ней сам вырезает кадры из байтов отрезка
+    и пропускает чужое (звук у камер H.264 лежит вперемешку с видео).
     """
     db, task, project, user, role, video = _resolve_video(task_id, video_id)
     if db is None:
         return video
     try:
-        index, err = _clip_index(db, video)
+        index, src, err = _clip_index(db, video)
         if err:
             return err
-        quality = request.args.get("q") or chunklib.default_for(index["height"])
-        if not chunklib.known(quality, index["height"]):
-            return jsonify({"error": "Неизвестное качество перегона."}), 400
-        try:
-            first, last = chunklib.chunk_bounds(chunk_no, index["count"])
-        except chunklib.VideoError as exc:
-            return jsonify({"error": str(exc)}), 404
+        quality = request.args.get("q") or chunklib.default_for(src)
+        if not chunklib.known(quality, src):
+            return jsonify({"error": "Неизвестное качество."}), 400
+        if quality == chunklib.SOURCE and src["range_why"]:
+            return _failed(f"«Исходное» по частям не отдать: {src['range_why']}.", quality)
+        asset, table, error = _rung(db, video, quality)
+        if table is None:
+            return _failed(error, quality) if error else _preparing(db, video, quality, stage=queue.KIND_VARIANT)
+        body = json.dumps({
+            "quality": quality,
+            "tag": _tag(table, asset),
+            "codec": table["codec_string"],
+            "description": table["extradata"],
+            "width": table["width"],
+            "height": table["height"],
+            "segments": table["segments"],
+            "keys": table["keys"],
+            "sizes": table["sizes"],
+            "gaps": table["gaps"],
+        }, separators=(",", ":")).encode()
+        # Сами жмём: nginx ответы сервисов не сжимает, а размеры пакетов жмутся в разы.
+        resp = Response(gzip.compress(body, 5), mimetype="application/json")
+        resp.headers["Content-Encoding"] = "gzip"
+        # Не кэшируем: ступень могут пересжать, а метка (tag) приезжает в самой таблице.
+        resp.headers["Cache-Control"] = "no-store"
+        return resp
+    finally:
+        db.close()
 
-        source = _video_file(video)
-        path = chunklib.chunk_path(source, chunk_no, quality)
-        if not os.path.exists(path):
-            state = _want_quality(db, video, index, quality)
-            broken = state["file"] == "error" or state["chunks"] == "error"
-            if broken and not queue.pending_count(db, video.id):
-                # Ступень не готовится и уже не будет: прошлая попытка упала,
-                # а новую заводить рано. Молчать и просить снова — это и есть
-                # тот самый бесконечный повтор, из-за которого один битый
-                # ролик клал сервис.
-                return _failed(
-                    state["error"] or f"Ступень {quality} подготовить не удалось.",
-                    quality,
-                )
-            # Этот перегон — вне очереди: на него смотрит живой человек, и он
-            # не должен ждать за фоновой подготовкой чужих ступеней.
-            job = queue.enqueue(db, video.id, queue.KIND_CHUNK,
-                                quality=quality, chunk_no=chunk_no)
-            if job is None:
-                failure = queue.last_failure(
-                    db, video.id, queue.KIND_CHUNK, quality, chunk_no
-                )
-                return _failed(
-                    (failure.error if failure else None)
-                    or f"Перегон {chunk_no} нарезать не удалось.",
-                    quality,
-                )
-            return _preparing(db, video, quality, stage=queue.KIND_CHUNK)
 
-        resp = send_file(path, mimetype="video/mp4", conditional=True)
-        # Какие кадры внутри — говорит сервер, а не считает клиент.
-        resp.headers["X-Chunk-First"] = str(first)
-        resp.headers["X-Chunk-Count"] = str(last - first + 1)
-        resp.headers["X-Chunk-Quality"] = quality
+@bp.get("/api/tasks/<task_id>/videos/<video_id>/source")
+def video_source(task_id, video_id):
+    """Отрезок ступени по Range — и только объявленный в таблице (решение 3, 22.10.2026).
+
+    Любой другой кусок — 416: клиент, ошибшийся в байтах, получает отказ, а не
+    обрывок с чужими кадрами. Какие кадры внутри, повторяют заголовки.
+    """
+    db, task, project, user, role, video = _resolve_video(task_id, video_id)
+    if db is None:
+        return video
+    try:
+        index, src, err = _clip_index(db, video)
+        if err:
+            return err
+        quality = request.args.get("q") or ""
+        if not chunklib.known(quality, src) or (quality == chunklib.SOURCE and src["range_why"]):
+            return jsonify({"error": "Это качество по частям не отдаётся."}), 400
+        asset, table, error = _rung(db, video, quality)
+        if table is None:
+            return _failed(error, quality) if error else _preparing(db, video, quality, stage=queue.KIND_VARIANT)
+        if request.args.get("v") != _tag(table, asset):
+            # Ступень пересжали, а у клиента прежняя таблица: байты не те.
+            return jsonify({"error": "Ступень обновилась.", "code": "stale"}), 409
+        ranges = request.range.ranges if request.range and request.range.units == "bytes" else []
+        seg = table["by_start"].get(ranges[0][0]) if len(ranges) == 1 else None
+        if seg is None or ranges[0][1] != seg["end"] + 1:
+            return jsonify({"error": "Отдаются только объявленные отрезки."}), 416
+
+        resp = send_file(os.path.join(config.DATA_DIR, asset.file_path),
+                         mimetype="application/octet-stream", conditional=True)
+        resp.headers["X-Segment-First"] = str(seg["first"])
+        resp.headers["X-Segment-Count"] = str(seg["count"])
+        resp.headers["X-Segment-Quality"] = quality
         resp.headers["X-Index-Version"] = index["version"]
-        resp.headers["Access-Control-Expose-Headers"] = (
-            "X-Chunk-First, X-Chunk-Count, X-Chunk-Quality, X-Index-Version"
-        )
-        # Перегон по номеру неизменен, пока жив ролик.
         resp.headers["Cache-Control"] = "private, max-age=86400, immutable"
         return resp
     finally:

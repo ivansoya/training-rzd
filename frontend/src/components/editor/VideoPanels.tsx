@@ -243,8 +243,8 @@ function TrackBody({ track, frozen, onPatch, onDelete }: {
 /** Ступени качества: готовые и «Исходное» выбираются, остальные видны с ходом подготовки. */
 export function qualityOptions(list: ClipQuality[]): SelectOption<string>[] {
   return list.map((q) => {
-    const open = q.ready || q.id === "src";
-    const wait = q.failed ? "не вышло" : q.chunks ? `готовится ${Math.round((q.prepared / q.chunks) * 100)} %` : "готовится";
+    const open = q.ready;
+    const wait = q.failed ? "не вышло" : q.reason ?? (q.percent != null ? `готовится ${q.percent} %` : "готовится");
     const h = q.height && q.label !== `${q.height}p` ? `${q.height}p` : undefined;
     return { value: q.id, label: q.label, hint: open ? h : wait, disabled: !open };
   });

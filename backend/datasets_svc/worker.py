@@ -8,16 +8,16 @@ gunicorn, оно занимало поток, который в это врем�
 будет готовиться дольше.
 
 Пулов два, и они не смешиваются. Быстрый берёт то, чего ждёт живой человек:
-таблицу кадров только что загруженного ролика и отдельный перегон, на который
-разметчик смотрит прямо сейчас. Медленный берёт фоновую подготовку ступеней.
-Будь пул один, все воркеры однажды оказались бы заняты копиями, и запрос
-перегона встал бы за ними — то самое, ради чего всё это и переписывалось.
+таблицы кадров и пакетов только что загруженного ролика — с ними оригинал уже
+открывается. Медленный берёт фоновую подготовку ступеней. Будь пул один, все
+воркеры однажды оказались бы заняты копиями, и таблица встала бы за ними.
 
 Падение воркера ничего не ломает: задача остаётся в базе с истёкшей арендой,
 и её подберут — свои же при следующем круге или соседний контейнер.
 """
 import logging
 import os
+import shutil
 import signal
 import threading
 import time
@@ -34,8 +34,7 @@ from datasets_svc import video_queue as queue
 
 log = logging.getLogger("video-worker")
 
-# Быстрых больше одного: пока один разбирает только что загруженный ролик,
-# второй должен успевать отдавать перегоны тем, кто уже размечает.
+# Быстрых больше одного: два ролика, загруженные разом, не ждут друг друга.
 FAST_WORKERS = int(os.environ.get("VIDEO_FAST_WORKERS", "2"))
 # Медленный по умолчанию один. Две копии, идущие разом, готовятся ровно
 # вдвое дольше каждая — выигрыша нет, а машина занята вся.
@@ -114,25 +113,45 @@ def _on_card(db, job, video, title, run):
 # Работы
 # --------------------------------------------------------------------------- #
 def _do_index(db, job, video, path):
-    """Таблица кадров, а следом — весь план подготовки ролика."""
-    index = video_index.ensure(db, video, path)
+    """Таблицы кадров и пакетов, а следом — весь план подготовки ролика."""
+    full = chunklib.build_index(path)
+    index = video_index.get(db, video, path)
+    if index is None:
+        index = video_index.store(db, video, full)
+    elif index["version"] != full["version"]:
+        # Номера кадров этого ролика уже в разметке — подменять таблицу нельзя.
+        raise chunklib.UnrecoverableVideoError("Таблица кадров разошлась с файлом ролика.")
 
     queue.enqueue(db, video.id, queue.KIND_STRIP)
     if video.mode != "annotate":
-        # Окно нарезки играет сам файл — копии и перегоны ему ни к чему.
+        # Окно нарезки играет сам файл — ступени ему ни к чему.
         return {"frames": index["count"]}
-    default = chunklib.default_for(index["height"])
-    for quality in chunklib.ladder_for(index["height"]):
-        # Ступень по умолчанию готовится первой: с неё ролик и откроют.
-        priority = queue.PRIORITY[queue.KIND_VARIANT] + (0 if quality == default else 5)
+
+    # «Исходное» — сам оригинал по Range; почему нельзя (если нельзя) — в error.
+    src = queue.ensure_asset(db, video.id, chunklib.SOURCE)
+    src.file_path, src.file_status, src.error = video.file_path, "ready", full["range_why"]
+    src.width, src.height = full["width"], full["height"]
+    src.size_bytes = os.path.getsize(path)
+    src.frame_index = chunklib.pack_table(full)
+    db.commit()
+    _drop_chunks(path)
+
+    for quality in chunklib.ladder_for(src.frame_index):
+        # 720p первой: она и запасная для браузера без кодека оригинала.
+        priority = queue.PRIORITY[queue.KIND_VARIANT] + (0 if quality == chunklib.DEFAULT_QUALITY else 5)
         queue.enqueue(db, video.id, queue.KIND_VARIANT, quality=quality,
                       priority=priority, total=index["count"])
-    if default == chunklib.SOURCE:
-        # Ролик мельче самой малой ступени: копий не будет, перегоны режем
-        # прямо из него — их всё равно немного.
-        queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=chunklib.SOURCE,
-                      priority=queue.PRIORITY_CHUNKSET_NOW, total=index["count"])
-    return {"frames": index["count"]}
+    return {"frames": index["count"], "range": full["range_why"] or "да"}
+
+
+def _drop_chunks(path):
+    """Перегоны и копия «Исходного» прежней раскладки (до 22.10.2026)."""
+    base, _ = os.path.splitext(path)
+    shutil.rmtree(base + "_chunks", ignore_errors=True)
+    try:
+        os.remove(chunklib.variant_path(path, chunklib.SOURCE))
+    except OSError:
+        pass
 
 
 def _do_strip(db, job, video, path):
@@ -146,9 +165,10 @@ def _do_strip(db, job, video, path):
 
 
 def _do_variant(db, job, video, path):
-    """Полная копия ступени. Из неё потом режутся перегоны — перекладыванием."""
+    """Файл ступени: битрейт не выше оригинала, таблица пакетов — для Range."""
     index = video_index.get(db, video, path)
-    if index is None:
+    src = video_index.table(queue.asset(db, video.id, chunklib.SOURCE))
+    if index is None or src is None:
         raise chunklib.VideoError("Таблица кадров ещё не построена.")
     asset = queue.ensure_asset(db, video.id, job.quality)
     dest = chunklib.variant_path(path, job.quality)
@@ -157,272 +177,33 @@ def _do_variant(db, job, video, path):
     asset.error = None
     db.commit()
 
+    # Потолок — битрейт оригинала: пережатие не сделает картинку лучше камеры (решение 7, 22.10.2026).
+    cap = src["bitrate"] or None
     made = _on_card(db, job, video, f"Копия ролика {job.quality}", lambda device, lease_id: chunklib.make_variant_gpu(
-        path, index, job.quality, dest, device, progress=_Beat(db, job, index["count"], lease_id)))
+        path, index, job.quality, dest, device, progress=_Beat(db, job, index["count"], lease_id), maxrate=cap))
     on_card = made is not None
     if made is None:
         made = chunklib.make_variant(
-            path, index, job.quality, dest, progress=_Beat(db, job, index["count"])
+            path, index, job.quality, dest, progress=_Beat(db, job, index["count"]), maxrate=cap
+        )
+    table = chunklib.build_index(made["path"])
+    if table["count"] != index["count"] or table["range_why"]:
+        raise chunklib.VideoError(
+            f"Ступень {job.quality} не годится: {table['range_why'] or str(table['count']) + ' кадров'}."
         )
     asset.file_status = "ready"
     asset.file_path = _rel(made["path"])
     asset.width, asset.height = made["width"], made["height"]
     asset.size_bytes = made["size_bytes"]
-    asset.chunks_total = chunklib.chunk_count(index["count"])
+    asset.frame_index = chunklib.pack_table(table)
     db.commit()
-
-    # Копия готова — сразу и нарезаем. «Когда выберут» тут не работает:
-    # выбрать можно только готовую ступень, а готовой она станет только если
-    # её нарезать. Раз копия уже сделана, нарезка из неё — перекладывание
-    # пакетов, и стоит она недорого.
-    first = job.quality == chunklib.default_for(index["height"])
-    queue.enqueue(db, video.id, queue.KIND_CHUNKSET, quality=job.quality,
-                  priority=queue.PRIORITY_CHUNKSET_NOW if first else None,
-                  total=index["count"])
-    return {"quality": job.quality, "bytes": made["size_bytes"], "карта": on_card}
-
-
-def _source_for(db, video, path, quality):
-    """Откуда резать перегоны этой ступени: из копии, если она готова.
-
-    Возвращает ``(путь, позиционная ли нумерация)``. В копии кадры лежат
-    подряд и считаются по порядку; в оригинале номер ищется в таблице времён.
-    """
-    if quality == chunklib.SOURCE:
-        return path, False
-    asset = queue.asset(db, video.id, quality)
-    if asset and asset.file_status == "ready" and asset.file_path:
-        variant = _abs(asset.file_path)
-        if os.path.exists(variant):
-            return variant, True
-    return path, False
-
-
-def _do_chunkset(db, job, video, path):
-    try:
-        return _cut_chunkset(db, job, video, path)
-    finally:
-        # Копия «Исходного» нужна только на время нарезки, а весит как сам ролик.
-        try:
-            os.remove(chunklib.variant_path(path, chunklib.SOURCE))
-        except OSError:
-            pass
-
-
-def _cut_chunkset(db, job, video, path):
-    """Все перегоны ступени. Из копии это перекладывание пакетов, и оно
-    настолько дешевле перекодирования, что нарезать всё разом проще, чем
-    заводить машинерию «по требованию»."""
-    index = video_index.get(db, video, path)
-    if index is None:
-        raise chunklib.VideoError("Таблица кадров ещё не построена.")
-    quality = job.quality or chunklib.default_for(index["height"])
-    asset = queue.ensure_asset(db, video.id, quality)
-    total = chunklib.chunk_count(index["count"])
-    source, positional = _source_for(db, video, path, quality)
-    if quality == chunklib.SOURCE:
-        # «Исходное» на карте: копия в рост оригинала, а из неё — перекладыванием, как у ступеней.
-        copy = chunklib.variant_path(path, quality)
-        if _on_card(db, job, video, "«Исходное» ролика", lambda device, lease_id: chunklib.make_variant_gpu(
-                path, index, quality, copy, device, progress=_Beat(db, job, index["count"], lease_id))):
-            source, positional = copy, True
-
-    asset.chunks_status = "building"
-    asset.chunks_total = total
-    asset.chunks_dir = _rel(chunklib.chunks_dir(path, quality))
-    asset.error = None
-    db.commit()
-
-    def dest_for(chunk_no):
-        return chunklib.chunk_path(path, chunk_no, quality)
-
-    beat = _Beat(db, job, index["count"])
-    made = 0
-    if positional:
-        try:
-            made = chunklib.cut_from_variant(
-                source, index["count"], dest_for, progress=beat
-            )
-            _check_first_chunk(dest_for(0), index["count"])
-        except chunklib.VideoError as exc:
-            # Копия не годится под перекладывание. Резать её перекодированием
-            # можно, но это лечение симптома: следующий же перегон по
-            # требованию упрётся в то же самое и снова будет стоить секунд.
-            # Поэтому копию переделываем, а нарезку возвращаем в очередь —
-            # она пойдёт следом за новой копией и уже переложится.
-            log.warning("копия %s не разложилась перекладыванием: %s", quality, exc)
-            _wipe_chunks(path, total, quality)
-            if _rebuild_variant(db, video, path, quality, asset, index):
-                raise chunklib.VideoError(
-                    f"Копия {quality} переделывается."
-                ) from exc
-            # Копию «Исходного» не переделывают — режем из оригинала, а не пережимаем пережатое.
-            source, positional = path, False
-            made = 0
-    if not made:
-        made = chunklib.cut_all(
-            source, index, quality, dest_for,
-            progress=beat, skip_existing=True, positional=positional,
-        )
-
-    ready = _count_ready(path, total, quality)
-    asset.chunks_ready = ready
-    asset.chunks_status = "ready" if ready >= total else "error"
-    if ready < total:
-        asset.error = f"Нарезано {ready} перегонов из {total}."
-    db.commit()
-    if ready < total:
-        raise chunklib.VideoError(asset.error)
-
-    freed = _drop_variant(db, path, asset)
-    return {"quality": quality, "chunks": ready, "копия убрана": freed}
-
-
-def _drop_variant(db, path, asset):
-    """Убрать копию ступени: перегоны нарезаны, и она своё отслужила.
-
-    Копия и её перегоны — это одни и те же байты дважды: перегон вырезается из
-    копии перекладыванием пакетов, а не пересжатием. На двадцатиминутном
-    ролике 1080p это 256 МБ, лежащих зря.
-
-    Копия нужна ровно двум вещам, и обе уже не про неё. Нарезка всей ступени —
-    закончилась. Кадр для полуавтомата — берётся из готового перегона, а не из
-    копии. Остаётся починка одиночного перегона, если файл потеряется: она
-    пойдёт перекодированием из оригинала, десять секунд на перегон, и случай
-    этот редкий.
-
-    ``file_status`` не трогаем: он про то, удалась ли копия, а не про то, лежит
-    ли она сейчас. Есть ли файл — говорит ``file_path``, его и снимаем; на него
-    и смотрит ``_source_for``.
-    """
-    if asset.quality == chunklib.SOURCE or not asset.file_path:
-        return 0
-    variant = _abs(asset.file_path)
-    try:
-        freed = os.path.getsize(variant)
-        os.remove(variant)
-    except OSError:
-        freed = 0
-    asset.file_path = None
-    asset.size_bytes = None
-    db.commit()
-    if freed:
-        log.info("копия %s убрана, освобождено %s МБ",
-                 asset.quality, round(freed / 1024 / 1024))
-    return freed
-
-
-def _do_chunk(db, job, video, path):
-    """Один перегон — тот, которого ждёт живой разметчик."""
-    index = video_index.get(db, video, path)
-    if index is None:
-        raise chunklib.VideoError("Таблица кадров ещё не построена.")
-    quality = job.quality or chunklib.default_for(index["height"])
-    dest = chunklib.chunk_path(path, job.chunk_no, quality)
-    if os.path.exists(dest):
-        return {"skipped": True}
-    source, positional = _source_for(db, video, path, quality)
-
-    if positional:
-        try:
-            def dest_for(_no):
-                return dest
-
-            if chunklib.cut_from_variant(
-                source, index["count"], dest_for, only=job.chunk_no
-            ):
-                # На этот перегон смотрит человек: лучше проверить лишний раз,
-                # чем показать ему кашу вместо кадра.
-                first, last = chunklib.chunk_bounds(job.chunk_no, index["count"])
-                got = chunklib.frame_count_of(dest)
-                if got != last - first + 1:
-                    raise chunklib.VideoError(
-                        f"Переложенный перегон читается как {got} кадров "
-                        f"вместо {last - first + 1}."
-                    )
-                _bump_ready(db, video.id, quality)
-                return {"chunk": job.chunk_no, "remuxed": True}
-        except chunklib.VideoError as exc:
-            log.warning("перегон %s не переложился: %s", job.chunk_no, exc)
-            try:
-                os.remove(dest)
-            except OSError:
-                pass
-
-    chunklib.cut_chunk(source, index, job.chunk_no, quality, dest,
-                       positional=positional)
-    _bump_ready(db, video.id, quality)
-    return {"chunk": job.chunk_no}
-
-
-def _rebuild_variant(db, video, path, quality, asset, index):
-    """Выбросить негодную копию ступени и заказать новую.
-
-    Нужно ровно один раз в жизни ролика: копии, сделанные до того, как кадрам
-    перестали навязывать тип из исходника, опорных на границах перегонов не
-    имеют. Чинится переделкой, а не вечным перекодированием при каждом
-    обращении. Повторов бояться нечего — число попыток у задачи ограничено.
-    """
-    if quality == chunklib.SOURCE:
-        return False
-    try:
-        os.remove(chunklib.variant_path(path, quality))
-    except OSError:
-        pass
-    asset.file_status = "pending"
-    asset.file_path = None
-    asset.chunks_status = "pending"
-    asset.chunks_ready = 0
-    db.commit()
-    queue.enqueue(db, video.id, queue.KIND_VARIANT, quality=quality,
-                  total=index["count"])
-    return True
-
-
-def _check_first_chunk(path, total):
-    """Убедиться, что переложенный перегон вообще читается.
-
-    Счётчик пакетов при перекладывании сходится по построению — а вот
-    контейнер может выйти таким, что его не откроет никто. Проверяем один
-    перегон: если сломано, сломано одинаково во всех.
-    """
-    want = chunklib.chunk_bounds(0, total)[1] + 1
-    got = chunklib.frame_count_of(path)
-    if got != want:
-        raise chunklib.VideoError(
-            f"Переложенный перегон читается как {got} кадров вместо {want}."
-        )
-
-
-def _wipe_chunks(path, total, quality):
-    """Убрать перегоны ступени — перед тем как нарезать их иначе."""
-    for n in range(total):
-        try:
-            os.remove(chunklib.chunk_path(path, n, quality))
-        except OSError:
-            pass
-
-
-def _count_ready(path, total, quality):
-    return sum(
-        1 for n in range(total)
-        if os.path.exists(chunklib.chunk_path(path, n, quality))
-    )
-
-
-def _bump_ready(db, video_id, quality):
-    asset = queue.asset(db, video_id, quality)
-    if asset is not None and asset.chunks_status != "ready":
-        asset.chunks_ready = asset.chunks_ready + 1
-        db.commit()
+    return {"quality": job.quality, "Мбит/с": round(table["bitrate"] / 1e6, 2), "карта": on_card}
 
 
 HANDLERS = {
     queue.KIND_INDEX: _do_index,
     queue.KIND_STRIP: _do_strip,
     queue.KIND_VARIANT: _do_variant,
-    queue.KIND_CHUNKSET: _do_chunkset,
-    queue.KIND_CHUNK: _do_chunk,
 }
 
 
@@ -477,14 +258,11 @@ def _mark_failed(db, job, exc):
     знает, а страница смотрит на ступень — и показывала бы полосу, за которой
     уже ничего не происходит.
     """
-    if job.kind not in (queue.KIND_VARIANT, queue.KIND_CHUNKSET) or not job.quality:
+    if job.kind != queue.KIND_VARIANT or not job.quality:
         return
     try:
         asset = queue.ensure_asset(db, job.video_id, job.quality)
-        if job.kind == queue.KIND_VARIANT:
-            asset.file_status = "error"
-        else:
-            asset.chunks_status = "error"
+        asset.file_status = "error"
         asset.error = str(exc)[:2000]
         db.commit()
     except Exception:  # noqa: BLE001
@@ -504,8 +282,7 @@ def loop(kinds, name):
                 db.close()
                 _stop.wait(IDLE_SLEEP)
                 continue
-            log.info("%s взял %s %s %s", name, job.kind, job.quality or "",
-                     job.chunk_no if job.chunk_no >= 0 else "")
+            log.info("%s взял %s %s", name, job.kind, job.quality or "")
             job_id = job.id
             try:
                 run_job(db, job)

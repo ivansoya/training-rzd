@@ -1283,12 +1283,34 @@ export function videoFrameUrl(taskId: string, videoId: string, frameNo: number):
   return `/api/tasks/${taskId}/videos/${videoId}/frame?n=${frameNo}`;
 }
 
-/** Перегон: кусок ролика, объявленный сервером вместе со своими кадрами. */
-export interface ClipChunk {
+/** Отрезок ступени: целые группы кадров от опорного, границы объявил сервер. */
+export interface ClipSegment {
   n: number;
   /** Номер первого кадра. Клиент его не вычисляет — он его читает. */
   first: number;
   count: number;
+  /** Байты отрезка в файле ступени, включительно: ровно их и просят по Range. */
+  start: number;
+  end: number;
+}
+
+/** Таблица пакетов ступени: по ней клиент вырезает кадры из байтов отрезка. */
+export interface ClipTable {
+  quality: string;
+  /** Метка файла ступени, уходит в адрес отрезка: пересжатая ступень не возьмёт байты из кэша. */
+  tag: string;
+  codec: string;
+  /** avcC/hvcC в base64 — описание потока для декодера. */
+  description: string;
+  width: number;
+  height: number;
+  segments: ClipSegment[];
+  /** Номера опорных кадров. */
+  keys: number[];
+  /** Размер кадра i (порядок разжатия здесь равен порядку показа). */
+  sizes: number[];
+  /** Сколько байт чужого (звук, заголовки) лежит перед кадром i. */
+  gaps: number[];
 }
 
 /** Ступень качества: исходное или уменьшенное, как у видеосервисов. */
@@ -1296,22 +1318,16 @@ export interface ClipQuality {
   id: string;
   label: string;
   height: number | null;
-  /** Перегоны нарезаны целиком. Только такую ступень и предлагают выбрать. */
+  /** Файл и таблица готовы. Только такую ступень и предлагают выбрать. */
   ready: boolean;
-  /** Сколько перегонов уже готово из скольких — для доли в меню. */
-  prepared: number;
-  chunks: number;
   failed: boolean;
-}
-
-/** Готовность одной ступени: сколько перегонов лежит и что с ней делается. */
-export interface ClipQualityState {
-  quality: string;
-  ready: number;
-  total: number;
-  file: "pending" | "building" | "ready" | "error";
-  chunks: "pending" | "building" | "ready" | "error";
-  error: string | null;
+  /** Почему «Исходное» не отдаётся по частям (кодек, B-кадры, контейнер). */
+  reason: string | null;
+  /** Сколько процентов ступени уже сжато, пока она готовится. */
+  percent: number | null;
+  /** Строка кодека для VideoDecoder: по ней решают, разжимает ли браузер. */
+  codec: string | null;
+  bitrate: number | null;
 }
 
 /** Что сейчас делает воркер с этим роликом. */
@@ -1332,11 +1348,6 @@ export interface ClipManifest {
   width: number;
   height: number;
   rate: [number, number];
-  chunk_frames: number;
-  chunks: ClipChunk[];
-  /** Сколько перегонов выбранной ступени уже нарезано. */
-  ready: number;
-  state: ClipQualityState;
   progress: ClipProgress | null;
   /** Что можно выбрать и что выбрано сейчас. */
   qualities: ClipQuality[];
@@ -1370,13 +1381,13 @@ export async function fetchClip(
   );
 }
 
-export function chunkUrl(
-  taskId: string,
-  videoId: string,
-  chunkNo: number,
-  quality: string
-): string {
-  return `/api/tasks/${taskId}/videos/${videoId}/chunks/${chunkNo}?q=${quality}`;
+export function tableUrl(taskId: string, videoId: string, quality: string): string {
+  return `/api/tasks/${taskId}/videos/${videoId}/table?q=${encodeURIComponent(quality)}`;
+}
+
+/** Адрес отрезка: байты просят заголовком Range, метка — чтобы не взять чужие из кэша. */
+export function sourceUrl(taskId: string, videoId: string, quality: string, tag: string): string {
+  return `/api/tasks/${taskId}/videos/${videoId}/source?q=${encodeURIComponent(quality)}&v=${encodeURIComponent(tag)}`;
 }
 
 /** Положение объекта, заданное рукой. Между ключевыми кадрами считается. */

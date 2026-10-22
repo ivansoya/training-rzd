@@ -1,4 +1,4 @@
-"""Опорные кадры копии стоят на границах перегонов. Без базы и без сервера.
+"""Опорные кадры копии ступени стоят ровно через 120 — по ним режутся отрезки. Без базы и без сервера.
 
 Это регрессия на самую дорогую ошибку конвейера. Кадр, декодированный из
 исходника, помнит, чем он там был, и libx264 верит этому буквально: кадр,
@@ -20,7 +20,7 @@ import os
 import av
 import pytest
 from datasets_svc.video_chunks import (
-    CHUNK_FRAMES,
+    SEGMENT_FRAMES,
     _VARIANT_X264,
     _Writer,
     _params,
@@ -59,7 +59,7 @@ def make(tmp_path, pict_type):
     """Копия ступени из кадров, которым заранее навязан тип."""
     dest = str(tmp_path / "variant.mp4")
     params = _params("480", *SIZE)
-    writer = _Writer(av, dest, RATE, params["size"], params, CHUNK_FRAMES,
+    writer = _Writer(av, dest, RATE, params["size"], params, SEGMENT_FRAMES,
                      x264=_VARIANT_X264)
     for i in range(FRAMES):
         frame = av.VideoFrame.from_image(paint(i))
@@ -74,7 +74,7 @@ def test_опорные_стоят_ровно_на_границах_перего
     path = make(tmp_path, lambda i: "I" if i % 50 == 0 else "P")
     total, keys = keyframes(path)
     assert total == FRAMES
-    assert keys == list(range(0, FRAMES, CHUNK_FRAMES)), (
+    assert keys == list(range(0, FRAMES, SEGMENT_FRAMES)), (
         "копия унаследовала опорные кадры исходника — перегоны из неё "
         "придётся перекодировать, а не перекладывать"
     )
@@ -85,21 +85,21 @@ def test_чужой_тип_кадра_не_добавляет_опорных(tmp
     границах перегонов."""
     path = make(tmp_path, lambda i: "I" if i % 10 == 0 else "P")
     _total, keys = keyframes(path)
-    assert keys == list(range(0, FRAMES, CHUNK_FRAMES))
+    assert keys == list(range(0, FRAMES, SEGMENT_FRAMES))
 
 
 def test_без_навязанного_типа_ничего_не_ломается(tmp_path):
     path = make(tmp_path, lambda _i: "NONE")
     total, keys = keyframes(path)
     assert total == FRAMES
-    assert keys == list(range(0, FRAMES, CHUNK_FRAMES))
+    assert keys == list(range(0, FRAMES, SEGMENT_FRAMES))
 
 
-@pytest.mark.parametrize("count", [1, CHUNK_FRAMES - 1, CHUNK_FRAMES])
+@pytest.mark.parametrize("count", [1, SEGMENT_FRAMES - 1, SEGMENT_FRAMES])
 def test_короткая_копия_остаётся_одним_перегоном(tmp_path, count):
     dest = str(tmp_path / f"short-{count}.mp4")
     params = _params("480", *SIZE)
-    writer = _Writer(av, dest, RATE, params["size"], params, CHUNK_FRAMES,
+    writer = _Writer(av, dest, RATE, params["size"], params, SEGMENT_FRAMES,
                      x264=_VARIANT_X264)
     for i in range(count):
         frame = av.VideoFrame.from_image(paint(i))

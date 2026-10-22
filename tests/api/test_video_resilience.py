@@ -8,7 +8,7 @@
 
 Отсюда три свойства, которые тут и проверяются: неготовое — это «202», а не
 ошибка и не зависшее соединение; одна и та же работа не заводится дважды;
-упавшая работа помнит, что упала.
+сломанная ступень помнит, что сломана.
 """
 import concurrent.futures as futures
 import time
@@ -38,9 +38,8 @@ def fresh(api, task, tall_video_file):
     return body
 
 
-def ask_chunk(api, video, n, quality=None):
-    return api.get(clip_url(video["task_id"], video["id"]) + f"/chunks/{n}",
-                   params={"q": quality} if quality else None)
+def ask_table(api, video, quality):
+    return api.get(clip_url(video["task_id"], video["id"]) + "/table", params={"q": quality})
 
 
 # --------------------------------------------------------------------------- #
@@ -57,11 +56,11 @@ def test_ролик_на_подготовке_отвечает_202_а_не_ош�
         assert res.headers.get("Retry-After")
 
 
-def test_неготовый_перегон_отвечает_202_и_говорит_когда_вернуться(api, fresh):
-    """Держать соединение, пока идёт нарезка, значит занимать поток, нужный
+def test_неготовая_ступень_отвечает_202_и_говорит_когда_вернуться(api, fresh):
+    """Держать соединение, пока ступень жмётся, значит занимать поток, нужный
     всем остальным. Клиенту говорят «готовится» и отпускают."""
-    wait_clip(api, fresh["task_id"], fresh["id"], chunks=False)
-    res = ask_chunk(api, fresh, 1, "480")
+    wait_clip(api, fresh["task_id"], fresh["id"], ready=False)
+    res = ask_table(api, fresh, "480")
     assert res.status_code in (200, 202), res.text
     if res.status_code == 202:
         body = res.json()
@@ -71,85 +70,80 @@ def test_неготовый_перегон_отвечает_202_и_говори�
 
 
 def test_ответ_приходит_быстро_даже_когда_ничего_не_готово(api, fresh):
-    """Смысл всей переделки: запрос перегона больше не ждёт перекодирования.
-    Секунда с запасом — это про сеть и базу, а не про кодировщик."""
-    wait_clip(api, fresh["task_id"], fresh["id"], chunks=False)
+    """Запрос ступени не ждёт сжатия. Секунды с запасом — это про сеть и базу."""
+    wait_clip(api, fresh["task_id"], fresh["id"], ready=False)
     started = time.monotonic()
-    res = ask_chunk(api, fresh, 1, "480")
+    res = ask_table(api, fresh, "480")
     spent = time.monotonic() - started
     assert res.status_code in (200, 202)
-    assert spent < 5.0, f"ответ шёл {spent:.1f} с — нарезка снова в запросе?"
+    assert spent < 5.0, f"ответ шёл {spent:.1f} с — сжатие снова в запросе?"
 
 
 # --------------------------------------------------------------------------- #
 # Одна работа — один раз
 # --------------------------------------------------------------------------- #
-def test_толпа_за_одним_перегоном_заводит_одну_работу(api, db, fresh):
+def test_толпа_за_одной_ступенью_заводит_одну_работу(api, db, fresh):
     """Шестнадцать разметчиков, открывших ролик разом, не должны запустить
     шестнадцать кодировщиков. Повтор отсекает база, а не проверка в коде:
     между проверкой и вставкой помещается второй такой же запрос."""
-    wait_clip(api, fresh["task_id"], fresh["id"], chunks=False)
+    wait_clip(api, fresh["task_id"], fresh["id"], ready=False)
     with futures.ThreadPoolExecutor(max_workers=16) as pool:
-        answers = list(pool.map(lambda _: ask_chunk(api, fresh, 1, "480"), range(16)))
+        answers = list(pool.map(lambda _: ask_table(api, fresh, "480"), range(16)))
 
-    assert all(r.status_code in (200, 202) for r in answers), \
-        [r.status_code for r in answers]
-    rows = jobs_of(db, fresh["id"], kind="chunk", chunk_no=1)
-    for_480 = [j for j in rows if j["quality"] == "480"]
-    assert len(for_480) <= 1, f"на один перегон завели {len(for_480)} работ"
+    assert all(r.status_code in (200, 202) for r in answers), [r.status_code for r in answers]
+    for_480 = [j for j in jobs_of(db, fresh["id"], kind="variant") if j["quality"] == "480"]
+    assert len(for_480) == 1, f"на одну ступень завели {len(for_480)} работ"
 
 
-def test_за_концом_ролика_работа_не_заводится(api, db, fresh):
-    """Ошибка в номере перегона не должна оборачиваться работой в очереди."""
-    wait_clip(api, fresh["task_id"], fresh["id"], chunks=False)
-    res = ask_chunk(api, fresh, 9999)
-    assert res.status_code == 404
-    assert jobs_of(db, fresh["id"], kind="chunk", chunk_no=9999) == []
+def test_неизвестная_ступень_работы_не_заводит(api, db, fresh):
+    """Ошибка в имени качества не должна оборачиваться работой в очереди."""
+    wait_clip(api, fresh["task_id"], fresh["id"], ready=False)
+    assert ask_table(api, fresh, "9999").status_code == 400
+    assert [j for j in jobs_of(db, fresh["id"]) if j["quality"] == "9999"] == []
 
 
 # --------------------------------------------------------------------------- #
 # Отказ помнится
 # --------------------------------------------------------------------------- #
-def _plant_failure(db, video_id, kind, quality="", chunk_no=-1, error="сломалось"):
-    """Подкладываем в очередь упавшую работу.
+def _break_rung(db, video_id, quality, error):
+    """Ступень, которую воркер сдал безнадёжной (так её отмечает ``_mark_failed``).
 
-    Сломать настоящий ролик так, чтобы он прошёл проверку на загрузке и упал
-    в воркере, из теста нельзя. А проверить надо именно память об отказе —
-    ровно она отличает «не смогли» от «долбим до последнего».
+    Сломать настоящий ролик так, чтобы он прошёл загрузку и упал в воркере, из
+    теста нельзя. Проверить же надо память об отказе — ровно она отличает «не
+    смогли» от «долбим до последнего».
     """
     with db.cursor() as cur:
         cur.execute(
-            "INSERT INTO video_jobs (id, video_id, kind, quality, chunk_no,"
-            " priority, status, attempts, error, created_at, finished_at)"
-            " VALUES (gen_random_uuid(), %s, %s, %s, %s, 20, 'error', 3, %s,"
-            " now(), now())",
-            (video_id, kind, quality, chunk_no, error),
+            "UPDATE video_assets SET file_status = 'error', file_path = NULL, error = %s"
+            " WHERE video_id = %s AND quality = %s",
+            (error, video_id, quality),
         )
 
 
-def test_упавший_перегон_отвечает_отказом_а_не_новой_попыткой(api, db, fresh):
-    wait_clip(api, fresh["task_id"], fresh["id"], chunks=False)
-    _plant_failure(db, fresh["id"], "chunk", "480", 1, "кодировщик не смог")
+def test_сломанная_ступень_отвечает_отказом_а_не_новой_попыткой(api, db, fresh):
+    wait_clip(api, fresh["task_id"], fresh["id"], quality="480")
+    _break_rung(db, fresh["id"], "480", "кодировщик не смог")
 
-    res = ask_chunk(api, fresh, 1, "480")
+    res = ask_table(api, fresh, "480")
     assert res.status_code == 409, res.text
     body = res.json()
     assert body["status"] == "failed"
     assert "кодировщик не смог" in body["error"]
+    clip = wait_clip(api, fresh["task_id"], fresh["id"], ready=False)
+    assert next(q for q in clip["qualities"] if q["id"] == "480")["failed"] is True
 
 
-def test_упавшая_работа_не_заводится_заново_сразу(api, db, fresh):
-    """Именно это и клало сервис: каждое движение по таймлайну по битому
-    ролику заводило новую полную нарезку."""
-    wait_clip(api, fresh["task_id"], fresh["id"], chunks=False)
-    _plant_failure(db, fresh["id"], "chunk", "480", 2)
+def test_сломанная_ступень_не_пережимается_на_каждый_взгляд(api, db, fresh):
+    """Именно это и клало сервис: каждое движение по ролику заводило новую работу."""
+    wait_clip(api, fresh["task_id"], fresh["id"], quality="480")
+    _break_rung(db, fresh["id"], "480", "сломалось")
 
-    before = len(jobs_of(db, fresh["id"], kind="chunk", chunk_no=2))
+    before = len(jobs_of(db, fresh["id"], kind="variant"))
     for _ in range(10):
-        ask_chunk(api, fresh, 2, "480")
-    after = jobs_of(db, fresh["id"], kind="chunk", chunk_no=2)
+        ask_table(api, fresh, "480")
+        api.get(clip_url(fresh["task_id"], fresh["id"]) + "/clip")
+    after = jobs_of(db, fresh["id"], kind="variant")
     assert len(after) == before, f"десять просьб завели {len(after) - before} работ"
-    assert all(j["status"] == "error" for j in after)
 
 
 # --------------------------------------------------------------------------- #
@@ -158,13 +152,17 @@ def test_упавшая_работа_не_заводится_заново_сра
 def test_осиротевшая_работа_возвращается_в_очередь(api, db, fresh):
     """Так выглядит падение воркера снаружи: работа осталась «в работе», но
     её никто не продлевает. Через срок аренды она снова чья-то — иначе ролик,
-    застигнутый рестартом, остался бы недорезанным навсегда."""
-    wait_clip(api, fresh["task_id"], fresh["id"], chunks=False)
+    застигнутый рестартом, остался бы неподготовленным навсегда."""
+    wait_clip(api, fresh["task_id"], fresh["id"], quality="480")
+    # Кинолента к этому времени склеена: её повтор воркер пропустит, ничего не трогая.
+    deadline = time.time() + 60
+    while jobs_of(db, fresh["id"], kind="strip", statuses=["queued", "running"]) and time.time() < deadline:
+        time.sleep(0.5)
     with db.cursor() as cur:
         cur.execute(
             "INSERT INTO video_jobs (id, video_id, kind, quality, chunk_no,"
             " priority, status, attempts, lease_until, created_at, started_at)"
-            " VALUES (gen_random_uuid(), %s, 'chunk', '480', 3, 20, 'running',"
+            " VALUES (gen_random_uuid(), %s, 'strip', '', -1, 25, 'running',"
             " 1, now() - interval '10 minutes', now(), now())"
             " RETURNING id",
             (fresh["id"],),
@@ -196,8 +194,8 @@ def _now(db):
 # --------------------------------------------------------------------------- #
 # Права никуда не делись
 # --------------------------------------------------------------------------- #
-def test_чужому_перегоны_не_отдаются(api, fresh, db):
-    """Перегон — это содержимое проекта. Отдельный путь отдачи не повод
+def test_чужому_ролик_не_отдаётся(api, fresh, db):
+    """Отрезок и таблица — содержимое проекта. Отдельный путь отдачи не повод
     забыть про права."""
     import requests
     from conftest import tag
@@ -215,5 +213,6 @@ def test_чужому_перегоны_не_отдаются(api, fresh, db):
     stranger.post(f"{BASE_URL}/api/auth/login",
                   json={"identity": login, "password": "Test-Passw0rd"})
 
-    res = stranger.get(clip_url(fresh["task_id"], fresh["id"]) + "/chunks/0")
-    assert res.status_code == 403, res.text
+    for path in ("/table", "/source"):
+        res = stranger.get(clip_url(fresh["task_id"], fresh["id"]) + path, params={"q": "480"})
+        assert res.status_code == 403, res.text

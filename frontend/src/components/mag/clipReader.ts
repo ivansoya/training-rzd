@@ -1,23 +1,24 @@
-import { DataStream, MP4BoxBuffer, createFile } from "mp4box";
-import type { Sample } from "mp4box";
-import { chunkUrl } from "../../auth/api";
+import { sourceUrl, tableUrl } from "../../auth/api";
 import { ChunkCache } from "./chunkCache";
 import { clipLog, exposeSnapshot } from "./clipLog";
 import { feedPlan } from "./feedPlan";
 import { Stalled, serialQueue, withDeadline } from "./decodeQueue";
-import type { ClipChunk, ClipManifest, ClipProgress } from "../../auth/api";
+import { fromBase64, packetPositions, sliceSegment, warmOrder } from "./sourcePlan";
+import type { SegmentFrame } from "./sourcePlan";
+import type { ClipManifest, ClipProgress, ClipSegment, ClipTable } from "../../auth/api";
 
-/** Разжатие ролика в браузере: перегоны приезжают видео, кадры достаёт клиент.
+/** Разжатие ролика в браузере: отрезки приезжают байтами файла, кадры достаёт клиент.
  *
- * Раньше кадр приезжал картинкой с сервера — на 2688×1520 один прогрев окна
- * стоил больше сотни мегабайт. Теперь приезжает перегон: 120 кадров видео,
- * которые разжимает `VideoDecoder`.
+ * Раньше кадр приезжал картинкой с сервера, потом — перегоном, пережатой
+ * копией по 120 кадров. С 22.10.2026 браузер просит у самого файла ступени (у
+ * «Исходного» — у оригинала) отрезок по Range и вырезает из байтов кадры по
+ * таблице пакетов сервера.
  *
  * Три правила, на которых всё держится.
  *
- * **Номер кадра не вычисляется.** Перечень перегонов объявлен сервером, и
- * заголовки самого перегона повторяют, какие кадры внутри. Клиент ищет в этом
- * перечне, но никогда не делит на 120 и не считает номер из времени.
+ * **Номер кадра не вычисляется.** Отрезки и кадры в них объявлены сервером в
+ * таблице ступени, и заголовки ответа повторяют, какие кадры внутри. Клиент
+ * ищет в этом перечне, но никогда не делит на 120 и не считает номер из времени.
  *
  * **Порядок показа и порядок разжатия — разные.** Кодировщик переставляет
  * кадры (B-кадры ссылаются вперёд), поэтому декодер отдаёт их не в том
@@ -45,17 +46,15 @@ import type { ClipChunk, ClipManifest, ClipProgress } from "../../auth/api";
 // стоит памяти, поэтому окно заметно уже прежнего.
 const RING_BEHIND = 4;
 const RING_AHEAD = 10;
-// Насколько вперёд тянем перегоны байтами. Три — это около пятнадцати секунд
-// хода вперёд на 25 к/с, и стоит это около мегабайта на перегон. Запас нужен
-// не памяти, а серверу: перегон, которого ещё нет, он режет на месте, и
-// спросив пораньше, мы прячем эту работу.
+// Насколько вперёд тянем отрезки байтами. Три — это около пятнадцати секунд
+// хода вперёд на 25 к/с: проигрывание не упирается в сеть. Тянутся по одному,
+// текущий первым (`warmOrder`).
 const AHEAD_CHUNKS = 3;
 const BEHIND_CHUNKS = 1;
-// Сколько сжатых перегонов держим в памяти. Больше, чем нужно прямо сейчас
+// Сколько сжатых отрезков держим в памяти. Больше, чем нужно прямо сейчас
 // (текущий, три вперёд, один назад): после прыжка в другое место прежние не
 // выбрасываются сразу, а доживают в кэше — вернуться назад тогда ничего не
-// стоит. Восемь перегонов — это около семи мегабайт на пожатой ступени и
-// около двадцати на исходной.
+// стоит. Восемь отрезков — ~13 МБ у «Искры» и до ~150 МБ у камер H.264 26 Мбит/с.
 const CHUNK_CACHE = 8;
 
 /** Ступень качества — её идентификатор из манифеста: «src» или высота. */
@@ -70,31 +69,32 @@ const PREPARE_DEADLINE_MS = 180_000;
 // превращалось в поток запросов, а каждый заводил на сервере новую работу.
 const FAILURE_COOLDOWN_MS = 30_000;
 
-/** Кадр перегона: байты для декодера и его номер в ролике.
+/** Отрезок на руках: кадры вырезаны из байтов, номер кадра в ролике у каждого свой.
  *
- * Номер проставляется здесь и уезжает в декодер меткой времени. Декодер
- * возвращает метку нетронутой, поэтому выданный кадр сам говорит, кто он, —
- * и говорить это он может, даже если декодер тем временем ушёл в следующий
- * перегон. Без этого поток через границу не пустить: у каждого перегона своё
- * время, начинающееся с нуля, и метки соседей совпали бы.
+ * Номер уезжает в декодер меткой времени. Декодер возвращает метку нетронутой,
+ * поэтому выданный кадр сам говорит, кто он, — даже если декодер тем временем
+ * ушёл в следующий отрезок.
  */
-interface ChunkFrame {
-  data: Uint8Array;
-  key: boolean;
-  /** Место в порядке показа внутри перегона. */
-  pres: number;
-  /** Номер кадра в ролике целиком. */
-  no: number;
-}
-
 interface Loaded {
-  chunk: ClipChunk;
-  /** Ступень, в которой перегон реально приехал: с ней настроен декодер. */
+  chunk: ClipSegment;
+  /** Ступень, в которой отрезок реально приехал: с ней настроен декодер. */
   quality: Quality;
   codec: string;
   description: Uint8Array;
   /** Кадры в порядке разжатия — том, в каком их надо скармливать декодеру. */
-  samples: ChunkFrame[];
+  samples: SegmentFrame[];
+}
+
+/** Таблица ступени, развёрнутая для работы: смещения кадров посчитаны один раз. */
+interface Table {
+  quality: Quality;
+  tag: string;
+  codec: string;
+  description: Uint8Array;
+  segments: ClipSegment[];
+  pos: Float64Array;
+  sizes: number[];
+  keys: Set<number>;
 }
 
 export class ClipError extends Error {}
@@ -166,72 +166,6 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** Описание кодека для `VideoDecoder`: avcC без заголовка бокса. */
-function description(sample: Sample): Uint8Array {
-  const entry = sample.description as unknown as Record<string, unknown>;
-  const box = (entry.avcC || entry.hvcC || entry.vpcC || entry.av1C) as
-    | { write: (s: unknown) => void }
-    | undefined;
-  if (!box) throw new ClipError("В перегоне нет описания кодека.");
-  // Порядок байт по умолчанию у mp4box — старшим вперёд, как и в самом mp4.
-  const stream = new DataStream(undefined, 0);
-  box.write(stream);
-  // Первые восемь байт — заголовок бокса; декодеру нужно только содержимое.
-  return new Uint8Array(stream.buffer, 8);
-}
-
-/** Разобрать mp4 перегона на кадры. Синхронно: mp4box отдаёт всё на flush. */
-function demux(bytes: ArrayBuffer): Omit<Loaded, "chunk" | "quality"> {
-  const file = createFile();
-  let codec = "";
-  let desc: Uint8Array | null = null;
-  const samples: ChunkFrame[] = [];
-  let failure: string | null = null;
-
-  file.onError = (err: unknown) => {
-    failure = String(err);
-  };
-  file.onReady = (info) => {
-    const track = info.videoTracks[0];
-    if (!track) {
-      failure = "В перегоне нет видеодорожки.";
-      return;
-    }
-    codec = track.codec;
-    file.setExtractionOptions(track.id, null, { nbSamples: 1_000_000 });
-    file.start();
-  };
-  file.onSamples = (_id, _user, list) => {
-    for (const s of list) {
-      if (!desc) desc = description(s);
-      if (!s.data) continue;
-      samples.push({
-        data: new Uint8Array(s.data),
-        key: s.is_sync,
-        pres: s.cts,   // пока время показа; ниже станет порядковым номером
-        no: -1,
-      });
-    }
-  };
-
-  file.appendBuffer(MP4BoxBuffer.fromArrayBuffer(bytes, 0), true);
-  file.flush();
-
-  if (failure) throw new ClipError(failure);
-  if (!desc || !samples.length) throw new ClipError("Перегон разобрать не удалось.");
-
-  // Номер кадра — место в порядке показа, а не в порядке разжатия. Кодировщик
-  // переставляет кадры, и счётчик выданных здесь соврал бы.
-  [...samples]
-    .sort((a, b) => a.pres - b.pres)
-    .forEach((s, i) => {
-      s.pres = i;
-    });
-
-  return { codec, description: desc, samples };
-}
-
-/** Открытый декодер: пока идём по перегону вперёд, он продолжает работать. */
 /** Открытый декодер: он идёт по ролику, а не по одному перегону.
  *
  * Перегон начинается с опорного кадра, а описание потока у соседних перегонов
@@ -277,9 +211,16 @@ export class ClipReader {
   private quality: Quality;
 
   private loaded = new ChunkCache<Loaded>(CHUNK_CACHE, (key) =>
-    clipLog("кэш", `вытеснен перегон ${key}`)
+    clipLog("кэш", `вытеснен отрезок ${key}`)
   );
   private loading = new Map<string, Promise<Loaded>>();
+  /** Отмена каждой загрузки отдельно: после прыжка устаревшие не делят канал с нужной. */
+  private aborts = new Map<string, AbortController>();
+  /** Растёт на каждый прогрев: прежний проход по очереди останавливается. */
+  private warmGen = 0;
+  /** Таблица текущей ступени; пока её нет, кадры не разжать. */
+  private table: Table | null = null;
+  private tableLoading: Promise<void> | null = null;
   private ring = new Map<number, ImageBitmap>();
   private active: Active | null = null;
   /** Растёт при смене качества. Всё, что начато раньше, в состояние не пишет:
@@ -307,7 +248,6 @@ export class ClipReader {
     this.quality = manifest.quality || manifest.default_quality;
     clipLog("читатель", "открыт", {
       кадров: manifest.frame_count,
-      перегонов: manifest.chunks.length,
       ступень: this.quality,
     });
     exposeSnapshot(() => this.snapshot());
@@ -333,7 +273,8 @@ export class ClipReader {
       закрыт: this.closed,
       кольцо: ring.length ? { сколько: ring.length, от: ring[0], до: ring[ring.length - 1] } : null,
       окно: this.keep,
-      перегоныВПамяти: this.loaded.keys(),
+      таблица: this.table && { ступень: this.table.quality, метка: this.table.tag, отрезков: this.table.segments.length },
+      отрезкиВПамяти: this.loaded.keys(),
       едут: [...this.loading.keys()],
       отказы: [...this.failures.entries()].map(([k, v]) => [k, v.message]),
       текущий: say(this.active),
@@ -341,9 +282,9 @@ export class ClipReader {
     };
   }
 
-  /** Перегон, в котором лежит кадр. Поиск по объявленному перечню. */
-  chunkFor(frameNo: number): ClipChunk | null {
-    const chunks = this.manifest.chunks;
+  /** Отрезок, в котором лежит кадр. Поиск по объявленному перечню; нет таблицы — null. */
+  chunkFor(frameNo: number): ClipSegment | null {
+    const chunks = this.table?.segments ?? [];
     let lo = 0;
     let hi = chunks.length - 1;
     while (lo <= hi) {
@@ -361,8 +302,12 @@ export class ClipReader {
     clipLog("ступень", `${this.quality || "(пусто)"} → ${quality}: всё сбрасываем`);
     this.quality = quality;
     this.gen += 1;
-    // Картинка другая — и сжатые перегоны, и разжатые кадры больше не годятся.
+    // Картинка другая — и таблица, и сжатые отрезки, и разжатые кадры больше не годятся.
     this.dropActive();
+    this.table = null;
+    this.tableLoading = null;
+    this.aborts.forEach((c) => c.abort());
+    this.aborts.clear();
     this.loaded.clear();
     this.loading.clear();
     this.ring.forEach((f) => f.close());
@@ -417,32 +362,38 @@ export class ClipReader {
     });
   }
 
-  /** Притащить соседние перегоны, пока их не спросили.
+  /** Притащить отрезок под курсором и соседей — по одному, текущий первым.
    *
-   * Что тянуть — решает текущее место: три перегона вперёд и один назад.
-   * Заодно это освежает их в кэше, поэтому при обычном ходе по ролику
-   * вытесняется всегда самое дальнее от курсора.
+   * Пять загрузок разом делили канал, и текущий отрезок приезжал за 3-5 с
+   * вместо 1 (замер на voran, 22.10.2026). Устаревшие после прыжка — отменяются.
+   * Заодно прогрев освежает соседей в кэше: вытесняется самое давнее.
    */
   warm(frameNo: number) {
     const here = this.chunkFor(frameNo);
-    if (!here) return;
-    const wanted: number[] = [];
-    for (let i = BEHIND_CHUNKS; i >= 1; i -= 1) wanted.push(here.n - i);
-    wanted.push(here.n);
-    for (let i = 1; i <= AHEAD_CHUNKS; i += 1) wanted.push(here.n + i);
-    for (const n of wanted) {
-      const chunk = this.manifest.chunks[n];
-      if (!chunk) continue;
-      const key = this.key(n);
-      // Всё, что рядом с курсором, — свежее: пусть вытесняется не оно.
-      if (this.loaded.get(key)) continue;
-      if (this.loading.has(key)) continue;
-      clipLog("прогрев", `заказан перегон ${n}`);
-      // Прогрев — ускорение, а не условие работы: перегон всё равно
-      // приедет обычным путём. Отказ здесь глушится намеренно, иначе
-      // каждая неудачная попытка всплывала бы необработанным обещанием.
-      this.load(chunk).catch(() => undefined);
+    if (!here) {
+      this.needTable();
+      return;
     }
+    const segments = this.table!.segments;
+    const order = warmOrder(here.n, segments.length, AHEAD_CHUNKS, BEHIND_CHUNKS);
+    const keep = new Set(order.map((n) => this.key(n)));
+    for (const [key, c] of this.aborts) {
+      if (!keep.has(key)) {
+        clipLog("прогрев", `отменён отрезок ${key}`);
+        c.abort();
+      }
+    }
+    const gen = (this.warmGen += 1);
+    void (async () => {
+      for (const n of order) {
+        if (gen !== this.warmGen || this.closed) return;
+        // Всё, что рядом с курсором, — свежее: пусть вытесняется не оно.
+        if (this.loaded.get(this.key(n))) continue;
+        // Прогрев — ускорение, а не условие работы: отказ глушится, кадр
+        // всё равно попросит отрезок обычным путём.
+        await this.load(segments[n]).catch(() => undefined);
+      }
+    })();
   }
 
   dispose() {
@@ -456,6 +407,7 @@ export class ClipReader {
     this.ring.clear();
     this.loaded.clear();
     this.loading.clear();
+    this.aborts.clear();
   }
 
   // ----------------------------------------------------------------- частное
@@ -464,7 +416,81 @@ export class ClipReader {
     return `${quality}:${chunkNo}`;
   }
 
-  private async load(chunk: ClipChunk): Promise<Loaded> {
+  /** Заказать таблицу текущей ступени, если её ещё никто не везёт. */
+  private needTable() {
+    if (this.table || this.tableLoading || this.closed) return;
+    const gen = this.gen;
+    const quality = this.quality;
+    this.tableLoading = this.loadTable(quality)
+      .then((table) => {
+        if (gen === this.gen && !this.closed) this.table = table;
+      })
+      .catch((err) => {
+        clipLog("таблица", `${quality}: не вышло —`, String(err));
+      })
+      .finally(() => {
+        if (gen === this.gen) this.tableLoading = null;
+      });
+  }
+
+  /** Таблица пакетов ступени: «202» — ступень ещё жмётся, ждём; «409» — не вышло. */
+  private async loadTable(quality: Quality): Promise<Table> {
+    const until = Date.now() + PREPARE_DEADLINE_MS;
+    for (;;) {
+      const res = await fetch(tableUrl(this.taskId, this.videoId, quality), {
+        credentials: "same-origin",
+        signal: this.stop.signal,
+      });
+      clipLog("сеть", `таблица ${quality}: ${res.status}`);
+      if (res.status === 202) {
+        const body = await res.json().catch(() => ({}));
+        this.reportPreparing(body, quality);
+        if (Date.now() >= until) {
+          throw new ClipError(`Ступень ${quality} готовится слишком долго. Попробуйте позже.`);
+        }
+        await sleep(Number(body.retry_after_ms) || 700, this.stop.signal);
+        continue;
+      }
+      if (res.status === 409) {
+        const body = await res.json().catch(() => ({}));
+        const message = body.error || `Ступень ${quality} подготовить не удалось.`;
+        this.failures.set(this.key(-1, quality), { message, at: Date.now() });
+        this.onProgress?.(null);
+        throw new ClipFailure(message);
+      }
+      if (!res.ok) throw new ClipError(`Таблица ступени ${quality} не приехала (${res.status}).`);
+      const body = (await res.json()) as ClipTable;
+      const description = fromBase64(body.description);
+      await this.checkCodec(body.codec, description);
+      this.onProgress?.(null);
+      return {
+        quality,
+        tag: body.tag,
+        codec: body.codec,
+        description,
+        segments: body.segments,
+        pos: packetPositions(body.sizes, body.gaps),
+        sizes: body.sizes,
+        keys: new Set(body.keys),
+      };
+    }
+  }
+
+  private reportPreparing(body: Record<string, unknown>, quality: Quality) {
+    this.onProgress?.(
+      body.processed !== undefined
+        ? {
+            kind: String(body.stage ?? "variant"),
+            quality: String(body.quality ?? quality),
+            status: "running",
+            processed: Number(body.processed ?? 0),
+            total: Number(body.total ?? 0),
+          }
+        : null
+    );
+  }
+
+  private async load(chunk: ClipSegment): Promise<Loaded> {
     const key = this.key(chunk.n);
     const gen = this.gen;
     const cached = this.loaded.get(key);
@@ -472,21 +498,21 @@ export class ClipReader {
     const running = this.loading.get(key);
     if (running) return running;
 
-    const quality = this.quality;
+    const table = this.table!;
+    const abort = new AbortController();
+    this.aborts.set(key, abort);
     const task = (async () => {
-      const bytes = await this.pull(chunk, quality);
-      const parts = demux(bytes);
-      await this.checkCodec(parts.codec, parts.description);
-      if (parts.samples.length !== chunk.count) {
-        throw new ClipError(
-          `В перегоне ${chunk.n} разобралось ${parts.samples.length} кадров ` +
-            `вместо ${chunk.count}.`
-        );
+      const bytes = await this.pull(chunk, table, AbortSignal.any([this.stop.signal, abort.signal]));
+      let samples: SegmentFrame[];
+      try {
+        samples = sliceSegment(bytes, chunk, table.pos, table.sizes, table.keys);
+      } catch (err) {
+        throw new ClipError((err as Error).message);
       }
-      // Номер в ролике проставляем здесь: демуксер про перегон не знает.
-      for (const s of parts.samples) s.no = chunk.first + s.pres;
-      const loaded: Loaded = { chunk, quality, ...parts };
-      // Качество успели переключить, пока перегон ехал: эти байты уже не те,
+      const loaded: Loaded = {
+        chunk, quality: table.quality, codec: table.codec, description: table.description, samples,
+      };
+      // Качество успели переключить, пока отрезок ехал: эти байты уже не те,
       // что просят, и в кэш им нельзя — иначе они лягут под новым ключом.
       if (!this.closed && gen === this.gen) {
         this.loaded.set(key, loaded);
@@ -499,87 +525,64 @@ export class ClipReader {
       return await task;
     } finally {
       this.loading.delete(key);
+      if (this.aborts.get(key) === abort) this.aborts.delete(key);
     }
   }
 
-  /** Забрать байты перегона у сервера, дождавшись, если он их ещё готовит.
+  /** Забрать байты отрезка: Range ровно по объявленным границам.
    *
-   * Ответов три, и они означают разное. «200» — вот перегон. «202» — сервер
-   * взял работу в очередь и ещё не дошёл; это обычный ход дела, а не сбой, и
-   * правильный ответ на него — подождать и спросить снова. «409» — сервер
-   * попробовал и не смог; повторять сразу бессмысленно, поэтому отказ
-   * запоминается и какое-то время выдаётся сразу, без похода по сети.
+   * «206» — вот отрезок. «409» со «stale» — ступень пересжали, таблица
+   * устарела: берём новую. Иной «409» — отказ, он запоминается и какое-то
+   * время выдаётся сразу, без похода по сети. «416» — мы ошиблись в байтах.
    */
-  private async pull(chunk: ClipChunk, quality: Quality): Promise<ArrayBuffer> {
-    const key = this.key(chunk.n, quality);
+  private async pull(chunk: ClipSegment, table: Table, signal: AbortSignal): Promise<ArrayBuffer> {
+    const key = this.key(chunk.n, table.quality);
     const failed = this.failures.get(key);
     if (failed && Date.now() - failed.at < FAILURE_COOLDOWN_MS) {
       throw new ClipFailure(failed.message);
     }
     this.failures.delete(key);
 
-    const until = Date.now() + PREPARE_DEADLINE_MS;
-    for (;;) {
-      const res = await fetch(
-        chunkUrl(this.taskId, this.videoId, chunk.n, quality),
-        { credentials: "same-origin", signal: this.stop.signal }
-      );
+    const res = await fetch(sourceUrl(this.taskId, this.videoId, table.quality, table.tag), {
+      credentials: "same-origin",
+      headers: { Range: `bytes=${chunk.start}-${chunk.end}` },
+      signal,
+    });
+    clipLog("сеть", `отрезок ${chunk.n} (${table.quality}): ${res.status}`);
 
-      clipLog("сеть", `перегон ${chunk.n} (${quality}): ${res.status}`);
-      if (res.status === 202) {
-        const body = await res.json().catch(() => ({}));
-        this.onProgress?.(
-          body.processed !== undefined
-            ? {
-                kind: body.stage ?? "chunk",
-                quality: body.quality ?? quality,
-                status: "running",
-                processed: body.processed ?? 0,
-                total: body.total ?? 0,
-              }
-            : null
-        );
-        if (Date.now() >= until) {
-          throw new ClipError(
-            `Перегон ${chunk.n} готовится слишком долго. Попробуйте позже.`
-          );
-        }
-        await sleep(Number(body.retry_after_ms) || 700, this.stop.signal);
-        continue;
+    if (res.status === 409) {
+      const body = await res.json().catch(() => ({}));
+      if (body.code === "stale" && this.table === table) {
+        this.table = null;
+        this.needTable();
+        throw new ClipError("Ступень обновилась, перечитываю таблицу.");
       }
-
-      if (res.status === 409) {
-        const body = await res.json().catch(() => ({}));
-        const message = body.error || `Перегон ${chunk.n} подготовить не удалось.`;
-        this.failures.set(key, { message, at: Date.now() });
-        this.onProgress?.(null);
-        throw new ClipFailure(message);
-      }
-
-      if (!res.ok) {
-        throw new ClipError(`Перегон ${chunk.n} не приехал (${res.status}).`);
-      }
-
-      // Сервер повторяет в заголовках, какие кадры внутри и в какой ступени.
-      // Расхождение с манифестом означает, что ролик подменили, и разметка
-      // указывает не туда.
-      const first = Number(res.headers.get("X-Chunk-First"));
-      const count = Number(res.headers.get("X-Chunk-Count"));
-      if (first !== chunk.first || count !== chunk.count) {
-        throw new ClipError(
-          `Перегон ${chunk.n} обещает кадры с ${first} (${count} шт.), ` +
-            `а в списке ролика — с ${chunk.first} (${chunk.count} шт.).`
-        );
-      }
-      const got = res.headers.get("X-Chunk-Quality");
-      if (got && got !== quality) {
-        throw new ClipError(
-          `Перегон ${chunk.n} приехал в ступени ${got}, а просили ${quality}.`
-        );
-      }
-      this.onProgress?.(null);
-      return await res.arrayBuffer();
+      const message = body.error || `Отрезок ${chunk.n} отдать не удалось.`;
+      this.failures.set(key, { message, at: Date.now() });
+      throw new ClipFailure(message);
     }
+    if (res.status !== 206) {
+      throw new ClipError(`Отрезок ${chunk.n} не приехал (${res.status}).`);
+    }
+
+    // Сервер повторяет в заголовках, какие кадры внутри и в какой ступени.
+    // Расхождение означает, что ролик подменили, и разметка указывает не туда.
+    const first = Number(res.headers.get("X-Segment-First"));
+    const count = Number(res.headers.get("X-Segment-Count"));
+    if (first !== chunk.first || count !== chunk.count) {
+      throw new ClipError(
+        `Отрезок ${chunk.n} обещает кадры с ${first} (${count} шт.), ` +
+          `а в таблице — с ${chunk.first} (${chunk.count} шт.).`
+      );
+    }
+    const got = res.headers.get("X-Segment-Quality");
+    if (got !== table.quality) {
+      throw new ClipError(`Отрезок ${chunk.n} приехал в ступени ${got}, а просили ${table.quality}.`);
+    }
+    if (res.headers.get("X-Index-Version") !== this.manifest.version) {
+      throw new ClipError("Таблица кадров ролика сменилась — откройте редактор заново.");
+    }
+    return await res.arrayBuffer();
   }
 
   private dropActive() {
@@ -618,8 +621,8 @@ export class ClipReader {
     return 0;
   }
 
-  /** Заказать перегон в фоне, если его ещё никто не везёт. */
-  private want(chunk: ClipChunk) {
+  /** Заказать отрезок в фоне, если его ещё никто не везёт. */
+  private want(chunk: ClipSegment) {
     const key = this.key(chunk.n);
     if (this.loaded.has(key) || this.loading.has(key)) return;
     this.load(chunk).catch(() => undefined);
@@ -633,6 +636,15 @@ export class ClipReader {
    * и говорим «приходите позже».
    */
   private async fill(frameNo: number) {
+    if (!this.table) {
+      // Таблица ступени ещё едет или ступень жмётся: это ожидание, а не отказ.
+      const failed = this.failures.get(this.key(-1));
+      if (failed && Date.now() - failed.at < FAILURE_COOLDOWN_MS) {
+        throw new ClipFailure(failed.message);
+      }
+      this.needTable();
+      throw new ClipPending(RECHECK_MS);
+    }
     const chunk = this.chunkFor(frameNo);
     if (!chunk) throw new ClipError(`Кадра ${frameNo} нет в ролике.`);
     const loaded = this.loaded.get(this.key(chunk.n));
@@ -641,7 +653,7 @@ export class ClipReader {
       if (failed && Date.now() - failed.at < FAILURE_COOLDOWN_MS) {
         throw new ClipFailure(failed.message);
       }
-      clipLog("разжатие", `кадр ${frameNo}: перегона ${chunk.n} нет в памяти`, {
+      clipLog("разжатие", `кадр ${frameNo}: отрезка ${chunk.n} нет в памяти`, {
         едут: [...this.loading.keys()],
         есть: this.loaded.keys(),
       });
@@ -673,7 +685,7 @@ export class ClipReader {
    */
   private seat(
     loaded: Loaded,
-    chunk: ClipChunk,
+    chunk: ClipSegment,
     local: number,
     frameNo: number
   ): Active {
@@ -747,8 +759,9 @@ export class ClipReader {
    * стыке кадр это не дёрнувшаяся картинка, а бокс на соседнем кадре.
    */
   private feed(active: Active, frameNo: number) {
+    const segments = this.table!.segments;
     const plan = feedPlan(
-      this.manifest.chunks,
+      segments,
       active.chunkNo,
       active.fed,
       frameNo + RING_AHEAD,
@@ -783,7 +796,7 @@ export class ClipReader {
     active.fed = plan.fed;
 
     if (plan.wantNext !== null) {
-      const after = this.manifest.chunks[plan.wantNext];
+      const after = segments[plan.wantNext];
       if (after) this.want(after);
     }
   }

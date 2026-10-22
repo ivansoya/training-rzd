@@ -17,7 +17,7 @@ import time
 
 import pytest
 import sample
-from conftest import BASE_URL, clip_url, wait_clip
+from conftest import BASE_URL, clip_url, get_table, wait_clip
 
 # Ответ обычного запроса, пока воркер занят. Секунда — это очень много для
 # запроса, который делает три обращения к базе; берём её именно потому, что
@@ -82,7 +82,7 @@ def test_разметка_сохраняется_пока_режется_вид�
     """Пока готовится ступень, разметчик продолжает работать на другом ролике.
     Сохранение бокса — самый частый запрос редактора, и он не должен зависеть
     от того, что делает кодировщик."""
-    wait_clip(api, busy["task_id"], busy["id"], chunks=False)
+    wait_clip(api, busy["task_id"], busy["id"], ready=False)
     url = clip_url(busy["task_id"], busy["id"]) + "/frames/5/boxes"
     box = {
         "class_index": label_class["class_index"],
@@ -99,11 +99,11 @@ def test_двадцать_клиентов_одного_ролика_не_вал
     """Бригада, открывшая один ролик разом. Ответы могут быть «ещё
     готовится» — это нормально; чего быть не должно, так это пятисотых и
     отвалившихся соединений."""
-    wait_clip(api, busy["task_id"], busy["id"], chunks=False)
+    wait_clip(api, busy["task_id"], busy["id"], ready=False)
 
     def one(n):
-        return api.get(clip_url(busy["task_id"], busy["id"]) + f"/chunks/{n % 2}",
-                       params={"q": "480"})
+        return api.get(clip_url(busy["task_id"], busy["id"]) + "/table",
+                       params={"q": "480" if n % 2 else "720"})
 
     with futures.ThreadPoolExecutor(max_workers=20) as pool:
         answers = list(pool.map(one, range(40)))
@@ -117,7 +117,7 @@ def test_манифест_ролика_отвечает_быстро_при_по
     """Таблица кадров разворачивается один раз на процесс. Раньше она читалась
     с тома и разворачивалась заново на каждый запрос — девяносто тысяч чисел
     на часовом ролике, и всё это в занятом потоке."""
-    wait_clip(api, busy["task_id"], busy["id"], chunks=False)
+    wait_clip(api, busy["task_id"], busy["id"], ready=False)
     spent, answers = timed(
         lambda: api.get(clip_url(busy["task_id"], busy["id"]) + "/clip"), 25
     )
@@ -125,17 +125,20 @@ def test_манифест_ролика_отвечает_быстро_при_по
     assert p95(spent) < CALM_P95, f"95-я доля {p95(spent):.2f} с"
 
 
-def test_отдача_готового_перегона_не_зависит_от_числа_просящих(api, busy):
-    """Готовый перегон — это отдача файла. Его время не должно расти от того,
-    что рядом кто-то ещё смотрит тот же ролик."""
+def test_отдача_готового_отрезка_не_зависит_от_числа_просящих(api, busy):
+    """Готовый отрезок — это отдача куска файла. Его время не должно расти от
+    того, что рядом кто-то ещё смотрит тот же ролик."""
     wait_clip(api, busy["task_id"], busy["id"], quality="480")
-    url = clip_url(busy["task_id"], busy["id"]) + "/chunks/0"
+    table = get_table(api, busy["task_id"], busy["id"], "480")
+    seg = table["segments"][0]
+    url = clip_url(busy["task_id"], busy["id"]) + "/source"
 
     def once():
-        return api.get(url, params={"q": "480"})
+        return api.get(url, params={"q": "480", "v": table["tag"]},
+                       headers={"Range": f"bytes={seg['start']}-{seg['end']}"})
 
     alone, _ = timed(once, 5)
     with futures.ThreadPoolExecutor(max_workers=12) as pool:
         crowd = list(pool.map(lambda _: once(), range(24)))
-    assert all(r.status_code == 200 for r in crowd), [r.status_code for r in crowd]
+    assert all(r.status_code == 206 for r in crowd), [r.status_code for r in crowd]
     assert max(alone) < CALM_MAX

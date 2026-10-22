@@ -23,7 +23,7 @@ const TALL_SAMPLE = process.env.TEST_SAMPLE_TALL || "/tmp/magistral-sample-tall.
 /**
  * Умеет ли браузер стенда разжимать H.264.
  *
- * Перегоны отдаются в H.264 — он есть во всех браузерах, которыми размечают.
+ * Отрезки длинного образца и все ступени — в H.264: он есть во всех браузерах, которыми размечают.
  * Но в Chromium, который приносит с собой Playwright, проприетарных кодеков
  * нет, а настоящий Chrome под Linux ARM64 не собирают. На такой машине проверки
  * покадровой точности пропускаются, и единственным их подтверждением остаётся
@@ -397,7 +397,7 @@ test("шаг стрелкой показывает соседний кадр, а
   await expect.poll(() => frameMark(editor), { timeout: 15_000 }).toBe(2);
 });
 
-test("прыжок по шкале грузит нужный перегон", async ({ page }) => {
+test("прыжок по шкале грузит нужный отрезок", async ({ page }) => {
   test.skip(
     !(await decodesH264(page)),
     "Браузер стенда не разжимает H.264: проверка идёт API-тестом"
@@ -406,16 +406,16 @@ test("прыжок по шкале грузит нужный перегон", as
   const editor = await openEditor(page, project, task);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(0);
 
-  // 200 лежит во втором перегоне: проверяется и прыжок, и подгрузка.
+  // 200 лежит во втором отрезке (150-299): проверяется и прыжок, и подгрузка.
   await seek(editor, 200);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(200);
 
-  // Назад через две границы перегонов — туда, где уже были.
+  // Назад через границу отрезков — туда, где уже были.
   await seek(editor, 5);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(5);
 });
 
-test("граница перегона не теряет и не задваивает кадр", async ({ page }) => {
+test("граница отрезка не теряет и не задваивает кадр", async ({ page }) => {
   test.skip(
     !(await decodesH264(page)),
     "Браузер стенда не разжимает H.264: проверка идёт API-тестом"
@@ -423,19 +423,19 @@ test("граница перегона не теряет и не задваива
   const { project, task } = await longClip(page);
   const editor = await openEditor(page, project, task);
 
-  // Встаём перед стыком и переходим его шагами: 119 — последний кадр первого
-  // перегона, 120 — первый кадр второго.
-  await seek(editor, 118);
-  await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(118);
+  // Встаём перед стыком и переходим его шагами: опорный у образца через 50,
+  // отрезок — три группы, 149 — последний кадр первого, 150 — первый второго.
+  await seek(editor, 148);
+  await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(148);
 
   const forward = control(editor, "Кадр вперёд");
-  for (const expected of [119, 120, 121]) {
+  for (const expected of [149, 150, 151]) {
     await forward.click();
     await expect.poll(() => frameMark(editor), { timeout: 20_000 }).toBe(expected);
   }
 
   await control(editor, "Кадр назад").click();
-  await expect.poll(() => frameMark(editor), { timeout: 20_000 }).toBe(120);
+  await expect.poll(() => frameMark(editor), { timeout: 20_000 }).toBe(150);
 });
 
 test("ступень качества меняет картинку, но не кадр", async ({ page }) => {
@@ -448,9 +448,10 @@ test("ступень качества меняет картинку, но не �
   await seek(editor, 77);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(77);
 
-  // Холст всегда в координатах исходника — о ступени говорит запрошенный перегон.
-  for (const [label, q] of [["480p", "480"], ["Исходное", "src"]]) {
-    const asked = page.waitForRequest((r) => /\/chunks\/\d+\?q=/.test(r.url()) && r.url().endsWith(`q=${q}`));
+  // Холст всегда в координатах исходника — о ступени говорит запрошенный отрезок.
+  // «Исходное» у образца в mpeg4 недоступно: браузер такой кодек не разжимает.
+  for (const [label, q] of [["480p", "480"], ["720p", "720"]]) {
+    const asked = page.waitForRequest((r) => r.url().includes(`/source?q=${q}&`));
     await pickQuality(editor, label);
     await asked;
     // Кадр обязан остаться тем же: иначе «резкость» уводила бы разметчика.
@@ -485,7 +486,7 @@ test("проигрывание не срывает декодер", async ({ pag
   await expect.poll(() => frameMark(editor), { timeout: 20_000 }).toBe(at);
 });
 
-test("проигрывание проходит границу перегона без провала", async ({ page }) => {
+test("проигрывание проходит границу отрезка без провала", async ({ page }) => {
   test.skip(
     !(await decodesH264(page)),
     "Браузер стенда не разжимает H.264: проверка идёт API-тестом"
@@ -493,9 +494,9 @@ test("проигрывание проходит границу перегона 
   const { project, task } = await longClip(page);
   const editor = await openEditor(page, project, task);
 
-  // Встаём незадолго до границы: перегон 0 кончается кадром 119.
-  await seek(editor, 100);
-  await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(100);
+  // Встаём незадолго до границы: отрезок 0 кончается кадром 149.
+  await seek(editor, 130);
+  await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(130);
 
   await editor.locator(".ve-play").click();
   // Пока идёт ролик, время не имеет права убегать от картинки: раньше полоса
@@ -511,9 +512,9 @@ test("проигрывание проходит границу перегона 
 
   const at = await uiFrame(editor);
   // Границу прошли — иначе тест ничего не проверил.
-  expect(at).toBeGreaterThan(120);
+  expect(at).toBeGreaterThan(150);
   await expect(failure(editor)).toHaveCount(0);
-  // Декодер следующего перегона грелся заранее, поэтому картинка не отстала.
+  // Следующий отрезок досыпается в тот же декодер, поэтому картинка не отстала.
   await expect.poll(() => frameMark(editor), { timeout: 20_000 }).toBe(at);
 });
 
@@ -523,10 +524,12 @@ test("на ожидании кадр гаснет, и ничего не дёрг
     "Браузер стенда не разжимает H.264: проверка идёт API-тестом"
   );
   const { project, task } = await longClip(page);
-  // Придерживаем перегон 2: без этого на маленьком ролике ожидание не успевает
-  // возникнуть, и проверять оказывается нечего.
-  await page.route("**/chunks/2*", async (route) => {
-    await new Promise((r) => setTimeout(r, 1500));
+  // Придерживаем всё, кроме первого отрезка: без этого на маленьком ролике
+  // ожидание не успевает возникнуть, и проверять оказывается нечего.
+  let asked = 0;
+  await page.route("**/source?*", async (route) => {
+    asked += 1;
+    if (asked > 1) await new Promise((r) => setTimeout(r, 1500));
     await route.continue();
   });
 
@@ -559,11 +562,11 @@ test("качество можно переключать подряд, и ред
   await seek(editor, 150);
   await expect.poll(() => frameMark(editor), { timeout: 30_000 }).toBe(150);
 
-  // Две ступени подряд: раньше перегон прежнего качества дописывался в кэш
+  // Две ступени подряд: раньше отрезок прежнего качества дописывался в кэш
   // уже после переключения, ожидание застывало и таймлайн переставал двигать
   // кадр — ползунок ездит, картинка стоит.
-  await pickQuality(editor, "Исходное");
   await pickQuality(editor, "480p");
+  await pickQuality(editor, "720p");
 
   await expect.poll(() => frameMark(editor), { timeout: 60_000 }).toBe(150);
   await expect(failure(editor)).toHaveCount(0);
