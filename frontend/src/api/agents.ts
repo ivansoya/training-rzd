@@ -1,7 +1,7 @@
 // Агенты разметки: полка весов, окно запуска в таске и прогоны.
 // Сам граф агента ходит через aug.ts — он лежит там же, где графы аугментаций.
 
-import { asJson, get, post, put, del } from "./http";
+import { ApiError, asJson, get, post, put, patch, del } from "./http";
 
 export interface Weights {
   id: string;
@@ -384,7 +384,9 @@ export interface ExampleItem {
   file_name: string;
   /** Меньшая сторона рамки, px. */
   side: number;
-  image_id: string;
+  /** Кадр проекта или своя картинка с полки — одно из двух. */
+  image_id: string | null;
+  picture_id?: string | null;
   box: [number, number, number, number];
 }
 
@@ -432,6 +434,8 @@ export interface ClassBox {
   video: string | null;
   t: number | null;
   group: number;
+  /** Рамка своей картинки с полки (плитки «Свои картинки»), а не кадра проекта. */
+  picture_id?: string;
 }
 
 export const exampleBoxes = (project: string, classId: string) =>
@@ -441,18 +445,23 @@ export const exampleBoxes = (project: string, classId: string) =>
 export const boxCrop = (image: string, box: number[]) =>
   `/api/agents/examples/boxes/crop?image=${image}&box=${box.map((v) => Math.round(v * 10) / 10).join(",")}`;
 
-/** Набор из выбранных рамок по порядку; `from` — прежний набор того же класса, его векторы не пересчитываются. */
+/** Образец для сборки: рамка на кадре проекта или на своей картинке. */
+export type ExampleRef = { image_id: string; box: number[] } | { picture_id: string; box: number[] };
+
+/** Набор из выбранных рамок по порядку; `from` — прежний набор того же класса, его векторы не пересчитываются.
+ *  Только свои картинки — без проекта и класса, `shelf` — имя полки, оно же имя класса набора. */
 export const examplesByHand = (body: {
-  project: string;
-  class_id: string;
-  items: { image_id: string; box: number[] }[];
+  project?: string;
+  class_id?: string;
+  shelf?: string;
+  items: ExampleRef[];
   from?: string;
 }) => post<{ set: ExampleSet }>("agents/examples", body);
 
 /** «Как видит SAM 3»: проход коллажа над кадром превью картинкой и число проходов. */
 export async function exampleCollage(body: {
   image_id: string;
-  items: { image_id: string; box: number[] }[];
+  items: ExampleRef[];
   side: number;
   tile?: number | null;
   pass: number;
@@ -471,6 +480,61 @@ export const listExamples = (ids: string[]) =>
   get<{ sets: ExampleSet[] }>(`agents/examples?ids=${ids.join(",")}`);
 
 export const exampleCrop = (id: string, uid: string) => `/api/agents/examples/${id}/crops/${uid}`;
+
+// --- Свои картинки на полке (training_svc/pictures.py) ------------------------
+
+/** Своя картинка с рамками; полка — имя класса. `locked` — почему удалить нельзя. */
+export interface Picture {
+  id: string;
+  shelf: string;
+  file_name: string;
+  width: number;
+  height: number;
+  boxes: [number, number, number, number][];
+  locked: string | null;
+  created_at: string;
+}
+
+export const PICTURE_TYPES = ["image/jpeg", "image/png", "image/webp"];
+export const PICTURE_MAX_BYTES = 20 << 20;
+/** Сколько файлов за раз (решение 23.10.2026). */
+export const PICTURE_BATCH = 64;
+
+export const listPictures = () => get<{ pictures: Picture[] }>("agents/pictures");
+
+/** Один файл — один запрос сырым телом, как веса: у каждого своя полоса хода и свой отказ. */
+export function uploadPicture(file: File, shelf: string, onProgress: (part: number) => void): Promise<Picture> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", `/api/agents/pictures?shelf=${encodeURIComponent(shelf)}&name=${encodeURIComponent(file.name)}`);
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable) onProgress(e.loaded / e.total);
+    };
+    xhr.onload = () => {
+      let data: { error?: string; code?: string } = {};
+      try {
+        data = JSON.parse(xhr.responseText);
+      } catch {
+        /* не JSON — ниже ответ без текста */
+      }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(data as Picture);
+      else reject(new ApiError(data.error || `HTTP ${xhr.status}`, xhr.status, data.code));
+    };
+    xhr.onerror = () => reject(new ApiError("Файл не передался — нет связи с сервером.", 0));
+    xhr.send(file);
+  });
+}
+
+export const savePictureBoxes = (id: string, boxes: [number, number, number, number][]) =>
+  patch<Picture>(`agents/pictures/${id}`, { boxes });
+
+export const deletePicture = (id: string) => del<{ ok: true }>(`agents/pictures/${id}`);
+
+export const pictureImage = (id: string, width?: number) =>
+  `/api/agents/pictures/${id}/image${width ? `?w=${width}` : ""}`;
+
+export const pictureCrop = (id: string, box: number[]) =>
+  `/api/agents/pictures/${id}/crop?box=${box.map((v) => Math.round(v * 10) / 10).join(",")}`;
 
 // --- агенты проекта: карточки подключённых и журнал прогонов ------------------
 

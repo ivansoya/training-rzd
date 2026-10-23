@@ -29,7 +29,7 @@ import {
   rowTarget, rowsOf, sam3Side, textHalf, textModel, tileSide, unfinished, upgradeDoc, upstream, withConf, type ClassDef, type FilterRow,
   type NetRow, type PromptRow,
 } from "./agentDoc";
-import { sameName, shapeBox } from "./examplePick";
+import { refOf, sameName, shapeBox } from "./examplePick";
 import AgentClasses from "./AgentClasses";
 import AgentFound from "./AgentFound";
 import AgentInspector from "./AgentInspector";
@@ -843,7 +843,7 @@ function Editor() {
     try {
       const { set: made } = await api.examplesByHand({
         project: t.proj.code, class_id: t.pc.id,
-        items: [...(t.set?.items ?? []).map((it) => ({ image_id: it.image_id, box: it.box })), { image_id: image.id, box: t.box }],
+        items: [...(t.set?.items ?? []).map(refOf), { image_id: image.id, box: t.box }],
         from: t.set?.status === "ready" && t.set.class_id === t.pc.id ? t.set.id : undefined,
       });
       keepSet(made);

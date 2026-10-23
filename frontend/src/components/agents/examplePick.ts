@@ -1,7 +1,8 @@
 // Окно «Образцы класса»: что показать плитками и что добрать случайно.
 // Группа (`ClassBox.group`) — тот же предмет на соседних кадрах ролика (agent_examples.same_object_groups).
 
-import type { ClassBox } from "../../api/agents";
+import { boxCrop, pictureCrop } from "../../api/agents";
+import type { ClassBox, ExampleItem, ExampleRef, Picture } from "../../api/agents";
 import type { TextModel } from "./agentDoc";
 
 export type Band = "all" | "small" | "mid" | "big";
@@ -21,8 +22,15 @@ export const addFor = (model: TextModel) => (model === "sam3" ? 6 : MAX_SET);
 /** Плитка-кнопка: SAM 3 — по одной; YOLOE — все разные, сколько осталось до потолка. */
 export const stepFor = (model: TextModel, have: number) => (model === "sam3" ? 1 : Math.max(0, MAX_SET - have));
 
-/** Образец в наборе: кадр и рамка; `group` есть, только если рамка из списка класса. */
-export interface Picked { uid: string; image_id: string; box: [number, number, number, number]; file_name: string; group?: number }
+/** Образец в наборе: кадр проекта или своя картинка и рамка; `group` есть, только если рамка из списка плиток. */
+export interface Picked {
+  uid: string;
+  image_id: string | null;
+  picture_id?: string | null;
+  box: [number, number, number, number];
+  file_name: string;
+  group?: number;
+}
 
 /** Полоса размера — по большей стороне: пруток 42×199 — «40–200», гайка 30×27 — «до 40». */
 export function bandOf(box: [number, number, number, number]): Exclude<Band, "all"> {
@@ -61,7 +69,52 @@ export function randomDistinct(pool: ClassBox[], chosen: Picked[], n: number, ra
   return order.slice(0, n).map((g) => g[Math.floor(rand() * g.length)]);
 }
 
-export const pickedOf = (b: ClassBox): Picked => ({ uid: b.uid, image_id: b.image_id, box: b.box, file_name: b.file_name, group: b.group });
+export const pickedOf = (b: ClassBox): Picked => ({
+  uid: b.uid, image_id: b.picture_id ? null : b.image_id, picture_id: b.picture_id ?? null, box: b.box, file_name: b.file_name, group: b.group,
+});
+
+/** Ключ рамки на своей картинке. Сервер называет образец по-своему (sha1), а клиенту нужен ключ сразу — и
+ *  одинаковый у плитки и у образца набора, чтобы щелчок по рамке находил её в наборе. */
+export const pictureKey = (id: string, box: number[]) => `p:${id}:${box.map((v) => Math.round(v * 10) / 10).join(",")}`;
+
+/** Рамки своих картинок плитками, как ручные рамки класса. Каждая рамка — свой предмет: группы
+ *  отрицательные, чтобы «Случайно» не путало их с группами кадров проекта. */
+export function pictureTiles(pictures: Picture[]): ClassBox[] {
+  let group = -1;
+  return pictures.flatMap((p) => p.boxes.map((box) => ({
+    uid: pictureKey(p.id, box), image_id: "", picture_id: p.id, file_name: p.file_name, dataset: "",
+    frame: [p.width, p.height] as [number, number], box, video: null, t: null, group: group--,
+  })));
+}
+
+/** Образец для сервера: кадр или картинка и рамка. */
+export const refOf = (p: Pick<Picked, "image_id" | "picture_id" | "box">): ExampleRef =>
+  (p.picture_id ? { picture_id: p.picture_id, box: p.box } : { image_id: p.image_id ?? "", box: p.box });
+
+/** Миниатюра образца: вырезка «авто» с кадра или со своей картинки. */
+export const cropUrl = (p: Pick<Picked, "image_id" | "picture_id" | "box">) =>
+  (p.picture_id ? pictureCrop(p.picture_id, p.box) : boxCrop(p.image_id ?? "", p.box));
+
+/** Образец набора на руках: у своих картинок ключ — как у плитки. */
+export const pickedOfItem = (it: ExampleItem): Picked => ({
+  uid: it.picture_id ? pictureKey(it.picture_id, it.box) : it.uid,
+  image_id: it.image_id, picture_id: it.picture_id ?? null, box: it.box, file_name: it.file_name,
+});
+
+/** Полки — имена классов на картинках человека: открытая первой, дальше по алфавиту, с числом картинок. */
+export function shelvesOf(pictures: Picture[], current: string): { name: string; count: number }[] {
+  const out = new Map<string, number>();
+  out.set(current, 0);
+  for (const p of pictures) {
+    const name = [...out.keys()].find((n) => sameName(n, p.shelf)) ?? p.shelf;
+    out.set(name, (out.get(name) ?? 0) + 1);
+  }
+  const [first, ...rest] = [...out.entries()].map(([name, count]) => ({ name, count }));
+  return [first, ...rest.sort((a, b) => a.name.localeCompare(b.name, "ru"))];
+}
+
+/** Картинки полки: имя сравнивается без регистра, как классы. */
+export const onShelf = (pictures: Picture[], shelf: string) => pictures.filter((p) => sameName(p.shelf, shelf));
 
 /** Перенести образец с места `from` на место `to`. */
 export function moved<T>(list: T[], from: number, to: number): T[] {

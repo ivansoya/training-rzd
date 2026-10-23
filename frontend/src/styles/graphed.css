@@ -681,6 +681,86 @@ button.ae-st-r:focus-visible { outline: 2px solid var(--ring); outline-offset: -
 .ep-col-pic > span { padding: 16px; }
 .ep-col-pic > span.bad { color: var(--destructive); }
 .ep-col-pic > img { width: 100%; height: 100%; object-fit: contain; display: block; }
+/* зелёная точка на миниатюре набора — образец со своей картинки */
+.ep-th .own { position: absolute; right: 3px; bottom: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--st-done); box-shadow: 0 0 0 1px rgb(0 0 0 / .6); }
+
+/* «Свои картинки»: полка карточками, рамка на картинке — плитка набора */
+.ep-gal.drop-on { box-shadow: inset 0 0 0 2px var(--ring); }
+.ep-warn { margin: 0; font-size: 12.5px; color: var(--st-skip); }
+.ep-warn-t { color: var(--st-skip); }
+.ep-pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(196px, 1fr)); gap: 10px; }
+.ep-pc { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--border); border-radius: var(--r); background: var(--stage); overflow: hidden; }
+.ep-pc:hover { border-color: var(--input); }
+.ep-pc-pic { position: relative; aspect-ratio: 4 / 3; display: grid; place-items: center; overflow: hidden; }
+.ep-pc-in { position: relative; max-width: 100%; max-height: 100%; cursor: pointer; }
+.ep-pc-in > img { width: 100%; height: 100%; display: block; }
+.ep-bx {
+  position: absolute; padding: 0; border: 1.5px solid var(--st-skip); border-radius: 2px; background: transparent;
+  box-shadow: 0 0 0 1px rgb(0 0 0 / .5); cursor: pointer;
+}
+button.ep-bx:hover { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+button.ep-bx:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.ep-bx.on { border: 2px solid var(--ring); box-shadow: 0 0 0 1px var(--ring), 0 0 0 2px rgb(0 0 0 / .6); }
+.ep-bx > b { position: absolute; left: 0; top: 0; padding: 0 4px; border-radius: 0 0 3px 0; font: 600 10.5px var(--mono); color: var(--primary-fg); background: var(--primary); }
+.ep-pc-need {
+  position: absolute; inset: 8px; display: grid; place-items: center; border: 1.5px dashed var(--st-skip); border-radius: var(--r-sm);
+  background: var(--on-frame-bg); color: var(--st-skip); font-size: 12.5px; font-weight: 500; pointer-events: none;
+}
+.ep-pc.busy .ep-pc-pic, .ep-pc.bad .ep-pc-pic { padding: 14px; }
+.ep-pc.busy .ui-progress { width: 100%; }
+.ep-pc.bad { border-color: color-mix(in srgb, var(--destructive) 50%, var(--border)); }
+.ep-pc.bad .ep-pc-pic { color: var(--destructive); font-size: 12.5px; text-align: center; }
+.ep-pc-f { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 4px 6px 4px 8px; border-top: 1px solid var(--border); background: var(--card); }
+.ep-pc-f .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 11px var(--mono); color: var(--muted-fg); }
+.ep-pc-f .ct { flex: none; white-space: nowrap; font-size: 11.5px; color: var(--faint); }
+.ep-pc-f .ct.warn { color: var(--st-skip); }
+.ep-x {
+  flex: none; width: 24px; height: 24px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-sm);
+  background: transparent; color: var(--muted-fg); cursor: pointer;
+}
+.ep-x:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
+.ep-x:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.ep-x:disabled { opacity: .45; cursor: not-allowed; }
+.ep-drop {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; min-height: 120px; padding: 12px;
+  border: 1.5px dashed var(--input); border-radius: var(--r); background: transparent; color: var(--muted-fg); font: 500 12.5px var(--font);
+  text-align: center; cursor: pointer;
+}
+.ep-drop:hover:not(:disabled) { border-color: var(--faint); color: var(--fg); }
+.ep-drop:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.ep-drop.big { width: 100%; min-height: 380px; gap: 10px; font-size: 14px; }
+
+/* окно «Рамки»: холст картинки, список рамок справа, полоса картинок полки внизу */
+.ep-ed .ui-dialog-bare { flex-direction: column; }
+.ep-ed-of { font-weight: 400; }
+.ep-ed-nav { display: flex; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--border); }
+.ep-ed-b { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 260px; }
+.ep-ed-cv { container-type: size; display: grid; place-items: center; min-width: 0; min-height: 0; padding: 12px; background: var(--stage); overflow: hidden; }
+/* Картинка вписана целиком: ширина — меньшее из ширины холста и его высоты × пропорция (--ar = w / h). */
+.ep-ed-wrap {
+  position: relative; width: min(100cqw, 100cqh * var(--ar, 1.333)); aspect-ratio: var(--ar, 1.333);
+  cursor: crosshair; user-select: none; touch-action: none;
+}
+.ep-ed-wrap > img { width: 100%; height: 100%; display: block; pointer-events: none; }
+.ep-ed-wrap .ep-bx { cursor: move; }
+.ep-ed-wrap .ep-bx.sel { border-color: var(--fg); box-shadow: 0 0 0 1px var(--fg), 0 0 0 2px rgb(0 0 0 / .6); }
+.ep-hd { position: absolute; width: 9px; height: 9px; background: var(--fg); border: 1px solid rgb(0 0 0 / .8); border-radius: 2px; }
+.ep-hd.nw { left: -5px; top: -5px; cursor: nwse-resize; }
+.ep-hd.ne { right: -5px; top: -5px; cursor: nesw-resize; }
+.ep-hd.sw { left: -5px; bottom: -5px; cursor: nesw-resize; }
+.ep-hd.se { right: -5px; bottom: -5px; cursor: nwse-resize; }
+.ep-ed-side { display: flex; flex-direction: column; gap: 10px; min-height: 0; padding: 14px; border-left: 1px solid var(--border); overflow: auto; }
+.ep-ed-side > * { flex-shrink: 0; }
+.ep-bl-list { display: flex; flex-direction: column; gap: 6px; }
+.ep-bl { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 4px 4px 4px 8px; border: 1px solid var(--border); border-radius: var(--r); font-size: 12.5px; cursor: pointer; }
+.ep-bl.sel { border-color: var(--fg); }
+.ep-keys { display: grid; gap: 4px; }
+.ep-strip { display: flex; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--border); overflow-x: auto; flex: none; }
+.ep-strip > button { flex: none; width: 72px; height: 54px; padding: 0; border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--stage); overflow: hidden; cursor: pointer; opacity: .75; }
+.ep-strip > button > img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.ep-strip > button.cur { opacity: 1; border-color: var(--ring); box-shadow: 0 0 0 1px var(--ring); }
+.ep-strip > button.nb { outline: 1.5px dashed var(--st-skip); outline-offset: -3px; }
+.ep-strip > button:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
 
 /* список агентов */
 .al-cls { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; max-width: 420px; }

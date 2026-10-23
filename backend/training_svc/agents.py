@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 
 from flask import Blueprint, Response, jsonify, request, send_file
-from sqlalchemy import func, select, text
+from sqlalchemy import Text, cast, func, select, text
 from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
 
@@ -29,13 +29,14 @@ from common import scout as scout_lib
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
-    AgentApply, AgentClassMap, AgentExamples, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph,
+    AgentApply, AgentClassMap, AgentExamples, AgentPicture, AgentPreview, AgentRun, AgentWeights, Annotation, AugGraph,
     AugGraphVersion, Dataset, GpuDevice, GpuLease, GpuUsageHint, Image, LabelClass, Project, ProjectAugGraph,
     ProjectMember, Task, TaskVideo, TrainRun, User, VideoAnnotation, VideoScout, utcnow,
 )
 from common.web import int_field, json_body, public_error
 from common import agent_examples as ax
 from training_svc import agent_preview as agent_preview_lib, agent_runner, examples as examples_lib, pt_guard
+from training_svc import pictures as pictures_lib
 
 bp = Blueprint("agents", __name__)
 
@@ -1307,13 +1308,18 @@ def create_examples():
         return err
     try:
         data = request.get_json(silent=True) or {}
+        raw = data.get("items")
+        # Набор только со своих картинок проекта не требует: полка с проектом не связана.
+        if isinstance(raw, list) and raw and not data.get("project") \
+                and all(isinstance(it, dict) and it.get("picture_id") for it in raw):
+            return _examples_by_hand(db, user, None, None, data)
         project = db.execute(select(Project).where(Project.code == data.get("project"))).scalar_one_or_none()
         if project is None or not has_role(role_in(db, user, project), "viewer"):
             return jsonify({"error": "Проект не найден."}), 404
         cls = db.get(LabelClass, _uuid(data.get("class_id")))
         if cls is None or cls.project_id != project.id:
             return jsonify({"error": "Класса нет в проекте."}), 404
-        if data.get("items") is not None:
+        if raw is not None:
             return _examples_by_hand(db, user, project, cls, data)
         try:
             # Не `or`: ноль — это ошибка человека, а не просьба об умолчании.
@@ -1340,27 +1346,37 @@ def create_examples():
 
 
 def _examples_by_hand(db, user, project, cls, data):
-    """Набор из выбранных рамок в заданном порядке; `from` — набор, чьи векторы не пересчитывать."""
+    """Набор из выбранных рамок в заданном порядке; `from` — набор, чьи векторы не пересчитывать.
+
+    Образец — кадр проекта (`image_id`) или своя картинка с полки (`picture_id`) и рамка на нём.
+    Без проекта (`project` и `cls` — None) — только свои картинки; класс набора — имя полки."""
     raw = data.get("items")
     if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_EXAMPLES:
         return jsonify({"error": f"Образцов от 1 до {MAX_EXAMPLES}."}), 400
     items = []
     for it in raw:
         try:
-            image_id, box = _uuid(it["image_id"]), [round(float(v), 1) for v in it["box"]]
-        except (KeyError, TypeError, ValueError):
-            image_id, box = None, []
-        if image_id is None or len(box) != 4:
-            return jsonify({"error": "Образец — это кадр и рамка на нём."}), 400
-        items.append({"image_id": str(image_id), "box": box})
+            key = "picture_id" if it.get("picture_id") else "image_id"
+            ref, box = _uuid(it[key]), [round(float(v), 1) for v in it["box"]]
+        except (AttributeError, KeyError, TypeError, ValueError):
+            key, ref, box = None, None, []
+        if ref is None or len(box) != 4 or (key == "image_id" and project is None):
+            return jsonify({"error": "Образец — это кадр проекта или своя картинка и рамка на них."}), 400
+        items.append({key: str(ref), "box": box})
+    pics = {i["picture_id"] for i in items if "picture_id" in i}
+    if pics and db.execute(select(func.count()).select_from(AgentPicture).where(
+            AgentPicture.id.in_([_uuid(p) for p in pics]), AgentPicture.owner_id == user.id)).scalar() != len(pics):
+        return jsonify({"error": "Картинки нет на вашей полке — её удалили."}), 404
     parent = None
     if data.get("from"):
         parent = _examples_row(db, user, data["from"])
-        if parent is None or parent.status != "ready" or parent.class_id != cls.id:
+        if parent is None or parent.status != "ready" or parent.class_id != (cls.id if cls else None):
             return jsonify({"error": "Набора-основы нет."}), 404
+    shelf = str(data.get("shelf") or "").strip()[:255] or "Свои картинки"
     row = AgentExamples(
-        owner_id=user.id, parent_id=parent.id if parent else None, project_id=project.id,
-        project_name=project.name, class_id=cls.id, class_name=cls.name, items=[], dir="", status="queued",
+        owner_id=user.id, parent_id=parent.id if parent else None, project_id=project.id if project else None,
+        project_name=project.name if project else "", class_id=cls.id if cls else None,
+        class_name=cls.name if cls else shelf, items=[], dir="", status="queued",
         params={"items": items, "n": len(items), "datasets": None, "seed": random.randrange(1 << 31)},
         created_by=user.id)
     db.add(row)
@@ -1395,8 +1411,6 @@ THUMB = 160
 @bp.get("/api/agents/examples/boxes/crop")
 def example_box_crop():
     """Миниатюра рамки для окна выбора: вырезка «авто» по ширине кадра и тонкая обводка."""
-    import cv2
-
     db, user, err = _me()
     if err:
         return err
@@ -1405,31 +1419,38 @@ def example_box_crop():
         project = db.get(Project, image.project_id) if image is not None else None
         if project is None or not has_role(role_in(db, user, project), "viewer"):
             return jsonify({"error": "Кадр не найден."}), 404
-        try:
-            box = [float(v) for v in (request.args.get("box") or "").split(",")]
-        except ValueError:
-            box = []
-        if len(box) != 4 or min(box[2:]) <= 0:
-            return jsonify({"error": "Рамка — четыре числа x,y,w,h."}), 400
-        pic = cv2.imread(os.path.join(config.DATA_DIR, image.file_path))
-        if pic is None:
-            return jsonify({"error": "Файла кадра нет."}), 404
-        height, width = pic.shape[:2]
-        x0, y0, x1, y1 = ax.auto_rect(box, width, width, height)
-        crop = pic[y0:y1, x0:x1]
-        s = THUMB / max(crop.shape[:2])
-        small = cv2.resize(crop, (max(1, round(crop.shape[1] * s)), max(1, round(crop.shape[0] * s))),
-                           interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
-        x, y, w, h = box
-        cv2.rectangle(small, (round((x - x0) * s), round((y - y0) * s)),
-                      (round((x + w - x0) * s) - 1, round((y + h - y0) * s) - 1), (255, 176, 90), 1)
-        _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        resp = Response(buf.tobytes(), mimetype="image/jpeg")
-        # Кадр по uuid не меняется — миниатюру можно держать в кеше браузера.
-        resp.headers["Cache-Control"] = "private, max-age=2592000, immutable"
-        return resp
+        return _box_thumb(os.path.join(config.DATA_DIR, image.file_path))
     finally:
         db.close()
+
+
+def _box_thumb(path):
+    """Миниатюра рамки `?box=x,y,w,h` с файла `path`: вырезка «авто» по ширине файла и тонкая обводка."""
+    import cv2
+
+    try:
+        box = [float(v) for v in (request.args.get("box") or "").split(",")]
+    except ValueError:
+        box = []
+    if len(box) != 4 or min(box[2:]) <= 0:
+        return jsonify({"error": "Рамка — четыре числа x,y,w,h."}), 400
+    pic = cv2.imread(path)
+    if pic is None:
+        return jsonify({"error": "Файла кадра нет."}), 404
+    height, width = pic.shape[:2]
+    x0, y0, x1, y1 = ax.auto_rect(box, width, width, height)
+    crop = pic[y0:y1, x0:x1]
+    s = THUMB / max(crop.shape[:2])
+    small = cv2.resize(crop, (max(1, round(crop.shape[1] * s)), max(1, round(crop.shape[0] * s))),
+                       interpolation=cv2.INTER_AREA if s < 1 else cv2.INTER_CUBIC)
+    x, y, w, h = box
+    cv2.rectangle(small, (round((x - x0) * s), round((y - y0) * s)),
+                  (round((x + w - x0) * s) - 1, round((y + h - y0) * s) - 1), (255, 176, 90), 1)
+    _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    resp = Response(buf.tobytes(), mimetype="image/jpeg")
+    # Файл по uuid не меняется — миниатюру можно держать в кеше браузера.
+    resp.headers["Cache-Control"] = "private, max-age=2592000, immutable"
+    return resp
 
 
 @bp.post("/api/agents/examples/collage")
@@ -1450,15 +1471,17 @@ def example_collage():
         if not isinstance(raw, list) or not 1 <= len(raw) <= MAX_EXAMPLES:
             return jsonify({"error": f"Образцов от 1 до {MAX_EXAMPLES}."}), 400
         try:
-            items = [(_uuid(it["image_id"]), [float(v) for v in it["box"]]) for it in raw]
+            # (своя картинка?, id, рамка)
+            items = [(bool(it.get("picture_id")), _uuid(it.get("picture_id") or it["image_id"]),
+                      [float(v) for v in it["box"]]) for it in raw]
             side = int(data.get("side") or 1008)
             tile = int(data["tile"]) if data.get("tile") else None
             at = int(data.get("pass") or 0)
-        except (KeyError, TypeError, ValueError):
+        except (AttributeError, KeyError, TypeError, ValueError):
             return jsonify({"error": "Образец — это кадр и рамка на нём."}), 400
-        if side not in agent_graph.SAM3_SIDES or any(i is None or len(b) != 4 for i, b in items):
+        if side not in agent_graph.SAM3_SIDES or any(i is None or len(b) != 4 for _, i, b in items):
             return jsonify({"error": "Вход SAM 3 — 644 или 1008, образец — кадр и рамка."}), 400
-        ids = {i for i, _ in items} | {_uuid(data.get("image_id"))}
+        ids = {i for own, i, _ in items if not own} | {_uuid(data.get("image_id"))}
         images = {i.id: i for i in db.execute(select(Image).where(Image.id.in_(ids - {None}))).scalars()}
         frame = images.get(_uuid(data.get("image_id")))
         if frame is None or len(images) != len(ids - {None}):
@@ -1466,15 +1489,20 @@ def example_collage():
         for project_id in {i.project_id for i in images.values()}:
             if not has_role(role_in(db, user, db.get(Project, project_id)), "viewer"):
                 return jsonify({"error": "Кадр не найден."}), 404
+        wanted = {i for own, i, _ in items if own}
+        pictures = _readable_pictures(db, user, wanted)
+        if len(pictures) != len(wanted):
+            return jsonify({"error": "Картинки нет на полке."}), 404
+        paths = {**{i: im.file_path for i, im in images.items()}, **{i: p.file_path for i, p in pictures.items()}}
 
         pics = {}
 
-        def pic(image):
-            if image.id not in pics:
-                pics[image.id] = cv2.imread(os.path.join(config.DATA_DIR, image.file_path))
-            return pics[image.id]
+        def pic(ref):
+            if ref not in pics:
+                pics[ref] = cv2.imread(os.path.join(config.DATA_DIR, paths[ref]))
+            return pics[ref]
 
-        view = pic(frame)
+        view = pic(frame.id)
         if view is None:
             return jsonify({"error": "Файла кадра нет."}), 404
         grow = False
@@ -1482,8 +1510,8 @@ def example_collage():
             view, grow = view[:tile, :tile], tile < side
         vh, vw = view.shape[:2]
         crops = []
-        for image_id, box in items:
-            img = pic(images[image_id])
+        for _, ref, box in items:
+            img = pic(ref)
             if img is None:
                 continue
             x0, y0, x1, y1 = ax.auto_rect(box, vw, img.shape[1], img.shape[0])
@@ -1568,6 +1596,155 @@ def example_crop(set_id, uid):
         # Набор неизменяем — вырезку браузер может держать в кеше сколько угодно.
         return send_file(os.path.join(config.DATA_DIR, row.dir, f"{uid}.jpg"),
                          mimetype="image/jpeg", max_age=86400 * 30)
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Свои картинки на полке (pictures.py, решения 23.10.2026)
+# --------------------------------------------------------------------------- #
+def _readable_pictures(db, user, ids):
+    """{id: картинка}, которые человек может видеть: свои — и те, что уже в его наборах
+    (копия агента ссылается на картинки владельца оригинала)."""
+    ids = {i for i in ids if i}
+    if not ids:
+        return {}
+    rows = {r.id: r for r in db.execute(select(AgentPicture).where(AgentPicture.id.in_(ids))).scalars()}
+    out = {i: r for i, r in rows.items() if r.owner_id == user.id}
+    for i in set(rows) - set(out):
+        if db.execute(select(AgentExamples.id).where(
+                AgentExamples.owner_id == user.id,
+                cast(AgentExamples.items, Text).like(f'%"picture_id": "{i}"%')).limit(1)).first():
+            out[i] = rows[i]
+    return out
+
+
+def _own_picture(db, user, picture_id):
+    row = db.get(AgentPicture, _uuid(picture_id))
+    return row if row is not None and row.owner_id == user.id else None
+
+
+@bp.get("/api/agents/pictures")
+def list_pictures():
+    """Все свои картинки человека: окно образцов делит их на полки по имени класса."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        rows = db.execute(select(AgentPicture).where(AgentPicture.owner_id == user.id)
+                          .order_by(AgentPicture.created_at)).scalars().all()
+        locks = pictures_lib.locks(db, [r.id for r in rows])
+        return jsonify({"pictures": [pictures_lib.view(r, locks.get(str(r.id))) for r in rows]})
+    finally:
+        db.close()
+
+
+@bp.put("/api/agents/pictures")
+def upload_picture():
+    """Картинка сырым телом, как веса: `?shelf=` — полка (имя класса), `?name=` — имя файла.
+    Один файл — один запрос: у каждого своя полоса хода и свой отказ."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        shelf = (request.args.get("shelf") or "").strip()
+        if not shelf:
+            return jsonify({"error": "Не указана полка — имя класса."}), 400
+        name = os.path.basename(request.args.get("name") or "picture.jpg")
+        raw = request.stream.read(pictures_lib.MAX_BYTES + 1)
+        try:
+            row = pictures_lib.shelve(db, user, raw, name, shelf)
+        except pictures_lib.PictureError as exc:
+            return jsonify({"error": str(exc), "code": exc.code}), 409 if exc.code == "duplicate" else 400
+        return jsonify(pictures_lib.view(row)), 201
+    finally:
+        db.close()
+
+
+@bp.patch("/api/agents/pictures/<picture_id>")
+def save_picture_boxes(picture_id):
+    """Рамки картинки целиком. Собранные наборы хранят свои копии рамок — их правка не трогает."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        row = _own_picture(db, user, picture_id)
+        if row is None:
+            return jsonify({"error": "Картинки нет на полке."}), 404
+        try:
+            row.boxes = ax.clean_boxes((request.get_json(silent=True) or {}).get("boxes"), row.width, row.height)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        db.commit()
+        return jsonify(pictures_lib.view(row, pictures_lib.locks(db, [row.id]).get(str(row.id))))
+    finally:
+        db.close()
+
+
+@bp.delete("/api/agents/pictures/<picture_id>")
+def delete_picture(picture_id):
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        row = _own_picture(db, user, picture_id)
+        if row is None:
+            return jsonify({"error": "Картинки нет на полке."}), 404
+        lock = pictures_lib.locks(db, [row.id]).get(str(row.id))
+        if lock:
+            return jsonify({"error": lock, "code": "locked"}), 409
+        path = os.path.join(config.DATA_DIR, row.file_path)
+        db.delete(row)
+        db.commit()
+        if os.path.exists(path):
+            os.remove(path)
+        return jsonify({"ok": True})
+    finally:
+        db.close()
+
+
+@bp.get("/api/agents/pictures/<picture_id>/image")
+def picture_image(picture_id):
+    """Картинка целиком, `?w=` — ужатая по ширине (плитки полки, окно рамок)."""
+    import cv2
+
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        row = _readable_pictures(db, user, {_uuid(picture_id)}).get(_uuid(picture_id))
+        if row is None:
+            return jsonify({"error": "Картинки нет на полке."}), 404
+        path = os.path.join(config.DATA_DIR, row.file_path)
+        want = request.args.get("w", type=int)
+        if not want or want >= row.width:
+            return send_file(path, mimetype="image/jpeg", max_age=86400 * 30)
+        pic = cv2.imread(path)
+        if pic is None:
+            return jsonify({"error": "Файла картинки нет."}), 404
+        k = max(16, min(want, 1600)) / pic.shape[1]
+        small = cv2.resize(pic, (max(1, round(pic.shape[1] * k)), max(1, round(pic.shape[0] * k))),
+                           interpolation=cv2.INTER_AREA)
+        _, buf = cv2.imencode(".jpg", small, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        resp = Response(buf.tobytes(), mimetype="image/jpeg")
+        # Файл картинки после приёма не меняется — меняются только рамки.
+        resp.headers["Cache-Control"] = "private, max-age=2592000, immutable"
+        return resp
+    finally:
+        db.close()
+
+
+@bp.get("/api/agents/pictures/<picture_id>/crop")
+def picture_crop(picture_id):
+    """Миниатюра рамки своей картинки — как у кадра проекта."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        row = _readable_pictures(db, user, {_uuid(picture_id)}).get(_uuid(picture_id))
+        if row is None:
+            return jsonify({"error": "Картинки нет на полке."}), 404
+        return _box_thumb(os.path.join(config.DATA_DIR, row.file_path))
     finally:
         db.close()
 

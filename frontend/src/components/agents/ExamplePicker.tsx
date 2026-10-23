@@ -10,8 +10,10 @@ import { Button, Check, Dialog, Icon, Notice, Popover, Seg, Select, Swatch, Swit
 import { count, ru } from "../ru";
 import { EX_ROW, collagePasses, perPass, type TextModel } from "./agentDoc";
 import {
-  BANDS, MAX_SET, addFor, filterBoxes, moved, pickedOf, randomDistinct, sameName, stepFor, tilesOf, type Band, type Picked,
+  BANDS, MAX_SET, addFor, cropUrl, filterBoxes, moved, onShelf, pickedOf, pickedOfItem, pictureTiles, randomDistinct, refOf,
+  sameName, shelvesOf, stepFor, tilesOf, type Band, type Picked,
 } from "./examplePick";
+import PictureShelf from "./PictureShelf";
 
 const PAGE = 54;
 const WAIT_MS = 300;
@@ -62,11 +64,24 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
   const [offDs, setOffDs] = useState<Set<string>>(new Set());
   const [merged, setMerged] = useState(true);
   const [limit, setLimit] = useState(PAGE);
-  const [picked, setPicked] = useState<Picked[]>(() => (set?.items ?? []).map((it) => ({
-    uid: it.uid, image_id: it.image_id, box: it.box, file_name: it.file_name,
-  })));
+  const [picked, setPicked] = useState<Picked[]>(() => (set?.items ?? []).map(pickedOfItem));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Свои картинки (решения 23.10.2026): полка — имя класса; набор только с картинок хранит имя полки как класс.
+  const [source, setSource] = useState<"project" | "own">(() => (set?.items.some((it) => it.picture_id) ? "own" : "project"));
+  const touched = useRef(false);
+  const [pictures, setPictures] = useState<api.Picture[] | null>(null);
+  const [shelf, setShelf] = useState(() => (set && !set.class_id ? set.class_name : agentClass.name));
+  useEffect(() => {
+    api.listPictures().then((r) => setPictures(r.pictures)).catch((e) => setError((e as Error).message));
+  }, []);
+  const shelfPics = useMemo(() => onShelf(pictures ?? [], shelf), [pictures, shelf]);
+  const ownTiles = useMemo(() => pictureTiles(shelfPics), [shelfPics]);
+  useEffect(() => {
+    // Образцы набора с картинок получают группу — «Случайно» их учтёт.
+    const byUid = new Map(ownTiles.map((t) => [t.uid, t]));
+    setPicked((old) => old.map((p) => (p.picture_id && byUid.has(p.uid) ? pickedOf(byUid.get(p.uid)!) : p)));
+  }, [ownTiles]);
 
   useEffect(() => {
     if (!project) return;
@@ -88,10 +103,18 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
     return () => { live = false; };
   }, [project, classId]);
 
+  // У класса проекта ручных рамок нет, а на полке картинки есть — открываем полку (пока человек сам не переключал).
+  useEffect(() => {
+    if (!touched.current && boxes && !boxes.length && shelfPics.length) setSource("own");
+  }, [boxes, shelfPics.length]);
+
   const proj = projects?.find((p) => p.code === project);
   const cls = proj?.classes.find((c) => c.id === classId);
-  const pool = useMemo(() => filterBoxes(boxes ?? [], band, offDs), [boxes, band, offDs]);
-  const tiles = useMemo(() => tilesOf(pool, merged), [pool, merged]);
+  const projectPool = useMemo(() => filterBoxes(boxes ?? [], band, offDs), [boxes, band, offDs]);
+  // «Случайно» и плитка «+1» берут из того источника, что открыт.
+  const pool = source === "own" ? ownTiles : projectPool;
+  const frames = picked.some((p) => !p.picture_id);
+  const tiles = useMemo(() => tilesOf(projectPool, merged), [projectPool, merged]);
   const order = new Map(picked.map((p, k) => [p.uid, k]));
   const add = addFor(model);
 
@@ -122,19 +145,27 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
   const changeClass = (project: string, id: string) => {
     setProject(project);
     setClassId(id);
-    setPicked([]);
+    // Рамки кадров другого класса в наборе не к месту; свои картинки от класса проекта не зависят.
+    setPicked((old) => old.filter((p) => p.picture_id));
     setLimit(PAGE);
   };
+  const sourceSeg = (
+    <Seg size="sm" label="Источник рамок" value={source}
+      onChange={(v) => { touched.current = true; setSource(v); }}
+      options={[{ value: "project", label: "Разметка проекта" }, { value: "own", label: `Свои картинки · ${shelfPics.length}` }]} />
+  );
 
+  // Кадры проекта в наборе требуют класс проекта; набор только со своих картинок — нет, его класс — полка.
+  const canSave = picked.length > 0 && (!frames || !!cls);
   const save = async () => {
-    if (!cls || !picked.length) return;
+    if (!canSave) return;
     setBusy(true);
     setError(null);
     try {
-      const r = await api.examplesByHand({
-        project, class_id: cls.id, items: picked.map((p) => ({ image_id: p.image_id, box: p.box })),
-        from: set && set.status === "ready" && set.class_id === cls.id ? set.id : undefined,
-      });
+      const ready = set && set.status === "ready" ? set : undefined;
+      const r = await api.examplesByHand(frames && cls
+        ? { project, class_id: cls.id, items: picked.map(refOf), from: ready && ready.class_id === cls.id ? ready.id : undefined }
+        : { shelf, items: picked.map(refOf), from: ready && !ready.class_id ? ready.id : undefined });
       onDone(r.set);
     } catch (e) {
       setError((e as Error).message);
@@ -162,13 +193,20 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
         </span>
         <span className="grow" />
         <Button variant="ghost" disabled={busy} onClick={onClose}>Отмена</Button>
-        <Button variant="primary" icon="images" disabled={busy || !cls || !picked.length} onClick={save}>
+        <Button variant="primary" icon="images" disabled={busy || !canSave} onClick={save}
+          title={frames && !cls ? "В наборе кадры проекта — выберите класс проекта" : undefined}>
           {busy ? "Собираю…" : "Сохранить набор"}
         </Button>
       </>}>
       <div className="ep-b">
+        {source === "own" ? (
+          <PictureShelf lead={sourceSeg} shelf={shelf} shelves={shelvesOf(pictures ?? [], shelf)} onShelf={setShelf}
+            pictures={shelfPics} onPictures={(fn) => setPictures((all) => fn(all ?? []))} order={order}
+            onToggle={(t) => toggle([t], t)} color={agentClass.color} busy={busy} />
+        ) : (
         <section className="ep-gal">
           <div className="ep-src">
+            {sourceSeg}
             <Select label="Проект" size="sm" value={project || undefined} placeholder="Проект" disabled={busy}
               onChange={(v) => changeClass(v, projects?.find((p) => p.code === v)?.classes.find((c) => sameName(c.name, agentClass.name))?.id ?? "")}
               options={(projects ?? []).map((p) => ({ value: p.code, label: p.name }))} />
@@ -238,6 +276,7 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
             </div>
           )}
         </section>
+        )}
 
         <section className="ep-side">
           <div className="ep-h">
@@ -319,7 +358,8 @@ function PassBlock({ label, pass, picked, onMove, onDrop, onDropPass, tail }: {
                 onDragStart={(e) => { e.dataTransfer.setData("text/x-example", String(k)); e.dataTransfer.effectAllowed = "move"; }}
                 onDragOver={(e) => { e.preventDefault(); setOver(k); }} onDragLeave={() => setOver((o) => (o === k ? null : o))}
                 onDrop={dropOn(k)}>
-                <img src={api.boxCrop(p.image_id, p.box)} alt={`образец ${k + 1}`} draggable={false} />
+                <img src={cropUrl(p)} alt={`образец ${k + 1}`} draggable={false} />
+                {p.picture_id && <span className="own" title="своя картинка" />}
                 <span className="n">{k + 1}</span>
                 <button type="button" className="rm" aria-label={`Убрать образец ${k + 1}`} onClick={() => onDrop(k)}>×</button>
               </div>
@@ -337,7 +377,7 @@ function Collage({ picked, preview }: { picked: Picked[]; preview: PickerPreview
   const [shot, setShot] = useState<{ url: string; passes: number } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const urlRef = useRef<string | null>(null);
-  const key = JSON.stringify([preview.image?.id, preview.side, preview.tile, pass, picked.map((p) => [p.image_id, p.box])]);
+  const key = JSON.stringify([preview.image?.id, preview.side, preview.tile, pass, picked.map((p) => [p.image_id, p.picture_id, p.box])]);
 
   useEffect(() => {
     const image = preview.image;
@@ -349,7 +389,7 @@ function Collage({ picked, preview }: { picked: Picked[]; preview: PickerPreview
     const timer = window.setTimeout(async () => {
       try {
         const r = await api.exampleCollage({
-          image_id: image.id, items: picked.map((p) => ({ image_id: p.image_id, box: p.box })),
+          image_id: image.id, items: picked.map(refOf),
           side: preview.side, tile: preview.tile, pass,
         }, ctrl.signal);
         const url = URL.createObjectURL(r.blob);

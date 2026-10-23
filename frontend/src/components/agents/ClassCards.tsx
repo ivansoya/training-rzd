@@ -12,7 +12,7 @@ import {
   type AgentClass, type PromptRow, type TextModel,
 } from "./agentDoc";
 import ExamplePicker, { type PickerPreview } from "./ExamplePicker";
-import { MAX_SET, randomDistinct, sameName, stepFor } from "./examplePick";
+import { MAX_SET, onShelf, pickedOf, pickedOfItem, pictureTiles, randomDistinct, refOf, sameName, stepFor } from "./examplePick";
 
 /** Класс агента по имени: найденный или заведённый редактором; пустое имя — null. */
 type Ensure = (name: string) => string | null;
@@ -303,19 +303,30 @@ export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef,
   );
 }
 
-/** Добрать `n` случайных рамок разных предметов класса к образцам `items` — новым набором (от `from`, если он есть). */
-async function addRandom(project: string, classId: string, items: { uid: string; image_id: string; box: number[] }[], n: number,
-  from?: string): Promise<api.ExampleSet> {
-  const { boxes } = await api.exampleBoxes(project, classId);
+/** «2 кадров и 3 картинок»: откуда образцы набора — кадры проекта и свои картинки считаются порознь. */
+function sourcesText(items: api.ExampleItem[]): string {
+  const frames = new Set(items.flatMap((it) => (it.image_id ? [it.image_id] : []))).size;
+  const pictures = new Set(items.flatMap((it) => (it.picture_id ? [it.picture_id] : []))).size;
+  return [frames && `${ru(frames)} ${plural(frames, "кадра", "кадров", "кадров")}`,
+    pictures && `${ru(pictures)} ${plural(pictures, "картинки", "картинок", "картинок")}`].filter(Boolean).join(" и ");
+}
+
+/** Откуда добирать: класс проекта или полка своих картинок (имя класса). */
+type AddFrom = { project: string; cls: string } | { shelf: string };
+
+/** Добрать `n` случайных рамок разных предметов к образцам `items` — новым набором (от `from`, если он есть). */
+async function addRandom(src: AddFrom, items: api.ExampleItem[], n: number, from?: string): Promise<api.ExampleSet> {
+  const own = "shelf" in src;
+  const boxes = own ? pictureTiles(onShelf((await api.listPictures()).pictures, src.shelf))
+    : (await api.exampleBoxes(src.project, src.cls)).boxes;
   const groups = new Map(boxes.map((b) => [b.uid, b.group]));
-  const more = randomDistinct(boxes, items.map((it) => ({
-    uid: it.uid, image_id: it.image_id, box: it.box as [number, number, number, number], file_name: "", group: groups.get(it.uid),
-  })), n);
-  if (!more.length) throw new Error(items.length ? "Разных рамок класса больше нет: все предметы уже в наборе."
-    : "У класса проекта нет ручной разметки от 8 px.");
-  return (await api.examplesByHand({
-    project, class_id: classId, from, items: [...items, ...more].map((it) => ({ image_id: it.image_id, box: it.box })),
-  })).set;
+  const have = items.map(pickedOfItem).map((p) => ({ ...p, group: groups.get(p.uid) }));
+  const more = randomDistinct(boxes, have, n);
+  if (!more.length) throw new Error(items.length ? "Разных рамок больше нет: все предметы уже в наборе."
+    : own ? `На полке «${src.shelf}» нет картинок с рамками.` : "У класса проекта нет ручной разметки от 8 px.");
+  const refs = [...have, ...more.map(pickedOf)].map(refOf);
+  return (await api.examplesByHand(own ? { shelf: src.shelf, from, items: refs }
+    : { project: src.project, class_id: src.cls, from, items: refs })).set;
 }
 
 /** Пустые образцы класса: «Выбрать…» и та же плитка случайного добора. Источник — класс-ссылка или класс проекта с тем же именем. */
@@ -334,12 +345,13 @@ function NoExamples({ card, sam3, readOnly, projects, onMade, onPick }: {
       }
       return null;
     })();
+  // Класса проекта с тем же именем нет — добираем с полки своих картинок того же имени.
+  const from: AddFrom = src?.project ? { project: src.project, cls: src.cls } : { shelf: card.def?.name ?? card.name };
   const add = async () => {
-    if (!src?.project) return;
     setBusy(true);
     setError(null);
     try {
-      onMade(await addRandom(src.project, src.cls, [], sam3 ? 1 : MAX_SET));
+      onMade(await addRandom(from, [], sam3 ? 1 : MAX_SET));
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -356,8 +368,8 @@ function NoExamples({ card, sam3, readOnly, projects, onMade, onPick }: {
       </div>
       {!readOnly && (
         <div className="ae-thumbs">
-          <button type="button" className="ep-add sm" disabled={busy || !src?.project} onClick={() => void add()}
-            title={!src?.project ? "Класса проекта с таким именем нет — выберите образцы вручную"
+          <button type="button" className="ep-add sm" disabled={busy} onClick={() => void add()}
+            title={"shelf" in from ? "Случайная рамка со своих картинок полки с тем же именем"
               : sam3 ? "Случайная рамка класса" : "Все разные предметы класса: YOLOE сводит их в один средний вектор"}>
             <Icon name="plus" size={14} /><span>{busy ? "…" : sam3 ? "+1" : "все"}</span>
           </button>
@@ -421,12 +433,15 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
   // «+1» и «+ проход»: случайная рамка другого предмета (как в окне «Образцы класса»), новым набором от этого.
   const proj = projects?.find((p) => p.id === set.project_id);
   const step = stepFor(sam3 ? "sam3" : "l", n);
-  const addOne = async () => {
-    if (!proj || !set.class_id) return derive({ add: step });
+  // Набор только со своих картинок (без проекта) добирает с полки — его класс и есть имя полки.
+  const src: AddFrom | null = proj && set.class_id ? { project: proj.code, cls: set.class_id }
+    : !set.project_id ? { shelf: set.class_name } : null;
+  const addSome = async (k: number) => {
+    if (!src) return derive({ add: k });
     setBusy(true);
     setError(null);
     try {
-      const next = await addRandom(proj.code, set.class_id, set.items, step, set.status === "ready" ? set.id : undefined);
+      const next = await addRandom(src, set.items, k, set.status === "ready" ? set.id : undefined);
       onSet(next);
       onRow({ set: next.id });
     } catch (e) {
@@ -438,7 +453,7 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
   const cap = sam3 && view ? perPass(view[0], view[1]) : null;
   const full = cap !== null && (plan[plan.length - 1]?.length ?? 0) >= cap;
   const plus = (label: string, title: string) => readOnly ? null : (
-    <button key="plus" type="button" className="ep-add sm" disabled={busy} title={title} onClick={() => void addOne()}>
+    <button key="plus" type="button" className="ep-add sm" disabled={busy} title={title} onClick={() => void addSome(step)}>
       <Icon name="plus" size={14} /><span>{busy ? "…" : label}</span>
     </button>
   );
@@ -495,7 +510,7 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
     <div className={cx("ae-exb", !row.on && "off")}>
       <div className="ae-sub-h">
         <b>Образцы</b>
-        <span className="t-ell">{set.project} · {count(n, "рамка", "рамки", "рамок")} с {ru(set.frames)} {plural(set.frames, "кадра", "кадров", "кадров")} · вырезка «авто»</span>
+        <span className="t-ell">{set.project ? `${set.project} · ` : ""}{count(n, "рамка", "рамки", "рамок")} с {sourcesText(set.items)} · вырезка «авто»</span>
         <span className="grow" />
         {chip && <span className="ae-chip">{chip}</span>}
       </div>
@@ -538,7 +553,11 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
         {!readOnly && (
           <>
             <Button size="sm" variant="ghost" icon="images" disabled={busy} onClick={onPick}>Выбрать…</Button>
-            {sam3 && <Button size="sm" variant="ghost" icon="plus" disabled={busy} onClick={() => derive({ add: ADD })}>{busy ? "…" : `Добрать ${ADD}`}</Button>}
+            {sam3 && (
+              // Набор с полки сервер добрать не может — у него нет проекта; добираем с полки здесь.
+              <Button size="sm" variant="ghost" icon="plus" disabled={busy}
+                onClick={() => void (src && "shelf" in src ? addSome(ADD) : derive({ add: ADD }))}>{busy ? "…" : `Добрать ${ADD}`}</Button>
+            )}
             <Button size="sm" variant="ghost" icon="trash" disabled={busy} aria-label="Убрать образцы из класса" onClick={onRemove} />
           </>
         )}

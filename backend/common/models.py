@@ -1719,8 +1719,9 @@ class AgentExamples(Base, AuditMixin):
     class_name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
     # {"datasets": [id] | null, "n", "collage", "ctx", "seed", "add"}
     params: Mapped[dict] = mapped_column(JsonCol, nullable=False)
-    # По порядку: [{"uid", "image_id", "file_name", "box": [x, y, w, h],
+    # По порядку: [{"uid", "image_id" | "picture_id", "file_name", "box": [x, y, w, h],
     #   "crop_box": [x, y, w, h]}]; первые `collage` идут в коллаж SAM 3.
+    # `picture_id` — своя картинка с полки (AgentPicture), `image_id` — кадр проекта.
     items: Mapped[list] = mapped_column(JsonCol, nullable=False)
     # Папка относительно DATA_DIR: vectors.npz и вырезки <uid>.jpg.
     dir: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
@@ -1728,6 +1729,37 @@ class AgentExamples(Base, AuditMixin):
         sa.String(16), nullable=False, default="queued", server_default="queued"
     )
     error: Mapped[str | None] = mapped_column(sa.Text)
+
+
+class AgentPicture(Base, AuditMixin):
+    """Своя картинка с рамками — источник образцов, когда в проекте объекта нет (решения 23.10.2026).
+
+    Лежит на личной полке, как веса и наборы, и с проектом не связана. Полка
+    делится по имени класса (`shelf`): окно «Образцы класса» открывает полку с
+    именем класса агента. Рамки правятся, набор хранит свою копию рамки —
+    правка картинки собранный набор не меняет. Файл — уже развёрнутый по EXIF
+    JPEG: так рамки из браузера и пиксели cv2 совпадают.
+    """
+
+    __tablename__ = "agent_pictures"
+    __table_args__ = (
+        sa.UniqueConstraint("owner_id", "sha256", name="uq_agent_pictures_file"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    owner_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL")
+    )
+    shelf: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    file_name: Mapped[str] = mapped_column(sa.String(255), nullable=False)
+    # Отпечаток присланного файла: тот же файл второй раз на полку не ложится.
+    sha256: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+    # Относительно DATA_DIR.
+    file_path: Mapped[str] = mapped_column(sa.String(1024), nullable=False)
+    width: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    height: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    # [[x, y, w, h], ...] в пикселях файла.
+    boxes: Mapped[list] = mapped_column(JsonCol, nullable=False)
 
 
 class AgentClassMap(Base):

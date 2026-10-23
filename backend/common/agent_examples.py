@@ -4,7 +4,8 @@
 держатся:
 
 * образцы — ручные рамки класса из датасетов проекта; меньшая сторона от
-  8 px, мельче модели запоминать нечего;
+  8 px, мельче модели запоминать нечего. С 23.10.2026 — ещё и рамки на своих
+  картинках с полки (`AgentPicture`): когда объекта в проекте нет вовсе;
 * выбор случайный, но сперва по одной рамке с разных кадров: 32 рамки с
   одного кадра — это один и тот же ракурс 32 раза;
 * YOLOE: вектор образца считается по **целому** кадру. По растянутой вырезке
@@ -55,6 +56,41 @@ def uid(image_id, box):
     позволяет «добрать», не взяв уже взятое."""
     raw = f"{image_id}:{','.join(f'{v:.1f}' for v in box)}"
     return hashlib.sha1(raw.encode()).hexdigest()[:12]
+
+
+def picture_uid(picture_id, box):
+    """Имя образца со своей картинки: приставка не даёт ему совпасть с кадром проекта."""
+    return uid(f"p:{picture_id}", box)
+
+
+def source_of(item):
+    """Откуда образец: id кадра проекта или «p:» + id своей картинки."""
+    return item.get("image_id") or f"p:{item.get('picture_id')}"
+
+
+# Рамок на одной своей картинке — с запасом на заросль из отдельных кустов.
+MAX_PICTURE_BOXES = 64
+
+
+def clean_boxes(raw, width, height):
+    """Рамки своей картинки из браузера → [[x, y, w, h]] в пикселях файла.
+
+    Выходящее за край обрезается по краю; мельче `MIN_SIDE` после обрезки —
+    отбрасывается: такой рамке модели запоминать нечего. Не список чисел —
+    ValueError с текстом для человека."""
+    if not isinstance(raw, list) or len(raw) > MAX_PICTURE_BOXES:
+        raise ValueError(f"Рамки — список, не больше {MAX_PICTURE_BOXES} на картинке.")
+    out = []
+    for box in raw:
+        try:
+            x, y, w, h = (float(v) for v in box)
+        except (TypeError, ValueError):
+            raise ValueError("Рамка — четыре числа x, y, w, h.") from None
+        x0, y0 = max(0.0, x), max(0.0, y)
+        x1, y1 = min(float(width), x + w), min(float(height), y + h)
+        if usable((x0, y0, x1 - x0, y1 - y0)):
+            out.append([round(x0, 1), round(y0, 1), round(x1 - x0, 1), round(y1 - y0, 1)])
+    return out
 
 
 def pick(frames, n, seed):

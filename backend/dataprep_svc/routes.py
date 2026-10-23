@@ -527,7 +527,8 @@ def save_version(graph_id):
             return bad
         version, error = _save_version(
             db, graph, data["doc"], user,
-            note=str_field(data, "note", max_len=2000, label="Заметка"),
+            # Столбец — varchar(255): длиннее падало 500 на вставке.
+            note=str_field(data, "note", max_len=255, label="Заметка"),
         )
         if error:
             return error

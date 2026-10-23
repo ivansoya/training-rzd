@@ -12,6 +12,9 @@
 На полке: `<набор>/vectors.npz` — `uids` и по массиву (N, D) на размер;
 `<набор>/<uid>.jpg` — вырезка «авто» по ширине кадра: миниатюра и запас, если кадр удалят.
 Коллаж SAM 3 режет образцы заново под ширину вида (`Crops`).
+
+С 23.10.2026 образец бывает и со своей картинки полки (`pictures.py`): источник —
+строка `ax.source_of` («p:» + id картинки или id кадра), дальше путь общий.
 """
 import logging
 import os
@@ -25,7 +28,7 @@ from sqlalchemy import select
 from common import agent_examples as ax, agent_graph, config, gpu, live
 from common.db import SessionLocal
 from common.models import (
-    AgentExamples, Annotation, AugGraph, AugGraphVersion, GpuLease, Image, utcnow,
+    AgentExamples, AgentPicture, Annotation, AugGraph, AugGraphVersion, GpuLease, Image, utcnow,
 )
 from training_svc import supervise
 
@@ -58,8 +61,9 @@ def view(row):
         "params": {k: v for k, v in row.params.items() if k != "items"},
         "parent_id": str(row.parent_id) if row.parent_id else None,
         "items": [{"uid": it["uid"], "file_name": it["file_name"], "side": round(min(it["box"][2:])),
-                   "image_id": it["image_id"], "box": it["box"]} for it in row.items],
-        "frames": len({it["image_id"] for it in row.items}),
+                   "image_id": it.get("image_id"), "picture_id": it.get("picture_id"), "box": it["box"]}
+                  for it in row.items],
+        "frames": len({ax.source_of(it) for it in row.items}),
         "created_at": row.created_at.isoformat(),
     }
 
@@ -98,16 +102,18 @@ def _vectors(jobs, device):
 
     out = {}
     for size in ax.YOLOE_SIZES:
-        model = YOLOE(os.path.join(agent_runner.YOLOE_DIR, f"yoloe-26{size}-seg.pt"))
-        # Голова под образцы — один класс за проход; модель после этого для
-        # поиска непригодна, поэтому своя на каждый размер и в мусор.
-        model.model.model[-1].nc = 1
-        model.model.names = ["object0"]
-        pred = YOLOEVPSegPredictor(overrides={
-            "task": "segment", "mode": "predict", "save": False, "verbose": False,
-            "batch": 1, "device": device, "imgsz": agent_graph.TEXT_IMGSZ})
-        pred.setup_model(model=model.model)
-        supervise.touch()
+        # Загрузка — под порогом загрузки: тёплому процессу без неё дают 60 с, а холодный подъём
+        # CUDA с первой моделью дольше — сторож снимал сборку (замер 23.10.2026, стенд).
+        with supervise.loading():
+            model = YOLOE(os.path.join(agent_runner.YOLOE_DIR, f"yoloe-26{size}-seg.pt"))
+            # Голова под образцы — один класс за проход; модель после этого для
+            # поиска непригодна, поэтому своя на каждый размер и в мусор.
+            model.model.model[-1].nc = 1
+            model.model.names = ["object0"]
+            pred = YOLOEVPSegPredictor(overrides={
+                "task": "segment", "mode": "predict", "save": False, "verbose": False,
+                "batch": 1, "device": device, "imgsz": agent_graph.TEXT_IMGSZ})
+            pred.setup_model(model=model.model)
         vecs, cached = [], (None, None)
         for path, (x, y, w, h) in jobs:
             if cached[0] != path:
@@ -126,26 +132,44 @@ def _box(raw):
     return tuple(round(float(v), 1) for v in raw)
 
 
+def _pictures(db, owner_id, ids):
+    """{«p:» + id: своя картинка владельца} — чужие и удалённые не попадают."""
+    ids = {_uuid(i) for i in ids} - {None}
+    if not ids:
+        return {}
+    return {f"p:{r.id}": r for r in db.execute(select(AgentPicture).where(
+        AgentPicture.id.in_(ids), AgentPicture.owner_id == owner_id)).scalars()}
+
+
 def build(db, row, device):
-    """Собрать набор: случайно, добором к родителю или ручным списком (`items`); вырезки, векторы."""
+    """Собрать набор: случайно, добором к родителю или ручным списком (`items`); вырезки, векторы.
+
+    Источник образца — строка: id кадра проекта или «p:» + id своей картинки (`ax.source_of`)."""
     import cv2
     import numpy as np
 
     p = row.params
-    if row.project_id is None or row.class_id is None:
-        raise ValueError("Проекта или класса набора больше нет — брать образцы неоткуда.")
     parent = db.get(AgentExamples, row.parent_id) if row.parent_id else None
     have = {it["uid"]: it for it in (parent.items if parent else [])}
+    pictures = {}
     if p.get("items") is not None:
         # Ручной выбор: итоговый порядок целиком; взятое у родителя не пересчитываем.
-        frames, names = usable_boxes(db, row.project_id, row.class_id)
+        frames, names = (usable_boxes(db, row.project_id, row.class_id)
+                         if row.project_id and row.class_id else ({}, {}))
+        pictures = _pictures(db, row.owner_id, [it["picture_id"] for it in p["items"] if it.get("picture_id")])
+        for key, pic in pictures.items():
+            frames[key] = [_box(b) for b in pic.boxes]
+            names[key] = pic.file_name
         known = {ax.uid(f, b): (f, b) for f, bs in frames.items() for b in bs}
-        order = list(dict.fromkeys(ax.uid(str(it["image_id"]), _box(it["box"])) for it in p["items"]))
+        order = list(dict.fromkeys(ax.uid(ax.source_of(it), _box(it["box"])) for it in p["items"]))
         lost = [u for u in order if u not in known and u not in have]
         if lost:
-            raise ValueError(f"{len(lost)} рамок больше нет в ручной разметке класса — их удалили или сдвинули.")
+            raise ValueError(f"{len(lost)} рамок больше нет в ручной разметке класса или на своих картинках — "
+                             "их удалили или сдвинули.")
         fresh = [known[u] for u in order if u not in have]
     else:
+        if row.project_id is None or row.class_id is None:
+            raise ValueError("Проекта или класса набора больше нет — брать образцы неоткуда.")
         frames, names = usable_boxes(db, row.project_id, row.class_id, p.get("datasets"))
         want = len(have) + int(p.get("add") or 0) if parent else int(p["n"])
         # Убранное человеком обратно не добираем: он его убрал нарочно.
@@ -158,16 +182,21 @@ def build(db, row, device):
 
     out_dir = folder(row.owner_id, row.id)
     os.makedirs(out_dir, exist_ok=True)
+    ids = [_uuid(f) for f, _ in fresh if not f.startswith("p:")]
     paths = {str(i.id): os.path.join(config.DATA_DIR, i.file_path) for i in db.execute(
-        select(Image).where(Image.id.in_([f for f, _ in fresh]))).scalars()} if fresh else {}
+        select(Image).where(Image.id.in_(ids))).scalars()} if ids else {}
+    paths.update({k: os.path.join(config.DATA_DIR, pic.file_path) for k, pic in pictures.items()})
     new = {}
-    for image_id, box in fresh:
-        im = cv2.imread(paths[image_id])
+    for source, box in fresh:
+        im = cv2.imread(paths[source])
+        if im is None:
+            raise ValueError(f"Файла «{names[source]}» нет на томе.")
         # Вырезка для миниатюр и на случай, если кадр удалят; в коллаж режется заново под вид.
         x0, y0, x1, y1 = ax.auto_rect(box, im.shape[1], im.shape[1], im.shape[0])
-        u = ax.uid(image_id, box)
+        u = ax.uid(source, box)
         cv2.imwrite(os.path.join(out_dir, f"{u}.jpg"), im[y0:y1, x0:x1], [cv2.IMWRITE_JPEG_QUALITY, 92])
-        new[u] = {"uid": u, "image_id": image_id, "file_name": names[image_id], "box": list(box),
+        ref = {"picture_id": source[2:]} if source.startswith("p:") else {"image_id": source}
+        new[u] = {"uid": u, **ref, "file_name": names[source], "box": list(box),
                   "crop_box": [box[0] - x0, box[1] - y0, box[2], box[3]]}
     got = _vectors([(paths[f], b) for f, b in fresh], device) if fresh else {}
     at = {u: k for k, u in enumerate(new)}
@@ -243,10 +272,16 @@ class Crops:
 
     def __init__(self, row):
         self.row = row
-        ids = {_uuid(it["image_id"]) for it in row.items} - {None}
+        ids = {_uuid(it.get("image_id")) for it in row.items} - {None}
+        pics = {_uuid(it.get("picture_id")) for it in row.items} - {None}
+        # Ключ — источник образца (`ax.source_of`): кадр проекта или «p:» + своя картинка.
+        # Картинку берём и чужую: копия агента ссылается на картинки владельца оригинала.
         with SessionLocal() as db:
             self.paths = {str(i): os.path.join(config.DATA_DIR, p) for i, p in db.execute(
                 select(Image.id, Image.file_path).where(Image.id.in_(ids)))} if ids else {}
+            if pics:
+                self.paths.update({f"p:{i}": os.path.join(config.DATA_DIR, p) for i, p in db.execute(
+                    select(AgentPicture.id, AgentPicture.file_path).where(AgentPicture.id.in_(pics)))})
         self.cache = {}
 
     def for_view(self, view_w):
@@ -258,7 +293,7 @@ class Crops:
             out = [None] * len(self.row.items)
             by_path = {}
             for k, it in enumerate(self.row.items):
-                by_path.setdefault(self.paths.get(str(it["image_id"])), []).append(k)
+                by_path.setdefault(self.paths.get(ax.source_of(it)), []).append(k)
             for path, ks in by_path.items():
                 img = cv2.imread(path) if path and os.path.exists(path) else None
                 for k in ks:
