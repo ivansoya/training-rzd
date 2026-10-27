@@ -556,7 +556,9 @@ a.pcard:hover { border-color: var(--input); }
 
 /* ---------- таски: страница ---------- */
 .tp-two { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 18px; align-items: start; }
-.tp-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.tp-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; position: relative; }
+/* Пока тащат файлы, колонке хватает высоты под зоны, даже если блок в ней один */
+.tp-main.is-drop { min-height: 380px; }
 .tp-main > *, .tp-pass > section { animation: tp-rise .5s var(--ease) both; }
 .tp-main > :nth-child(2), .tp-pass > section:nth-child(2) { animation-delay: .07s; }
 .tp-main > :nth-child(3), .tp-pass > section:nth-child(3) { animation-delay: .13s; }
@@ -680,6 +682,34 @@ a.pcard:hover { border-color: var(--input); }
 .tp-way > .ui-ic { color: var(--muted-fg); }
 .tp-way > b { font-size: 14px; font-weight: 600; }
 .tp-way > span { font-size: 12.5px; color: var(--muted-fg); line-height: 1.4; }
+.tp-way > .tp-way-dnd { margin-top: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--faint); }
+/* Файлы над страницей: зона ждёт пунктиром, под курсором — кольцом, чужому роду гаснет с подписью */
+.tp-empty.is-drop { border-color: var(--ring); }
+.tp-way.fit { border-style: dashed; border-color: var(--input); }
+.tp-way.on { border-color: var(--ring); background: color-mix(in srgb, var(--ring) 9%, var(--card)); translate: 0 -2px; box-shadow: var(--shadow-sm); }
+.tp-way.on > .ui-ic { color: var(--ring); }
+.tp-way.off { opacity: .32; }
+.tp-way > .tp-way-say { margin-top: auto; display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 500; color: var(--ring); }
+.tp-way.off > .tp-way-say { color: var(--muted-fg); font-weight: 400; }
+.tp-main > .tp-veil {
+  position: absolute; inset: 0; z-index: 5; border: 1.5px dashed var(--input); border-radius: var(--r-lg);
+  background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(2px); animation: ed-in .15s var(--ease) both;
+}
+.tp-veil.no { border-color: var(--border); }
+/* Колонка бывает выше окна: зоны держатся на виду под шапкой */
+.tp-veil-in {
+  position: sticky; top: calc(var(--topbar-h) + 12px); height: calc(100dvh - var(--topbar-h) - 24px); max-height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 16px; text-align: center;
+}
+.tp-veil-in > b { font-size: 16px; font-weight: 600; }
+.tp-veil-in > p { margin: -6px 0 0; color: var(--muted-fg); font-size: 13px; }
+.tp-nope {
+  display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 28px 36px; max-width: 440px;
+  border: 1px solid var(--border); border-radius: var(--r-md); background: var(--card);
+}
+.tp-nope > .ui-ic { color: var(--faint); }
+.tp-nope > b { font-size: 15px; font-weight: 600; }
+.tp-nope > span { font-size: 13px; color: var(--muted-fg); }
 
 /* паспорт таски */
 .tp-pass { display: flex; flex-direction: column; }

@@ -1,6 +1,6 @@
 // Источники кадров таски карточками: изображения, ролики на нарезку, ролики на разметку, кадры из разметки.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentClearScope, PendingObject, PendingVideo, TaskNumbers, TaskPerson, TaskVideoItem, VideoPrepare } from "../../../auth/api";
 import type { Tag } from "../../../api/tags";
@@ -13,6 +13,8 @@ import type { AgentAction, AgentClear } from "./AgentMenu";
 import TagPicker from "../TagPicker";
 import VideoStrip from "../VideoStrip";
 import { fmtBytes, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
+import { fits, zoneSay } from "./drop";
+import type { Dragged } from "./drop";
 import type { SourceBlock, SourceCounts } from "./tasks";
 import { STATES, agentVideo, coverage, dayOf, stateParts } from "./tasks";
 import { hereNames } from "../here";
@@ -39,25 +41,77 @@ export function AddMenu({ onAdd }: { onAdd: (what: Add) => void }) {
   );
 }
 
-export function TaskEmpty({ editable, dataset, onAdd }: { editable: boolean; dataset: string | null; onAdd: (w: Add) => void }) {
-  const ways: [Add, "images" | "cut" | "film", string, string][] = [
-    ["images", "images", "Изображения", "Файлы или папка целиком. Перед отправкой спросим таги — потом их не восстановить."],
-    ["cut", "cut", "Видео на нарезку", "Выберете участки и шаг — из них получатся отдельные кадры."],
-    ["annotate", "film", "Видео на разметку", "Размечаете сам ролик треками. Кадры появятся, когда закроете разметку."],
-  ];
+const WAYS: [Add, "images" | "cut" | "film", string, string][] = [
+  ["images", "images", "Изображения", "Файлы или папка целиком. Перед отправкой спросим таги — потом их не восстановить."],
+  ["cut", "cut", "Видео на нарезку", "Выберете участки и шаг — из них получатся отдельные кадры."],
+  ["annotate", "film", "Видео на разметку", "Размечаете сам ролик треками. Кадры появятся, когда закроете разметку."],
+];
+
+type DropTo = (w: Add, dt: DataTransfer) => void;
+
+/** Три пути в таску: щелчок — выбор файлов, бросок — то же с брошенным. Пока тащат, зона ждёт или гаснет по роду файлов. */
+function Ways({ drag, onAdd, onDrop }: { drag: Dragged | null; onAdd: (w: Add) => void; onDrop: DropTo }) {
+  const [hover, setHover] = useState<Add | null>(null);
+  useEffect(() => { if (!drag) setHover(null); }, [drag]);
   return (
-    <div className="tp-empty">
+    <div className="tp-ways">
+      {WAYS.map(([w, icon, title, hint]) => {
+        const ok = !drag || fits(w, drag);
+        const say = drag ? zoneSay(w, drag, hover === w) : "";
+        return (
+          <button key={w} type="button" className={cx("tp-way", drag && (!ok ? "off" : hover === w ? "on" : "fit"))}
+            onClick={() => onAdd(w)}
+            onDragOver={(e) => {
+              if (!drag || !ok) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = "copy";
+              if (hover !== w) setHover(w);
+            }}
+            onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setHover((h) => (h === w ? null : h)); }}
+            onDrop={(e) => {
+              if (!ok) return;
+              e.preventDefault();
+              setHover(null);
+              onDrop(w, e.dataTransfer);
+            }}>
+            <Icon name={icon} size={22} /><b>{title}</b><span>{hint}</span>
+            {drag
+              ? say && <span className="tp-way-say">{hover === w && ok && <Icon name="upload" size={14} />}{say}</span>
+              : <span className="tp-way-dnd"><Icon name="upload" size={13} />или перетащите сюда</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function TaskEmpty({ editable, dataset, drag, onAdd, onDrop }: {
+  editable: boolean; dataset: string | null; drag: Dragged | null; onAdd: (w: Add) => void; onDrop: DropTo;
+}) {
+  return (
+    <div className={cx("tp-empty", editable && drag && "is-drop")}>
       <b>В таске пока нет кадров</b>
       <p>Таска — пул кадров: размечаете здесь, а на «Готово» размеченное уходит в датасет{dataset ? ` «${dataset}»` : ""}.</p>
-      {editable ? (
-        <div className="tp-ways">
-          {ways.map(([w, icon, title, hint]) => (
-            <button key={w} type="button" className="tp-way" onClick={() => onAdd(w)}>
-              <Icon name={icon} size={22} /><b>{title}</b><span>{hint}</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+      {editable ? <Ways drag={drag} onAdd={onAdd} onDrop={onDrop} /> : null}
+    </div>
+  );
+}
+
+/** Наложение над колонкой блоков, пока тащат файлы: те же три пути — или почему сюда нельзя. */
+export function DropVeil({ drag, refusal, onAdd, onDrop }: { drag: Dragged; refusal: string | null; onAdd: (w: Add) => void; onDrop: DropTo }) {
+  return (
+    <div className={cx("tp-veil", refusal && "no")}>
+      <div className="tp-veil-in">
+        {refusal ? (
+          <div className="tp-nope"><Icon name="lock" size={24} /><b>Сюда файлы не добавить</b><span>{refusal}</span></div>
+        ) : (
+          <>
+            <b>Куда положить файлы?</b>
+            <p>Отпустите над нужным разделом</p>
+            <Ways drag={drag} onAdd={onAdd} onDrop={onDrop} />
+          </>
+        )}
+      </div>
     </div>
   );
 }

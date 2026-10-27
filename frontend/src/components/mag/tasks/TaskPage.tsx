@@ -15,8 +15,8 @@ import { setImageTags, setVideoTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
 import { runContext } from "../../../api/agents";
 import type { RunMode, RunView } from "../../../api/agents";
-import { Button, Notice, Progress, Sheet, hasLayer } from "../../../ui";
-import { count, plural } from "../../ru";
+import { Button, Notice, Progress, Sheet, cx, hasLayer } from "../../../ui";
+import { count, plural, ru } from "../../ru";
 import AgentRunDialog, { AgentRunBar } from "../../agents/AgentRunDialog";
 import AgentSetupDialog from "../../agents/AgentSetupDialog";
 import CpuConfirm, { refusalOf, type CardRefusal } from "../../hardware/CpuConfirm";
@@ -28,8 +28,10 @@ import UploadImagesModal from "../UploadImagesModal";
 import VideoAnnotator from "../VideoAnnotator";
 import VideoCutModal from "../VideoCutModal";
 import { useConfirm } from "./Confirm";
-import { AddMenu, AnnotateCard, CutCard, FramesCard, TaskEmpty } from "./Sources";
+import { AddMenu, AnnotateCard, CutCard, DropVeil, FramesCard, TaskEmpty } from "./Sources";
 import type { AgentHooks } from "./Sources";
+import { droppedFiles, kindOf, parts, useFileDrag, zoneKind } from "./drop";
+import type { Zone } from "./drop";
 import { EventList, TaskPassport } from "./TaskPassport";
 import type { FrameState } from "./tasks";
 import { buildSources, closePlan, closeText, handoverText } from "./tasks";
@@ -74,6 +76,7 @@ export default function TaskPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const upload = useUpload(taskId || "");
+  const drag = useFileDrag();
   const [tags, setTags] = useState<Tag[]>([]);
   const [picked, setPicked] = useState<File[] | null>(null);
   const [history, setHistory] = useState(false);
@@ -323,23 +326,53 @@ export default function TaskPage() {
   const review = (source: string) => openFiltered({ status: "agent", source });
   const openVideo = (v: TaskVideoItem, forReview = false) => { setReviewing(forReview); setAnnotating(v); };
 
-  // Отказ загрузки показывает полоса из очереди — он виден и после ухода со страницы
+  // Отказ загрузки показывает полоса из очереди — он виден и после ухода со страницы.
+  // Каждая часть — своя партия очереди: отказ одной не снимает остальные.
   async function sendFiles(files: File[], perFile: string[][]) {
     if (!taskId) return;
     setPicked(null);
     setError(null);
-    const name = count(files.length, "изображение", "изображения", "изображений");
-    const [got] = await enqueueUpload(taskId, [{ name, send: (onPct) => uploadTaskImages(taskId, files, onPct, perFile) }])
-      .catch(() => [null]);
-    if (!got) return;
-    const skipped = `${count(got.skipped, "файл", "файла", "файлов")} — не изображения или не читаются`;
-    if (!got.added && got.skipped) setError(`Ни один файл не принят: ${skipped}.`);
-    else if (got.skipped) setNotice(`Принято ${got.added}, пропущено ${skipped}.`);
+    const ranges = parts(files);
+    const name = ([a, b]: [number, number]) => ranges.length > 1
+      ? `изображения ${ru(a + 1)}–${ru(b)} из ${ru(files.length)}`
+      : count(files.length, "изображение", "изображения", "изображений");
+    const sent = await Promise.allSettled(ranges.map((r) => enqueueUpload(taskId, [{
+      name: name(r),
+      send: (onPct) => uploadTaskImages(taskId, files.slice(...r), onPct, perFile.slice(...r)).catch((e) => {
+        throw ranges.length > 1 ? new Error(`Не легли ${name(r)}: ${(e as Error).message}`) : e;
+      }),
+    }])));
+    const got = sent.flatMap((s) => (s.status === "fulfilled" ? s.value : []));
+    if (!got.length) return;
+    const added = got.reduce((s, g) => s + g.added, 0);
+    const skipped = got.reduce((s, g) => s + g.skipped, 0);
+    const why = `${count(skipped, "файл", "файла", "файлов")} — не изображения или не читаются`;
+    if (!added && skipped) setError(`Ни один файл не принят: ${why}.`);
+    else if (skipped) setNotice(`Принято ${added}, пропущено ${why}.`);
+  }
+
+  /** Брошенное в зону: папки развёрнуты, взят только род зоны, остальное названо числом. */
+  async function dropFiles(w: Zone, dt: DataTransfer) {
+    let all: File[];
+    try {
+      all = await droppedFiles(dt);
+    } catch (e) {
+      setError(`Не прочитать брошенное: ${(e as Error).message}`);
+      return;
+    }
+    const kind = zoneKind(w);
+    const take = all.filter((f) => kindOf(f) === kind);
+    const skipped = `${count(all.length - take.length, "файл", "файла", "файлов")} — ${kind === "images" ? "не изображения" : "не видео"}`;
+    if (!take.length) { setError(`Ни один файл не подошёл: ${skipped}.`); return; }
+    if (take.length < all.length) {
+      setNotice(`Взято ${kind === "images" ? count(take.length, "изображение", "изображения", "изображений")
+        : count(take.length, "ролик", "ролика", "роликов")}, пропущено ${skipped}.`);
+    }
+    if (w === "images") setPicked(take); else void onVideo(take, w);
   }
 
   /** Ролики встают в очередь вкладки и уходят по одному. */
-  async function onVideo(files: FileList | null, mode: "cut" | "annotate") {
-    const list = Array.from(files || []);
+  async function onVideo(list: File[], mode: "cut" | "annotate") {
     if (!list.length || !taskId) return;
     setError(null);
     const items = list.map((file) => ({
@@ -436,6 +469,12 @@ export default function TaskPage() {
     (live.mode === "frames" ? !!frames && live.sources.includes(frames) : live.videos.some((v) => videos.includes(v)))
       ? live : null;
   const empty = sources.length === 0 && annotateVideos.length === 0;
+  // Поверх открытого окна (таги, нарезка, редактор) бросок в таску путает — зон нет
+  const dragOn = drag && !(editing || annotating || cutting || picked || hasLayer()) ? drag : null;
+  const refusal = fillable ? null : handJob || watched
+    ? "Таска сдаётся в датасет — добавить можно будет после."
+    : "Добавлять файлы в эту таску вам сейчас нельзя.";
+  const drop = (w: Zone, dt: DataTransfer) => void dropFiles(w, dt);
   // Меню «⋯» блоков: агент таски сразу, без окна
   const agent: AgentHooks = {
     tool: agentTool, busy: busy || agentBusy, onSetup: () => setSetupOpen(true),
@@ -509,10 +548,11 @@ export default function TaskPage() {
       )}
 
       <div className="tp-two">
-        <div className="tp-main">
+        <div className={cx("tp-main", dragOn && "is-drop")}>
           {fillable && !empty && <div className="tp-add"><AddMenu onAdd={onAdd} /></div>}
-          {empty ? <TaskEmpty editable={fillable} dataset={task.target_dataset?.name ?? null} onAdd={onAdd} />
+          {empty ? <TaskEmpty editable={fillable} dataset={task.target_dataset?.name ?? null} drag={dragOn} onAdd={onAdd} onDrop={drop} />
             : cards.map((c) => c.node)}
+          {dragOn && (!empty || !fillable) && <DropVeil drag={dragOn} refusal={refusal} onAdd={onAdd} onDrop={drop} />}
         </div>
         <TaskPassport task={task} numbers={numbers} numbersLook={numbersLook} pendingFrames={pendingFrames} pendingLook={pendingLook}
           events={events} workers={workers} busy={busy || !!handJob || !!watched} handing={handing}
@@ -523,9 +563,9 @@ export default function TaskPage() {
       <input ref={fileRef} type="file" accept="image/*" multiple hidden
         onChange={(e) => { if (e.target.files?.length) setPicked([...e.target.files]); e.target.value = ""; }} />
       <input ref={cutRef} type="file" accept="video/*" multiple hidden
-        onChange={(e) => { void onVideo(e.target.files, "cut"); e.target.value = ""; }} />
+        onChange={(e) => { void onVideo(Array.from(e.target.files ?? []), "cut"); e.target.value = ""; }} />
       <input ref={annotateRef} type="file" accept="video/*" multiple hidden
-        onChange={(e) => { void onVideo(e.target.files, "annotate"); e.target.value = ""; }} />
+        onChange={(e) => { void onVideo(Array.from(e.target.files ?? []), "annotate"); e.target.value = ""; }} />
 
       <Sheet open={history} onOpenChange={setHistory} title="История таски" desc={count(events.length, "событие", "события", "событий")}>
         <EventList events={events} />
