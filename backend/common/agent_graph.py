@@ -570,9 +570,10 @@ def _check_text(node, sam3, examples):
         raise AgentGraphError(f"{title(node)}: «Слов за проход» — авто, 1, 2, 4, 8 или 16, сейчас {words!r}.")
     if not text_rows(node):
         raise AgentGraphError(f"{title(node)}: не включена ни одна строка.")
-    if text_model(params) == "sam3" and len(text_rows(node)) > SAM3_MAX_ROWS:
+    # Строка-образцы — свой вызов ценой одного слова, в потолок не идёт (замер борщевика 26.10).
+    if text_model(params) == "sam3" and len(text_prompts(node)) > SAM3_MAX_ROWS:
         raise AgentGraphError(
-            f"{title(node)}: у SAM 3 не больше {SAM3_MAX_ROWS} строк — память растёт с каждой.")
+            f"{title(node)}: у SAM 3 не больше {SAM3_MAX_ROWS} строк-слов — память растёт с каждой.")
     # Одно слово или один набор дважды — два класса модели на одно и то же:
     # они делили бы находки между собой. Синоним пишется другим словом.
     prompts = [p.lower() for _, p in text_prompts(node)]

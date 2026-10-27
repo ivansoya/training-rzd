@@ -578,6 +578,9 @@ def test_sam3_не_больше_16_строк_и_бронь_растёт_с_пр
     with pytest.raises(ag.AgentGraphError, match="не больше 16"):
         ag.check(_text_doc(_text("t", many, model="sam3")))
     ag.check(_text_doc(_text("t", many)))  # YOLOE — без потолка
+    full = _text("t", many[:16], model="sam3")
+    full["params"]["prompts"].append({"kind": "examples", "set": "s1", "agent": "Борщевик", "on": True})
+    ag.check(_text_doc(full))  # строка-образцы в потолок слов не идёт
     two = _text("t", many[:2], model="sam3")
     # Сетка 10.10.2026, вход 644: модель с кадром 1840 + 150 на слово
     assert ag.text_vram_mb(two) == 1840 + 2 * 150
