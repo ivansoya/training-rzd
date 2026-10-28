@@ -248,7 +248,7 @@ export default function VideoAnnotator({
   const [plan, setPlan] = useState<MaterializePreview | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   // `ghost` — меню открыто на находке разведки (номер в `ghosts`), а не на объекте.
-  const [menu, setMenu] = useState<{ i: number | null; x: number; y: number; ghost?: number } | null>(null);
+  const [menu, setMenu] = useState<{ i: number | null; x: number; y: number; ghost?: number; part?: number } | null>(null);
   const [laneMenu, setLaneMenu] = useState<LaneAction | null>(null);
   const [scale, setScale] = useState(1);
   const [draft, setDraft] = useState<CanvasShape[] | null>(null);
@@ -1511,7 +1511,7 @@ export default function VideoAnnotator({
   const emptyState = markedHere ? (busyHere ? "idle" : "on") : busyHere ? "busy" : "off";
 
   /** Меню объекта: проверка и контур — первой группой, превращения — второй. */
-  function objectActions(i: number | null): MenuAction[][] {
+  function objectActions(i: number | null, part?: number): MenuAction[][] {
     const item = i === null ? undefined : items[i];
     if (i === null || !item || frozen) return [];
     const main: MenuAction[] = [];
@@ -1538,6 +1538,21 @@ export default function VideoAnnotator({
         disabled: contour,
         run: () => { if (!contour) toTrack(item.box); setMenu(null); },
       });
+      const rings = boxes[i]?.parts?.length || 0;
+      if (rings > 1 && part !== undefined) {
+        more.push({
+          label: "Убрать этот контур",
+          hint: `останется ${rings - 1}`,
+          run: () => {
+            editSingle(item.box, (s) => {
+              const parts = poly.removePart(s.parts!, part);
+              return { ...s, parts, ...(poly.bounds(parts) || {}) };
+            });
+            setSelPart(null);
+            setMenu(null);
+          },
+        });
+      }
     }
     return [main, more];
   }
@@ -1625,7 +1640,7 @@ export default function VideoAnnotator({
             onBoxes={onBoxes}
             onDrawn={() => setTool("select")}
             onScale={setScale}
-            onContext={(i, x, y) => setMenu({ i, x, y })}
+            onContext={(i, x, y, at) => setMenu({ i, x, y, part: at?.part })}
             onAutoPoint={onAutoPoint}
             onAutoBox={onAutoBox}
             onAutoCommit={commitAuto}
@@ -1790,7 +1805,7 @@ export default function VideoAnnotator({
                   setMenu(null);
                 }
           }
-          groups={objectActions(menu.i)}
+          groups={objectActions(menu.i, menu.part)}
           note={menu.i !== null && items[menu.i]?.kind === "single" && singleAgent(items[menu.i])
             ? <AgentNote item={items[menu.i]} /> : undefined}
           onClose={() => setMenu(null)}
