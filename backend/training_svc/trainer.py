@@ -221,7 +221,8 @@ def vram_want(db, model_id, task, imgsz, batch, gpus):
     sig = gpu.signature("train", model=model_id, task=task, imgsz=imgsz, batch=batch,
                         **({"gpus": gpus} if gpus > 1 else {}))
     want, source = gpu.estimate(db, "train", sig, card_vram(model_id, task, imgsz, batch, gpus))
-    return want, source, sig
+    # Замер (max_memory_reserved) идёт без CUDA-контекста процесса — прибавляем, как агентам.
+    return want + gpu.CONTEXT_MB, source, sig
 
 
 def fit_hint(model_id, task, imgsz, batch, gpus, cap_mb, scale=1.0):
@@ -255,9 +256,10 @@ def card_gate(db, model_id, task, params):
     cap = max(caps)
     error = (f"Не поместится на карту: нужно {gpu._gb(want)}, а под задачи отдаётся {gpu._gb(cap)}." if gpus == 1
              else f"Нужно карт: {gpus} по {gpu._gb(want)}, а таких на сервере {roomy}.")
-    scale = max(1.0, want / max(1, card_vram(model_id, task, imgsz, batch, gpus)))
+    # Контекст от батча не зависит — растягивается и подбирается только сама обучающая часть.
+    scale = max(1.0, (want - gpu.CONTEXT_MB) / max(1, card_vram(model_id, task, imgsz, batch, gpus)))
     return {"code": "gpu_never", "error": error, "need_mb": want, "cap_mb": cap,
-            "fit": fit_hint(model_id, task, imgsz, batch, gpus, cap, scale)}
+            "fit": fit_hint(model_id, task, imgsz, batch, gpus, cap - gpu.CONTEXT_MB, scale)}
 
 
 def is_available():

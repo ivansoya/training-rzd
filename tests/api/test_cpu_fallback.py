@@ -2,8 +2,8 @@
 
 Обучение и прогон агента, которым карта мала или выключена, при запуске получают 409 с причиной
 (и обучение — с подсказкой, что влезет), а с согласием (`device: cpu`) считают на процессоре.
-Процессор берёт одну задачу разом. Карта ужимается запасом до CAP МБ под задачи — ни обучение,
-ни YOLOE на неё не влезают; после модуля запас возвращается.
+Процессор берёт одну задачу разом. Карта ужимается бронью полуавтомата до CAP МБ под задачи — ни обучение,
+ни YOLOE на неё не влезают; после модуля бронь возвращается.
 """
 import io
 import time
@@ -14,7 +14,7 @@ import agent_data
 from conftest import BASE_URL, drop_project, tag, wait_job
 from test_project_data import archive
 
-CAP = 100
+CAP = 600  # 500 — CUDA-контекст обучения (gpu.CONTEXT_MB), самому обучению остаётся 100
 PERSON = "person"
 
 
@@ -26,18 +26,19 @@ def owner(db):
 @pytest.fixture(scope="module")
 def card(db):
     with db.cursor() as cur:
-        cur.execute("""select id, total_mb, reserved_mb, sam2_reserve_mb from gpu_devices
+        cur.execute("""select id, total_mb, sam2_reserve_mb from gpu_devices
                        where enabled and seen_at > now() - interval '5 min' order by device_index limit 1""")
         row = cur.fetchone()
         if row is None:
             pytest.skip("На стенде нет живой карты")
-        real, total, reserved, sam2 = row
-        cur.execute("update gpu_devices set reserved_mb = %s where id = %s", (total - sam2 - CAP, real))
+        real, total, sam2 = row
+        # Сужаем бронью полуавтомата: другого рычага у карты нет, а переписывает её только живой SAM2.
+        cur.execute("update gpu_devices set sam2_reserve_mb = %s where id = %s", (total - CAP, real))
     try:
         yield str(real)
     finally:
         with db.cursor() as cur:
-            cur.execute("update gpu_devices set reserved_mb = %s, enabled = true where id = %s", (reserved, real))
+            cur.execute("update gpu_devices set sam2_reserve_mb = %s, enabled = true where id = %s", (sam2, real))
 
 
 @pytest.fixture(scope="module")
@@ -122,7 +123,7 @@ def test_обучение_больше_карты_учится_на_процес
     body = {"set_id": sid, "model": "yolo11n", "params": {"epochs": 1, "imgsz": 640, "batch": 16}}
     res = owner.post(url("/runs"), json=body)
     assert res.status_code == 409 and res.json()["code"] == "gpu_never", res.text
-    # Под задачи 100 МБ: даже батч 1 на 640 не влезает — подсказка про вход.
+    # Обучению 100 МБ: даже батч 1 на 640 не влезает — подсказка про вход.
     fit = res.json()["fit"]
     assert fit and fit["batch"] == 1 and fit["imgsz"] < 640, fit
 

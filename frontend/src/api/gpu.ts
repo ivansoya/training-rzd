@@ -32,7 +32,6 @@ export interface Device {
   index: number;
   name: string;
   total_mb: number;
-  reserved_mb: number;
   sam2_reserve_mb: number;
   max_heavy: number;
   held_mb: number;
@@ -42,7 +41,7 @@ export interface Device {
   enabled: boolean;
   /** На связи: воркер перечислял карту недавно. */
   fresh: boolean;
-  /** Потолок под задачи: всего без запаса и резерва под разметку. */
+  /** Потолок под задачи: всего без резерва под разметку. */
   cap_mb: number;
   /** Пусто без права на оборудование — тогда занятое видно только суммой `held_mb`. */
   holders: Holder[];
@@ -115,7 +114,7 @@ export const setAccess = (userId: string, level: HardwareLevel | null) => put<Ac
 
 export const setLimits = (
   id: string,
-  data: { reserved_mb?: number; max_heavy?: number; enabled?: boolean }
+  data: { max_heavy?: number; enabled?: boolean }
 ) => patch<Device[]>(`gpu/devices/${id}`, data);
 
 // Свою задачу отменяет владелец, чужую — «Управление». Снимает не сервер, а воркер: флаг ставится в базе, а процесс убивает тот,

@@ -14,7 +14,7 @@ def _gb(mb) -> str:
     return f"{mb / 1024:.1f} ГБ".replace(".", ",")
 
 
-def for_tasks_mb(total_mb, reserved_mb, sam2_mb) -> int:
+def for_tasks_mb(total_mb, sam2_mb) -> int:
     """Потолок карты: сколько она отдаёт под задачи в самом лучшем случае.
 
     Заявка больше этого числа не пройдёт никогда — очередь освобождает чужую
@@ -22,10 +22,10 @@ def for_tasks_mb(total_mb, reserved_mb, sam2_mb) -> int:
     о «никогда» ровно по той же формуле, что и допуск: разойдясь, они начали бы
     ставить в очередь то, что сами же и отвергают.
     """
-    return total_mb - reserved_mb - sam2_mb
+    return total_mb - sam2_mb
 
 
-def fits(*, total_mb, reserved_mb, sam2_mb, held_mb,
+def fits(*, total_mb, sam2_mb, held_mb,
          heavy, max_heavy, want_mb, heavy_request):
     """Влезает ли работа на карту.
 
@@ -35,7 +35,7 @@ def fits(*, total_mb, reserved_mb, sam2_mb, held_mb,
     Ждущие места не придерживают (решение 11.10.2026): что влезает — идёт сразу,
     большая задача может ждать сколько угодно, выручает её человек.
     """
-    for_tasks = for_tasks_mb(total_mb, reserved_mb, sam2_mb)
+    for_tasks = for_tasks_mb(total_mb, sam2_mb)
     if want_mb > for_tasks:
         return (
             f"не поместится никогда: под задачи отдаётся {_gb(for_tasks)}, "
@@ -70,7 +70,7 @@ def place(parts, cards, *, spread, heavy_request, busy_kind):
     """Куда лечь частям одной задачи — всем разом или никуда.
 
     ``parts`` — [МБ] по частям; ``cards`` — живые карты по номеру, словари
-    {id, index, total, reserved, sam2, held, heavy, max_heavy, busy}.
+    {id, index, total, sam2, held, heavy, max_heavy, busy}.
     ``spread`` — каждая часть на своей карте (обучение на нескольких картах);
     иначе части ложатся плотно и на как можно меньше карт (агент по блокам).
     Возвращает ([id карты по частям], None) или (None, причина для человека).
@@ -87,11 +87,11 @@ def place(parts, cards, *, spread, heavy_request, busy_kind):
         for c in cards:
             if spread and c["id"] in used:
                 continue
-            why = fits(total_mb=c["total"], reserved_mb=c["reserved"], sam2_mb=c["sam2"],
+            why = fits(total_mb=c["total"], sam2_mb=c["sam2"],
                        held_mb=held[c["id"]], heavy=heavy[c["id"]],
                        max_heavy=c["max_heavy"], want_mb=want, heavy_request=heavy_request)
             if why is None:
-                free = for_tasks_mb(c["total"], c["reserved"], c["sam2"]) - held[c["id"]]
+                free = for_tasks_mb(c["total"], c["sam2"]) - held[c["id"]]
                 ok.append((c["id"], free - want, busy[c["id"]]))
             else:
                 reasons.append(f"карта {c['index']}: {why}")

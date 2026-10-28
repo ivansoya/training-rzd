@@ -13,7 +13,7 @@ import { NumInput } from "../NumInput";
 import { Avatar, Badge, Button, Card, Empty, Icon, Input, Legend, Notice, PageHeader, Seg, StackBar, Switch, Table, cx } from "../../ui";
 import type { IconName } from "../../ui";
 import { count } from "../ru";
-import { HATCH, RESERVE, cardList, freeColor, gb, kindOf, liveDevices, loadOf, shortName } from "../shell/useGpuState";
+import { HATCH, cardList, freeColor, gb, kindOf, liveDevices, loadOf, shortName } from "../shell/useGpuState";
 
 const clock = (iso: string) => new Date(iso).toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" });
 
@@ -160,7 +160,7 @@ export default function HardwarePage() {
 /** Карта — строкой таблицы; раскрытая — ещё строкой с держателями и настройками. */
 function DeviceRows({ device: d, state, many, open, onToggle, onLimit, onKill }: {
   device: Device; state: GpuState; many: boolean; open: boolean; onToggle: () => void;
-  onLimit: (data: { reserved_mb?: number; max_heavy?: number; enabled?: boolean }) => void;
+  onLimit: (data: { max_heavy?: number; enabled?: boolean }) => void;
   onKill: (leaseId: string) => void;
 }) {
   const off = !d.enabled || !d.fresh;
@@ -169,7 +169,6 @@ function DeviceRows({ device: d, state, many, open, onToggle, onLimit, onKill }:
     ...(d.sam2_reserve_mb > 0 ? [{ label: "под разметку", value: d.sam2_reserve_mb, color: HATCH }] : []),
     ...d.holders.map((h) => ({ label: h.what ?? kindOf(h.kind)[0], value: h.granted_mb, color: kindOf(h.kind)[1] })),
     ...(others > 0 ? [{ label: "занято задачами", value: others, color: "var(--faint)" }] : []),
-    ...(d.reserved_mb > 0 ? [{ label: "неприкосновенный запас", value: d.reserved_mb, color: RESERVE }] : []),
     { label: "свободно", value: d.free_mb, color: freeColor(loadOf(d.free_mb, d.total_mb).tone) },
   ];
   const kinds = [...new Set(d.holders.map((h) => h.kind))];
@@ -270,20 +269,15 @@ function CpuRows({ state, onKill }: { state: GpuState; onKill: (leaseId: string)
   );
 }
 
-/** Запас, потолок тяжёлых и включение карты: меняет «Управление», видит «Просмотр». */
+/** Потолок тяжёлых и включение карты: меняет «Управление», видит «Просмотр». */
 function CardSettings({ device: d, state, onLimit }: {
   device: Device; state: GpuState;
-  onLimit: (data: { reserved_mb?: number; max_heavy?: number; enabled?: boolean }) => void;
+  onLimit: (data: { max_heavy?: number; enabled?: boolean }) => void;
 }) {
   return (
     <>
       {state.manage ? (
         <footer className="hw-cfg">
-          <label className="hw-f">
-            <span>Неприкосновенный запас, ГБ</span>
-            <NumInput className="ui-input ui-ctl" lazy value={d.reserved_mb / 1024} min={0} max={Math.round(d.total_mb / 1024)} step={0.5}
-              onValue={(v) => v !== undefined && Math.round(v * 1024) !== d.reserved_mb && onLimit({ reserved_mb: Math.round(v * 1024) })} />
-          </label>
           <label className="hw-f">
             <span>Тяжёлых задач на карту</span>
             <NumInput className="ui-input ui-ctl" lazy integer value={d.max_heavy} min={1} max={8}
@@ -301,7 +295,6 @@ function CardSettings({ device: d, state, onLimit }: {
         </footer>
       ) : state.staff && (
         <footer className="hw-cfg ro">
-          <span>Запас <b>{gb(d.reserved_mb)} ГБ</b></span>
           <span>Тяжёлых задач на карту <b>{d.max_heavy}</b></span>
           <span>Включена <b>{d.enabled ? "да" : "нет"}</b></span>
           <span className="grow" />
@@ -443,7 +436,7 @@ function AccessCard({ onError }: { onError: (msg: string) => void }) {
         <div className="hw-list">{granted.map((u) => person(u, u.login === u.name ? u.email : `${u.login} · ${u.email}`))}</div>
       ) : granted && <p className="t-xs t-muted">Прав не выдано никому, кроме назначенных командой на сервере.</p>}
       <p className="t-xs t-faint">
-        «Просмотр» — держатели карт и вся очередь. «Управление» — ещё запас памяти, включение карт, «Снять» и выдача прав.
+        «Просмотр» — держатели карт и вся очередь. «Управление» — ещё потолок тяжёлых задач, включение карт, «Снять» и выдача прав.
         Сводку карт и свою очередь видят все. Первого управляющего назначает <code>flask grant-staff</code> на сервере.
       </p>
     </Card>

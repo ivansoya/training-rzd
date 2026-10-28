@@ -936,11 +936,6 @@ class GpuDevice(Base):
     uuid_str: Mapped[str | None] = mapped_column(sa.String(64), unique=True)
     name: Mapped[str] = mapped_column(sa.String(128), nullable=False)
     total_mb: Mapped[int] = mapped_column(sa.Integer, nullable=False)
-    # Неприкосновенный запас: сколько памяти не раздавать никогда. Ставит
-    # человек, перезапуск контейнера это не сбрасывает.
-    reserved_mb: Mapped[int] = mapped_column(
-        sa.Integer, nullable=False, default=1024, server_default="1024"
-    )
     # Постоянная бронь полуавтомата. Колонкой, а не строкой брони на сессию:
     # сессии SAM2 приходят и уходят десятками в час, а память процесс держит
     # всё время, пока жив хоть один его воркер.

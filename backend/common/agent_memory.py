@@ -153,7 +153,7 @@ def scaled(units, total_mb):
 
 def _slots(cards, now):
     """Карты для `gpu_rules.place`: потолок — по `cap_mb`, занятое — сейчас или ноль."""
-    return [{"id": i, "index": c.get("index", i), "total": c["cap_mb"], "reserved": 0, "sam2": 0,
+    return [{"id": i, "index": c.get("index", i), "total": c["cap_mb"], "sam2": 0,
              "held": c["cap_mb"] - c["free_mb"] if now else 0, "heavy": 0,
              "max_heavy": 1, "busy": 0} for i, c in enumerate(cards)]
 

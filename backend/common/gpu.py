@@ -373,7 +373,7 @@ def capacity_mb(db) -> int:
     devices, _held, _heavy, _busy = _load_state(db, lock=False)
     return max(
         (
-            for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb)
+            for_tasks_mb(d.total_mb, d.sam2_reserve_mb)
             for d in devices
         ),
         default=0,
@@ -389,15 +389,15 @@ def cards(db):
         "id": str(d.id),
         "index": d.device_index,
         "name": d.name,
-        "cap_mb": for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb),
-        "free_mb": max(0, for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb) - held.get(d.id, 0)),
+        "cap_mb": for_tasks_mb(d.total_mb, d.sam2_reserve_mb),
+        "free_mb": max(0, for_tasks_mb(d.total_mb, d.sam2_reserve_mb) - held.get(d.id, 0)),
     } for d in devices]
 
 
 def capacities(db) -> list[int]:
     """Потолки живых карт: влезет ли задача на нескольких картах в принципе."""
     devices, _held, _heavy, _busy = _load_state(db, lock=False)
-    return [for_tasks_mb(d.total_mb, d.reserved_mb, d.sam2_reserve_mb) for d in devices]
+    return [for_tasks_mb(d.total_mb, d.sam2_reserve_mb) for d in devices]
 
 
 def queued_count(db, gpu_only=False) -> int:
@@ -482,7 +482,7 @@ def _load_state(db, lock=True, include_stale=False):
 
 def _cards(devices, held, heavy, busy):
     return [{
-        "id": d.id, "index": d.device_index, "total": d.total_mb, "reserved": d.reserved_mb,
+        "id": d.id, "index": d.device_index, "total": d.total_mb,
         "sam2": d.sam2_reserve_mb, "held": held.get(d.id, 0),
         "heavy": heavy.get(d.id, 0), "max_heavy": d.max_heavy, "busy": busy.get(d.id, 0),
     } for d in devices]
@@ -659,18 +659,17 @@ def devices_view(db, holders=True):
             "index": dev.device_index,
             "name": dev.name,
             "total_mb": dev.total_mb,
-            "reserved_mb": dev.reserved_mb,
             "sam2_reserve_mb": dev.sam2_reserve_mb,
             "max_heavy": dev.max_heavy,
             "held_mb": used,
             "free_mb": max(
-                0, dev.total_mb - dev.reserved_mb - dev.sam2_reserve_mb - used
+                0, dev.total_mb - dev.sam2_reserve_mb - used
             ),
             "heavy": heavy.get(dev.id, 0),
             "seen_at": dev.seen_at.isoformat() if dev.seen_at else None,
             "enabled": bool(dev.enabled),
             "fresh": _fresh(dev, now),
-            "cap_mb": for_tasks_mb(dev.total_mb, dev.reserved_mb, dev.sam2_reserve_mb),
+            "cap_mb": for_tasks_mb(dev.total_mb, dev.sam2_reserve_mb),
             "holders": [
                 {
                     "id": str(r.id),
@@ -761,12 +760,10 @@ def queue_view(db, *, user_id=None, staff=False):
     }
 
 
-def set_limits(db, device_id, *, reserved_mb=None, max_heavy=None, enabled=None):
+def set_limits(db, device_id, *, max_heavy=None, enabled=None):
     dev = db.get(GpuDevice, device_id)
     if dev is None:
         return None
-    if reserved_mb is not None:
-        dev.reserved_mb = max(0, int(reserved_mb))
     if max_heavy is not None:
         dev.max_heavy = max(1, int(max_heavy))
     if enabled is not None:

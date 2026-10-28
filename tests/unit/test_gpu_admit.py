@@ -5,16 +5,15 @@
 """
 from common.gpu_rules import fits, for_tasks_mb
 
-# Карта на 24 ГБ: 2 ГБ неприкосновенный запас, 4 ГБ держит полуавтомат.
-BIG = dict(total_mb=24564, reserved_mb=2048, sam2_mb=4096, max_heavy=1)
+# Карта на 24 ГБ: 4 ГБ держит полуавтомат.
+BIG = dict(total_mb=24564, sam2_mb=4096, max_heavy=1)
 # Карта на 12 ГБ без полуавтомата.
-SMALL = dict(total_mb=12288, reserved_mb=1024, sam2_mb=0, max_heavy=1)
+SMALL = dict(total_mb=12288, sam2_mb=0, max_heavy=1)
 
 
 def ask(card, *, held=0, heavy=0, want, heavy_request=True):
     return fits(
         total_mb=card["total_mb"],
-        reserved_mb=card["reserved_mb"],
         sam2_mb=card["sam2_mb"],
         held_mb=held,
         heavy=heavy,
@@ -28,15 +27,15 @@ def test_пустая_карта_пускает_то_что_влезает():
     assert ask(BIG, want=12600) is None
 
 
-def test_запас_и_бронь_полуавтомата_не_раздаются():
-    # 24564 − 2048 запаса − 4096 полуавтомата = 18420 МБ под задачи.
-    assert ask(BIG, want=18420) is None
-    assert ask(BIG, want=18421) is not None
+def test_бронь_полуавтомата_не_раздаётся():
+    # 24564 − 4096 полуавтомата = 20468 МБ под задачи.
+    assert ask(BIG, want=20468) is None
+    assert ask(BIG, want=20469) is not None
 
 
 def test_занятое_место_вычитается():
-    assert ask(BIG, held=12600, want=5800, heavy_request=False) is None
-    assert ask(BIG, held=12600, want=5900, heavy_request=False) is not None
+    assert ask(BIG, held=12600, want=7800, heavy_request=False) is None
+    assert ask(BIG, held=12600, want=7900, heavy_request=False) is not None
 
 
 def test_потолок_тяжёлых_держит_второе_обучение():
@@ -58,7 +57,7 @@ def test_невозможное_называется_невозможным():
     assert why is not None
     assert "никогда" in why
 
-    why = ask(SMALL, held=10000, want=2000, heavy_request=False)
+    why = ask(SMALL, held=10000, want=3000, heavy_request=False)
     assert why is not None
     assert "никогда" not in why
     assert "свободно" in why
@@ -74,8 +73,8 @@ def test_причина_написана_для_человека():
 
 
 def test_ровно_по_границе_проходит():
-    assert ask(SMALL, held=1000, want=10264, heavy_request=False) is None
-    assert ask(SMALL, held=1000, want=10265, heavy_request=False) is not None
+    assert ask(SMALL, held=1000, want=11288, heavy_request=False) is None
+    assert ask(SMALL, held=1000, want=11289, heavy_request=False) is not None
 
 
 # --------------------------------------------------------------------------- #
@@ -85,7 +84,7 @@ def test_потолок_совпадает_с_приговором_допуск�
     """Если эти двое разойдутся, диспетчер станет ставить в очередь заявки,
     которые сам же считает невыполнимыми, — и та встанет навсегда."""
     for card in (BIG, SMALL):
-        top = for_tasks_mb(card["total_mb"], card["reserved_mb"], card["sam2_mb"])
+        top = for_tasks_mb(card["total_mb"], card["sam2_mb"])
         assert "никогда" not in (ask(card, want=top) or "")
         assert "никогда" in ask(card, want=top + 1)
 
@@ -93,7 +92,7 @@ def test_потолок_совпадает_с_приговором_допуск�
 def test_потолок_не_зависит_от_занятого():
     """Потолок — свойство карты. Занятое сейчас двигает «подожди», но не его:
     иначе большое обучение то отвергалось бы, то вставало в очередь."""
-    top = for_tasks_mb(SMALL["total_mb"], SMALL["reserved_mb"], SMALL["sam2_mb"])
+    top = for_tasks_mb(SMALL["total_mb"], SMALL["sam2_mb"])
     assert "никогда" in ask(SMALL, want=top + 1, held=0)
     assert "никогда" in ask(SMALL, want=top + 1, held=4096)
 
@@ -130,8 +129,8 @@ def test_ничья_и_пустой_список():
 from common.gpu_rules import place  # noqa: E402
 
 
-def card(i, total=24564, held=0, heavy=0, busy=0, max_heavy=1, reserved=1024, sam2=0):
-    return dict(id=f"c{i}", index=i, total=total, reserved=reserved, sam2=sam2, held=held,
+def card(i, total=23540, held=0, heavy=0, busy=0, max_heavy=1, sam2=0):
+    return dict(id=f"c{i}", index=i, total=total, sam2=sam2, held=held,
                 heavy=heavy, max_heavy=max_heavy, busy=busy)
 
 

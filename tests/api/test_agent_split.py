@@ -50,17 +50,18 @@ def two_cards(db):
     """Вторая «карта» — та же физическая; потолки обеих — по CAP."""
     with db.cursor() as cur:
         _forget(cur)
-        cur.execute("""select id, total_mb, reserved_mb, sam2_reserve_mb from gpu_devices
+        cur.execute("""select id, total_mb, sam2_reserve_mb from gpu_devices
                        where enabled and seen_at > now() - interval '5 min' order by device_index limit 1""")
         row = cur.fetchone()
         if row is None:
             pytest.skip("На стенде нет живой карты")
-        real, total, reserved, sam2 = row
+        real, total, sam2 = row
         fake = str(uuid.uuid4())
-        cur.execute("update gpu_devices set reserved_mb = %s where id = %s", (total - sam2 - CAP, real))
-        cur.execute("""insert into gpu_devices (id, host, device_index, uuid_str, name, total_mb, reserved_mb,
+        # Сужаем бронью полуавтомата: другого рычага у карты нет, а переписывает её только живой SAM2.
+        cur.execute("update gpu_devices set sam2_reserve_mb = %s where id = %s", (total - CAP, real))
+        cur.execute("""insert into gpu_devices (id, host, device_index, uuid_str, name, total_mb,
                        sam2_reserve_mb, max_heavy, enabled, seen_at, created_at)
-                       values (%s, 'probe-split', 0, %s, 'RTX проба', %s, %s, 0, 1, true,
+                       values (%s, 'probe-split', 0, %s, 'RTX проба', %s, %s, 1, true,
                                now() + interval '1 day', now())""",
                     (fake, f"probe-{fake}", total, total - CAP))
     db.commit()
@@ -73,7 +74,7 @@ def two_cards(db):
             cur.execute("""update gpu_leases set status = 'released', released_at = now(), lease_until = null
                            where status in ('queued', 'held') and (device_id = %s or group_id in
                            (select group_id from gpu_leases where device_id = %s))""", (fake, fake))
-            cur.execute("update gpu_devices set reserved_mb = %s where id = %s", (reserved, real))
+            cur.execute("update gpu_devices set sam2_reserve_mb = %s where id = %s", (sam2, real))
             cur.execute("delete from gpu_devices where id = %s", (fake,))
             _forget(cur)
         db.commit()

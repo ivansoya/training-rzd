@@ -57,8 +57,6 @@ const upper = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /** Резерв под полуавтомат — штриховкой: это не работа, а место, которое держат для разметки. */
 export const HATCH = "repeating-linear-gradient(135deg, var(--c4) 0 3px, color-mix(in srgb, var(--c4) 40%, var(--card)) 3px 6px)";
-// Запас серый: жёлтым занято «загружена»
-export const RESERVE = "repeating-linear-gradient(135deg, var(--faint) 0 3px, var(--hover) 3px 6px)";
 
 /** Состояние карты по свободной доле: от 30 % — свободна, меньше 10 % — занята (решение 13.10.2026). */
 export function loadOf(free_mb: number, total_mb: number) {
@@ -69,15 +67,14 @@ export function loadOf(free_mb: number, total_mb: number) {
 }
 export const freeColor = (tone: string) => `color-mix(in srgb, ${tone} 65%, var(--card))`;
 
-/** Доли памяти всех живых карт одной полосой: разметка, работы по видам, запас, свободное.
+/** Доли памяти всех живых карт одной полосой: разметка, работы по видам, свободное.
  *  Высота карточки обзора не зависит от числа карт (решение 10.10.2026). */
 export function serverParts(devices: Device[]) {
   const byKind = new Map<string, number>();
-  let sam2 = 0, reserved = 0, free = 0, anonymous = 0, total = 0;
+  let sam2 = 0, free = 0, anonymous = 0, total = 0;
   for (const d of devices) {
     total += d.total_mb;
     sam2 += d.sam2_reserve_mb;
-    reserved += d.reserved_mb;
     free += d.free_mb;
     for (const h of d.holders) byKind.set(h.kind, (byKind.get(h.kind) ?? 0) + h.granted_mb);
     // Без права на оборудование держателей нет — занятое одной суммой.
@@ -88,7 +85,6 @@ export function serverParts(devices: Device[]) {
     ...(sam2 > 0 ? [{ label: "Разметка", value: sam2, color: HATCH }] : []),
     ...[...byKind].map(([k, mb]) => ({ label: upper(kindOf(k)[0]), value: mb, color: kindOf(k)[1] })),
     ...(anonymous > 0 ? [{ label: "Занято", value: anonymous, color: "var(--faint)" }] : []),
-    ...(reserved > 0 ? [{ label: "Запас", value: reserved, color: RESERVE }] : []),
     { label: "Свободно", value: free, color: freeColor(load.tone) },
   ];
   return { parts, load, total };

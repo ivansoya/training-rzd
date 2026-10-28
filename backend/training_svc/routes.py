@@ -277,8 +277,6 @@ def set_device_limits(device_id):
             raise InputError("enabled: ожидается да или нет.", "enabled")
         dev = gpu.set_limits(
             db, _uuid(device_id),
-            reserved_mb=int_field(data, "reserved_mb", lo=0, hi=1 << 20,
-                                  label="Запас памяти, МБ"),
             max_heavy=int_field(data, "max_heavy", lo=1, hi=64,
                                 label="Тяжёлых задач"),
             enabled=enabled,
