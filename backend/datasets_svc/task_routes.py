@@ -21,7 +21,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import aliased
 
-from common import attribution, config, images, jobs, live, tags, task_frames, task_rights
+from common import agent_graph, attribution, config, images, jobs, live, tags, task_frames, task_rights
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
@@ -39,6 +39,7 @@ from common.models import (
     User,
     VideoAnnotation,
     VideoTrack,
+    utcnow,
 )
 from common.storage import translit_slug
 from common.web import InputError, json_body, public_error
@@ -390,6 +391,13 @@ def _light_list(db, tasks, user, role):
             .join(Image, Image.id == Annotation.image_id)
             .where(Image.task_id.in_(ids)).group_by(Image.task_id)
         ).all())
+    # Идущий агент — значком на карточке доски (решение 29.10.2026); на таску он один
+    now = utcnow()
+    runs = {r.task_id: {
+        "status": r.status, "mode": (r.params or {}).get("mode") or "frames", "cpu": (r.params or {}).get("device") == "cpu",
+        "processed": r.processed, "total": r.total, "rate": agent_graph.run_rate(r.status, r.stats, r.processed, now),
+    } for r in db.execute(select(AgentRun).where(
+        AgentRun.task_id.in_(ids), AgentRun.status.in_(("queued", "waiting_gpu", "running")))).scalars()} if ids else {}
     out = []
     for t in tasks:
         last_box = boxed.get(t.id)
@@ -414,6 +422,7 @@ def _light_list(db, tasks, user, role):
             "moves": sorted(task_rights.moves(t.status, role, user.id, teams[t.id])),
             # Можно ли пополнять — «В таску ▾» в датасете предлагает только такие
             "fill": task_rights.can_fill(t.status, role, user.id, teams[t.id], t.created_by),
+            "agent": runs.get(t.id),
         })
     return out
 
@@ -565,10 +574,11 @@ def get_task(task_id):
             select(TaskVideo).where(TaskVideo.task_id == task.id)
             .order_by(TaskVideo.created_at)
         ).scalars().all()
-        # Сколько кадров дал каждый ролик и сколько из них в датасете.
-        per_video = {vid: (n, a) for vid, n, a in db.execute(
+        # Сколько кадров дал каждый ролик, сколько из них в датасете и сколько не тронуто — их берёт агент.
+        per_video = {vid: (n, a, f) for vid, n, a, f in db.execute(
             select(Image.source_video_id, func.count(Image.id),
-                   func.count(Image.id).filter(Image.dataset_id.isnot(None)))
+                   func.count(Image.id).filter(Image.dataset_id.isnot(None)),
+                   func.count(Image.id).filter(Image.task_status == "new"))
             .where(Image.task_id == task.id, Image.source_video_id.isnot(None),
                    Image.task_status != "deleted")
             .group_by(Image.source_video_id)
@@ -596,8 +606,9 @@ def get_task(task_id):
                 "mode": v.mode,
                 "frame_count": v.frame_count,
                 "segments": v.segments or [],
-                "frames": per_video.get(v.id, (0, 0))[0],
-                "accepted": per_video.get(v.id, (0, 0))[1],
+                "frames": per_video.get(v.id, (0, 0, 0))[0],
+                "accepted": per_video.get(v.id, (0, 0, 0))[1],
+                "fresh": per_video.get(v.id, (0, 0, 0))[2],
                 "tracks": per_video_tracks.get(v.id, 0),
                 "created_at": v.created_at.isoformat(),
             }

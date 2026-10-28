@@ -34,3 +34,16 @@ def test_уборка_по_остатку_стёрла_бы_рамки_до_сб
     rest = video_left([0, 25], 0, wanted)
     assert written - set(wanted) == set()          # по плану — ничего лишнего
     assert written - set(rest) == {0, 25}          # по остатку — стёрлись бы
+
+
+def test_скорость_с_перезапуска_и_не_раньше_30_кадров():
+    """«Осталось ≈» считает скорость с (пере)запуска: кадры до «Продолжить» в неё не идут (решение 29.10.2026)."""
+    from datetime import datetime, timedelta, timezone
+    from common.agent_graph import run_rate
+
+    t0 = datetime(2026, 10, 29, 10, 0, tzinfo=timezone.utc)
+    stats = {"since": [t0.isoformat(), 1000]}
+    assert run_rate("running", stats, 1180, t0 + timedelta(seconds=100)) == 1.8
+    assert run_rate("running", stats, 1029, t0 + timedelta(seconds=10)) is None   # 29 кадров — рано
+    assert run_rate("waiting_gpu", stats, 1180, t0 + timedelta(seconds=100)) is None
+    assert run_rate("running", {}, 1180, t0) is None                              # прогон до выкладки

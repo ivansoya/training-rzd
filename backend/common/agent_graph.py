@@ -40,6 +40,7 @@ import copy
 import math
 import statistics
 import time
+from datetime import datetime
 
 KINDS = ("frame", "net", "text", "merge", "nms", "filter", "sam", "output")
 # Узлы, которые сами находят объекты: номер класса переводят в имя агента.
@@ -1063,6 +1064,21 @@ def video_left(cursor, pos, wanted):
     if pos < at:
         return None
     return [f for f in wanted if f > after] if pos == at else list(wanted)
+
+
+RATE_MIN_FRAMES = 30
+
+
+def run_rate(status, stats, processed, now):
+    """Кадров в секунду идущего прогона с его (пере)запуска — `stats.since` [время ISO, обработано тогда].
+    None, пока с тех пор меньше 30 кадров: первые кадры греют модели и врут (решение 29.10.2026)."""
+    since = (stats or {}).get("since")
+    if status != "running" or not since:
+        return None
+    done = (processed or 0) - since[1]
+    secs = (now - datetime.fromisoformat(since[0])).total_seconds()
+    return round(done / secs, 3) if done >= RATE_MIN_FRAMES and secs > 0 else None
+
 
 def segments(hits, step, gap_frames, last_frame):
     """Попадания разведки → участки по классам агента.

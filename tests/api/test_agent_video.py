@@ -22,7 +22,7 @@ import pytest
 
 import agent_data
 from agent_data import PERSON
-from conftest import BASE_URL, drop_project, hand_over, tag
+from conftest import BASE_URL, drop_project, hand_over, tag, wait_job
 
 FPS = 5
 BLOCK = 10                      # кадров на блок — две секунды
@@ -165,6 +165,9 @@ def _agent_singles(db, video_id):
 def test_разведка_находит_человека_там_где_он_есть(owner, setup):
     run = _run(owner, setup, mode="scout", videos=[v["id"] for v in setup["videos"].values()], gap=0.5)
     assert run["stats"]["videos"] == 2
+    # План по роликам — ход каждого на странице таски; скорость есть только у идущего (решения 29.10.2026)
+    assert run["stats"]["plan"] == [len(range(0, len(PLAN) * BLOCK, STEP))] * 2 and sum(run["stats"]["plan"]) == run["total"]
+    assert run["stats"]["since"] and run["rate"] is None
 
     scouts = owner.get(f"{BASE_URL}/api/agents/tasks/{setup['task']['id']}/scouts").json()["scouts"]
     cut, annotate = scouts[setup["videos"]["cut"]["id"]], scouts[setup["videos"]["annotate"]["id"]]
@@ -292,6 +295,30 @@ def test_агент_на_кадре_из_редактора(owner, setup, db):
         got = owner.post(url, json={**{k: body[k] for k in ("graph_id", "version_id")},
                                     "image_id": images[0]["id"]}).json()
         assert all(b["pending"] for b in got["boxes"] if b["source"] == "model")
+
+
+def test_нарезанные_кадры_агент_берёт_по_ролику_и_блоком(owner, setup, db):
+    """Нарезали — кадры ролика новые, агент их размечает: одним роликом из его «⋯» и всем блоком
+    «Ролики на нарезку» (проверка 29.10.2026). Рамки встают на проверку, доска агента больше не видит."""
+    task, video = setup["task"], setup["videos"]["cut"]
+    res = owner.post(f"{BASE_URL}/api/tasks/{task['id']}/videos/{video['id']}/cut",
+                     json={"segments": [{"start_ms": 0, "end_ms": 6000, "step_ms": 1000}]})
+    assert res.status_code in (200, 202), res.text
+    assert wait_job(owner, res.json()["job_id"])["status"] == "done"
+    item = next(v for v in owner.get(f"{BASE_URL}/api/tasks/{task['id']}").json()["videos"] if v["id"] == video["id"])
+    assert item["frames"] > 0 and item["fresh"] == item["frames"], item
+
+    for sources in ([video["id"]], ["videos"]):
+        run = _run(owner, setup, mode="frames", sources=sources)
+        assert run["total"] == run["processed"] == item["frames"], (sources, run)
+        with db.cursor() as cur:
+            cur.execute("""select count(distinct i.id), count(a.id) from images i join annotations a on a.image_id = i.id
+                           where i.source_video_id = %s and a.pending""", (video["id"],))
+            framed, boxes = cur.fetchone()
+        assert framed > 0 and boxes > 0, (sources, framed, boxes)
+
+    card = next(t for t in owner.get(f"{BASE_URL}/api/projects/{setup['code']}/tasks").json()["tasks"] if t["id"] == task["id"])
+    assert card["agent"] is None
 
 
 def test_закрытие_отдаёт_кадры_агента_на_проверку(owner, setup, db):

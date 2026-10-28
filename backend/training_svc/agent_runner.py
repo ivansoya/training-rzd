@@ -324,7 +324,8 @@ def prepare(db, run):
     run.gpu_lease_id = lease.id
     run.queue_reason = None
     run.started_at = run.started_at or utcnow()
-    run.stats = {**(run.stats or {}), "res": info}  # курсор и счёт повтора — не затирать
+    # Курсор и счёт повтора — не затирать; `since` — точка отсчёта скорости этого (пере)запуска.
+    run.stats = {**(run.stats or {}), "res": info, "since": [utcnow().isoformat(), run.processed or 0]}
     db.commit()
     live.notify(db, "agent", run.id, run.project_id, s="running")
     # Блок → карта: при дележе — карта его части, иначе все на одной.
@@ -353,6 +354,10 @@ def run_held(db, run_id, ctx):
         ids = frames(db, run) if mode == "frames" else None
         plan = _video_plan(db, run, mode) if ids is None else None
         run.total = len(ids) if ids is not None else sum(len(f) for _, f in plan)
+        if plan is not None:
+            # Кадров на ролик по порядку `params.videos` — ход каждого ролика на странице таски
+            have = {str(v.id): len(f) for v, f in plan}
+            run.stats = {**(run.stats or {}), "plan": [have.get(str(v), 0) for v in run.params.get("videos") or []]}
         db.commit()
         tick = _ticker(db, run, ctx["lease_id"], [] if cpu else sorted(set(devices.values()), key=str), info)
         work = _Work(doc, ctx["order"], ctx["units"], weights, sets, devices, ctx["lease_id"], ctx["sequential"], tick)

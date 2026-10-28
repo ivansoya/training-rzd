@@ -374,6 +374,8 @@ def _run_view(db, run):
         "processed": run.processed,
         "total": run.total,
         "stats": run.stats or {},
+        # Часами сервера: у клиента они могут уйти, и «осталось» у двух людей разошлось бы
+        "rate": agent_graph.run_rate(run.status, run.stats, run.processed, utcnow()),
         "error": run.error,
         "queue_reason": run.queue_reason or _queue_reason(db, run),
         "agent": graph.name if graph else None,
@@ -568,7 +570,10 @@ def start_agent_run(task_id):
         if mode not in ("frames", "annotate", "scout"):
             return jsonify({"error": "Неизвестный режим прогона."}), 400
         # Кадры размечаемых роликов блоком не бывают: в таске они правятся только в ролике.
-        sources = [s for s in data.get("sources") or [] if s in task_frames.SOURCES]
+        # Нарезаемый ролик этой таски — свой блок: «Разметить нарезанные кадры ролика» (решение 29.10.2026).
+        cut = {str(v) for v in db.execute(select(TaskVideo.id).where(
+            TaskVideo.task_id == task.id, TaskVideo.mode == "cut")).scalars()}
+        sources = [s for s in data.get("sources") or [] if s in task_frames.SOURCES or s in cut]
         if mode == "frames" and not sources:
             return jsonify({"error": "Выберите, что размечать."}), 400
         videos = []
