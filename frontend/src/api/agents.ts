@@ -67,8 +67,10 @@ export interface RunView {
   status: "queued" | "waiting_gpu" | "running" | "done" | "error" | "stopped";
   processed: number;
   total: number | null;
-  /** cursor — где прогон: у роликов [номер в videos, кадр], у кадров [имя, id]. */
-  stats: { boxes?: number; frames?: number; videos?: number; cursor?: [number | string, number | string] };
+  /** cursor — где прогон: у роликов [номер в videos, кадр], у кадров [имя, id]; plan — кадров на ролик по порядку videos. */
+  stats: { boxes?: number; frames?: number; videos?: number; cursor?: [number | string, number | string]; plan?: number[] };
+  /** Кадров в секунду с (пере)запуска прогона; null — не идёт или кадров с запуска меньше 30. */
+  rate: number | null;
   error: string | null;
   queue_reason: string | null;
   agent: string | null;

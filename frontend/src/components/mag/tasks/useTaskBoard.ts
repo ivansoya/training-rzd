@@ -103,6 +103,17 @@ export function useTaskBoard(code: string, me: string, pick?: (list: TaskLight[]
   });
   useEffect(() => () => window.clearTimeout(timer.current), []);
 
+  // Ход агентов — значками карточек: события идут на каждый кадр, список перечитываем не чаще раза в 15 с, счётчики не трогаем
+  const agentTimer = useRef<number | undefined>(undefined);
+  useLive("agent", () => {
+    if (agentTimer.current !== undefined) return;
+    agentTimer.current = window.setTimeout(() => {
+      agentTimer.current = undefined;
+      void refresh([]);
+    }, 15000);
+  });
+  useEffect(() => () => window.clearTimeout(agentTimer.current), []);
+
   /** Карточка переезжает сразу; ответ сервера её поправит. */
   const patch = useCallback((id: string, fields: Partial<TaskLight>) => {
     const prev = snapRef.current;

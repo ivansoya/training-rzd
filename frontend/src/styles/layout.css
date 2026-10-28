@@ -620,6 +620,11 @@ a.pcard:hover { border-color: var(--input); }
 .tp-reel-c > b { font-weight: 500; }
 .tp-reel-a { display: flex; gap: 4px; justify-content: flex-end; }
 .tp-reel-t, .tp-fold { grid-column: 2 / -1; }
+/* Ролик в прогоне агента: в одну строку, текст с многоточием, значок и полоса не ужимаются (решения 29.10.2026) */
+.tp-reel-ag { grid-column: 2 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; height: 22px; font-size: 12px; color: var(--muted-fg); white-space: nowrap; }
+.tp-reel-ag > :not(.t-ell) { flex: none; }
+.tp-reel-ag.done { color: var(--agent-fg); }
+.tp-reel-ag .tp-agent-bar { flex: 0 0 120px; }
 .tp-segs {
   display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 4px; margin-left: -4px; border: 0;
   border-radius: var(--r-sm); background: none; color: var(--muted-fg); font-size: 12px;

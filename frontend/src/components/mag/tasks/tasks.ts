@@ -308,8 +308,89 @@ export function coverage(v: TaskVideoItem, objects?: { start: number; end: numbe
   return (objects || []).map((o) => [o.start / n, Math.max(o.end, o.start + n * 0.004) / n]);
 }
 
-/** Ролик, по которому агент идёт сейчас: курсор прогона роликов — [номер в videos, кадр], пройденный ролик сдвигает его на следующий. */
-export function agentVideo(run: Pick<RunView, "status" | "mode" | "videos" | "stats"> | null | undefined): string | undefined {
-  if (run?.status !== "running" || run.mode === "frames") return undefined;
-  return run.videos[Number(run.stats.cursor?.[0] ?? 0)];
+// --------------------------------------------------------------------------- //
+// Ход агента: время, ролики прогона, причина погашенных пунктов (решения 29.10.2026)
+// --------------------------------------------------------------------------- //
+type Pace = Pick<RunView, "status" | "processed" | "total" | "rate">;
+type ReelRun = Pace & Pick<RunView, "mode" | "videos" | "stats">;
+
+/** «≈ 4 ч 47 мин», «≈ через 5 мин» — с точностью до минуты; меньше минуты — минута. */
+export function etaText(sec: number, after = ""): string {
+  const m = Math.max(1, Math.round(sec / 60));
+  return `≈ ${after}${m < 60 ? `${m} мин` : `${Math.floor(m / 60)} ч${m % 60 ? ` ${m % 60} мин` : ""}`}`;
+}
+
+/** Доля хода в процентах вниз: «100 %» — только когда пройдено всё. */
+export const runPct = (r: Pick<RunView, "processed" | "total">) =>
+  r.total ? Math.min(100, Math.floor((r.processed / r.total) * 100)) : 0;
+
+/** «осталось ≈ 5 мин» до конца идущего прогона; скорости ещё нет — «считаю время»; не идёт — null. */
+export function leftText(r: Pace, word = "осталось "): string | null {
+  if (r.status !== "running") return null;
+  return r.rate && r.total != null ? word + etaText(Math.max(0, r.total - r.processed) / r.rate) : "считаю время";
+}
+
+/** «ролик 4 из 30» у прогона роликов; курсор — [номер в videos, кадр], пройденный ролик сдвигает его дальше. */
+export function reelLine(r: Pick<RunView, "mode" | "videos" | "stats">): string | null {
+  if (r.mode === "frames" || !r.videos.length) return null;
+  return `ролик ${Math.min(Number(r.stats.cursor?.[0] ?? 0) + 1, r.videos.length)} из ${r.videos.length}`;
+}
+
+export interface ReelState {
+  kind: "done" | "cur" | "queue";
+  /** Идёт: пройдено кадров ролика и сколько в его плане; у прогона без плана — нет. */
+  done?: number;
+  plan?: number;
+  /** Идёт — секунд до конца ролика, ждёт — до его начала; null — скорости нет. */
+  secs?: number | null;
+  /** Ждёт: место в очереди агента. */
+  place?: number;
+}
+
+/** Где каждый ролик прогона. Разведка не держит кадр внутри ролика, поэтому пройденное
+ *  в текущем — счёт прогона минус план пройденных роликов (`stats.plan`). */
+export function reelStates(r: ReelRun): Map<string, ReelState> {
+  const out = new Map<string, ReelState>();
+  if (r.mode === "frames") return out;
+  const pos = Number(r.stats.cursor?.[0] ?? 0);
+  const plan = r.stats.plan;
+  const going = r.status === "running";
+  const before = (plan ?? []).slice(0, pos).reduce((s, n) => s + n, 0);
+  const done = plan ? Math.min(plan[pos] ?? 0, Math.max(0, r.processed - before)) : undefined;
+  // Кадров до начала очередного ролика: остаток текущего, потом планы ждущих перед ним
+  let ahead = plan && done !== undefined ? (plan[pos] ?? 0) - done : null;
+  r.videos.forEach((id, i) => {
+    if (i < pos) out.set(id, { kind: "done" });
+    else if (i === pos && going) {
+      out.set(id, { kind: "cur", done, plan: plan?.[pos], secs: r.rate && ahead !== null ? ahead / r.rate : null });
+    } else {
+      out.set(id, { kind: "queue", place: i - pos + (going ? 0 : 1), secs: going && r.rate && ahead !== null ? ahead / r.rate : null });
+      if (ahead !== null && i > pos) ahead += plan?.[i] ?? 0;
+    }
+  });
+  return out;
+}
+
+const DOES = { scout: "разведывает", annotate: "размечает", frames: "размечает" } as const;
+
+/** Что агент делает сейчас — одним словом для плашки, строки блока и значка доски. */
+export function runWord(r: Pick<RunView, "status" | "mode" | "cpu">): string {
+  if (r.status === "running") return DOES[r.mode];
+  return r.status === "queued" ? "в очереди" : r.cpu ? "ждёт процессор" : "ждёт карту";
+}
+
+/** Почему пункты агента погашены, пока по таске идёт прогон: что идёт и сколько ждать. */
+export function busyText(r: Pace & Pick<RunView, "mode" | "cpu">): string {
+  if (r.status !== "running") return `агент ${runWord(r)}`;
+  return `идёт ${r.mode === "scout" ? "разведка" : "разметка"} · ${leftText(r)}`;
+}
+
+/** Значки идущего агента на карточке доски — первыми в строке значков. Ход — отдельным значком:
+ *  в узкой карточке значки идут в два ряда, и одним длинным процент со временем ушли бы в многоточие. */
+export function agentBadges(a: NonNullable<TaskLight["agent"]>): CardBadge[] {
+  const what = `агент ${runWord(a)}`;
+  if (a.status !== "running") return [{ text: what, title: what, tone: "var(--agent-fg)", icon: "bot" }];
+  const title = `Агент ${runWord(a)}: ${ru(a.processed)} из ${a.total === null ? "—" : ru(a.total)} кадров`;
+  return [{ text: what, title, tone: "var(--agent-fg)", icon: "bot", live: true },
+    { text: `${runPct(a)} % · ${leftText(a, "")}`, title, tone: "var(--agent-fg)" }];
 }

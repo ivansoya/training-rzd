@@ -11,7 +11,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import * as api from "../../api/agents";
-import { Badge, Button, Check, Dialog, Empty, Field, Icon, LinkButton, Notice, Progress, Radio, Select } from "../../ui";
+import { Badge, Button, Check, Dialog, Empty, Field, Icon, LinkButton, Notice, Progress, Radio, Select, cx } from "../../ui";
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
 import ClassMap, { guess, useAutoMapped } from "./ClassMap";
@@ -19,6 +19,7 @@ import CpuConfirm, { refusalOf, type CardRefusal } from "../hardware/CpuConfirm"
 import { VerdictChip, gb, short, verdictLook } from "./GpuVerdict";
 import ScoutOverview from "./ScoutOverview";
 import { sampledCount } from "./scoutMath";
+import { leftText, reelLine, runPct } from "../mag/tasks/tasks";
 
 const SOURCE_TITLE: Record<"files" | "videos" | "dataset", string> = {
   files: "Загружено файлами", videos: "Нарезано из роликов", dataset: "Из датасета",
@@ -333,11 +334,14 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
       <Badge icon="sparkle" tone="var(--agent)">{run.agent ?? "агент"} v{run.version}</Badge>
       <span className="ui-mono t-sm">{ru(run.processed)} / {run.total == null ? "—" : ru(run.total)}</span>
       <span className="t-sm">{run.status === "running" && run.mode === "scout" ? "разведывает" : run.cpu && run.status === "waiting_gpu" ? "ждёт процессор" : STATUS[run.status]}</span>
+      {active && <span className="t-sm">{[reelLine(run), `${runPct(run)} %`, leftText(run)].filter(Boolean).join(" · ")}</span>}
       {result && <span className="t-sm t-muted">{result}</span>}
       {run.error && <span className="t-sm ge-warn">{run.error}</span>}
       {stopError && <span className="t-sm ge-warn">{stopError}</span>}
       {run.queue_reason && (run.status === "waiting_gpu" || run.status === "queued") && <span className="t-xs t-muted">{run.queue_reason}</span>}
-      {active && <span className="ar-prog"><Progress value={run.total ? run.processed / run.total : 0} label="Ход прогона" color="var(--agent)" /></span>}
+      {/* Пока агент идёт — перелив по всей дорожке: при 0 % заливки не видно, а движение видно; ждущий стоит */}
+      {active && <span className={cx("ar-prog", run.status === "running" && "ui-shim")}>
+        <Progress value={run.total ? run.processed / run.total : 0} label="Ход прогона" color="var(--agent)" /></span>}
       <span className="grow" />
       {run.status === "done" && run.mode === "scout" && run.videos.length > 0 && (
         <Button size="sm" variant="ghost" icon="activity" onClick={() => setStatsOpen(true)}>Статистика</Button>

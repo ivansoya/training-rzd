@@ -34,7 +34,7 @@ import { droppedFiles, kindOf, parts, useFileDrag, zoneKind } from "./drop";
 import type { Zone } from "./drop";
 import { EventList, TaskPassport } from "./TaskPassport";
 import type { FrameState } from "./tasks";
-import { buildSources, closePlan, closeText, handoverText } from "./tasks";
+import { buildSources, busyText, closePlan, closeText, handoverText } from "./tasks";
 import { look } from "./useTaskBoard";
 import { openVideos, useTaskPage } from "./useTaskPage";
 import { dismissUploadError, enqueueUpload, uploading, useUpload } from "./uploads";
@@ -477,7 +477,8 @@ export default function TaskPage() {
   const drop = (w: Zone, dt: DataTransfer) => void dropFiles(w, dt);
   // Меню «⋯» блоков: агент таски сразу, без окна
   const agent: AgentHooks = {
-    tool: agentTool, busy: busy || agentBusy, onSetup: () => setSetupOpen(true),
+    // На таску один прогон: пункты агента погашены с тем, что идёт и сколько ждать (решение 29.10.2026)
+    tool: agentTool, busy: live ? busyText(live) : busy && "подождите", onSetup: () => setSetupOpen(true),
     start: (body) => void guard(async () => {
       try {
         setAgentRun(await agentTool.start(body));

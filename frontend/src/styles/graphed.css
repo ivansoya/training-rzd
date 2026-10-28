@@ -824,7 +824,7 @@ button.acl-sw:focus-visible { outline: 2px solid var(--ring); outline-offset: 2p
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border-radius: var(--r-md);
   border: 1px solid color-mix(in srgb, var(--agent) 35%, var(--border)); background: color-mix(in srgb, var(--agent) 6%, var(--card));
 }
-.ar-prog { flex: 0 1 220px; min-width: 120px; }
+.ar-prog { flex: 0 1 220px; min-width: 120px; border-radius: var(--r-full); }
 
 /* Влезет ли агент на карту: плашка вердикта и окно «Ресурсы» (GpuVerdict.tsx).
    Цвет — по вердикту: зелёный влезает, жёлтый ждать, сиреневый по картам, синий поочерёдно, красный не запустится. */

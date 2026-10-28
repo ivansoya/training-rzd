@@ -2,6 +2,7 @@
 // httpOnly cookie, so every call is a plain same-origin fetch.
 
 import type { SavedShape } from "../components/mag/savedIds";
+import type { RunView } from "../api/agents";
 
 export interface AuthUser {
   id: string;
@@ -880,6 +881,8 @@ export interface TaskLight extends Omit<TaskSummary, "counts" | "rights"> {
   moves: TaskStatus[];
   /** Можно ли пополнять — «В таску ▾» в датасете. */
   fill?: boolean;
+  /** Идущий по таске агент — значок на карточке; null — не идёт. */
+  agent?: Pick<RunView, "status" | "mode" | "cpu" | "processed" | "total" | "rate"> | null;
 }
 
 /** Счётчики карточки доски: по одному запросу на таску. */
@@ -934,6 +937,8 @@ export interface TaskVideoItem {
   frame_count: number | null;
   segments: CutSegment[];
   frames: number;
+  /** Сколько нарезанных кадров ролика не тронуто — их возьмёт агент. */
+  fresh: number;
   /** Сколько объектов ведётся на размечаемом ролике. */
   tracks: number;
   /** Сколько кадров ролика в датасете — с прошлых сдач. */

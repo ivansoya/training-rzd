@@ -1,6 +1,6 @@
 // Источники кадров таски карточками: изображения, ролики на нарезку, ролики на разметку, кадры из разметки.
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentClearScope, PendingObject, PendingVideo, TaskNumbers, TaskPerson, TaskVideoItem, VideoPrepare } from "../../../auth/api";
 import type { Tag } from "../../../api/tags";
@@ -15,8 +15,8 @@ import VideoStrip from "../VideoStrip";
 import { fmtBytes, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
 import { fits, zoneSay } from "./drop";
 import type { Dragged } from "./drop";
-import type { SourceBlock, SourceCounts } from "./tasks";
-import { STATES, agentVideo, coverage, dayOf, stateParts } from "./tasks";
+import type { ReelState, SourceBlock, SourceCounts } from "./tasks";
+import { STATES, coverage, dayOf, etaText, leftText, reelLine, reelStates, runPct, runWord, stateParts } from "./tasks";
 import { hereNames } from "../here";
 import type { Here } from "../here";
 import { look as lookOf } from "./useTaskBoard";
@@ -166,8 +166,8 @@ function ReviewAgent({ n, onReview }: { n?: number; onReview?: () => void }) {
 /** Агент из меню блока: агент таски, запуск сразу и окно «Агент таски». */
 export interface AgentHooks {
   tool: AgentToolState;
-  /** Агент уже идёт по таске или страница занята. */
-  busy: boolean;
+  /** Почему агента сейчас не позвать: что идёт по таске и сколько ждать; false — можно. */
+  busy: string | false;
   onSetup: () => void;
   start: (body: { mode: RunMode; sources?: string[]; videos?: string[]; step: number }) => void;
   /** Полное окно запуска, настроенное на блок. */
@@ -184,8 +184,8 @@ const clearOf = (agent: AgentHooks, scope: AgentClearScope, frames?: number, off
 /** Кнопка «Агент» в шапке блока: окно запуска со всеми режимами этого блока. */
 function AgentButton({ agent, ask }: { agent: AgentHooks; ask: Parameters<AgentHooks["dialog"]>[0] }) {
   return (
-    <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled={agent.busy} onClick={() => agent.dialog(ask)}
-      title={agent.busy ? "Агент уже идёт по этой таске" : "Разметить или разведать этот блок агентом — с выбором режима"}>
+    <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled={!!agent.busy} onClick={() => agent.dialog(ask)}
+      title={agent.busy || "Разметить или разведать этот блок агентом — с выбором режима"}>
       Агент
     </Button>
   );
@@ -215,17 +215,56 @@ const annotateAction = (agent: AgentHooks, videos: TaskVideoItem[], label: strin
 /** Ход агента по блоку — прямо в карточке, а не только полосой под шапкой. */
 export function AgentLine({ run }: { run?: RunView | null }) {
   if (!run) return null;
-  const pct = run.total ? Math.min(100, Math.round((run.processed / run.total) * 100)) : null;
-  const what = run.mode === "scout" ? "разведывает" : "размечает";
+  const pct = runPct(run);
+  const left = leftText(run);
   return (
     <div className="tp-agent" role="status">
       <Icon name="bot" size={13} />
       <span className="t-xs">
-        Агент «{run.agent ?? "агент"}» {run.status === "running" ? what : run.status === "queued" ? "в очереди" : "ждёт карту"}
-        {pct !== null && <> · <span className="ui-mono">{pct} %</span></>}
-        {" · "}<span className="ui-mono">{ru(run.processed)}{run.total ? ` из ${ru(run.total)}` : ""}</span>
+        Агент «{run.agent ?? "агент"}» {runWord(run)}
+        {" · "}{reelLine(run) ?? <span className="ui-mono">{ru(run.processed)}{run.total ? ` из ${ru(run.total)}` : ""}</span>}
+        {" · "}<span className="ui-mono">{pct} %</span>
+        {left && ` · ${left}`}
       </span>
-      {pct !== null && <i className="tp-agent-bar"><u style={{ width: `${pct}%` }} /></i>}
+      {/* Переливается, пока агент идёт: при 0 % заливки не видно, а движение видно */}
+      <i className={cx("tp-agent-bar", run.status === "running" && "ui-shim")}><u style={{ width: `${pct}%` }} /></i>
+    </div>
+  );
+}
+
+/** Состояния роликов прогона. «Начнётся ≈ через» у ждущих пересчитывается, когда агент берёт
+ *  следующий ролик или впервые узнаёт скорость, а не на каждом опросе (решение 29.10.2026). */
+function useReelStates(run?: RunView | null) {
+  const held = useRef<{ key: string; secs: Map<string, number | null | undefined> } | null>(null);
+  if (!run) return null;
+  const states = reelStates(run);
+  const key = `${run.id}:${run.stats.cursor?.[0] ?? 0}:${run.status}:${!!run.rate}`;
+  if (held.current?.key !== key) held.current = { key, secs: new Map([...states].map(([id, s]) => [id, s.secs])) };
+  for (const [id, s] of states) if (s.kind === "queue") s.secs = held.current.secs.get(id);
+  return states;
+}
+
+/** Ролик в прогоне агента: пройден, идёт — сколько из плана и сколько осталось, ждёт — место и когда начнётся. */
+function ReelAgent({ s, scout }: { s?: ReelState; scout: boolean }) {
+  if (!s) return null;
+  if (s.kind === "done") {
+    return <div className="tp-reel-ag done"><Icon name="tick" size={13} /><span className="t-ell">{scout ? "разведан" : "размечен агентом"}</span></div>;
+  }
+  if (s.kind === "queue") {
+    return (
+      <div className="tp-reel-ag"><Icon name="bot" size={13} />
+        <span className="t-ell">в очереди агента · {s.place}-й{s.secs != null && ` · начнётся ${etaText(s.secs, "через ")}`}</span></div>
+    );
+  }
+  const pct = s.plan ? Math.min(100, Math.floor(((s.done ?? 0) / s.plan) * 100)) : null;
+  return (
+    <div className="tp-reel-ag">
+      <Badge tone="var(--agent)" live>агент {scout ? "разведывает" : "размечает"}</Badge>
+      <span className="t-ell">
+        {pct !== null && <><span className="ui-mono">{ru(s.done ?? 0)} / {ru(s.plan!)}</span> · <span className="ui-mono">{pct} %</span> · </>}
+        {s.secs == null ? "считаю время" : `осталось ${etaText(s.secs)}`}
+      </span>
+      {pct !== null && <i className="tp-agent-bar ui-shim"><u style={{ width: `${pct}%` }} /></i>}
     </div>
   );
 }
@@ -329,6 +368,7 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
   onTagCreated: (t: Tag) => void;
 }) {
   const videos = block.videos || [];
+  const reels = useReelStates(run);
   // Пересечение: чип «на все» обещает, что таг стоит у каждого ролика
   const common = videos.reduce<string[]>((acc, v) => acc.filter((id) => (v.tag_ids || []).includes(id)),
     [...(videos[0]?.tag_ids || [])]);
@@ -371,9 +411,11 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
       <div className="tp-reels">
         {videos.map((v) => (
           <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={fillable}
+            agentState={<ReelAgent s={reels?.get(v.id)} scout={run?.mode === "scout"} />}
             menu={(editable || fillable) && (
               <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
-                actions={editable ? [scoutAction(agent, [v], "Разведать ролик")] : []}
+                actions={editable ? [scoutAction(agent, [v], "Разведать ролик"),
+                  framesAction(agent, v.id, v.fresh, "Разметить нарезанные кадры ролика")] : []}
                 clear={editable ? clearOf(agent, { sources: [v.id] }) : undefined}
                 deleteLabel="Удалить ролик и его кадры" onDelete={fillable ? () => onDelete(v) : undefined} />
             )}
@@ -385,8 +427,10 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
   );
 }
 
-function ReelRow({ v, taskId, code, tags, editable, menu, onCut, onTags, onTagCreated }: {
+function ReelRow({ v, taskId, code, tags, editable, agentState, menu, onCut, onTags, onTagCreated }: {
   v: TaskVideoItem;
+  /** Где ролик в прогоне агента — строкой под ним. */
+  agentState: ReactNode;
   taskId: string;
   code: string;
   tags: Tag[];
@@ -421,6 +465,7 @@ function ReelRow({ v, taskId, code, tags, editable, menu, onCut, onTags, onTagCr
         <Button size="sm" icon={editable ? "cut" : "eye"} onClick={onCut}>{!editable ? "Смотреть" : segs ? "Нарезать ещё" : "Нарезать"}</Button>
         {menu}
       </div>
+      {agentState}
       <div className="tp-reel-t">
         <TagPicker code={code} all={tags} value={v.tag_ids || []} disabled={!editable} compact placeholder="таг ролика"
           onChange={onTags} onCreated={onTagCreated} />
@@ -490,7 +535,7 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
   onTagCreated: (t: Tag) => void;
 }) {
   const unchecked = videos.reduce((s, v) => s + (pending[v.id]?.unchecked || 0), 0);
-  const agentOn = agentVideo(run);
+  const reels = useReelStates(run);
   return (
     <Card className="tp-src" flush
       title={<><Icon name="film" />Ролики на разметку<Badge variant="secondary">{videos.length}</Badge></>}
@@ -521,10 +566,7 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
                 <b className="t-ell" title={v.file_name}>{v.file_name}</b>
                 {handing ? <Badge tone="var(--c1)" live>сдаётся</Badge>
                   : !working ? <Badge tone="var(--st-done)" icon="tick">сдан</Badge>
-                  : <>
-                    {names.length > 0 && <span className="tp-here"><Badge tone="var(--c1)" live title={who}><span className="t-ell">{who}</span></Badge></span>}
-                    {agentOn === v.id && <Badge tone="var(--agent)" live>агент {run?.mode === "scout" ? "разведывает" : "размечает"}</Badge>}
-                  </>}
+                  : names.length > 0 && <span className="tp-here"><Badge tone="var(--c1)" live title={who}><span className="t-ell">{who}</span></Badge></span>}
                 <span className="grow" />
                 {editable && !known && (
                   <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled>Проверить <span className="ui-sk pill" style={{ width: 34 }} /></Button>
@@ -550,6 +592,7 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
                 {fmtTime(v.duration_ms || 0)} · {v.width}×{v.height} · {v.fps} к/с · {fmtBytes(v.size_bytes)}
                 {" "}<PrepareLine prepare={v.prepare} />
               </span>
+              <ReelAgent s={reels?.get(v.id)} scout={run?.mode === "scout"} />
               {known ? <span className={zone}><Rail parts={coverage(v, p?.objects)} tone="track" /></span>
                 : <i className={cx("ui-sk bar", l.loading && "ui-shim")} />}
               <div className="tp-vnums">

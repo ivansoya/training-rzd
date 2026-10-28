@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { TaskCounts, TaskDetail, TaskLight, TaskStats } from "../../../auth/api";
 import {
-  agentVideo, boardColumns, buildSources, cardLook, closePlan, closeText, dayOf, handoverText, percentOf, requestOrder, sourceLine, teamLine, waitingOf,
+  agentBadges, boardColumns, buildSources, busyText, cardLook, closePlan, closeText, dayOf, etaText, handoverText, leftText, percentOf, reelLine,
+  reelStates, requestOrder, runPct, sourceLine, teamLine, waitingOf,
 } from "./tasks";
 
 const video = (id: string, mode: string, created = "2026-10-01T10:00:00Z") =>
@@ -186,16 +187,59 @@ describe("карточка таски (решения 14.10.2026)", () => {
   });
 });
 
-describe("agentVideo", () => {
-  const run = (over: object) => ({ status: "running", mode: "annotate", videos: ["a", "b"], stats: {}, ...over }) as never;
-  it("ролик под курсором; до первого кадра — первый; после последнего — никакой", () => {
-    expect(agentVideo(run({}))).toBe("a");
-    expect(agentVideo(run({ stats: { cursor: [1, 250] } }))).toBe("b");
-    expect(agentVideo(run({ stats: { cursor: [2, -1] } }))).toBeUndefined();
+describe("ход агента (решения 29.10.2026)", () => {
+  // Разведка «Искры» из макета: 30 роликов, план по шагу 25, скорость 1,8 кадра/с
+  const plan = [1198, 1798, 1196, 1198, 1198, 1798];
+  const run = (over: object) => ({ status: "running", mode: "scout", videos: ["a", "b", "c", "d", "e", "f"], processed: 0, total: 35834,
+    rate: null, cpu: false, stats: { plan }, ...over }) as never;
+
+  it("время — до минуты, часы с минутами", () => {
+    expect(etaText(17223)).toBe("≈ 4 ч 47 мин");
+    expect(etaText(310)).toBe("≈ 5 мин");
+    expect(etaText(3600)).toBe("≈ 1 ч");
+    expect(etaText(5)).toBe("≈ 1 мин");
   });
-  it("только идущий прогон роликов", () => {
-    expect(agentVideo(run({ status: "waiting_gpu" }))).toBeUndefined();
-    expect(agentVideo(run({ mode: "frames", stats: { cursor: ["x.jpg", "id"] } }))).toBeUndefined();
-    expect(agentVideo(run({ mode: "scout", stats: { cursor: [1, -1] } }))).toBe("b");
+
+  it("плашка: процент вниз, без скорости — «считаю время», ждущему — ничего", () => {
+    const going = run({ processed: 4832, rate: 1.8, stats: { plan, cursor: [3, -1] } });
+    expect(runPct(going)).toBe(13);
+    expect(runPct(run({ processed: 35833 }))).toBe(99);
+    expect(leftText(going)).toBe("осталось ≈ 4 ч 47 мин");
+    expect(leftText(run({ processed: 5 }))).toBe("считаю время");
+    expect(leftText(run({ status: "waiting_gpu" }))).toBeNull();
+    expect(reelLine(going)).toBe("ролик 4 из 6");
+    expect(reelLine(run({ stats: { cursor: [6, -1] } }))).toBe("ролик 6 из 6");
+    expect(reelLine(run({ mode: "frames", stats: { cursor: ["x.jpg", "id"] } }))).toBeNull();
+  });
+
+  it("ролики: пройденные, текущий из своего плана, очередь с местом и временем до начала", () => {
+    // Пройдено три ролика (4192 кадра) и 640 кадров четвёртого
+    const got = reelStates(run({ processed: 4832, rate: 1.8, stats: { plan, cursor: [3, -1] } }));
+    expect(got.get("c")).toEqual({ kind: "done" });
+    expect(got.get("d")).toEqual({ kind: "cur", done: 640, plan: 1198, secs: 558 / 1.8 });
+    expect(got.get("e")).toEqual({ kind: "queue", place: 1, secs: 558 / 1.8 });
+    expect(got.get("f")).toEqual({ kind: "queue", place: 2, secs: (558 + 1198) / 1.8 });
+  });
+
+  it("без скорости — места без времени; ждёт карту — текущего нет, первый в очереди", () => {
+    const early = reelStates(run({ processed: 5 }));
+    expect(early.get("a")).toEqual({ kind: "cur", done: 5, plan: 1198, secs: null });
+    expect(early.get("b")).toEqual({ kind: "queue", place: 1, secs: null });
+    const wait = reelStates(run({ status: "waiting_gpu" }));
+    expect(wait.get("a")).toEqual({ kind: "queue", place: 1, secs: null });
+    expect(wait.get("c")).toEqual({ kind: "queue", place: 3, secs: null });
+    // Прогон без плана (начат до выкладки): ход ролика не известен, но где он — известно
+    expect(reelStates(run({ stats: { cursor: [1, -1] } })).get("b")).toEqual({ kind: "cur", done: undefined, plan: undefined, secs: null });
+    expect(reelStates(run({ mode: "frames" })).size).toBe(0);
+  });
+
+  it("погашенные пункты и значок доски говорят, что идёт и сколько ждать", () => {
+    const going = run({ processed: 4832, rate: 1.8 });
+    expect(busyText(going)).toBe("идёт разведка · осталось ≈ 4 ч 47 мин");
+    expect(busyText(run({ mode: "frames", processed: 3 }))).toBe("идёт разметка · считаю время");
+    expect(busyText(run({ status: "waiting_gpu", cpu: true }))).toBe("агент ждёт процессор");
+    expect(agentBadges(going).map((b) => b.text)).toEqual(["агент разведывает", "13 % · ≈ 4 ч 47 мин"]);
+    expect(agentBadges(going)[0].live).toBe(true);
+    expect(agentBadges(run({ status: "queued" })).map((b) => b.text)).toEqual(["агент в очереди"]);
   });
 });

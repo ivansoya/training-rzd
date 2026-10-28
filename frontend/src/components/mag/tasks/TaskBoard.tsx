@@ -15,7 +15,7 @@ import { useProject } from "../ProjectShell";
 import { useConfirm } from "./Confirm";
 import { CreateTaskModal } from "./CreateTaskModal";
 import {
-  BOARD, STATUS, boardColumns, boxedRecently, cardLook, closePlan, closeText, handoverText, sourceLine, statusNote,
+  BOARD, STATUS, agentBadges, boardColumns, boxedRecently, cardLook, closePlan, closeText, handoverText, sourceLine, statusNote,
   teamLine, waitingOf,
 } from "./tasks";
 import { look, useTaskBoard } from "./useTaskBoard";
@@ -215,6 +215,8 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
   const zone = cx("tb-zone", v.stale && "stale", v.loading && "ui-shim", !v.has && !v.loading && "wait");
   const cls = cx("ui-card tb-card", movable && "movable", dragged && "dragged", landed && "landed");
   const face = s ? cardLook(t.status, s) : null;
+  // Идущий агент — первым значком (решение 29.10.2026): что не влезет, обрежется с конца
+  const badges = [...(t.agent ? agentBadges(t.agent) : []), ...(face?.badges ?? [])];
   if (t.status === "closed") {
     return (
       <Link to={to} className={cx(cls, "closed")} draggable={false}>
@@ -251,7 +253,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
             {face.parts.some((p) => p.value) ? <StackBar parts={face.parts} /> : <i className="ui-stack" />}
             <span className={cx("tb-line", face.quiet && "quiet")} title={face.title}><CardLine line={face.line} /></span>
             <span className="tb-badges">
-              {face.badges.map((b) => (
+              {badges.map((b) => (
                 <Badge key={b.text} tone={b.tone} icon={b.icon} live={b.live} title={b.title}><span className="t-ell">{b.text}</span></Badge>
               ))}
             </span>

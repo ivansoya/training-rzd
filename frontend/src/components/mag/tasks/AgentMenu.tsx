@@ -33,15 +33,15 @@ export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup
   actions: AgentAction[];
   /** Поле «каждый N-й кадр» — там, где есть ролики. */
   step?: boolean;
-  /** Агент уже идёт по таске: на таску один прогон. */
-  busy?: boolean;
+  /** Почему агента сейчас не позвать: на таску один прогон — что идёт и сколько ждать. */
+  busy?: string | false;
   onSetup: () => void;
   clear?: AgentClear;
   deleteLabel?: string;
   onDelete?: () => void;
   label: string;
 }) {
-  const clearOff = busy ? "агент уже идёт по таске" : clear?.off;
+  const clearOff = busy || clear?.off;
   // На очереди в меню только «Удалить»: агента туда не зовут
   const agentPart = actions.length > 0;
   const [step, setStep] = useState(25);
@@ -61,7 +61,7 @@ export default function AgentMenu({ tool, actions, step: withStep, busy, onSetup
               onClick={() => { close(); onSetup(); }} />
           </div>}
           {actions.map((a) => {
-            const why = busy ? "агент уже идёт по таске" : !tool.agent ? "выберите агента ⚙" : a.off;
+            const why = busy || (!tool.agent ? "выберите агента ⚙" : a.off);
             return (
               <MenuItem key={a.label} icon={a.icon} disabled={!!why} hint={why || a.hint}
                 onSelect={() => { close(); a.run(step); }}>{a.label}</MenuItem>
