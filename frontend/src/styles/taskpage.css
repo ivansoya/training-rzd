@@ -188,7 +188,9 @@
 .tp-agent .t-xs { color: var(--muted-fg); }
 .tp-agent-bar { flex: 1 1 120px; height: 4px; border-radius: 2px; background: color-mix(in srgb, var(--agent) 22%, transparent); overflow: hidden; }
 .tp-agent-bar u { display: block; height: 100%; background: var(--agent); transition: width .4s var(--ease); }
-.tp-agent-w { padding: 10px 16px 12px; border-bottom: 1px solid var(--border); }
+.tp-agent-w, .tp-tagall-w { padding: 10px 16px 12px; border-bottom: 1px solid var(--border); }
+/* Один ролик — строки тагов пачкой нет, пустая полоса не нужна */
+.tp-tagall-w:empty { display: none; }
 
 /* Меню «⋯» блока: агент таски с шестерёнкой, режимы, шаг кадров, удаление */
 .am-h { display: flex; align-items: center; gap: 8px; padding: 4px 4px 6px 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border); font-size: 12.5px; color: var(--muted-fg); }

@@ -370,18 +370,6 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
 }) {
   const videos = block.videos || [];
   const reels = useReelStates(run);
-  // Пересечение: чип «на все» обещает, что таг стоит у каждого ролика
-  const common = videos.reduce<string[]>((acc, v) => acc.filter((id) => (v.tag_ids || []).includes(id)),
-    [...(videos[0]?.tag_ids || [])]);
-  const tagAll = (next: string[]) => {
-    const added = next.filter((id) => !common.includes(id));
-    const removed = common.filter((id) => !next.includes(id));
-    for (const v of videos) {
-      const own = v.tag_ids || [];
-      const ids = [...new Set([...own, ...added])].filter((id) => !removed.includes(id));
-      if (ids.length !== own.length || ids.some((id) => !own.includes(id))) onVideoTags(v, ids);
-    }
-  };
   return (
     <Card className="tp-src"
       title={<><Icon name="cut" />Ролики на нарезку<Badge variant="secondary">{videos.length}</Badge></>}
@@ -402,13 +390,7 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
       </>}>
       <AgentLine run={run} />
       {block.total > 0 && <Progress c={block.counts} known={block.known} look={look} />}
-      {fillable && videos.length > 1 && (
-        <div className="tp-tagall">
-          <span className="t-xs t-muted">Таг на все {videos.length}</span>
-          <TagPicker code={code} all={tags} value={common} compact placeholder="таг на все ролики"
-            onChange={tagAll} onCreated={onTagCreated} />
-        </div>
-      )}
+      {fillable && <TagAll videos={videos} code={code} tags={tags} onVideoTags={onVideoTags} onTagCreated={onTagCreated} />}
       <div className="tp-reels">
         {videos.map((v) => (
           <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={fillable}
@@ -425,6 +407,44 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
         ))}
       </div>
     </Card>
+  );
+}
+
+/** Таги пачкой на блок роликов: «на все» и «без тага» — второе, когда часть роликов уже со своими тагами. */
+function TagAll({ videos, code, tags, onVideoTags, onTagCreated }: {
+  videos: TaskVideoItem[];
+  code: string;
+  tags: Tag[];
+  onVideoTags: (v: TaskVideoItem, ids: string[]) => void;
+  onTagCreated: (t: Tag) => void;
+}) {
+  if (videos.length < 2) return null;
+  // Пересечение: чип «на все» обещает, что таг стоит у каждого ролика
+  const common = videos.reduce<string[]>((acc, v) => acc.filter((id) => (v.tag_ids || []).includes(id)),
+    [...(videos[0]?.tag_ids || [])]);
+  const tagAll = (next: string[]) => {
+    const added = next.filter((id) => !common.includes(id));
+    const removed = common.filter((id) => !next.includes(id));
+    for (const v of videos) {
+      const own = v.tag_ids || [];
+      const ids = [...new Set([...own, ...added])].filter((id) => !removed.includes(id));
+      if (ids.length !== own.length || ids.some((id) => !own.includes(id))) onVideoTags(v, ids);
+    }
+  };
+  // Все без тага — это то же «на все», второй кнопкой не дублируем
+  const bare = videos.filter((v) => !v.tag_ids?.length);
+  return (
+    <div className="tp-tagall">
+      <span className="t-xs t-muted">Таг на все {videos.length}</span>
+      <TagPicker code={code} all={tags} value={common} compact placeholder="таг на все ролики"
+        onChange={tagAll} onCreated={onTagCreated} />
+      {bare.length > 0 && bare.length < videos.length && <>
+        <Sep />
+        <span className="t-xs t-muted">Без тага {bare.length}</span>
+        <TagPicker code={code} all={tags} value={[]} compact placeholder="таг роликам без тага"
+          onChange={(ids) => bare.forEach((v) => onVideoTags(v, ids))} onCreated={onTagCreated} />
+      </>}
+    </div>
   );
 }
 
@@ -551,6 +571,7 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
           clear={clearOf(agent, { videos: videos.map((v) => v.id) }, unchecked)} />}
       </>}>
       {run && <div className="tp-agent-w"><AgentLine run={run} /></div>}
+      {fillable && <div className="tp-tagall-w"><TagAll videos={videos} code={code} tags={tags} onVideoTags={onVideoTags} onTagCreated={onTagCreated} /></div>}
       {videos.map((v) => {
         // У сданной таски сводки нет и не будет — ждать нечего
         const known = !working || v.id in pending;
