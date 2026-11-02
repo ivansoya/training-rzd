@@ -123,7 +123,7 @@ export function plainLine(kind: AgentKind, p: Record<string, unknown>): string {
     case "output": return "в разметку";
     case "merge": {
       const n = mergeInputs(p);
-      return `${n} ${n < 5 ? "входа" : "входов"} · подряд`;
+      return `${n} ${n < 5 ? "входа" : "входов"}, подряд`;
     }
     case "nms": return `IoU ${decimal(num(p.iou, 0.6))}, ${p.agnostic ? "между классами" : "внутри класса"}`;
     case "sam": return `SAM2.1 ${String(p.model ?? SAM_DEFAULTS.model).replace("sam2.1_hiera_", "").replace("_plus", "+")} → контур`;

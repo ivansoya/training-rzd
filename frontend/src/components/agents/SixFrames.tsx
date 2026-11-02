@@ -6,6 +6,7 @@ import * as api from "../../api/agents";
 import type { GraphDoc } from "../../api/aug";
 import { Button, Dialog, Icon, Switch } from "../../ui";
 import { count } from "../ru";
+import Sep from "../Sep";
 import { keep, load } from "../aug/NodePreview";
 import AgentFrame from "./AgentFrame";
 
@@ -50,7 +51,7 @@ export default function SixFrames({ open, onClose, graphId, doc, project, colorO
           <Switch id="ae-six-human" checked={human} onChange={(v) => { setHuman(v); keep("agent-preview-human", v); }} />
           <span>Разметка человека</span>
         </label>
-        {got && <span className="t-xs t-faint">{got.sequential ? "на карте поочерёдно" : "на карте"} · {got.ms} мс</span>}
+        {got && <span className="t-xs t-faint">{got.sequential ? "на карте поочерёдно" : "на карте"}<Sep />{got.ms} мс</span>}
         <span className="grow" />
         <Button icon="refresh" disabled={!got && !error} onClick={() => setRound((r) => r + 1)}>Ещё 6 кадров</Button>
         <Button variant="primary" onClick={onClose}>Готово</Button>

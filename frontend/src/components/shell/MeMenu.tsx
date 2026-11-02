@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthGate";
 import { Avatar, MenuItem, Popover } from "../../ui";
+import Sep from "../Sep";
 
 /** Аватар в шапке: кто вошёл, кабинет и выход. */
 export default function MeMenu() {
@@ -16,7 +17,7 @@ export default function MeMenu() {
         <>
           <div className="me-h">
             <b>{me.user.display_name}</b>
-            <span>{me.user.login} · {me.user.email}</span>
+            <span>{me.user.login}<Sep />{me.user.email}</span>
           </div>
           <div className="ui-pop-sep" />
           <MenuItem icon="user" onSelect={() => { close(); navigate("/account"); }}>Личный кабинет</MenuItem>

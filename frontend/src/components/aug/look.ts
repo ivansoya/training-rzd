@@ -58,8 +58,8 @@ export function argText(spec: ParamSpec, value: unknown): string {
   return "";
 }
 
-/** Строка под именем аугментации: два первых параметра и вероятность, если она не единица. */
-export function paramSummary(cat: CatalogueNode | undefined, params: Record<string, unknown>): string {
+/** Куски строки под именем аугментации: два первых параметра и вероятность, если она не единица. */
+export function paramSummary(cat: CatalogueNode | undefined, params: Record<string, unknown>): string[] {
   const args = (params.args as Record<string, unknown> | undefined) ?? {};
   const parts = (cat?.params ?? [])
     .map((s) => {
@@ -70,7 +70,7 @@ export function paramSummary(cat: CatalogueNode | undefined, params: Record<stri
     .slice(0, 2);
   const chance = Number(params.chance ?? 1);
   if (chance < 1) parts.push(`p ${num(chance)}`);
-  return parts.join(" · ");
+  return parts;
 }
 
 export const DRAWER_MIN = 140;

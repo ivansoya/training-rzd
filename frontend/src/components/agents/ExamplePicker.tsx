@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } 
 import * as api from "../../api/agents";
 import { Button, Check, Dialog, Icon, Notice, Popover, Seg, Select, Swatch, Switch, cx } from "../../ui";
 import { count, ru } from "../ru";
+import Sep from "../Sep";
 import { EX_ROW, collagePasses, perPass, type TextModel } from "./agentDoc";
 import {
   BANDS, MAX_SET, addFor, cropUrl, filterBoxes, moved, onShelf, pickedOf, pickedOfItem, pictureTiles, randomDistinct, refOf,
@@ -152,7 +153,7 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
   const sourceSeg = (
     <Seg size="sm" label="Источник рамок" value={source}
       onChange={(v) => { touched.current = true; setSource(v); }}
-      options={[{ value: "project", label: "Разметка проекта" }, { value: "own", label: `Свои картинки · ${shelfPics.length}` }]} />
+      options={[{ value: "project", label: "Разметка проекта" }, { value: "own", label: <>Свои картинки<Sep />{shelfPics.length}</> }]} />
   );
 
   // Кадры проекта в наборе требуют класс проекта; набор только со своих картинок — нет, его класс — полка.
@@ -188,8 +189,8 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
       footer={<>
         <span className="t-xs t-muted">
           {sam3
-            ? `Вырезка — авто, под размер в кадре · ${count(passes.length, "проход", "прохода", "проходов")} на кадр${passes.length > 1 && view ? " — каждый следующий ещё один вызов модели" : ""}`
-            : "Вырезка — авто · YOLOE сводит набор в один средний вектор"}
+            ? <>Вырезка — авто, под размер в кадре<Sep />{count(passes.length, "проход", "прохода", "проходов")} на кадр{passes.length > 1 && view ? " — каждый следующий ещё один вызов модели" : ""}</>
+            : <>Вырезка — авто<Sep />YOLOE сводит набор в один средний вектор</>}
         </span>
         <span className="grow" />
         <Button variant="ghost" disabled={busy} onClick={onClose}>Отмена</Button>
@@ -238,7 +239,7 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
             <span className="grow" />
             {boxes && (
               <span className="t-xs t-faint">
-                {count(pool.length, "ручная рамка", "ручные рамки", "ручных рамок")} · {count(new Set(pool.map((b) => b.image_id)).size, "кадр", "кадра", "кадров")}
+                {count(pool.length, "ручная рамка", "ручные рамки", "ручных рамок")}<Sep />{count(new Set(pool.map((b) => b.image_id)).size, "кадр", "кадра", "кадров")}
               </span>
             )}
           </div>
@@ -254,7 +255,7 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
                         const [, , w, h] = t.box.box;
                         return (
                           <button key={t.box.uid} type="button" className={cx("ep-tile", at !== undefined && "on")} aria-pressed={at !== undefined}
-                            title={`${t.box.file_name} — ${Math.round(w)}×${Math.round(h)}${t.members.length > 1 ? ` · тот же предмет на ${t.members.length} кадрах` : ""}`}
+                            title={`${t.box.file_name} — ${Math.round(w)}×${Math.round(h)}${t.members.length > 1 ? `, тот же предмет на ${t.members.length} кадрах` : ""}`}
                             onClick={() => toggle(t.members, t.box)}>
                             <img src={api.boxCrop(t.box.image_id, t.box.box)} alt="" loading="lazy" draggable={false} />
                             {at !== undefined && <b>{at + 1}</b>}
@@ -269,7 +270,7 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
           {tiles.length > 0 && (
             <div className="ep-more">
               <span className="t-xs t-faint">
-                показано {ru(Math.min(limit, tiles.length))} из {ru(tiles.length)} · щелчок — в набор или из набора, номер — порядок
+                показано {ru(Math.min(limit, tiles.length))} из {ru(tiles.length)}<Sep />щелчок — в набор или из набора, номер — порядок
               </span>
               <span className="grow" />
               {limit < tiles.length && <Button size="sm" onClick={() => setLimit((l) => l + PAGE)}>Показать ещё</Button>}
@@ -282,7 +283,7 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
           <div className="ep-h">
             <b>Набор</b>
             <span className="t-xs t-faint">
-              {count(picked.length, "образец", "образца", "образцов")}{sam3 ? ` · ${count(passes.length, "проход", "прохода", "проходов")}` : ""}
+              {count(picked.length, "образец", "образца", "образцов")}{sam3 && <><Sep />{count(passes.length, "проход", "прохода", "проходов")}</>}
             </span>
             <span className="grow" />
             <Button size="sm" icon="shuffle" disabled={!pool.length}
@@ -295,7 +296,7 @@ export default function ExamplePicker({ model, agentClass, projects, set, preset
           {picked.length === 0 && <p className="ep-none">Набор пуст: щёлкайте по плиткам слева или добирайте случайно.</p>}
           <div className="ep-passes">
             {(passes.length ? passes : [[]]).map((pass, p, all) => (
-              <PassBlock key={p} label={sam3 ? `проход ${p + 1}${pass.length > EX_ROW ? " · 2 ряда" : ""}` : null}
+              <PassBlock key={p} label={sam3 ? `проход ${p + 1}` : null}
                 pass={pass} picked={picked} onMove={(a, b) => setPicked((old) => moved(old, a, b))}
                 onDrop={(k) => setPicked((old) => old.filter((_, i) => i !== k))}
                 onDropPass={pass.length ? () => setPicked((old) => old.filter((_, i) => !pass.includes(i))) : undefined}
@@ -341,10 +342,10 @@ function PassBlock({ label, pass, picked, onMove, onDrop, onDropPass, tail }: {
     <div className="ep-pass">
       {label && (
         <div className="ep-pass-h">
-          <span>{label}</span><span className="grow" /><span>порядок — перетаскиванием</span>
+          <span>{label}{pass.length > EX_ROW && <><Sep />2 ряда</>}</span><span className="grow" /><span>порядок — перетаскиванием</span>
           {onDropPass && (
-            <button type="button" className="ep-pass-x" onClick={onDropPass} aria-label={`Убрать ${label.split(" ·")[0]}`}
-              title={`Убрать ${label.split(" ·")[0]}: ${pass.length} обр.`}><Icon name="x" size={12} /></button>
+            <button type="button" className="ep-pass-x" onClick={onDropPass} aria-label={`Убрать ${label}`}
+              title={`Убрать ${label}: ${pass.length} обр.`}><Icon name="x" size={12} /></button>
           )}
         </div>
       )}
@@ -417,7 +418,7 @@ function Collage({ picked, preview }: { picked: Picked[]; preview: PickerPreview
       <div className="ep-h">
         <b>Как видит SAM 3</b>
         <span className="t-xs t-faint">
-          {preview.image ? `на кадре превью, вход ${preview.side}${preview.tile ? ` · первый тайл ${preview.tile} px` : ""}` : "кадра превью нет"}
+          {preview.image ? <>на кадре превью, вход {preview.side}{preview.tile ? <><Sep />первый тайл {preview.tile} px</> : ""}</> : "кадра превью нет"}
         </span>
         <span className="grow" />
         {n > 1 && (

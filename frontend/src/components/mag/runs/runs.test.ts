@@ -90,7 +90,7 @@ describe("страница прогона", () => {
     expect(runStatus(run({ status: "waiting_gpu", params: { device: "cpu" } })).label).toBe("Ждёт процессор");
     expect(runStatus(run({ status: "waiting_gpu", params: {} })).label).toBe("Ждёт карту");
     const rows = (title: string) => ddp.find((x) => x.title === title)!.rows;
-    expect(rows("Обучение")).toContainEqual(["Батч", "16 на карту · общий 32"]);
+    expect(rows("Обучение")).toContainEqual(["Батч", ["16 на карту", "общий 32"]]);
     expect(rows("Железо")).toContainEqual(["Устройство", "карты 2,5"]);
   });
 

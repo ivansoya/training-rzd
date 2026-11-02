@@ -12,6 +12,7 @@ import type { HumanShape, AgentPreview as Result } from "../../api/agents";
 import type { GraphDoc } from "../../api/aug";
 import { Button, Dialog, Icon, Popover, Select, Switch } from "../../ui";
 import { keep, load } from "../aug/NodePreview";
+import Sep, { withSep } from "../Sep";
 import { unfinished } from "./agentDoc";
 import AgentFrame from "./AgentFrame";
 import { agentTitle, type AgentNodeData } from "./AgentNodes";
@@ -124,7 +125,7 @@ export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, c
     verdict: human && verdict ? verdict : undefined,
   };
   const setHumanKept = (v: boolean) => { setHuman(v); keep("agent-preview-human", v); };
-  const frameText = result ? `${result.image.file_name} · ${result.image.width} × ${result.image.height}` : "";
+  const frameParts = result ? [result.image.file_name, `${result.image.width} × ${result.image.height}`] : [];
 
   const nav = (big?: boolean) => (
     <>
@@ -178,14 +179,14 @@ export default function AgentPreviewPane({ state, nodes, watch, pinned, onPin, c
         <>
           <div className="ae-pv-nav">{nav()}</div>
           <p className="t-xs t-faint">
-            <span className="ae-pv-file t-ell" title={frameText}>{frameText}</span>
-            {result.sequential ? "на карте поочерёдно" : "на карте"} · {result.ms} мс{project ? ` · ${project.name}` : ""}
+            <span className="ae-pv-file t-ell" title={frameParts.join(", ")}>{withSep(frameParts)}</span>
+            {result.sequential ? "на карте поочерёдно" : "на карте"}<Sep />{result.ms} мс{project && <><Sep />{project.name}</>}
           </p>
         </>
       )}
 
       <Dialog open={full && Boolean(layers)} onOpenChange={setFull} width={4000} height={4000} bare className="ge-full"
-        title={d ? agentTitle(d) : "Превью"} desc={frameText}>
+        title={d ? agentTitle(d) : "Превью"} desc={withSep(frameParts)}>
         {result && layers && (
           <div className="ge-full-b">
             <div className="ge-full-stage">

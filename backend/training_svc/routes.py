@@ -598,7 +598,7 @@ def start_run(code):
             spec = model["scratch"]
         params["pretrained"] = bool(pretrained)
 
-        name = (data.get("name") or f"{tset.name} · {model_id}").strip()
+        name = (data.get("name") or f"{tset.name} — {model_id}").strip()
         run = TrainRun(
             project_id=project.id, number=_next_number(db, project),
             set_id=tset.id, name=name[:255],

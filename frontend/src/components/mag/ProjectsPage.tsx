@@ -11,6 +11,7 @@ import { Avatars, Badge, Button, Dot, Empty, Input, Notice, PageHeader, Progress
 import { useAuth } from "../auth/AuthGate";
 import { pct, ru } from "../ru";
 import CreateProjectModal from "./CreateProjectModal";
+import { withSep } from "../Sep";
 import { doneShare, projectsLine, runLine } from "./projects";
 import type { RunTone } from "./projects";
 
@@ -88,7 +89,7 @@ export default function ProjectsPage() {
   return (
     <div className="page">
       <PageHeader title="Проекты"
-        desc={loaded ? projectsLine(projects, invitations.length) : "Загружаем проекты…"}
+        desc={loaded ? withSep(projectsLine(projects, invitations.length)) : "Загружаем проекты…"}
         actions={<Button variant="primary" icon="plus" onClick={() => setShowCreate(true)}>Новый проект</Button>} />
 
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}

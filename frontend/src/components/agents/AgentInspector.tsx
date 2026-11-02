@@ -9,6 +9,7 @@ import { useState, type ReactNode } from "react";
 import * as api from "../../api/agents";
 import { Badge, Button, Empty, Field, Icon, Popover, Seg, Select, Switch } from "../../ui";
 import { NumInput } from "../NumInput";
+import Sep, { withSep } from "../Sep";
 import {
   LIMITS, MAX_PASSES, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, TILE_OVERLAP, TITLES, frameCalls, inputSide, mergeInputs,
   isExamples, offLimits, promptsOf, rowTarget, rowsOf, SAM3_WORDS, sam3DefaultWords, sam3Mb, sam3Side, sam3Words, switchTextModel, textHalf,
@@ -39,8 +40,8 @@ const DETAIL = [
 ];
 
 const SIDES = [
-  { value: "644", label: "644 · быстрее" },
-  { value: "1008", label: "1008 · точнее" },
+  { value: "644", label: <>644<Sep />быстрее</> },
+  { value: "1008", label: <>1008<Sep />точнее</> },
 ];
 
 export default function AgentInspector({ node, readOnly, weights, sam3Ready, sets, goneSets, onSet, classes, ensure, ensureRef, projects,
@@ -113,14 +114,14 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
     const mb = sam3Mb(p, Math.min(per, words), est?.sam3_cpu_half ?? true);
     const total = est && nodeMb !== undefined ? est.estimate_mb - nodeMb + mb : mb;
     const passes = Math.max(1, Math.ceil(words / per));
-    return `≈ ${gb(total)} ГБ · ${passes} ${plural(passes, "проход", "прохода", "проходов")}`;
+    return <>≈ {gb(total)} ГБ<Sep />{passes} {plural(passes, "проход", "прохода", "проходов")}</>;
   };
   const memoryRow = nodeMb !== undefined && (
     <div className="ae-panel-row">
       <span className="ae-panel-l">Память узла</span>
       <span className="ae-panel-v t-ell">
         <b className={heaviest ? "ae-heavy" : undefined} title={heaviest ? "Самый тяжёлый узел агента" : undefined}>≈ {gb(nodeMb)} ГБ</b>
-        {sam3 ? ` · SAM 3 на входе ${sam3Side(p)}` : ""}
+        {sam3 && <><Sep />SAM 3 на входе {sam3Side(p)}</>}
         {sam3 && words > 0 ? `, ${Math.min(autoWords, words)} ${plural(Math.min(autoWords, words), "слово", "слова", "слов")} за проход` : ""}
       </span>
     </div>
@@ -204,7 +205,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
           <>
             <span className="ui-mono">
               {frame.w}×{frame.h}
-              {frame.share < 0.995 && <em> · у {Math.round((1 - frame.share) * 100)} % кадров другой размер</em>}
+              {frame.share < 0.995 && <em><Sep />у {Math.round((1 - frame.share) * 100)} % кадров другой размер</em>}
             </span>
             {tiling && views && <span>{viewsText} = {total} {plural(total, "проход", "прохода", "проходов")}</span>}
           </>
@@ -215,8 +216,8 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
       {tiling && fineFields}
     </div>
   );
-  const contour = `до ${num(p.polygon_points, SAM_DEFAULTS.polygon_points)} точек · куски от ${num(p.min_area, SAM_DEFAULTS.min_area)} px²`
-    + (p.fill_holes !== false ? " · дыры залиты" : "");
+  const contour = [`до ${num(p.polygon_points, SAM_DEFAULTS.polygon_points)} точек`, `куски от ${num(p.min_area, SAM_DEFAULTS.min_area)} px²`,
+    ...(p.fill_holes !== false ? ["дыры залиты"] : [])];
 
   return (
     <section className="ge-sec ae-insp">
@@ -262,7 +263,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
                 <b>Модель и поиск</b>
                 <span className="ae-readout" title={calls !== null && frame ? `Вызовов модели на кадр ${frame.w}×${frame.h}` : undefined}>
                   {time ? <>{time} <em>на кадр</em></> : <em>время — после превью</em>}
-                  {calls !== null && <em> · {calls} {plural(calls, "вызов", "вызова", "вызовов")}</em>}
+                  {calls !== null && <em><Sep />{calls} {plural(calls, "вызов", "вызова", "вызовов")}</em>}
                 </span>
               </div>
               <div className="ae-panel-top">
@@ -302,10 +303,10 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
                       <Select size="sm" id={id} label="Слов за проход" value={String(sam3Words(p) ?? "auto")} disabled={readOnly || words === 0}
                         onChange={(v) => onChange({ words: v === "auto" ? null : Number(v) })}
                         options={[
-                          { value: "auto", label: `Авто · ${autoWords}`, hint: `${wordsOption(autoWords)} — самая крупная порция, что влезает в карту` },
+                          { value: "auto", label: <>Авто<Sep />{autoWords}</>, hint: <>{wordsOption(autoWords)} — самая крупная порция, что влезает в карту</> },
                           ...SAM3_WORDS.map((w) => ({
                             value: String(w), label: String(w),
-                            hint: `${wordsOption(w)}${w === 1 ? " — меньше всего памяти, дольше всего" : w === sam3DefaultWords(p) ? ` — умолчание для входа ${sam3Side(p)}` : w >= words ? ` — все ${words} разом` : ""}`,
+                            hint: <>{wordsOption(w)}{w === 1 ? " — меньше всего памяти, дольше всего" : w === sam3DefaultWords(p) ? ` — умолчание для входа ${sam3Side(p)}` : w >= words ? ` — все ${words} разом` : ""}</>,
                           })),
                         ]} />
                     )}
@@ -316,7 +317,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
               {sam3 && (
                 <div className="ae-panel-row">
                   <span className="ae-panel-l">Контур</span>
-                  <span className="ae-panel-v t-ell" title={contour}>{contour}</span>
+                  <span className="ae-panel-v t-ell" title={contour.join(", ")}>{withSep(contour)}</span>
                   <Popover align="end" width={280} trigger={<Button size="sm" variant="ghost" icon="sliders" disabled={readOnly}>Настроить</Button>}>
                     <div className="ae-contour">
                       {number("polygon_points", "Точек контура до", num(p.polygon_points, SAM_DEFAULTS.polygon_points), 8)}
@@ -329,7 +330,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
               <div className="ae-panel-row">
                 <span className="ae-panel-l">Тайлинг</span>
                 <span className="ae-panel-v">
-                  {tiling ? `${views ? viewsText : "тайлы"} · тайл ${side} px` : "выключен — кадр идёт целиком"}
+                  {tiling ? <>{views ? viewsText : "тайлы"}<Sep />тайл {side} px</> : "выключен — кадр идёт целиком"}
                 </span>
                 <Switch checked={tiling} label="Тайлинг" disabled={readOnly} onChange={(v) => onChange({ tiles: v })} />
               </div>
@@ -363,7 +364,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
                 {weights ? (
                   <>
                     <b className="ui-mono t-ell" title={weights.name}>{weights.name}</b>
-                    <span>{weights.task} · вход {weights.imgsz ?? "—"} · {weights.names.length} кл. · {mb(weights.size_bytes)}</span>
+                    <span>{weights.task}<Sep />вход {weights.imgsz ?? "—"}<Sep />{weights.names.length} кл.<Sep />{mb(weights.size_bytes)}</span>
                     {weights.run && <span>из обучения «{weights.run.name}»</span>}
                   </>
                 ) : <b className="ge-warn">Веса не выбраны</b>}

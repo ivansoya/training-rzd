@@ -44,7 +44,9 @@ const api = async (method, url, data) => {
 // План разведки как у «Искры» в макете: 1198 + 1798 + 1196 кадров, пройден первый и 640 второго, скорость 1,8 к/с
 const PLAN = [1198, 1798, 1196];
 const DONE = 1198 + 640;
-const text = async (loc) => (await loc.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+// Черта <Sep /> текста не даёт — читаем её как « · », чтобы сверять, что части разделены
+const SEP_TEXT = (el) => { const c = el.cloneNode(true); c.querySelectorAll(".sep").forEach((s) => s.replaceWith(" · ")); return c.textContent; };
+const text = async (loc) => (await loc.evaluate(SEP_TEXT).catch(() => "")).replace(/\s+/g, " ").trim();
 
 let temp = null;
 let runId = null;
@@ -108,7 +110,7 @@ try {
   await item.waitFor({ timeout: 5000 }).catch(() => null);
   check("новый пункт есть и погашен", await item.count() === 1 && await item.isDisabled(), await item.count());
   const why = await text(item.locator(".ui-opt-h"));
-  check("причина — что идёт и сколько ждать", /^идёт разведка · осталось ≈ 2\d мин$/.test(why), why);
+  check("причина — что идёт и сколько ждать", /^идёт разведка, осталось ≈ 2\d мин$/.test(why), why);
   await page.screenshot({ path: `${OUT}/progress-menu.png` });
   await page.keyboard.press("Escape");
 
@@ -116,7 +118,7 @@ try {
   await page.goto(`${BASE}/projects/${temp}/tasks`);
   const card = page.locator(".tb-card", { hasText: "Проба хода агента" });
   await card.locator(".tb-badges .ui-badge").first().waitFor({ timeout: 15000 }).catch(() => null);
-  const badges = await card.locator(".tb-badges .ui-badge").allInnerTexts();
+  const badges = await card.locator(".tb-badges .ui-badge").evaluateAll((els, f) => els.map(new Function(`return ${f}`)()), SEP_TEXT.toString());
   check("доска: первыми — «агент разведывает» и «43 % · ≈ 2x мин»",
     badges[0]?.trim() === "агент разведывает" && /^43 % · ≈ 2\d мин$/.test(badges[1]?.trim() ?? ""), badges);
   // Узкая карточка (5 колонок) кладёт значки в два ряда — ни один из двух не должен уйти в многоточие

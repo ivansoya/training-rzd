@@ -10,6 +10,7 @@ import {
 } from "../../auth/api";
 import type { ImageTaskStatus, LabelClass, TaskImage } from "../../auth/api";
 import BoxCanvas from "./BoxCanvas";
+import Sep from "../Sep";
 import type {
   CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape,
 } from "./BoxCanvas";
@@ -349,7 +350,7 @@ export default function AnnotationEditor({
     : ds ? (ro ? ["next"] : ["empty", "trash", "next"])
       : frameActions({ status: image.task_status, objects: boxes.length, readOnly: ro });
   const unchecked = pendingCount(boxes);
-  // Агенты кадра — для групп на проверке и подписи «класс · агент» при двух и больше.
+  // Агенты кадра — для групп на проверке и подписи агента у класса при двух и больше.
   const agentsHere = useMemo(() => agentGroups(boxes, (b) => agentKeyOf(meta.get(b.id ?? ""))), [boxes, meta]);
   const canEmpty = actions.includes("empty");
 
@@ -1348,10 +1349,10 @@ export default function AnnotationEditor({
         title={title}
         sub={<>
           Кадр <span className="ui-mono">{at < 0 ? "—" : ru(at + 1)}</span> из <span className="ui-mono">{ru(of)}</span>
-          {fltOn && <span className="t-faint"> ({ds ? "в группе" : "в таске"} {ru(ds ? ds.total : images.length)})</span>} · {image.file_name}
+          {fltOn && <span className="t-faint"> ({ds ? "в группе" : "в таске"} {ru(ds ? ds.total : images.length)})</span>}<Sep />{image.file_name}
         </>}
         extra={ds ? undefined :
-          <div className="ed-prog" title={STATUS_LOOK.map((s) => `${s.label}: ${progress.counts[s.id]}`).join(" · ")}>
+          <div className="ed-prog" title={STATUS_LOOK.map((s) => `${s.label}: ${progress.counts[s.id]}`).join(", ")}>
             <StackBar label="Прогресс" parts={STATUS_LOOK.map((s) => ({ label: s.label, value: progress.counts[s.id], color: s.color }))} />
             <div className="row t-xs t-muted">
               <span>решено <span className="ui-mono">{ru(progress.decided)}</span></span>
@@ -1490,7 +1491,7 @@ export default function AnnotationEditor({
           <AutoStatus state={auto.state} error={auto.error} busy={auto.busy} on={autoOn || samOn}
             quiet={frozen} onRetry={auto.retry} onDismiss={() => { auto.setError(null); setSamOn(false); }} />
           {addTo !== null && (
-            <div className="mag-auto-plate" role="status">Следующий контур ляжет в выбранный объект · Esc — отменить</div>
+            <div className="mag-auto-plate" role="status">Следующий контур ляжет в выбранный объект<Sep />Esc — отменить</div>
           )}
           {(agentTool.busy || agentNote) && (
             <div className="mag-auto-plate ed-agent-plate" role="status">{agentTool.busy ? "Агент смотрит кадр…" : agentNote}</div>
@@ -1528,7 +1529,7 @@ export default function AnnotationEditor({
                     n: (ds ? ds.base : 0) + i + 1,
                     ring: im.task_status + ((i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending)) ? " agent" : "")
                       + (out ? " out" : ""),
-                    title: `${im.file_name} — ${im.annotations} разметок${out ? " · не по фильтру, уйдёт из ленты" : ""}`,
+                    title: `${im.file_name} — ${im.annotations} разметок${out ? "; не по фильтру, уйдёт из ленты" : ""}`,
                   };
                 })}
                 index={pos}

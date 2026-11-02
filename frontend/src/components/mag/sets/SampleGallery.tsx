@@ -166,7 +166,8 @@ const SampleTile = memo(function SampleTile({ s, src, onOpen }: { s: Sample; src
   const copy = s.ops.length > 0;
   return (
     <button type="button" className="fr-tile" onClick={onOpen}
-      title={`${s.source_name ?? s.name} — ${count(s.objects, "объект", "объекта", "объектов")}${copy && s.sid ? ` · ${pathText(s.sid)}` : ""}`}>
+      title={`${s.source_name ?? s.name} — ${count(s.objects, "объект", "объекта", "объектов")}${copy && s.sid ? `
+${pathText(s.sid)}` : ""}`}>
       <img src={src} alt="" loading="lazy" decoding="async" draggable={false} />
       <ShapeMini boxes={s.boxes} width={s.width} height={s.height} />
       <span className={cx("fr-split", copy && "ts-copy")}>{copy ? "копия" : "оригинал"}</span>

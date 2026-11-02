@@ -21,6 +21,7 @@ import AgentRunDialog, { AgentRunBar } from "../../agents/AgentRunDialog";
 import AgentSetupDialog from "../../agents/AgentSetupDialog";
 import CpuConfirm, { refusalOf, type CardRefusal } from "../../hardware/CpuConfirm";
 import { useAgentTool } from "../../editor/AgentTool";
+import Sep from "../../Sep";
 import ScoutOverview from "../../agents/ScoutOverview";
 import { useScouts } from "../../agents/scout";
 import AnnotationEditor, { saveSettled } from "../AnnotationEditor";
@@ -539,9 +540,9 @@ export default function TaskPage() {
         <div className="tp-upload" role="status">
           <span className="t-sm tp-upload-l">
             {!upload.name ? <span>В очереди</span> : <>
-              <span>{upload.pct >= 0.999 ? "Обрабатываю на сервере" : "Передаю"}{upload.total > 1 && ` ${upload.done + 1} из ${upload.total}`} · </span>
+              <span>{upload.pct >= 0.999 ? "Обрабатываю на сервере" : "Передаю"}{upload.total > 1 && ` ${upload.done + 1} из ${upload.total}`}<Sep /></span>
               <span className="t-ell">{upload.name}</span>
-              {upload.pct < 0.999 && <span> · {Math.round(upload.pct * 100)} %</span>}
+              {upload.pct < 0.999 && <span><Sep />{Math.round(upload.pct * 100)} %</span>}
             </>}
           </span>
           <Progress value={upload.pct >= 0.999 ? 1 : upload.pct} label="Загрузка" />

@@ -5,6 +5,7 @@ import type { Overview, OverviewClass } from "../../api/overview";
 import type { TaskLight } from "../../auth/api";
 import { useLive } from "../../live/LiveProvider";
 import { useAuth } from "../auth/AuthGate";
+import Sep, { withSep } from "../Sep";
 import {
   Avatar, Badge, Button, Card, Dot, Empty, Icon, Legend, LineChart, LinkButton, Notice, PageHeader,
   Spark, StackBar, cx,
@@ -87,7 +88,7 @@ export default function ProjectOverview() {
 
   const header = (
     <PageHeader title="Обзор"
-      desc={<>{project.name}{data?.updated_at && <> · изменения {ago(data.updated_at)}</>}</>}
+      desc={<>{project.name}{data?.updated_at && <><Sep />изменения {ago(data.updated_at)}</>}</>}
       actions={actions} />
   );
 
@@ -213,7 +214,7 @@ function ClassBalance({ rows, declared, code }: { rows: OverviewClass[]; declare
                   <span className="t-ell">{r.name}</span>
                 </span>
                 <span className="bal-t" style={{ width: `${Math.max(2, (r.total / max) * 100)}%` }}
-                  title={`train ${ru(r.train)} · val ${ru(r.val)}${r.other ? ` · без сплита ${ru(r.other)}` : ""}`}>
+                  title={`train ${ru(r.train)}, val ${ru(r.val)}${r.other ? `, без сплита ${ru(r.other)}` : ""}`}>
                   {r.train > 0 && <i style={{ flex: r.train, background: "var(--c1)" }} />}
                   {r.val > 0 && <i style={{ flex: r.val, background: "var(--c2)" }} />}
                   {r.other > 0 && <i style={{ flex: r.other, background: "var(--destructive)" }} />}
@@ -274,7 +275,7 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
                   <span className={cx("ov-task-m t-xs t-muted", v.stale && "stale", v.loading && "ui-shim")}>
                     <Icon name={s && (s.sources.cut || s.sources.annotate) ? "film" : "images"} size={14} />
                     <span className="t-ell">
-                      {s ? sourceLine(s.sources) : <i className="ui-sk pill" style={{ width: 110 }} />} · {teamLine(t.assignees)}
+                      {s ? withSep(sourceLine(s.sources)) : <i className="ui-sk pill" style={{ width: 110 }} />}<Sep />{teamLine(t.assignees)}
                     </span>
                   </span>
                   <span className={cx("ov-task-p t-xs", v.stale && "stale", v.loading && "ui-shim")}>
@@ -312,7 +313,7 @@ function RunCard({ run, code }: { run: Overview["latest_run"]; code: string }) {
   const [label, tone] = run.cpu && run.status === "waiting_gpu" ? ["Ждёт процессор", ""] : RUN_BADGE[run.status] ?? [run.status, ""];
   return (
     <Card title={run.name}
-      desc={<>{run.model}{run.imgsz ? ` · ${run.imgsz} px` : ""} · эпоха {run.epoch} из {run.epochs}</>}
+      desc={<>{run.model}{run.imgsz ? <><Sep />{run.imgsz} px</> : null}<Sep />эпоха {run.epoch} из {run.epochs}</>}
       actions={<>
         <Badge tone={tone || undefined} live={run.status === "running"}>{label}</Badge>
         <LinkButton variant="ghost" size="sm" to={`/projects/${code}/runs/${run.id}`}>Открыть</LinkButton>
@@ -346,8 +347,8 @@ function ActivityCard({ data, code }: { data: Overview; code: string }) {
               {a.user ? <Avatar name={a.user} /> : <span className="feed-sys"><Icon name="activity" size={13} /></span>}
               <span>
                 {describeTaskEvent(a.kind, a.payload)}
-                {a.task && <> · <Link to={`/projects/${code}/tasks/${a.task.id}`}>{a.task.name}</Link></>}
-                {a.run && <> · <Link to={`/projects/${code}/runs/${a.run.id}`}>к обучению</Link></>}
+                {a.task && <Link className="feed-go" to={`/projects/${code}/tasks/${a.task.id}`}>{a.task.name}</Link>}
+                {a.run && <Link className="feed-go" to={`/projects/${code}/runs/${a.run.id}`}>к обучению</Link>}
               </span>
               <span className="feed-t" title={new Date(a.at).toLocaleString("ru-RU")}>{ago(a.at)}</span>
             </li>
@@ -377,7 +378,7 @@ function GpuCard() {
   const many = devices.length > 1;
   return (
     <Card title={many ? "Видеокарты" : "Видеокарта"}
-      desc={many ? `${count(devices.length, "карта", "карты", "карт")} в работе · ${gb(total)} ГБ` : `${shortName(devices[0].name)} · ${gb(total)} ГБ`}
+      desc={withSep([many ? `${count(devices.length, "карта", "карты", "карт")} в работе` : shortName(devices[0].name), `${gb(total)} ГБ`])}
       actions={<Badge tone={load.tone}>{load.label}</Badge>}>
       <div className="stack-v ov-gpu">
         <StackBar parts={parts} height={12} label="Память видеокарт" />

@@ -24,6 +24,7 @@ import {
   AnchorButton, Button, Check, ChipToggle, Dialog, Legend, Notice, Pill, Range, Ring, Seg, StackBar,
 } from "../../ui";
 import { formatBytes } from "./ProjectShell";
+import Sep, { withSep } from "../Sep";
 import { count, plural, ru } from "../ru";
 
 interface Props {
@@ -221,7 +222,7 @@ export default function ExportModal({ detail, onClose }: Props) {
       <div className="exp-stage">
         <Ring tone="done" label="Архив готов" />
         <b>Архив готов</b>
-        <span>{result.file_name} · {formatBytes(result.size_bytes)}</span>
+        <span>{result.file_name}<Sep />{formatBytes(result.size_bytes)}</span>
       </div>
     </>
   ) : (
@@ -270,7 +271,7 @@ export default function ExportModal({ detail, onClose }: Props) {
 
   return (
     <Dialog open onOpenChange={(v) => { if (!v) onClose(); }} width={940} height={760} className="exp"
-      title="Экспорт проекта" desc={`${detail.project.name} · архив с изображениями и разметкой`} bare
+      title="Экспорт проекта" desc={withSep([detail.project.name, "архив с изображениями и разметкой"])} bare
       footer={
         <>
           <span className="grow t-sm t-muted">{phase === "setup" ? (pending ? "Считаю предпросмотр…" : preview ? "Предпросмотр пересчитан" : "") : ""}</span>
@@ -328,7 +329,7 @@ export default function ExportModal({ detail, onClose }: Props) {
 
         <section>
           <div className="exp-h">
-            <span>Классы <span className="t-faint">· щелчок по строке — в выгрузку или из неё · train / val</span></span>
+            <span>Классы<span className="t-faint"><Sep />щелчок по строке — в выгрузку или из неё<Sep />train / val</span></span>
             <span className="exp-acts">
               <button type="button" disabled={locked} onClick={() => setPickedCls(new Set(classes.map((c) => c.id)))}>все</button>
               <button type="button" disabled={locked} onClick={() => setPickedCls(new Set(classes.filter((c) => c.annotations > 0).map((c) => c.id)))}>с разметкой</button>
@@ -348,7 +349,7 @@ export default function ExportModal({ detail, onClose }: Props) {
                   <span className="exp-pick" aria-hidden="true" />
                   <span className="exp-n"><span className="t-ell">{c.name}</span><small>{c.superclass_name ?? "без группы"}</small></span>
                   {row ? (
-                    <span className="exp-tv" style={{ width: `${Math.max(6, (total / maxTotal) * 100)}%` }} title={`train ${row.train} · val ${row.val}`}>
+                    <span className="exp-tv" style={{ width: `${Math.max(6, (total / maxTotal) * 100)}%` }} title={`train ${row.train}, val ${row.val}`}>
                       <i style={{ flex: row.train || 0.001, background: "var(--c1)" }} />
                       <i style={{ flex: row.val || 0.001, background: "var(--c2)" }} />
                     </span>

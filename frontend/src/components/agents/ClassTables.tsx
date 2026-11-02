@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { Button, Input, Seg, cx } from "../../ui";
 import { NumInput } from "../NumInput";
+import Sep from "../Sep";
 import { CLASS_NAME_MAX, foldName, offLimits, type AgentClass, type FilterRow, type NetRow, type PromptRow } from "./agentDoc";
 
 type Shown = "all" | "on" | "off";
@@ -20,7 +21,7 @@ function Head({ title, total, on, query, onQuery, placeholder, shown, onShown, o
     <div className="ae-ct-h">
       <div className="ae-ct-t">
         <b>{title}</b>
-        <span className="ui-mono">{total}{on !== undefined && <> · в агент {on}</>}</span>
+        <span className="ui-mono">{total}{on !== undefined && <><Sep />в агент {on}</>}</span>
       </div>
       {onQuery && (
         <div className="ae-ct-tools">

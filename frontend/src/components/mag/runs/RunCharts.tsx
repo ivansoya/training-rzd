@@ -100,7 +100,7 @@ function Grid({ v, colorOf }: { v: ConfusionView; colorOf: ColorOf }) {
             : p > 0 ? `color-mix(in srgb, var(--st-del) ${Math.min(80, Math.round(10 + p * 280))}%, var(--card))` : undefined;
           return (
             <span key={j} className={cx("rn-cm-c", p === 0 && "z", (diag || p >= 0.05) && "hi")} style={bg ? { background: bg } : undefined}
-              title={`${pairName(v, i, j)}: ${pct(p)} · ${v.counts[i][j].toLocaleString("ru-RU")}`}>
+              title={`${pairName(v, i, j)}: ${pct(p)}, ${v.counts[i][j].toLocaleString("ru-RU")}`}>
               {p > 0 && val < 1 ? "<1" : val}
             </span>
           );

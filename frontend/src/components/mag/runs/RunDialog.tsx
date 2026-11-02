@@ -8,6 +8,7 @@ import type { TrainSet } from "../../../api/trainsets";
 import { Button, Check, Dialog, Field, Icon, Input, Notice, Seg, Select, Switch } from "../../../ui";
 import CpuConfirm, { refusalOf, type CardRefusal } from "../../hardware/CpuConfirm";
 import { count, ru } from "../../ru";
+import Sep, { withSep } from "../../Sep";
 import { gb, useGpuState } from "../../shell/useGpuState";
 import { AUG_KEYS } from "./runs";
 
@@ -32,7 +33,7 @@ const FINE = ["optimizer", "lr0", "lrf", "momentum", "weight_decay", "warmup_epo
 export interface RunSeed { setId?: string; model?: string; params?: Record<string, unknown>; name?: string }
 
 export function seedOf(run: Run): RunSeed {
-  return { setId: run.set?.id, model: run.base_model, params: run.params, name: `${run.name} · повтор` };
+  return { setId: run.set?.id, model: run.base_model, params: run.params, name: `${run.name} (повтор)` };
 }
 
 export default function RunDialog({ code, seed, onClose, onStarted }: {
@@ -88,7 +89,7 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
 
   useEffect(() => {
     if (named) return;
-    if (set && model) setName(`${set.name} · ${model}`);
+    if (set && model) setName(`${set.name} — ${model}`);
   }, [set, model, named]);
   useEffect(() => { if (seed.name) setName(seed.name); }, [seed.name]);
 
@@ -197,15 +198,15 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
         ) : (
           <>
             <div className="rn-form-2">
-              <Field label="Набор" hint={set?.counts ? `${ru(set.counts.samples)} образцов · обучение ${ru(set.counts.train)} · проверка ${ru(set.counts.val)}` : undefined}>
+              <Field label="Набор" hint={set?.counts ? withSep([`${ru(set.counts.samples)} образцов`, `обучение ${ru(set.counts.train)}`, `проверка ${ru(set.counts.val)}`]) : undefined}>
                 {(id) => <Select id={id} full value={setId || undefined} onChange={setSetId} placeholder="Загружаю…"
                   options={(sets ?? []).map((s) => ({ value: s.id, label: s.name, hint: s.kind === "polygon" ? "контуры" : "рамки" }))} />}
               </Field>
-              <Field label={`Модель · ${task === "segment" ? "сегментация" : "детекция"}`}
+              <Field label={<>Модель<Sep />{task === "segment" ? "сегментация" : "детекция"}</>}
                 hint={chosen ? (chosen.builtin ? (chosen.cached ? "Предобучена на COCO, веса уже на томе"
                   : "Весов на томе нет — первый запуск начнёт со скачивания") : "Своя модель, учится от принесённых весов") : undefined}>
                 {(id) => <Select id={id} full value={model || undefined} onChange={setModel} placeholder="Загружаю…"
-                  options={models.map((m) => ({ value: m.id, label: m.name, hint: [m.size, m.note, m.builtin ? "" : "своя"].filter(Boolean).join(" · ") }))} />}
+                  options={models.map((m) => ({ value: m.id, label: m.name, hint: withSep([m.size, m.note, m.builtin ? "" : "своя"]) }))} />}
               </Field>
             </div>
             <Field label="Название обучения">
@@ -229,8 +230,8 @@ export default function RunDialog({ code, seed, onClose, onStarted }: {
                   <Seg size="sm" label="Карт на обучение" value={String(gpus)} onChange={(v) => setValue("gpus", Number(v))}
                     options={Array.from({ length: live }, (_, i) => ({ value: String(i + 1), label: String(i + 1) }))} />
                   <span className="rn-gpu-l">
-                    {gpus === 1 ? "одна карта" : <><b>по {batch} на карту</b> · общий батч {total} · ждёт <b>{count(gpus, "карту", "карты", "карт")} сразу</b></>}
-                    {vram && <> · <b>≈ {gb(vram.want_mb)} ГБ</b>{gpus > 1 ? " на карту" : ""}</>}
+                    {gpus === 1 ? "одна карта" : <><b>по {batch} на карту</b><Sep />общий батч {total}<Sep />ждёт <b>{count(gpus, "карту", "карты", "карт")} сразу</b></>}
+                    {vram && <><Sep /><b>≈ {gb(vram.want_mb)} ГБ</b>{gpus > 1 ? " на карту" : ""}</>}
                   </span>
                 </div>
                 {total > 64 && (

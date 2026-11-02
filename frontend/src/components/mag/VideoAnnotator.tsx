@@ -52,6 +52,7 @@ import type { Clip } from "./useClip";
 import { keyAt, msToFrame, stateAt, trackEnd } from "./trackMath";
 import { fmtTime } from "./VideoCutModal";
 import { count, plural, ru } from "../ru";
+import Sep from "../Sep";
 import { scoutLanes, taskColors, useScouts } from "../agents/scout";
 import AgentRunDialog, { AgentRunBar } from "../agents/AgentRunDialog";
 import AgentSetupDialog from "../agents/AgentSetupDialog";
@@ -1563,7 +1564,7 @@ export default function VideoAnnotator({
         onBack={() => void closeEditor()}
         backLabel="К таске (Esc)"
         title={video.file_name}
-        sub={<>{taskName} · <span className="ui-mono">{fmtTime(video.duration_ms || 0)}</span> · <span className="ui-mono">{ru(fps)}</span> к/с</>}
+        sub={<>{taskName}<Sep /><span className="ui-mono">{fmtTime(video.duration_ms || 0)}</span><Sep /><span className="ui-mono">{ru(fps)}</span> к/с</>}
       >
         {clip.preparing && <PrepareNote clip={clip} />}
         {!clip.preparing && clip.loading && <span className="ve-prep"><i />Читаю ролик…</span>}

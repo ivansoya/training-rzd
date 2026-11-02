@@ -10,6 +10,7 @@ import { pollJob } from "../../../api/jobs";
 import type { StatusResult } from "../../../auth/api";
 import { Avatars, Badge, Button, Dot, Empty, Icon, Input, Notice, PageHeader, Seg, StackBar, cx } from "../../../ui";
 import { useAuth } from "../../auth/AuthGate";
+import Sep, { withSep } from "../../Sep";
 import { ago, count, ru } from "../../ru";
 import { useProject } from "../ProjectShell";
 import { useConfirm } from "./Confirm";
@@ -57,11 +58,11 @@ export default function TaskBoard() {
   // Ждут решения — по пришедшим счётчикам; пока идут, рядом «обновляется»
   const busy = board.listing || list.some((t) => fresh[t.id] !== "ok");
   const desc = tasks === null ? <Updating>Загружаем…</Updating> : <>
-    {[
+    {withSep([
       count(list.length, "таска", "таски", "тасок"),
       working ? `${ru(working)} в работе` : null,
       `${count(waitingOf(list, stats), "кадр ждёт", "кадра ждут", "кадров ждут")} решения`,
-    ].filter(Boolean).join(" · ")}
+    ])}
     {at !== null && busy && <span className="tb-cache">на {cacheTime(at)}</span>}
     {busy && <Updating>обновляется</Updating>}
   </>;
@@ -223,7 +224,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
         <b className="tb-name">{t.name}</b>
         <span className={cx(zone, "one")}>
           {face ? (
-            <span className="tb-line" title={face.title}><CardLine line={face.line} /> · {ago(t.status_at)}</span>
+            <span className="tb-line" title={face.title}><CardLine line={face.line} /><Sep />{ago(t.status_at)}</span>
           ) : <i className="ui-sk pill" style={{ width: 150 }} />}
         </span>
       </Link>
@@ -235,9 +236,9 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
         <b className="tb-name">{t.name}</b>
         {t.assignees.length > 0 && <Avatars names={t.assignees.map((p) => p.display_name)} max={3} />}
       </div>
-      <span className="tb-src t-xs t-muted" title={s ? sourceLine(s.sources) : undefined}>
+      <span className="tb-src t-xs t-muted" title={s ? sourceLine(s.sources).join(", ") : undefined}>
         <Icon name={s && (s.sources.cut || s.sources.annotate) ? "film" : "images"} size={14} />
-        {s ? <span className="t-ell">{sourceLine(s.sources)}</span> : <i className="ui-sk pill" style={{ width: 120 }} />}
+        {s ? <span className="t-ell">{withSep(sourceLine(s.sources))}</span> : <i className="ui-sk pill" style={{ width: 120 }} />}
       </span>
       {/* Три строки всегда — полоса, числа, значки: после загрузки высота карточки не меняется.
           Каждая — в одну строку с многоточием: перенос ложился на соседнюю строку */}
@@ -253,8 +254,9 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
             {face.parts.some((p) => p.value) ? <StackBar parts={face.parts} /> : <i className="ui-stack" />}
             <span className={cx("tb-line", face.quiet && "quiet")} title={face.title}><CardLine line={face.line} /></span>
             <span className="tb-badges">
-              {badges.map((b) => (
-                <Badge key={b.text} tone={b.tone} icon={b.icon} live={b.live} title={b.title}><span className="t-ell">{b.text}</span></Badge>
+              {badges.map((b, i) => (
+                <Badge key={i} tone={b.tone} icon={b.icon} live={b.live} title={b.title}>
+                  <span className="t-ell">{typeof b.text === "string" ? b.text : withSep(b.text)}</span></Badge>
               ))}
             </span>
           </>
@@ -271,9 +273,9 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
   );
 }
 
-/** Строка чисел карточки: числа выделены, слова тише. Общая у доски и обзора. */
-export function CardLine({ line }: { line: (string | number)[] }) {
-  return <>{line.map((x, i) => (typeof x === "number" ? <b key={i}>{ru(x)}</b> : x))}</>;
+/** Строка чисел карточки: куски через черту, числа выделены, слова тише. Общая у доски и обзора. */
+export function CardLine({ line }: { line: (string | number)[][] }) {
+  return <>{withSep(line.map((part) => part.map((x, i) => (typeof x === "number" ? <b key={i}>{ru(x)}</b> : x))))}</>;
 }
 
 /** «обновляется» со спиннером — пока идут запросы. */

@@ -5,6 +5,7 @@ import type { ClipQuality, LabelClass, VideoTrack } from "../../auth/api";
 import { Button, Icon, Select, Seg, Swatch, Switch, cx } from "../../ui";
 import type { SelectOption } from "../../ui";
 import { fmtConf } from "../mag/BoxCanvas";
+import Sep from "../Sep";
 import type { CanvasShape } from "../mag/BoxCanvas";
 import { exportCount, fmtFrameTime, frameToMs, trackEnd } from "../mag/trackMath";
 import { NumInput } from "../NumInput";
@@ -128,7 +129,7 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
       {agent.length > 0 && (
         <section className="fe-sec fe-objs fe-agent">
           <div className="fe-sec-t">
-            <span className="row"><Icon name="bot" size={13} />Агент · на проверке</span>
+            <span className="row"><Icon name="bot" size={13} /><span>Агент<Sep />на проверке</span></span>
             <span className="ui-mono">{agent.length}</span>
           </div>
           {groups.map(({ agent: a, idx }) => {

@@ -9,6 +9,7 @@ import {
   AnchorButton, Button, Card, Chip, Dot, Empty, Icon, LinkButton, MenuItem, Notice, PageHeader, Popover, Progress,
 } from "../../../ui";
 import { ru } from "../../ru";
+import Sep, { withSep } from "../../Sep";
 import { useProject } from "../ProjectShell";
 import { useConfirm } from "../tasks/Confirm";
 import { ClassesCard, ConfusionCard, CurvesCard, LossCard, MetricsCard } from "./RunCharts";
@@ -101,14 +102,14 @@ export default function RunPage() {
     if (active) {
       const eta = left(run, epochs);
       const vram = run.peak_vram_mb != null ? `${(run.peak_vram_mb / 1024).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} ГБ видеопамяти` : null;
-      return { title: `${st.label}: ${stageText(run)}`, sub: [eta && `осталось около ${eta}`, vram].filter(Boolean).join(" · ") || "Первая эпоха ещё не закончилась" };
+      return { title: `${st.label}: ${stageText(run)}`, sub: eta || vram ? withSep([eta && `осталось около ${eta}`, vram]) : "Первая эпоха ещё не закончилась" };
     }
     const done = run.finished_at ? new Date(run.finished_at).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" }) : null;
-    if (run.status === "done") return { title: `Готово за ${duration(run.train_seconds)}`, sub: [done, `${run.epochs} эпох`, run.best_epoch && `лучшая — ${run.best_epoch}`].filter(Boolean).join(" · ") };
+    if (run.status === "done") return { title: `Готово за ${duration(run.train_seconds)}`, sub: withSep([done, `${run.epochs} эпох`, run.best_epoch ? `лучшая — ${run.best_epoch}` : null]) };
     const at = Math.max(0, run.current_epoch - 1);
     const where = run.status === "error" ? run.current_epoch : at;
     return { title: `${run.status === "error" ? "Ошибка" : "Остановлено"}${where ? ` на эпохе ${where} из ${run.epochs}` : " до первой эпохи"}`,
-      sub: [done, run.resumable ? "можно продолжить с последней законченной эпохи" : null].filter(Boolean).join(" · ") };
+      sub: withSep([done, run.resumable ? "можно продолжить с последней законченной эпохи" : null]) };
   })();
 
   const graphs = run.set?.graphs ?? [];
@@ -122,7 +123,7 @@ export default function RunPage() {
   return (
     <div className="page rn">
       <PageHeader title={`Обучение №${run.number}`}
-        desc={`${run.name} · ${run.base_model}${run.imgsz ? ` · ${run.imgsz} px` : ""}${run.author ? ` · запустил ${run.author}` : ""}`}
+        desc={withSep([run.name, run.base_model, run.imgsz ? `${run.imgsz} px` : null, run.author ? `запустил ${run.author}` : null])}
         actions={<>
           {manage && (active || waiting) && (
             <Button variant="danger" icon="stop" disabled={acting || run.status === "stopping"} onClick={stop}>
@@ -155,7 +156,7 @@ export default function RunPage() {
           <div><dt>Обучение</dt><dd className="mono">№{run.number}</dd></div>
           <div><dt>Набор</dt><dd>{run.set ? <>
             <Link to={`/projects/${code}/trainsets/${run.set.id}`}>«{run.set.name}»</Link>
-            {run.set.counts && <> · <span className="mono">{ru(run.set.counts.samples ?? 0)}</span> образцов</>}
+            {run.set.counts && <><Sep /><span className="mono">{ru(run.set.counts.samples ?? 0)}</span> образцов</>}
           </> : "удалён"}</dd></div>
           <div><dt>Аугментации</dt><dd className="row wrap" style={{ gap: 4 }}>
             {graphs.map((g) => (
@@ -229,7 +230,7 @@ export default function RunPage() {
           {paramGroups(run, classes).filter((g) => g.rows.length).map((g) => (
             <div key={g.title} className="rn-prm-c">
               <div className="rn-prm-t"><Icon name={g.icon} size={14} />{g.title}</div>
-              {g.rows.map(([k, v]) => <div key={k} className="rn-prm-r"><span>{k}</span><b className="mono">{v}</b></div>)}
+              {g.rows.map(([k, v]) => <div key={k} className="rn-prm-r"><span>{k}</span><b className="mono">{Array.isArray(v) ? withSep(v) : v}</b></div>)}
             </div>
           ))}
         </div>

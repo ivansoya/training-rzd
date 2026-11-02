@@ -121,11 +121,13 @@ try {
 
   await page.goto(`${BASE}/projects/${temp}/tasks`);
   await page.waitForTimeout(3000);
+  // Черта <Sep /> текста не даёт — читаем её как « · », чтобы сверять, что части разделены
+  const SEP_TEXT = (el) => { const c = el.cloneNode(true); c.querySelectorAll(".sep").forEach((s) => s.replaceWith(" · ")); return c.textContent; };
   const line = async (name) => {
     const card = page.locator(".tb-card", { hasText: name }).first();
     return {
-      line: (await card.locator(".tb-line").innerText()).trim(),
-      badges: (await card.locator(".tb-badges .ui-badge").allInnerTexts()).map((x) => x.trim()),
+      line: (await card.locator(".tb-line").evaluate(SEP_TEXT)).replace(/\s+/g, " ").trim(),
+      badges: (await card.locator(".tb-badges .ui-badge").evaluateAll((els, f) => els.map(new Function(`return ${f}`)()), SEP_TEXT.toString())).map((x) => x.replace(/\s+/g, " ").trim()),
       foot: (await card.locator(".tb-foot").count()) ? (await card.locator(".tb-foot").innerText()).replace(/\s+/g, " ").trim() : "",
     };
   };
@@ -142,7 +144,7 @@ try {
   const E = await line("Сданная с роликом");
   check("сданная: все изображения с кадрами ролика", /^\d+ изображени/.test(E.line) && E.foot.includes("сдана"), `${E.line} / ${E.foot}`);
   const F = page.locator(".tb-card.closed", { hasText: "Закрытая" });
-  if (await F.count()) console.log("   закрытая:", (await F.locator(".tb-line").innerText()).trim());
+  if (await F.count()) console.log("   закрытая:", (await F.locator(".tb-line").evaluate(SEP_TEXT)).trim());
 
   // Ничего не вылезает за карточку, строки зоны не пересекаются, строка чисел видна целиком — на двух ширинах окна
   for (const width of [1280, 1600]) {

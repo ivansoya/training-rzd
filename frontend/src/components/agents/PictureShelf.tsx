@@ -7,6 +7,7 @@ import { useRef, useState, type DragEvent, type ReactNode } from "react";
 import * as api from "../../api/agents";
 import { Button, Icon, Progress, Select, cx } from "../../ui";
 import { count } from "../ru";
+import Sep from "../Sep";
 import { useConfirm } from "../mag/tasks/Confirm";
 import { pictureTiles } from "./examplePick";
 import PictureBoxes from "./PictureBoxes";
@@ -102,14 +103,14 @@ export default function PictureShelf({ lead, shelf, shelves, onShelf, pictures, 
       <div className="ep-src">
         {lead}
         <Select label="Полка" size="sm" value={shelf} disabled={busy} onChange={onShelf}
-          options={shelves.map((s) => ({ value: s.name, label: `${s.name} · ${s.count}` }))} />
+          options={shelves.map((s) => ({ value: s.name, label: <>{s.name}<Sep />{s.count}</> }))} />
         <Button size="sm" variant="outline" icon="upload" disabled={busy} onClick={choose}>Загрузить картинки</Button>
       </div>
       <div className="ep-tools">
         <span className="t-xs t-faint">
-          {sending ? `Загружаю: осталось ${sending}${failed ? ` · ${count(failed, "отказ", "отказа", "отказов")}` : ""}`
-            : <>{count(pictures.length, "картинка", "картинки", "картинок")} · {count(boxes, "рамка", "рамки", "рамок")}
-              {bare > 0 && <span className="ep-warn-t"> · {bare} без рамки</span>}</>}
+          {sending ? <>Загружаю: осталось {sending}{failed ? <><Sep />{count(failed, "отказ", "отказа", "отказов")}</> : ""}</>
+            : <>{count(pictures.length, "картинка", "картинки", "картинок")}<Sep />{count(boxes, "рамка", "рамки", "рамок")}
+              {bare > 0 && <span className="ep-warn-t"><Sep />{bare} без рамки</span>}</>}
         </span>
         <span className="grow" />
         {pictures.length > 0 && <span className="t-xs t-faint">щелчок по рамке — в набор или из набора, номер — порядок</span>}
@@ -120,7 +121,7 @@ export default function PictureShelf({ lead, shelf, shelves, onShelf, pictures, 
           <button type="button" className="ep-drop big" disabled={busy} onClick={choose}>
             <Icon name="upload" size={22} />
             <span>Перетащите картинки сюда или выберите файлы</span>
-            <span className="t-xs t-faint">JPEG, PNG, WebP · до 20 МБ · до {api.PICTURE_BATCH} за раз</span>
+            <span className="t-xs t-faint">JPEG, PNG, WebP<Sep />до 20 МБ<Sep />до {api.PICTURE_BATCH} за раз</span>
           </button>
         ) : (
           <div className="ep-pgrid">
@@ -144,7 +145,7 @@ export default function PictureShelf({ lead, shelf, shelves, onShelf, pictures, 
               </div>
             ))}
             <button type="button" className="ep-drop" disabled={busy} onClick={choose}>
-              <Icon name="upload" size={18} /><span>Перетащите ещё</span><span className="t-xs t-faint">JPEG, PNG, WebP · до 20 МБ</span>
+              <Icon name="upload" size={18} /><span>Перетащите ещё</span><span className="t-xs t-faint">JPEG, PNG, WebP<Sep />до 20 МБ</span>
             </button>
           </div>
         )}
@@ -180,7 +181,7 @@ function Card({ p, order, color, onToggle, onOpen, onRemove }: {
               <button key={t.uid} type="button" className={cx("ep-bx", at !== undefined && "on")} aria-pressed={at !== undefined}
                 style={{ left: `${x / p.width * 100}%`, top: `${y / p.height * 100}%`, width: `${w / p.width * 100}%`,
                   height: `${h / p.height * 100}%`, borderColor: at !== undefined ? undefined : color }}
-                title={at !== undefined ? `В наборе, № ${at + 1} — убрать` : `В набор · ${Math.round(w)}×${Math.round(h)}`}
+                title={at !== undefined ? `В наборе, № ${at + 1} — убрать` : `В набор, ${Math.round(w)}×${Math.round(h)}`}
                 onClick={(e) => { e.stopPropagation(); onToggle(t); }}>
                 {at !== undefined && <b>{at + 1}</b>}
               </button>
@@ -190,7 +191,7 @@ function Card({ p, order, color, onToggle, onOpen, onRemove }: {
         </div>
       </div>
       <div className="ep-pc-f">
-        <span className="nm" title={`${p.file_name} · ${p.width}×${p.height}`}>{p.file_name}</span><span className="grow" />
+        <span className="nm" title={`${p.file_name}, ${p.width}×${p.height}`}>{p.file_name}</span><span className="grow" />
         <span className={cx("ct", !p.boxes.length && "warn")}>{p.boxes.length ? count(p.boxes.length, "рамка", "рамки", "рамок") : "без рамки"}</span>
         <button type="button" className="ep-x" title="Рамки" aria-label={`Рамки «${p.file_name}»`} onClick={onOpen}>
           <Icon name="edit" size={13} />

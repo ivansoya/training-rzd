@@ -18,7 +18,7 @@ export interface Holder extends Described {
   peak_mb: number | null;
   user_id: string | null;
   granted_at: string | null;
-  /** Что из задачи лежит на этой карте: «SAM 3 · вход 1008», «батч 8 на карту». */
+  /** Что из задачи лежит на этой карте: «SAM 3, вход 1008», «батч 8 на карту». */
   label: string | null;
   /** Номера всех карт задачи — у задачи на нескольких картах, иначе null. */
   cards: number[] | null;

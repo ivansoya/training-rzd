@@ -9,6 +9,7 @@ import type { CSSProperties } from "react";
 import * as api from "../../api/agents";
 import { Badge, Button, ColorPicker, Dialog, Empty, Icon, Input, Popover, Select, cx } from "../../ui";
 import { count } from "../ru";
+import Sep from "../Sep";
 import { CLASS_NAME_MAX, findOrCreate, foldName, type AgentClass, type ClassDef } from "./agentDoc";
 
 type Project = api.ClassSource;
@@ -143,7 +144,7 @@ export default function AgentClasses({ open, onClose, classes, readOnly, project
     return (
       <span className="acl-ref" title={projects && !project ? "Нет доступа к проекту — показан последний известный класс" : undefined}>
         <Icon name="link" size={12} />
-        <span className="t-ell">{c.ref.project_name ?? project?.name ?? "проект"} · {live?.name ?? c.name}</span>
+        <span className="t-ell">{c.ref.project_name ?? project?.name ?? "проект"}<Sep />{live?.name ?? c.name}</span>
         {projects && !project && <Badge variant="secondary">нет доступа</Badge>}
       </span>
     );

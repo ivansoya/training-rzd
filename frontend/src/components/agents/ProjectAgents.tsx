@@ -12,6 +12,7 @@ import {
   Avatar, Badge, Button, Card, Dot, Empty, Icon, LinkButton, MenuItem, Meta, Notice, PageHeader, Popover, Progress, Select, Swatch, Table, cx,
 } from "../../ui";
 import { ago, count, ru } from "../ru";
+import Sep, { withSep } from "../Sep";
 import { useConfirm } from "../mag/tasks/Confirm";
 import { clock, dayLabel, duration } from "../mag/runs/runs";
 import { gb, short, verdictDetail, verdictLook } from "./GpuVerdict";
@@ -107,8 +108,8 @@ export default function ProjectAgents() {
   );
 
   const desc = data === null ? "Загружаю…" : agents.length === 0 ? "Агенты разметки, которых предлагают при запуске в тасках"
-    : [count(agents.length, "агент подключён", "агента подключено", "агентов подключено"),
-      runs ? count(runs, "запуск", "запуска", "запусков") : "ещё не запускали"].join(" · ");
+    : withSep([count(agents.length, "агент подключён", "агента подключено", "агентов подключено"),
+      runs ? count(runs, "запуск", "запуска", "запусков") : "ещё не запускали"]);
 
   return (
     <div className="page pa">
@@ -173,7 +174,7 @@ function AgentRow({ agent: a, cards, queued, canCopy, canUnlink, working, onOpen
       <td className="gl-name">
         <b>{a.name}</b>
         {!a.owner_here && <Badge tone="var(--st-skip)" title="Агент работает дальше; править его может только владелец">владелец вне проекта</Badge>}
-        <p>{[a.owner?.name ?? "владелец удалён", a.mine ? "ваш" : "только чтение", `${a.classes} кл.`].join(" · ")}</p>
+        <p>{withSep([a.owner?.name ?? "владелец удалён", a.mine ? "ваш" : "только чтение", `${a.classes} кл.`])}</p>
       </td>
       <td>{a.version ? <span className="ui-mono">v{a.version}</span> : <span className="t-xs t-faint">без версии</span>}</td>
       <td>
@@ -187,7 +188,7 @@ function AgentRow({ agent: a, cards, queued, canCopy, canUnlink, working, onOpen
       <td className="r">{a.speed !== null ? ru(a.speed) : <span className="t-faint">—</span>}</td>
       <td className="r">{a.boxes ? <span title={`${ru(a.accepted)} из ${ru(a.boxes)}`}>{Math.round((a.accepted / a.boxes) * 100)} %</span> : <span className="t-faint">—</span>}</td>
       <td className="r">{a.applies_week ? ru(a.applies_week) : <span className="t-faint">—</span>}</td>
-      <td className="gl-when">{a.last_run_at ? `${ago(a.last_run_at)}${last ? ` · ${last.word}` : ""}` : <span className="t-faint">не запускали</span>}</td>
+      <td className="gl-when">{a.last_run_at ? <>{ago(a.last_run_at)}{last && <><Sep />{last.word}</>}</> : <span className="t-faint">не запускали</span>}</td>
       <td className="r gl-act" onClick={stop} onKeyDown={stop}>
         <Popover align="end" width={280} trigger={<Button size="sm" variant="ghost" icon="more" aria-label={`Действия с агентом ${a.name}`} />}>
           {(close) => (<>
@@ -289,17 +290,17 @@ function RunJournal({ code, onChange, many }: { code: string; onChange: () => vo
   const facet = (list: api.Facet[] | undefined) => [{ value: ALL, label: "" }, ...(list ?? []).map((f) => ({ value: f.id, label: f.name }))];
   const t = page?.totals;
   const sum = t ? [count(t.all, "запуск", "запуска", "запусков"), t.running ? `идёт ${t.running}` : "", t.waiting ? `ждёт ${t.waiting}` : ""]
-    .filter(Boolean).join(" · ") : "Загружаю…";
+    : ["Загружаю…"];
 
   return (
-    <Card flush className="pa-j" title="Запуски на тасках" desc={`${sum} · превью и G на кадре сюда не пишутся`}>
+    <Card flush className="pa-j" title="Запуски на тасках" desc={withSep([...sum, "превью и G на кадре сюда не пишутся"])}>
       <div className="pa-bar">
         {pick("agent", "Агент", "bot", facet(facets?.agents))}
         {pick("status", "Статус", "activity", FILTER_STATUS)}
         {pick("task", "Таска", "check", facet(facets?.tasks))}
         {pick("user", "Кто", "user", facet(facets?.users))}
         <span className="grow" />
-        <span className="t-xs t-muted">Сначала новые · обновляется само</span>
+        <span className="t-xs t-muted">Сначала новые<Sep />обновляется само</span>
       </div>
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
       {page !== null && rows.length === 0 ? (
@@ -336,7 +337,7 @@ function RunJournal({ code, onChange, many }: { code: string; onChange: () => vo
       )}
       {page?.more && (
         <button type="button" className="rn-more pa-more" onClick={() => void more()}>
-          Показать ещё · показано {ru(rows.length)}{t ? ` из ${ru(t.all)}` : ""}
+          Показать ещё<Sep />показано {ru(rows.length)}{t ? ` из ${ru(t.all)}` : ""}
         </button>
       )}
     </Card>
@@ -419,9 +420,9 @@ function JournalDetail({ run: r, many }: { run: api.JournalRun; many: boolean })
   ].filter(Boolean) as [string, string][];
   const memory: [string, ReactNode][] = [
     ["Режим", r.sequential ? "поочерёдно — медленнее, сумма не влезала в карту" : "целиком"],
-    many ? ["Карты", r.cards?.length ? `${cardList(r.cards)}${r.card ? ` · ${short(r.card)}` : ""}` : "—"]
+    many ? ["Карты", r.cards?.length ? withSep([cardList(r.cards), r.card && short(r.card)]) : "—"]
       : ["Карта", r.card ? short(r.card) : "—"],
-    ["Память", `просили ${num(r.want_mb)} ГБ · ${r.peak_mb ? `пик ${gb(r.peak_mb)} ГБ` : "пик не записан"}`],
+    ["Память", withSep([`просили ${num(r.want_mb)} ГБ`, r.peak_mb ? `пик ${gb(r.peak_mb)} ГБ` : "пик не записан"])],
     ["Ожидание", `${r.waited_s ? duration(r.waited_s) : "без ожидания"}${r.queue_reason ? ` — ${r.queue_reason}` : ""}`],
   ];
   if (r.error) memory.push(["Ошибка", <span className="pa-bad">{r.error}</span>]);

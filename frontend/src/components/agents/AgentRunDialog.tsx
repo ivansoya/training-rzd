@@ -14,6 +14,7 @@ import * as api from "../../api/agents";
 import { Badge, Button, Check, Dialog, Empty, Field, Icon, LinkButton, Notice, Progress, Radio, Select, cx } from "../../ui";
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
+import Sep, { withSep } from "../Sep";
 import ClassMap, { guess, useAutoMapped } from "./ClassMap";
 import CpuConfirm, { refusalOf, type CardRefusal } from "../hardware/CpuConfirm";
 import { VerdictChip, gb, short, verdictLook } from "./GpuVerdict";
@@ -108,7 +109,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
       : [];
     const look = verdictLook(a.verdict);
     const ver = a.versions.find((v) => v.id === a.head)?.version;
-    const who = a.group === "project" ? `${a.mine ? "мой" : a.owner ?? "владелец удалён"} · v${ver}` : `v${ver} · запуск не подключает агента к проекту`;
+    const who = a.group === "project" ? [a.mine ? "мой" : a.owner ?? "владелец удалён", `v${ver}`] : [`v${ver}`, "запуск не подключает агента к проекту"];
     return [...head, {
       value: a.id,
       label: (
@@ -117,7 +118,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
           <span className={`ar-opt-v ${look.tone}`} title={a.verdict.reason}><Icon name={look.icon} size={13} />{gb(a.verdict.want_mb)} ГБ</span>
         </span>
       ),
-      hint: a.verdict.state === "sequential" ? `${who} · только поочерёдно, медленнее` : who,
+      hint: withSep(a.verdict.state === "sequential" ? [...who, "только поочерёдно, медленнее"] : who),
     }];
   });
 
@@ -144,7 +145,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
       {eligible.map((v) => (
         <Check key={v.id} checked={videos.has(v.id)} onChange={(on) => setVideos((old) => toggled(old, v.id, on))}>
           <span className="ui-mono t-ell" title={v.file_name}>{v.file_name}</span>
-          <span className="t-xs t-faint">{v.frames == null ? "—" : count(v.frames, "кадр", "кадра", "кадров")} · {v.mode === "cut" ? "нарезка" : "разметка"}</span>
+          <span className="t-xs t-faint">{v.frames == null ? "—" : count(v.frames, "кадр", "кадра", "кадров")}<Sep />{v.mode === "cut" ? "нарезка" : "разметка"}</span>
         </Check>
       ))}
     </div>
@@ -170,7 +171,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
           <Button variant="agent" icon="sparkle" onClick={() => void start()}
             disabled={busy || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
             title={mode !== "scout" && mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}>
-            {startText}{verdict?.state === "wait" || (verdict?.state === "split" && !verdict.ready) ? " · в очередь" : ""}
+            {startText}{(verdict?.state === "wait" || (verdict?.state === "split" && !verdict.ready)) && <><Sep />в очередь</>}
           </Button>
         )}
       </>}>
@@ -200,7 +201,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
                 {(id) => <Select id={id} full label="Версия" value={version?.id} onChange={setVersionId}
                   options={agent.versions.map((v) => ({
                     value: v.id, label: `Версия ${v.version}`,
-                    hint: `${new Date(v.created_at).toLocaleDateString("ru-RU")} · ${count(v.classes.length, "класс", "класса", "классов")}`,
+                    hint: withSep([new Date(v.created_at).toLocaleDateString("ru-RU"), count(v.classes.length, "класс", "класса", "классов")]),
                   }))} />}
               </Field>
             </div>
@@ -334,7 +335,7 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
       <Badge icon="sparkle" tone="var(--agent)">{run.agent ?? "агент"} v{run.version}</Badge>
       <span className="ui-mono t-sm">{ru(run.processed)} / {run.total == null ? "—" : ru(run.total)}</span>
       <span className="t-sm">{run.status === "running" && run.mode === "scout" ? "разведывает" : run.cpu && run.status === "waiting_gpu" ? "ждёт процессор" : STATUS[run.status]}</span>
-      {active && <span className="t-sm">{[reelLine(run), `${runPct(run)} %`, leftText(run)].filter(Boolean).join(" · ")}</span>}
+      {active && <span className="t-sm">{withSep([reelLine(run), `${runPct(run)} %`, leftText(run)])}</span>}
       {result && <span className="t-sm t-muted">{result}</span>}
       {run.error && <span className="t-sm ge-warn">{run.error}</span>}
       {stopError && <span className="t-sm ge-warn">{stopError}</span>}

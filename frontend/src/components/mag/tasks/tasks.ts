@@ -87,17 +87,20 @@ export function boardParts(c: Counts): StackPart[] {
   }));
 }
 
-export interface CardBadge { text: string; title: string; tone?: string; icon?: IconName; live?: boolean }
-/** Карточка таски на доске и в обзоре: полоса, строка (числа — отдельными кусками), подсказка с полным
+/** Текст значка — строкой или кусками через черту. */
+export interface CardBadge { text: string | string[]; title: string; tone?: string; icon?: IconName; live?: boolean }
+/** Карточка таски на доске и в обзоре: полоса, строка кусками через черту (числа внутри куска — отдельно), подсказка с полным
  *  счётом и значки по важности — что не влезет в строку, обрежется с конца. */
-export interface CardLook { parts: StackPart[]; line: (string | number)[]; title: string; badges: CardBadge[]; quiet?: boolean }
+export interface CardLook {
+  parts: StackPart[]; line: (string | number)[][]; title: string; badges: CardBadge[]; quiet?: boolean;
+}
 
 const plus = (a: Counts, b: Counts): Counts => Object.fromEntries(
   (["new", "skipped", "annotated", "empty", "deleted", "agent"] as const).map((k) => [k, (a[k] || 0) + (b[k] || 0)]));
 const NO_VIDEOS: TaskStats["videos"] = { tracks: 0, boxes: 0, agent_done: 0, agent_left: 0 };
-const flat = (line: (string | number)[]) => line.map((x) => (typeof x === "number" ? ru(x) : x)).join("");
+const flat = (line: (string | number)[][]) => line.map((part) => part.map((x) => (typeof x === "number" ? ru(x) : x)).join("")).join(", ");
 
-/** Решения 14.10.2026: изображения — «сделано · осталось», отложенные — значком; ролик — треками и рамками,
+/** Решения 14.10.2026: изображения — «сделано» и «осталось», отложенные — значком; ролик — треками и рамками,
  *  с агентом — проверкой по кадрам; сданная — все изображения таски вместе с кадрами роликов. */
 export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sources" | "handover"> & { videos?: TaskStats["videos"] }): CardLook {
   const c = s.counts;
@@ -113,8 +116,8 @@ export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sour
     const images = c.total + (c.video?.total || 0);
     const ds = inDataset(c);
     const word = plural(images, "изображение", "изображения", "изображений");
-    const line = !images ? ["изображений нет"]
-      : ds === images ? [images, ` ${word} в датасете`] : [images, ` ${word} · `, ds, " в датасете"];
+    const line = !images ? [["изображений нет"]]
+      : ds === images ? [[images, ` ${word} в датасете`]] : [[images, ` ${word}`], [ds, " в датасете"]];
     waiting((c.agent || 0) + (c.video?.agent || 0));
     return { parts: boardParts(plus(c, c.video ?? {})), line, title: flat(line), badges, quiet: !images };
   }
@@ -132,37 +135,37 @@ export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sour
         ? { text: `${head}: осталось проверить ${ru(v.agent_left)}`, title: `${head}: ${checkTitle}`, tone: "var(--agent-fg)", icon: "film" }
         : { text: `${head}: ${made}`, title: `${head}: ${made}`, icon: "film" });
     }
-    const line = ["сделано ", doneOf(c), " · осталось ", c.new || 0];
+    const line = [["сделано ", doneOf(c)], ["осталось ", c.new || 0]];
     const title = `Сделано ${ru(doneOf(c))}: размечено ${ru(c.annotated)}, фон ${ru(c.empty)}, брак ${ru(c.deleted || 0)}`
-      + `${c.skipped ? ` · отложено ${ru(c.skipped)}` : ""} · осталось ${ru(c.new)}${c.agent ? `, из них ${ru(c.agent)} ждут проверки агента` : ""}`;
+      + `${c.skipped ? `; отложено ${ru(c.skipped)}` : ""}; осталось ${ru(c.new)}${c.agent ? `, из них ${ru(c.agent)} ждут проверки агента` : ""}`;
     return { parts: boardParts(c), line, title, badges };
   }
   if (rolls && checking) {
     badges.push({ text: made, title: made, icon: "film" });
     return {
       parts: [{ value: v.agent_done, color: "var(--agent-hi)", label: "Проверено" }, { value: v.agent_left, color: "var(--st-new)", label: "Ждёт проверки" }],
-      line: ["проверено ", v.agent_done, " · осталось ", v.agent_left], title: checkTitle, badges,
+      line: [["проверено ", v.agent_done], ["осталось ", v.agent_left]], title: checkTitle, badges,
     };
   }
   if (rolls) {
-    const line = [v.tracks, ` ${plural(v.tracks, "трек", "трека", "треков")} · `, v.boxes, ` ${plural(v.boxes, "рамка", "рамки", "рамок")}`];
+    const line = [[v.tracks, ` ${plural(v.tracks, "трек", "трека", "треков")}`], [v.boxes, ` ${plural(v.boxes, "рамка", "рамки", "рамок")}`]];
     return { parts: [], line, title: made, badges };
   }
-  return { parts: [], line: ["кадров пока нет"], title: "Кадров пока нет", badges, quiet: true };
+  return { parts: [], line: [["кадров пока нет"]], title: "Кадров пока нет", badges, quiet: true };
 }
 
 /** Размечали меньше 15 минут назад — у таски живая точка. */
 export const boxedRecently = (t: TaskLight) => !!t.last_box_at && Date.now() - Date.parse(t.last_box_at) < 15 * 60_000;
 
-/** Откуда кадры одной строкой для карточки доски. */
-export function sourceLine(s: TaskStats["sources"]): string {
+/** Откуда кадры — куски строки карточки доски. */
+export function sourceLine(s: TaskStats["sources"]): string[] {
   const parts = [
     s.files ? count(s.files, "изображение", "изображения", "изображений") : "",
     s.dataset ? `${count(s.dataset, "кадр", "кадра", "кадров")} из датасета` : "",
     s.cut ? `${count(s.cut, "ролик", "ролика", "роликов")} на нарезку${s.uncut ? ` (${s.uncut} не ${plural(s.uncut, "нарезан", "нарезаны", "нарезаны")})` : ""}` : "",
     s.annotate ? `${count(s.annotate, "ролик", "ролика", "роликов")} на разметку` : "",
   ].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "пустая";
+  return parts.length ? parts : ["пустая"];
 }
 
 /** Колонки доски: свежее сверху; закрытые — по времени закрытия. */
@@ -382,7 +385,8 @@ export function runWord(r: Pick<RunView, "status" | "mode" | "cpu">): string {
 /** Почему пункты агента погашены, пока по таске идёт прогон: что идёт и сколько ждать. */
 export function busyText(r: Pace & Pick<RunView, "mode" | "cpu">): string {
   if (r.status !== "running") return `агент ${runWord(r)}`;
-  return `идёт ${r.mode === "scout" ? "разведка" : "разметка"} · ${leftText(r)}`;
+  // Строка уходит и в title кнопки — поэтому запятая, а не черта
+  return `идёт ${r.mode === "scout" ? "разведка" : "разметка"}, ${leftText(r)}`;
 }
 
 /** Значки идущего агента на карточке доски — первыми в строке значков. Ход — отдельным значком:
@@ -392,5 +396,5 @@ export function agentBadges(a: NonNullable<TaskLight["agent"]>): CardBadge[] {
   if (a.status !== "running") return [{ text: what, title: what, tone: "var(--agent-fg)", icon: "bot" }];
   const title = `Агент ${runWord(a)}: ${ru(a.processed)} из ${a.total === null ? "—" : ru(a.total)} кадров`;
   return [{ text: what, title, tone: "var(--agent-fg)", icon: "bot", live: true },
-    { text: `${runPct(a)} % · ${leftText(a, "")}`, title, tone: "var(--agent-fg)" }];
+    { text: [`${runPct(a)} %`, leftText(a, "")!], title, tone: "var(--agent-fg)" }];
 }

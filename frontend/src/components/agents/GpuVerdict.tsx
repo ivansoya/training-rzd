@@ -7,6 +7,7 @@ import { forwardRef, useEffect, useRef, useState, type ButtonHTMLAttributes } fr
 import * as api from "../../api/agents";
 import { Icon, cx, type IconName } from "../../ui";
 import { count } from "../ru";
+import Sep from "../Sep";
 import { cardList } from "../shell/useGpuState";
 
 export const gb = (mb: number) => (mb / 1024).toLocaleString("ru-RU", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
@@ -77,8 +78,8 @@ export const VerdictChip = forwardRef<HTMLButtonElement, {
     <>
       <Icon name={look.icon} size={15} />
       <b>≈ {gb(est.total_mb)}</b><span>ГБ</span>
-      {compact === "word" && <><span>·</span><em>{look.word}</em></>}
-      {!compact && <><span>·</span><span className="t-ell"><em>{look.word}{source ? "" : ":"}</em>{source ? " — " : " "}{tail}</span></>}
+      {compact === "word" && <><Sep /><em>{look.word}</em></>}
+      {!compact && <><Sep /><span className="t-ell"><em>{look.word}{source ? "" : ":"}</em>{source ? " — " : " "}{tail}</span></>}
     </>
   );
   return button ? (
@@ -97,7 +98,7 @@ export function ResourcesPanel({ est }: { est: api.Estimate }) {
     <div className="ae-res">
       <div className="ae-res-h">
         <b>Ресурсы</b>
-        <span className="t-xs t-muted">≈ {gb(est.total_mb)} ГБ · {est.measured ? `замер, ${count(est.measured, "запуск", "запуска", "запусков")}` : "прикидка"}</span>
+        <span className="t-xs t-muted">≈ {gb(est.total_mb)} ГБ<Sep />{est.measured ? `замер, ${count(est.measured, "запуск", "запуска", "запусков")}` : "прикидка"}</span>
       </div>
 
       <section>
@@ -111,7 +112,7 @@ export function ResourcesPanel({ est }: { est: api.Estimate }) {
           const need = split ? (placed?.units.reduce((s, u) => s + u.mb, 0) ?? 0) : est.verdict.want_mb;
           return (
             <div key={c.id} className="ae-res-card">
-              <div className="ae-res-r"><b>{est.cards.length > 1 ? `Карта ${c.index} · ` : ""}{short(c.name)}</b>
+              <div className="ae-res-r"><b>{est.cards.length > 1 && <>Карта {c.index}<Sep /></>}{short(c.name)}</b>
                 <span className="t-xs t-muted">под задачи {gb(c.cap_mb)} ГБ</span></div>
               <div className="ae-res-bar" aria-hidden="true">
                 <i style={{ width: `${(used / Math.max(1, c.cap_mb)) * 100}%` }} />
@@ -119,8 +120,8 @@ export function ResourcesPanel({ est }: { est: api.Estimate }) {
                   width: `${Math.min(100 - (used / Math.max(1, c.cap_mb)) * 100, (need / Math.max(1, c.cap_mb)) * 100)}%` }} />
               </div>
               <div className="t-xs t-muted">
-                свободно {gb(c.free_mb)} из {gb(c.cap_mb)}{need ? ` · ${split ? "ляжет" : "агенту нужно"} ${gb(need)}` : ""}
-                {est.queued ? ` · в очереди ${count(est.queued, "работа", "работы", "работ")}` : ""}
+                свободно {gb(c.free_mb)} из {gb(c.cap_mb)}{need ? <><Sep />{split ? "ляжет" : "агенту нужно"} {gb(need)}</> : ""}
+                {est.queued ? <><Sep />в очереди {count(est.queued, "работа", "работы", "работ")}</> : ""}
               </div>
               {placed?.units.map((u) => (
                 <div key={u.label} className="ae-res-u"><span className="t-ell">{u.label}</span><b>{gb(u.mb)} ГБ</b></div>
@@ -136,7 +137,7 @@ export function ResourcesPanel({ est }: { est: api.Estimate }) {
           const heavy = est.heaviest?.key === u.key && est.units.length > 1;
           return (
             <div key={u.key} className="ae-res-u">
-              <span className="t-ell">{u.label}{u.nodes.length > 1 ? ` · ${u.nodes.length} узла, одна модель` : ""}</span>
+              <span className="t-ell">{u.label}{u.nodes.length > 1 && <><Sep />{u.nodes.length} узла, одна модель</>}</span>
               <b className={heavy ? "heavy" : undefined} title={heavy ? "Самый тяжёлый узел агента" : undefined}>{gb(u.mb)} ГБ</b>
             </div>
           );

@@ -4,6 +4,7 @@
 import type { CSSProperties } from "react";
 import { Button, Icon, Swatch, cx } from "../../ui";
 import { count, plural, ru } from "../ru";
+import Sep, { withSep } from "../Sep";
 import { MAX_PASSES } from "./agentDoc";
 import { iconOf, toneOf } from "./look";
 import type { ClassStat, NodeStat } from "./summary";
@@ -38,7 +39,7 @@ export default function AgentSummary({ nodes, classes, frame, worst, sequential,
           <b>Время и вызовы модели</b>
           <span className="ae-readout">
             {timed ? <>≈ {took(total)} <em>на кадр</em></> : <em>время — после превью</em>}
-            <em> · {count(calls, "вызов", "вызова", "вызовов")}{sequential ? " · поочерёдно" : ""}</em>
+            <em><Sep />{count(calls, "вызов", "вызова", "вызовов")}{sequential && <><Sep />поочерёдно</>}</em>
           </span>
         </div>
         <div className="ae-st">
@@ -47,8 +48,8 @@ export default function AgentSummary({ nodes, classes, frame, worst, sequential,
             <button key={n.id} type="button" className="ae-st-r" style={{ "--gc": toneOf(n.kind) } as CSSProperties}
               title="Выделить узел на холсте" onClick={() => onNode(n.id)}>
               <span className="ae-st-n"><Icon name={iconOf(n.kind)} size={14} /><b className="t-ell">{n.title}</b></span>
-              <span className="ae-st-m t-ell" title={n.model}>
-                {n.model}{n.views !== null && n.views > 1 ? ` · ${count(n.views, "вид", "вида", "видов")}` : ""}
+              <span className="ae-st-m t-ell" title={n.model.join(", ")}>
+                {withSep([...n.model, n.views !== null && n.views > 1 && count(n.views, "вид", "вида", "видов")])}
               </span>
               <span className="r ui-mono">
                 {n.calls !== null ? ru(n.calls) : n.boxes !== null ? <span title="Кадр кодируется один раз, рамки декодируются за миллисекунды">1 + {ru(n.boxes)}</span> : "—"}
@@ -61,10 +62,10 @@ export default function AgentSummary({ nodes, classes, frame, worst, sequential,
         <div className="ae-panel-row ae-st-f">
           <span className="ae-panel-l">Кадр</span>
           <span className="ae-panel-v">
-            {frame ? `${frame.name} · ${frame.w}×${frame.h}` : "появится, когда превью посчитает кадр"}
+            {frame ? <>{frame.name}<Sep />{frame.w}×{frame.h}</> : "появится, когда превью посчитает кадр"}
             {worst && (
               <span className={cx("ae-st-worst", worst.calls > MAX_PASSES && "bad")}>
-                {" "}· самый большой в проекте {worst.w}×{worst.h} — {count(worst.calls, "вызов", "вызова", "вызовов")}
+                <Sep />самый большой в проекте {worst.w}×{worst.h} — {count(worst.calls, "вызов", "вызова", "вызовов")}
                 {worst.calls > MAX_PASSES ? `, больше ${MAX_PASSES} нельзя` : ""}
               </span>
             )}
@@ -84,7 +85,7 @@ export default function AgentSummary({ nodes, classes, frame, worst, sequential,
         <div className="ae-panel-h">
           <b>Классы агента</b>
           <span className="ae-st-h-r">
-            <span className="ae-readout">{ru(boxes)} <em>{plural(boxes, "рамка", "рамки", "рамок")} на кадре · {count(classes.length, "класс", "класса", "классов")}</em></span>
+            <span className="ae-readout">{ru(boxes)} <em>{plural(boxes, "рамка", "рамки", "рамок")} на кадре<Sep />{count(classes.length, "класс", "класса", "классов")}</em></span>
             <Button size="sm" variant="ghost" icon="tags" onClick={onClasses}>Изменить…</Button>
           </span>
         </div>
@@ -101,7 +102,7 @@ export default function AgentSummary({ nodes, classes, frame, worst, sequential,
                 <span className="ae-st-src">
                   {from.map((f) => (
                     <span key={f.node} className="t-ell" title={`${f.title}: ${f.labels.join(", ")}`}>
-                      <b>{f.title}</b> · {f.labels.join(", ")}
+                      <b>{f.title}</b><Sep />{f.labels.join(", ")}
                     </span>
                   ))}
                 </span>

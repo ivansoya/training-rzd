@@ -25,11 +25,11 @@ export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, 
 }) {
   const prev = onPrev && (
     <Button variant="ghost" size="sm" icon="chevL" className="is-agent ed-review-go" aria-label="Предыдущий кадр с разметкой ([)"
-      title="Предыдущий кадр с разметкой · [ · только на проверке — Shift+[" onClick={onPrev} />
+      title={"Предыдущий кадр с разметкой ([)\nтолько на проверке — Shift+["} onClick={onPrev} />
   );
   const next = onNext && (
     <Button variant="ghost" size="sm" icon="chevR" className="is-agent ed-review-go" aria-label="Следующий кадр с разметкой (])"
-      title="Следующий кадр с разметкой · ] · только на проверке — Shift+]" onClick={onNext} />
+      title={"Следующий кадр с разметкой (])\nтолько на проверке — Shift+]"} onClick={onNext} />
   );
   if (count === 0) {
     const n = left ?? 0;

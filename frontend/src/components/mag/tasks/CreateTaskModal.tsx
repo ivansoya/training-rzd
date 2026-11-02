@@ -10,6 +10,7 @@ import type { TakePreview } from "../../../api/gallery";
 import { useAuth } from "../../auth/AuthGate";
 import { useProject } from "../ProjectShell";
 import { count, ru } from "../../ru";
+import Sep from "../../Sep";
 import { Badge, Button, Dialog, Field, Icon, Input, Notice, Select } from "../../../ui";
 import { TeamPicker } from "./Team";
 
@@ -98,7 +99,7 @@ export function CreateTaskModal({
             </div>
             {preview && preview.by_dataset.length > 0 && (
               <div className="row wrap">
-                {preview.by_dataset.map((d) => <Badge key={d.id}>{d.name} · {ru(d.n)}</Badge>)}
+                {preview.by_dataset.map((d) => <Badge key={d.id}><span>{d.name}<Sep />{ru(d.n)}</span></Badge>)}
               </div>
             )}
             {skipped > 0 && (
@@ -106,7 +107,7 @@ export function CreateTaskModal({
                 {nothing ? "Все выбранные кадры уже в тасках" : `Пропущено ${ru(skipped)} — уже в тасках`}:{" "}
                 {preview!.busy.map((b, i) => (
                   <span key={b.task_id}>{i > 0 && ", "}
-                    <Link className="fe-link" to={`/projects/${detail.project.code}/tasks/${b.task_id}`}>{b.name}</Link> · {ru(b.n)}
+                    <Link className="fe-link" to={`/projects/${detail.project.code}/tasks/${b.task_id}`}>{b.name}</Link><Sep />{ru(b.n)}
                   </span>
                 ))}
               </Notice>

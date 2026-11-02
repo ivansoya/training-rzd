@@ -7,6 +7,7 @@ import * as api from "../../api/agents";
 import { Button, Icon, Input, MenuItem, Notice, Popover, Swatch, Switch, cx } from "../../ui";
 import { NumInput } from "../NumInput";
 import { count, plural, ru } from "../ru";
+import Sep, { withSep } from "../Sep";
 import {
   CYRILLIC, EX_ROW, collagePasses, exampleConfDefault, isExamples, offLimits, perPass, promptMax, withConf,
   type AgentClass, type PromptRow, type TextModel,
@@ -132,17 +133,18 @@ export default function ClassCards({ rows, readOnly, classes, ensure, ensureRef,
     else if (live.length) {
       const n = live.reduce((s, { r }) => s + sizeOf(r), 0);
       const p = live.reduce((s, { r }) => s + passesOf(sizeOf(r)), 0);
-      parts.push(count(n, "образец", "образца", "образцов") + (sam3 ? ` · ${count(p, "проход", "прохода", "проходов")}` : "")
-        + (!opened ? ` ${dec(live[0].r.conf ?? nodeConf)}` : ""));
+      parts.push(count(n, "образец", "образца", "образцов"));
+      if (sam3) parts.push(count(p, "проход", "прохода", "проходов"));
+      if (!opened) parts[parts.length - 1] += ` ${dec(live[0].r.conf ?? nodeConf)}`;
     }
-    return parts.join(" · ") || "пусто — добавьте описание или образцы";
+    return parts.length ? withSep(parts) : "пусто — добавьте описание или образцы";
   };
 
   return (
     <div className="ae-block">
       <div className="ae-block-h">
         <b>Классы</b>
-        <span className="ae-block-d">{cards.length} · {count(total.texts, "описание", "описания", "описаний")} · {count(total.examples, "образец", "образца", "образцов")}</span>
+        <span className="ae-block-d">{cards.length}<Sep />{count(total.texts, "описание", "описания", "описаний")}<Sep />{count(total.examples, "образец", "образца", "образцов")}</span>
         <span className="grow" />
         {cards.length > 2 && (
           <Input icon="search" className="ae-find" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Найти класс или описание"
@@ -362,7 +364,7 @@ function NoExamples({ card, sam3, readOnly, projects, onMade, onPick }: {
     <>
       <div className="ae-sub-h">
         <b>Образцы</b>
-        <span>{sam3 ? "нет" : "нет · у YOLOE набор сводится в один средний вектор"}</span>
+        <span>{sam3 ? "нет" : <>нет<Sep />у YOLOE набор сводится в один средний вектор</>}</span>
         <span className="grow" />
         {!readOnly && <Button size="sm" variant="ghost" icon="images" onClick={onPick}>Выбрать…</Button>}
       </div>
@@ -415,7 +417,7 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
   const rowsIn = (pass: number[]) => Array.from({ length: Math.ceil(pass.length / EX_ROW) }, (_, k) => pass.slice(k * EX_ROW, (k + 1) * EX_ROW));
   // Подписи «ряд» и «проход» — только когда их больше одного; YOLOE просто ставит миниатюры подряд.
   const chip = !sam3 ? null : plan.length > 1 ? count(plan.length, "проход", "прохода", "проходов")
-    : `1 проход${rowsIn(plan[0] ?? []).length > 1 ? " · 2 ряда" : ""}`;
+    : withSep(["1 проход", rowsIn(plan[0] ?? []).length > 1 && "2 ряда"]);
 
   const derive = async (body: { order?: string[]; add?: number }) => {
     setBusy(true);
@@ -510,7 +512,7 @@ function ExampleBlock({ row, set, gone, sam3, view, views, msPerCall, readOnly, 
     <div className={cx("ae-exb", !row.on && "off")}>
       <div className="ae-sub-h">
         <b>Образцы</b>
-        <span className="t-ell">{set.project ? `${set.project} · ` : ""}{count(n, "рамка", "рамки", "рамок")} с {sourcesText(set.items)} · вырезка «авто»</span>
+        <span className="t-ell">{set.project && <>{set.project}<Sep /></>}{count(n, "рамка", "рамки", "рамок")} с {sourcesText(set.items)}<Sep />вырезка «авто»</span>
         <span className="grow" />
         {chip && <span className="ae-chip">{chip}</span>}
       </div>

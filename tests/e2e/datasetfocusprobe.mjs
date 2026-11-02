@@ -27,7 +27,9 @@ async function until(ok, ms = 8000) {
   }
   return false;
 }
-const text = async (sel) => ((await page.locator(sel).first().innerText().catch(() => "")) || "").replace(/\s+/g, " ").trim();
+// Черта <Sep /> текста не даёт — читаем её как « · », чтобы сверять, что части разделены
+const SEP_TEXT = (el) => { const c = el.cloneNode(true); c.querySelectorAll(".sep").forEach((s) => s.replaceWith(" · ")); return c.textContent; };
+const text = async (sel) => ((await page.locator(sel).first().evaluate(SEP_TEXT).catch(() => "")) || "").replace(/\s+/g, " ").trim();
 // Метка флажка по пикселям снимка: от центра метки наружу — сколько пикселей поля до рамки с каждой стороны;
 // dx/dy — перекос. По осям через центр, чтобы фон за скруглёнными углами в замер не попадал
 async function centered(loc) {

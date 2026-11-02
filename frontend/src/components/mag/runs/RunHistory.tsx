@@ -10,6 +10,7 @@ import {
   AnchorButton, Avatar, Badge, Button, Card, Dot, Empty, MenuItem, Notice, PageHeader, Popover, Progress, Select, Seg, Spark,
 } from "../../../ui";
 import { count, plural } from "../../ru";
+import Sep, { withSep } from "../../Sep";
 import { useConfirm } from "../tasks/Confirm";
 import RunDialog, { seedOf } from "./RunDialog";
 import type { RunSeed } from "./RunDialog";
@@ -82,11 +83,11 @@ export default function RunHistory() {
     if (ok) await act(() => runsApi.deleteRun(code, r.id));
   };
 
-  const desc = runs === null ? "Загружаю…" : [
+  const desc = runs === null ? "Загружаю…" : withSep([
     count(all.length, "обучение", "обучения", "обучений"),
     nActive ? `${nActive} ${plural(nActive, "идёт", "идут", "идут")}` : "",
     nWait ? `${nWait} ${plural(nWait, "ждёт", "ждут", "ждут")} очереди` : "",
-  ].filter(Boolean).join(" · ");
+  ]);
 
   return (
     <div className="page rn">
@@ -162,14 +163,14 @@ function NowCard({ run, first, canEdit, onOpen, onStop }: {
       onKeyDown={(e) => { if (e.key === "Enter") onOpen(); }}>
       <div className="row between">
         <span className="row"><Dot color={st.tone} live={st.live} />
-          <b>№{run.number} · {run.base_model}{run.imgsz ? ` · ${run.imgsz}` : ""}</b></span>
+          <b>№{run.number}<Sep />{run.base_model}{run.imgsz ? <><Sep />{run.imgsz}</> : null}</b></span>
         {waiting ? <Badge>{first ? "В очереди первым" : st.label}</Badge>
           : map50 != null && <span className="mono t-sm">mAP50 {dec(map50)}</span>}
       </div>
       <Progress value={waiting ? 0 : progress(run)} label="Ход обучения" />
       <div className="row between t-xs t-muted">
         <span className="t-ell">{waiting ? (run.queue_reason ?? "Ждёт свободную карту")
-          : [stageText(run), etaText(run)].filter(Boolean).join(" · ")}</span>
+          : withSep([stageText(run), etaText(run)])}</span>
         {waiting && canEdit ? (
           <Button size="sm" variant="ghost" onClick={(e) => { e.stopPropagation(); onStop(); }}>Убрать из очереди</Button>
         ) : run.peak_vram_mb != null && <span>{(run.peak_vram_mb / 1024).toLocaleString("ru-RU", { maximumFractionDigits: 1 })} ГБ</span>}
@@ -205,7 +206,7 @@ function HistoryRow({ run, canEdit, weights, onOpen, onResume, onRepeat, onDelet
             : <Badge tone={st.tone}>{st.label}</Badge>}
         </span>
         <span className="t-xs t-muted t-ell">
-          {run.set ? run.set.name : "набор удалён"}{graphs.length ? ` · ${graphs.map((g) => g.name).join(", ")}` : ""}
+          {run.set ? run.set.name : "набор удалён"}{graphs.length ? <><Sep />{graphs.map((g) => g.name).join(", ")}</> : null}
         </span>
         {why && <span className={run.status === "error" ? "t-xs rn-bad t-ell" : "t-xs rn-warn t-ell"} title={why}>{why}</span>}
       </span>

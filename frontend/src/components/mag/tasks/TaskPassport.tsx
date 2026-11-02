@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 import type { ProjectMemberInfo, TaskDetail, TaskEventItem, TaskNumbers, TaskStatus } from "../../../auth/api";
 import { Avatar, Badge, Button, Icon, Progress, Ring, Swatch, cx, useTween } from "../../../ui";
 import { ago, count, ru } from "../../ru";
+import Sep from "../../Sep";
 import { describeTaskEvent } from "../taskEvents";
 import type { FrameState } from "./tasks";
 import { NEXT, STATES, STATUS, dayOf, decidedOf, framesOf, inDataset } from "./tasks";
@@ -158,7 +159,7 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
 
       {classes.length > 0 && (
         <section>
-          <h5>Чем размечено · {count(objects, "объект", "объекта", "объектов")}</h5>
+          <h5>Чем размечено<Sep />{count(objects, "объект", "объекта", "объектов")}</h5>
           <div className="tp-cls-l">
             {classes.map((x) => (
               <div key={x.class_index} className="tp-cbar" title={x.name}>

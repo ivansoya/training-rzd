@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import * as aug from "../../api/aug";
 import { Button, Card, Empty, Input, MenuItem, Notice, PageHeader, Popover, Seg, Table } from "../../ui";
 import { ago, count, ru } from "../ru";
+import { withSep } from "../Sep";
 import { useConfirm } from "../mag/tasks/Confirm";
 import { statClasses } from "./agentDoc";
 import { freeName } from "./look";
@@ -95,7 +96,7 @@ export default function AgentList() {
   }, [all, q]);
   const used = all.filter((g) => (g.runs ?? 0) > 0).length;
   const desc = agents === null ? "Загружаю…"
-    : [count(all.length, "агент", "агента", "агентов"), used ? `${used} уже размечали` : ""].filter(Boolean).join(" · ");
+    : withSep([count(all.length, "агент", "агента", "агентов"), used ? `${used} уже размечали` : ""]);
   const stop = (e: SyntheticEvent) => e.stopPropagation();
 
   return (

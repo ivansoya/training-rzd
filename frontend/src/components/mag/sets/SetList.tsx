@@ -12,6 +12,7 @@ import {
   Badge, Button, Card, Chip, Empty, Icon, Input, LinkButton, MenuItem, Notice, PageHeader, Popover, Progress, StackBar, Table,
 } from "../../../ui";
 import { count, ru } from "../../ru";
+import Sep, { withSep } from "../../Sep";
 import RunDialog from "../runs/RunDialog";
 import { dec } from "../runs/runs";
 import { useConfirm } from "../tasks/Confirm";
@@ -83,13 +84,13 @@ export default function SetList() {
   const nBuild = all.filter((s) => s.status === "building").length;
   const nQueue = all.filter((s) => s.status === "queued").length;
   const disk = all.reduce((a, s) => a + s.size_bytes, 0);
-  const desc = sets === null ? "Загружаю…" : all.length === 0 ? "Обучение идёт только из набора" : [
+  const desc = sets === null ? "Загружаю…" : all.length === 0 ? "Обучение идёт только из набора" : withSep([
     count(all.length, "набор", "набора", "наборов"),
     nReady ? `${nReady} ${nReady === 1 ? "готов" : "готовы"}` : "",
     nBuild ? `${nBuild} собирается` : "",
     nQueue ? `${nQueue} в очереди` : "",
     disk ? `на диске ${bytes(disk)}` : "",
-  ].filter(Boolean).join(" · ");
+  ]);
 
   // Старая вкладка «Обучения» жила здесь же
   if (search.get("tab") === "runs") return <Navigate replace to={`/projects/${code}/runs`} />;
@@ -177,9 +178,10 @@ export function SplitCell({ set }: { set: TrainSet }) {
 export function SetBadge({ set }: { set: TrainSet }) {
   const st = SET_STATUS[set.status];
   const job = set.job;
-  const pct = set.status === "building" && job?.total ? ` · ${Math.floor((job.processed / job.total) * 100)} %` : "";
+  const pct = set.status === "building" && job?.total ? Math.floor((job.processed / job.total) * 100) : null;
   return <Badge tone={st.tone} live={st.live} icon={set.status === "error" ? "alert" : set.status === "queued" ? "clock" : undefined}>
-    {st.label}{pct}
+    {/* Значок — flex с зазором: черта внутри строчного span, иначе зазор двойной */}
+    <span>{st.label}{pct !== null && <><Sep />{pct} %</>}</span>
   </Badge>;
 }
 
@@ -193,7 +195,7 @@ export function BuildProgress({ set }: { set: TrainSet }) {
   if (!job) return null;
   return (
     <div className="ts-prog">
-      <span className="t-sm">{job.stage_text ?? "Готовлю"}{job.total ? <> · <span className="ui-mono">{ru(job.processed)}</span> из <span className="ui-mono">{ru(job.total)}</span></> : null}</span>
+      <span className="t-sm">{job.stage_text ?? "Готовлю"}{job.total ? <><Sep /><span className="ui-mono">{ru(job.processed)}</span> из <span className="ui-mono">{ru(job.total)}</span></> : null}</span>
       <Progress value={job.total ? job.processed : 0} max={job.total || 1} label="Ход сборки" color={TRAIN} />
     </div>
   );
@@ -223,7 +225,7 @@ function SetRow({ set: s, runs, canEdit, building, onOpen, onTrain, onSimilar, o
         <td className="ts-name">
           <b>{s.name}</b>
           <div className="ts-chips">
-            {graphs.length ? graphs.map((g) => <Chip key={g.id + g.version} icon="workflow">{g.name} · v{g.version}</Chip>)
+            {graphs.length ? graphs.map((g) => <Chip key={g.id + g.version} icon="workflow"><span>{g.name}<Sep />v{g.version}</span></Chip>)
               : <span className="ts-none">без аугментаций</span>}
           </div>
         </td>
@@ -248,7 +250,7 @@ function SetRow({ set: s, runs, canEdit, building, onOpen, onTrain, onSimilar, o
         <td>
           {runs?.best ? (
             <span className="ts-best"><b className="ui-mono">{dec(runs.best.map50)}</b>
-              <span>№{runs.best.number} · {count(runs.runs.length, "обучение", "обучения", "обучений")}</span></span>
+              <span>№{runs.best.number}<Sep />{count(runs.runs.length, "обучение", "обучения", "обучений")}</span></span>
           ) : runs?.runs.length ? <span className="t-xs t-faint">{count(runs.runs.length, "обучение", "обучения", "обучений")}, без итога</span>
             : <span className="t-xs t-faint">{s.status === "ready" ? "не учили" : "—"}</span>}
         </td>

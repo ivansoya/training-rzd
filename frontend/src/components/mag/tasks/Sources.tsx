@@ -8,6 +8,7 @@ import { Badge, Button, Card, Icon, Legend, LinkButton, MenuItem, Popover, Stack
 import { count, plural, ru } from "../../ru";
 import type { RunMode, RunView } from "../../../api/agents";
 import type { AgentToolState } from "../../editor/AgentTool";
+import Sep from "../../Sep";
 import AgentMenu from "./AgentMenu";
 import type { AgentAction, AgentClear } from "./AgentMenu";
 import TagPicker from "../TagPicker";
@@ -222,9 +223,9 @@ export function AgentLine({ run }: { run?: RunView | null }) {
       <Icon name="bot" size={13} />
       <span className="t-xs">
         Агент «{run.agent ?? "агент"}» {runWord(run)}
-        {" · "}{reelLine(run) ?? <span className="ui-mono">{ru(run.processed)}{run.total ? ` из ${ru(run.total)}` : ""}</span>}
-        {" · "}<span className="ui-mono">{pct} %</span>
-        {left && ` · ${left}`}
+        <Sep />{reelLine(run) ?? <span className="ui-mono">{ru(run.processed)}{run.total ? ` из ${ru(run.total)}` : ""}</span>}
+        <Sep /><span className="ui-mono">{pct} %</span>
+        {left && <><Sep />{left}</>}
       </span>
       {/* Переливается, пока агент идёт: при 0 % заливки не видно, а движение видно */}
       <i className={cx("tp-agent-bar", run.status === "running" && "ui-shim")}><u style={{ width: `${pct}%` }} /></i>
@@ -253,7 +254,7 @@ function ReelAgent({ s, scout }: { s?: ReelState; scout: boolean }) {
   if (s.kind === "queue") {
     return (
       <div className="tp-reel-ag"><Icon name="bot" size={13} />
-        <span className="t-ell">в очереди агента · {s.place}-й{s.secs != null && ` · начнётся ${etaText(s.secs, "через ")}`}</span></div>
+        <span className="t-ell">в очереди агента<Sep />{s.place}-й{s.secs != null && <><Sep />начнётся {etaText(s.secs, "через ")}</>}</span></div>
     );
   }
   const pct = s.plan ? Math.min(100, Math.floor(((s.done ?? 0) / s.plan) * 100)) : null;
@@ -261,7 +262,7 @@ function ReelAgent({ s, scout }: { s?: ReelState; scout: boolean }) {
     <div className="tp-reel-ag">
       <Badge tone="var(--agent)" live>агент {scout ? "разведывает" : "размечает"}</Badge>
       <span className="t-ell">
-        {pct !== null && <><span className="ui-mono">{ru(s.done ?? 0)} / {ru(s.plan!)}</span> · <span className="ui-mono">{pct} %</span> · </>}
+        {pct !== null && <><span className="ui-mono">{ru(s.done ?? 0)} / {ru(s.plan!)}</span><Sep /><span className="ui-mono">{pct} %</span><Sep /></>}
         {s.secs == null ? "считаю время" : `осталось ${etaText(s.secs)}`}
       </span>
       {pct !== null && <i className="tp-agent-bar ui-shim"><u style={{ width: `${pct}%` }} /></i>}
@@ -313,7 +314,7 @@ export function FramesCard({ block, look, editable, run, agent, onAnnotate, onRe
         <div className="row wrap">
           {block.datasets.map((d) => (
             <LinkButton key={d.id} size="sm" variant="ghost" icon="database" to={`/projects/${code}/datasets?ds=${d.id}`}>
-              {d.name}<span className="ui-mono t-faint"> · {ru(d.n)}</span>
+              {d.name}<span className="ui-mono t-faint"><Sep />{ru(d.n)}</span>
             </LinkButton>
           ))}
         </div>
@@ -322,8 +323,8 @@ export function FramesCard({ block, look, editable, run, agent, onAnnotate, onRe
       {copies && block.known && (
         <span className="t-xs t-muted">
           При сдаче: на место <b className="ui-mono">{ru((c.annotated || 0) + (c.empty || 0))}</b>
-          {" · "}уберём из датасета <b className="ui-mono">{ru(c.deleted || 0)}</b>
-          {" · "}не тронем <b className="ui-mono">{ru((c.new || 0) + (c.skipped || 0))}</b>
+          <Sep />уберём из датасета <b className="ui-mono">{ru(c.deleted || 0)}</b>
+          <Sep />не тронем <b className="ui-mono">{ru((c.new || 0) + (c.skipped || 0))}</b>
         </span>
       )}
     </Card>
@@ -335,7 +336,7 @@ export function PrepareLine({ prepare }: { prepare?: VideoPrepare }) {
   if (prepare.error) return <span className="tp-prep bad"><Icon name="alert" size={13} />не удалось: {prepare.error}</span>;
   if (!prepare.busy) return prepare.ready ? null : <span className="tp-prep"><i />готовится…</span>;
   const pct = prepare.total > 0 ? Math.min(100, Math.round((prepare.processed / prepare.total) * 100)) : null;
-  return <span className="tp-prep"><i />{prepare.stage_text || "готовлю"}{pct !== null && ` · ${pct} %`}</span>;
+  return <span className="tp-prep"><i />{prepare.stage_text || "готовлю"}{pct !== null && <><Sep />{pct} %</>}</span>;
 }
 
 export function Rail({ parts, tone }: { parts: [number, number][]; tone?: "track" }) {
@@ -449,7 +450,7 @@ function ReelRow({ v, taskId, code, tags, editable, agentState, menu, onCut, onT
       <VideoStrip className="tp-poster" taskId={taskId} videoId={v.id} />
       <div className="tp-reel-n">
         <b className="t-ell" title={v.file_name}>{v.file_name}</b>
-        <span className="t-xs t-muted">{fmtTime(v.duration_ms || 0)} · {v.width}×{v.height} · {fmtBytes(v.size_bytes)}</span>
+        <span className="t-xs t-muted">{fmtTime(v.duration_ms || 0)}<Sep />{v.width}×{v.height}<Sep />{fmtBytes(v.size_bytes)}</span>
         <Rail parts={coverage(v)} />
         <span className="tp-reel-s"><PrepareLine prepare={v.prepare} /></span>
       </div>
@@ -589,7 +590,7 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
                 )}
               </div>
               <span className="t-xs t-muted">
-                {fmtTime(v.duration_ms || 0)} · {v.width}×{v.height} · {v.fps} к/с · {fmtBytes(v.size_bytes)}
+                {fmtTime(v.duration_ms || 0)}<Sep />{v.width}×{v.height}<Sep />{v.fps} к/с<Sep />{fmtBytes(v.size_bytes)}
                 {" "}<PrepareLine prepare={v.prepare} />
               </span>
               <ReelAgent s={reels?.get(v.id)} scout={run?.mode === "scout"} />
@@ -630,8 +631,8 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
                         <tr key={i} className={o.error ? "bad" : undefined}>
                           <td><span className="tp-cls"><Swatch color={c.color} />{c.name}</span></td>
                           <td className="ui-mono">{ru(o.start)} — {ru(o.end)}</td>
-                          <td className="r">{o.keys}{!o.interpolate && " · без интерполяции"}
-                            {o.hidden > 0 && ` · ${o.hidden} ${plural(o.hidden, "зона", "зоны", "зон")} невидимости`}</td>
+                          <td className="r">{o.keys}{!o.interpolate && <><Sep />без интерполяции</>}
+                            {o.hidden > 0 && <><Sep />{o.hidden} {plural(o.hidden, "зона", "зоны", "зон")} невидимости</>}</td>
                           <td>{o.step === 1 ? "каждый" : `каждый ${o.step}-й`}</td>
                           <td className="r ui-mono">{o.error ? <em title={o.error}>не считается</em> : ru(o.frames)}</td>
                         </tr>

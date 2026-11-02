@@ -26,9 +26,9 @@ describe("look", () => {
   });
 
   it("строка параметров с вероятностью", () => {
-    expect(paramSummary(rotate, { args: { limit: 8 }, chance: 1 })).toBe("угол 8");
-    expect(paramSummary(rotate, { chance: 0.5 })).toBe("угол 10 · p 0,5");
-    expect(paramSummary(undefined, { chance: 1 })).toBe("");
+    expect(paramSummary(rotate, { args: { limit: 8 }, chance: 1 })).toEqual(["угол 8"]);
+    expect(paramSummary(rotate, { chance: 0.5 })).toEqual(["угол 10", "p 0,5"]);
+    expect(paramSummary(undefined, { chance: 1 })).toEqual([]);
   });
 
   it("род узла: аугментация — по группе каталога", () => {

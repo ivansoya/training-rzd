@@ -130,9 +130,9 @@ def test_целиком_нет_по_частям_да():
 
 
 def test_самый_тяжёлый_больше_карты_не_запустится():
-    got = am.verdict(15000, {"mb": 14000, "label": "SAM 3 · вход 1008"}, [card()])
+    got = am.verdict(15000, {"mb": 14000, "label": "SAM 3, вход 1008"}, [card()])
     assert got["state"] == am.NEVER
-    assert "SAM 3 · вход 1008" in got["reason"]
+    assert "SAM 3, вход 1008" in got["reason"]
 
 
 def test_без_карт_не_запустится():
@@ -155,7 +155,7 @@ def test_контекст_процесса_в_вердикте_и_в_брони(
 
 
 # ---- делёж по картам (решения 10.10.2026) ------------------------------------
-UNITS = [{"label": "SAM 3 · вход 1008", "mb": 8830}, {"label": "YOLOE-l", "mb": 4340},
+UNITS = [{"label": "SAM 3, вход 1008", "mb": 8830}, {"label": "YOLOE-l", "mb": 4340},
          {"label": "Уточнение SAM", "mb": 640}]
 
 
@@ -164,7 +164,7 @@ def test_целиком_не_влезает_блоки_по_двум_карта�
     got = am.verdict(13810, UNITS[0], [card("A", cap=11263), card("B", cap=11263)], UNITS)
     assert got["state"] == am.SPLIT and got["ready"] and got["cards"] == 2
     assert got["parts"] == [8830, 4340, 640]
-    assert [u["label"] for u in got["placement"][0]["units"]] == ["SAM 3 · вход 1008"]
+    assert [u["label"] for u in got["placement"][0]["units"]] == ["SAM 3, вход 1008"]
 
 
 def test_карты_под_делёж_заняты_значит_ждать_их():

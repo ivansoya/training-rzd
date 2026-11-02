@@ -11,6 +11,7 @@ import type { Built, SamplesTally, SetClass, TrainSet } from "../../../api/train
 import { useLive } from "../../../live/LiveProvider";
 import { Avatar, Button, Card, Empty, LinkButton, Notice, PageHeader } from "../../../ui";
 import { count, ru } from "../../ru";
+import Sep from "../../Sep";
 import { useProject } from "../ProjectShell";
 import RunDialog from "../runs/RunDialog";
 import { useConfirm } from "../tasks/Confirm";
@@ -105,10 +106,10 @@ export default function SetPage() {
   const desc = (
     <span className="ts-desc">
       <span>{set.built_at ? `собран ${when(set.built_at)}` : `создан ${when(set.created_at)}`}</span>
-      {set.author && <><span className="t-faint">·</span><span className="row" style={{ gap: 6 }}><Avatar name={set.author} size={20} />{set.author}</span></>}
-      <span className="t-faint">·</span>
+      {set.author && <><Sep /><span className="row" style={{ gap: 6 }}><Avatar name={set.author} size={20} />{set.author}</span></>}
+      <Sep />
       <span>деление {SPLIT_MODE[set.split_mode]}{set.split_mode !== "manual" ? `, val ${Math.round(set.val_ratio * 100)} %` : ""}</span>
-      <span className="t-faint">·</span>
+      <Sep />
       <span className="ui-mono t-xs t-faint" title="Номер перемешивания — тот же номер даёт то же деление">№ {ru(set.seed)}</span>
     </span>
   );

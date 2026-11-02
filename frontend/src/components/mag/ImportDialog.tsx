@@ -6,6 +6,7 @@ import { cancelImport, commitImport, getClasses, getImport } from "../../auth/ap
 import type { ImportState, LabelClass, ScannedClass } from "../../auth/api";
 import { Button, ColorPicker, Dialog, Field, Icon, Input, LinkButton, Pill, Popover, Ring, Select } from "../../ui";
 import { count, plural, ru } from "../ru";
+import Sep, { withSep } from "../Sep";
 import { clearUpload, startUpload, useUpload } from "./importUpload";
 import ProjectOverview from "./ProjectOverview";
 import { formatBytes, useProject } from "./ProjectShell";
@@ -248,7 +249,7 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
       step: 0,
       body: <Stage ring={<Ring value={upload.pct} label="Загрузка архива" />}
         title={starting ? "Запускаю разбор архива…" : "Передаю архив"}
-        sub={<>{upload.name} · <span className="ui-mono">{formatBytes(upload.size * upload.pct)} из {formatBytes(upload.size)}</span></>}
+        sub={<>{upload.name}<Sep /><span className="ui-mono">{formatBytes(upload.size * upload.pct)} из {formatBytes(upload.size)}</span></>}
         pills={<Pill icon="refresh">Докачается при обрыве — выберите тот же файл</Pill>} />,
       footer: <>{cancelBtn}<span className="grow" />{!confirmCancel && fold}</>,
     });
@@ -441,7 +442,7 @@ export default function ImportDialog({ onClose }: { onClose: () => void }) {
 function Steps({ step, bad }: { step: number | "done"; bad?: boolean }) {
   const done = step === "done";
   const cur = done ? STEPS.length : step;
-  const label = done ? "Импорт завершён" : `Шаг ${cur + 1} из ${STEPS.length} · ${STEPS[cur]}`;
+  const label = done ? "Импорт завершён" : withSep([`Шаг ${cur + 1} из ${STEPS.length}`, STEPS[cur]]);
   const next = !done && !bad && cur < STEPS.length - 1 ? `дальше: ${STEPS[cur + 1].toLowerCase()}` : "";
   return (
     <div className="imp-steps" aria-label="Шаги импорта">
@@ -499,7 +500,7 @@ function ClassRow({ cls, draft, superclasses, maxCount, projectClasses, onChange
           <Select full size="sm" value={draft?.target ?? "new"} label={`Класс проекта для класса ${cls.class_index}`}
             onChange={(v) => onChange({ target: v === "new" ? null : v })}
             options={[{ value: "new", label: "Новый класс" },
-              ...projectClasses.map((pc) => ({ value: pc.id, label: pc.name, hint: `№ ${pc.class_index}${pc.superclass_name ? ` · ${pc.superclass_name}` : ""}` }))]} />
+              ...projectClasses.map((pc) => ({ value: pc.id, label: pc.name, hint: withSep([`№ ${pc.class_index}`, pc.superclass_name]) }))]} />
         </td>
       )}
       <td style={{ width: 52 }}>

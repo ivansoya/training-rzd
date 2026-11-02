@@ -11,6 +11,7 @@ import { cutVideo, estimateCut, videoFileUrl } from "../../auth/api";
 import type { CutEstimate, CutSegment, Segment, TaskVideoItem } from "../../auth/api";
 import { Button, Dialog, Icon, Input, MenuItem, Meta, Notice, Popover, cx, layerDepth, useEscape } from "../../ui";
 import { plural, ru } from "../ru";
+import Sep, { withSep } from "../Sep";
 import VideoStrip from "./VideoStrip";
 import { NumInput } from "../NumInput";
 import { ScoutBand, scoutHits, taskColors, useScouts } from "../agents/scout";
@@ -708,11 +709,11 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   return (
     <Dialog open onOpenChange={(v) => { if (!v) void requestClose(); }} closable={!busy} modalLock width={4000} height={4000} bare
       className="vc" title={video.file_name}
-      desc={`${fmtTime(duration)} · ${video.fps} к/с · ${video.width}×${video.height} · ${fmtBytes(video.size_bytes)}`}
+      desc={withSep([fmtTime(duration), `${video.fps} к/с`, `${video.width}×${video.height}`, fmtBytes(video.size_bytes)])}
       footer={<>
         <span className="t-xs t-faint vc-keys">
-          {editable ? "Протяжка по ленте — участок · Shift+протяжка — сдвиг · колесо — масштаб · F — кадр · Пробел, ← → — плеер"
-            : "Колесо — масштаб · протяжка — сдвиг · Пробел, ← → — плеер"}
+          {editable ? withSep(["Протяжка по ленте — участок", "Shift+протяжка — сдвиг", "колесо — масштаб", "F — кадр", "Пробел, ← → — плеер"])
+            : withSep(["Колесо — масштаб", "протяжка — сдвиг", "Пробел, ← → — плеер"])}
         </span>
         <span className="grow" />
         <Button variant="ghost" onClick={() => void requestClose()} disabled={busy}>{editable ? "Отмена" : "Закрыть"}</Button>
@@ -801,7 +802,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
                       // Меню высотой ~340 px у нижнего края прижимается вверх.
                       setMenu({ x: Math.min(e.clientX, window.innerWidth - 220), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 350)), segId: s.id });
                     }}>
-                    {fmtTime(s.end_ms - s.start_ms)} · {fmtStep(s.step_ms)}
+                    {fmtTime(s.end_ms - s.start_ms)}<Sep />{fmtStep(s.step_ms)}
                   </b>
                   <i className="h l" onPointerDown={(e) => grabSeg(e, s, "l")} />
                   <i className="h r" onPointerDown={(e) => grabSeg(e, s, "r")} />

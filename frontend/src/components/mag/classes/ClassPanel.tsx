@@ -5,6 +5,7 @@ import {
   Button, CLASS_COLORS, Card, Check, ColorPicker, Field, Input, Kbd, Meta, Notice, Pill, Radio, Select, Swatch,
 } from "../../../ui";
 import { count, plural } from "../../ru";
+import { withSep } from "../../Sep";
 import { hotkey, indexLabel } from "./classes";
 import { useAction } from "./useAction";
 
@@ -43,7 +44,7 @@ export function ClassPanel({ code, cls, classes, superclasses, initialGroup, can
   };
 
   const desc = cls
-    ? `${indexLabel(cls.class_index)} · ${count(cls.annotations, "бокс", "бокса", "боксов")}${cls.images ? ` на ${count(cls.images, "кадре", "кадрах", "кадрах")}` : ""}`
+    ? withSep([indexLabel(cls.class_index), `${count(cls.annotations, "бокс", "бокса", "боксов")}${cls.images ? ` на ${count(cls.images, "кадре", "кадрах", "кадрах")}` : ""}`])
     : "Номер выдаст сервер — следующий свободный";
 
   return (
@@ -161,7 +162,7 @@ function Fate({ code, cls, others, onCancel, onDone }: {
               : others.length ? "Выберите, куда перенести" : "В проекте нет другого класса"}>
             <Select full value={target || undefined} onChange={setTarget} placeholder="Выберите класс"
               label="Куда перенести"
-              options={others.map((c) => ({ value: c.id, label: c.name, hint: `${indexLabel(c.class_index)} · ${c.superclass_name ?? "без группы"}` }))} />
+              options={others.map((c) => ({ value: c.id, label: c.name, hint: withSep([indexLabel(c.class_index), c.superclass_name ?? "без группы"]) }))} />
             <Check checked={keep} onChange={setKeep}>Класс оставить пустым</Check>
             {usage.overlap_images ? (
               <Pill tone="warn">

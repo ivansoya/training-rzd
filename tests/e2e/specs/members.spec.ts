@@ -34,7 +34,7 @@ test("участники: приглашения, роль и исключени
   // Логин приглашённого сервер не раскрывает — строка приглашения одна
   const pending = page.locator("tr.mem-inv");
   await expect(pending).toContainText("Просмотр");
-  await expect(page.getByText("Ждут ответа · 1")).toBeVisible();
+  await expect(page.locator("tr.mem-sub")).toHaveText(/^Ждут ответа, 1$/);
 
   // Отозвали — друг снова доступен в окне
   await pending.getByRole("button", { name: "Отозвать" }).click();

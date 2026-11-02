@@ -16,6 +16,7 @@ import type { CatalogueNode, GraphDoc, PreviewPic, PreviewResult, PreviewStep } 
 import { Button, Dialog, Field, Icon, Popover, Seg, Select, Switch, cx } from "../../ui";
 import { titleOf, ru, type NodeData } from "./GraphNodes";
 import Marks from "../editor/Marks";
+import { withSep } from "../Sep";
 import type { Mark } from "../editor/Marks";
 
 const WAIT_MS = 300;
@@ -247,8 +248,8 @@ export default function NodePreview({ frame, doc, nodes, byOp, watch, pinned, on
   const droppedHere = Object.entries(result?.dropped ?? {});
   const frameText = result
     ? result.frame.kind === "project"
-      ? `${result.frame.name} · ${result.frame.width} × ${result.frame.height}`
-      : `тестовый кадр · ${result.frame.width} × ${result.frame.height}`
+      ? withSep([result.frame.name, `${result.frame.width} × ${result.frame.height}`])
+      : withSep(["тестовый кадр", `${result.frame.width} × ${result.frame.height}`])
     : "";
 
   const settings = (

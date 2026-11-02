@@ -7,6 +7,7 @@ import type { CSSProperties, MouseEvent } from "react";
 import type { HumanShape, PreviewDet } from "../../api/agents";
 import { cx } from "../../ui";
 import Marks from "../editor/Marks";
+import Sep from "../Sep";
 import type { Mark } from "../editor/Marks";
 import { shapeBox } from "./examplePick";
 import type { Verdict } from "./verdict";
@@ -75,7 +76,7 @@ export default function AgentFrame({ image, layers, colorOf, busy, className, on
     ...(v ? [
       ...v.missed.map((m, i): Mark => ({
         key: `m${i}`, x: m.box[0], y: m.box[1], w: m.box[2], h: m.box[3], color: "var(--st-skip)", dashed: true,
-        parts: m.shape.type === "polygon" ? m.shape.geometry.parts : undefined, label: <>не нашёл · {m.cls}</>,
+        parts: m.shape.type === "polygon" ? m.shape.geometry.parts : undefined, label: <>не нашёл<Sep />{m.cls}</>,
       })),
       ...v.hit.map(({ det: d }) => det(d, `o${d.id}`, "var(--st-done)", { mark: sam(d) })),
       ...v.wrong.map((d) => det(d, `o${d.id}`, "var(--st-del)", { mark: sam(d) })),

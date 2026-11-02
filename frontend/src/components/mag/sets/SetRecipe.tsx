@@ -6,6 +6,7 @@ import type { ProjectDetail } from "../../../auth/api";
 import type { Built, TrainSet } from "../../../api/trainsets";
 import { Card, Chip, Icon, Meta } from "../../../ui";
 import { count, ru } from "../../ru";
+import Sep, { withSep } from "../../Sep";
 import { TRAIN, VAL } from "./sets";
 import type { Flow } from "./sets";
 
@@ -50,13 +51,13 @@ export function SetRecipe({ set, flows, built, project }: {
                 const d = projectDs.get(id);
                 return <Chip key={id} icon="images">
                   {d ? d.name : "удалён"}{d && <span className="ui-mono t-faint"> {ru(d.images_count)}</span>}
-                  {pinned[id] && <span className="t-faint"> · только {pinned[id]}</span>}
+                  {pinned[id] && <><Sep /><span className="t-faint">только {pinned[id]}</span></>}
                 </Chip>;
               })}
             </span>
           ) : "—"],
-          ["Классы", c ? `${c.classes}${classesAll ? ` из ${classesAll}` : ""} · номера — как в data.yaml` : "—"],
-          ["Разметка", `${set.kind === "polygon" ? "контуры" : "рамки"}${c?.background ? ` · фон: ${count(c.background, "кадр", "кадра", "кадров")} без объектов, с пустым файлом` : ""}`],
+          ["Классы", c ? withSep([`${c.classes}${classesAll ? ` из ${classesAll}` : ""}`, "номера — как в data.yaml"]) : "—"],
+          ["Разметка", withSep([set.kind === "polygon" ? "контуры" : "рамки", c?.background ? `фон: ${count(c.background, "кадр", "кадра", "кадров")} без объектов, с пустым файлом` : ""])],
         ]} />
       </div>
     </Card>
@@ -78,7 +79,7 @@ function FlowRow({ f }: { f: Flow }) {
       {f.graph ? (
         <Link className="ts-node graph" to={`/augment/${f.graph.id}`} title="Открыть граф">
           <span className="ts-node-k"><Icon name="workflow" size={13} />граф аугментаций</span>
-          <b className="t-ell">{f.graph.name} · v{f.graph.version}</b>
+          <b className="t-ell">{f.graph.name}<Sep />v{f.graph.version}</b>
           {f.images && f.samples !== null ? <small>×{(f.samples / f.images).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</small> : null}
         </Link>
       ) : (

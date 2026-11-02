@@ -76,7 +76,7 @@ def plan(doc, cap_mb=None, scout=False, nets=None, sam3_cpu_half=True):
             mb = agent_graph.text_vram_mb(node, cap_mb, sam3_cpu_half)
             nodes[node["id"]] = mb
             side = agent_graph.sam3_side(params)
-            unit = sam3.setdefault(side, {"key": f"sam3@{side}", "kind": "sam3", "label": f"SAM 3 · вход {side}",
+            unit = sam3.setdefault(side, {"key": f"sam3@{side}", "kind": "sam3", "label": f"SAM 3, вход {side}",
                                           "mb": 0, "nodes": []})
             unit["mb"] = max(unit["mb"], mb)
             unit["nodes"].append(node["id"])

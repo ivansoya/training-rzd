@@ -17,9 +17,9 @@ describe("сводка агента в «Выходе»", () => {
     const trace = { t: { in: [], out: [det("a")], ms: 200 }, s: { in: [det("a"), det("b")], out: [det("a")], ms: 40 } };
     const got = nodeStats(nodes, { w: 2688, h: 1520 }, trace, () => undefined);
     expect(got.map((n) => n.id)).toEqual(["t", "n", "s"]);
-    expect(got[0]).toMatchObject({ model: "SAM 3 · 1008", calls: 1, views: 1, ms: 200, out: 1 });
-    expect(got[1]).toMatchObject({ model: "—", calls: null, ms: undefined });
-    expect(got[2]).toMatchObject({ model: "SAM2.1 small", boxes: 2, calls: null });
+    expect(got[0]).toMatchObject({ model: ["SAM 3", "1008"], calls: 1, views: 1, ms: 200, out: 1 });
+    expect(got[1]).toMatchObject({ model: ["—"], calls: null, ms: undefined });
+    expect(got[2]).toMatchObject({ model: ["SAM2.1 small"], boxes: 2, calls: null });
   });
 
   it("классы: счёт на кадре и источники по узлам, неиспользуемые не показываются", () => {

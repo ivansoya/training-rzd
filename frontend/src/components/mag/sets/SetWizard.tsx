@@ -18,6 +18,7 @@ import {
   StackBar, Swatch, Table, cx,
 } from "../../../ui";
 import { count, ru } from "../../ru";
+import Sep, { withSep } from "../../Sep";
 import { FeedRows } from "./FeedRows";
 import { SPLIT_MODE, TRAIN, VAL, bytes, seedFromSet, similarName } from "./sets";
 
@@ -198,7 +199,7 @@ export default function SetWizard() {
   const dsById = new Map((detail?.datasets ?? []).map((d) => [d.id, d]));
   const pickedCls = classes.filter((c) => picked.includes(c.id));
   const stepNote = [
-    datasets.length ? `${count(datasets.length, "датасет", "датасета", "датасетов")} · ${count(picked.length, "класс", "класса", "классов")}` : "",
+    datasets.length ? withSep([count(datasets.length, "датасет", "датасета", "датасетов"), count(picked.length, "класс", "класса", "классов")]) : "",
     `${SPLIT_MODE[mode]}${mode !== "manual" ? `, ${Math.round(ratio * 100)} %` : ""}`,
     (() => { const n = new Set(feeds.map((f) => f.graph_version_id).filter(Boolean)).size; return n ? count(n, "граф", "графа", "графов") : "без графов"; })(),
     "",
@@ -256,7 +257,7 @@ export default function SetWizard() {
                 );
               })}
             </Card>
-            <Card title="Классы" desc={`${picked.length} из ${classes.length} · объектов в выбранных датасетах`} actions={<>
+            <Card title="Классы" desc={withSep([`${picked.length} из ${classes.length}`, "объектов в выбранных датасетах"])} actions={<>
               <Button variant="ghost" size="sm" onClick={() => setPicked(classes.map((c) => c.id))}>Все</Button>
               <Button variant="ghost" size="sm" onClick={() => setPicked([])}>Ничего</Button>
             </>}>
@@ -295,7 +296,7 @@ export default function SetWizard() {
                       <div className="tw-embed">
                         <Progress value={preview.embeddings.ready} max={Math.max(1, preview.embeddings.total)} label="Признаки кадров" color="var(--st-done)" />
                         <span className="t-xs t-muted">признаки посчитаны у {ru(preview.embeddings.ready)} из {ru(preview.embeddings.total)}
-                          {preview.embeddings.job?.stage_text ? ` · ${preview.embeddings.job.stage_text}` : ""}</span>
+                          {preview.embeddings.job?.stage_text ? <><Sep />{preview.embeddings.job.stage_text}</> : null}</span>
                         {!preview.embeddings.job && preview.embeddings.failure && <Pill tone="bad">Не посчитались: {preview.embeddings.failure.error}</Pill>}
                         {needsEmbeddings && (
                           <Button size="sm" icon="cpu" onClick={embed} disabled={Boolean(preview.embeddings.job)}>
@@ -340,7 +341,7 @@ export default function SetWizard() {
                     })}
                     {preview.background > 0 && (
                       <tr>
-                        <td className="t-muted">фон · {backgroundWords(preview.background_parts) || "кадры без разметки"}</td>
+                        <td className="t-muted">фон<Sep />{backgroundWords(preview.background_parts) || "кадры без разметки"}</td>
                         <td className="r ui-mono">{ru(preview.background_split?.train ?? 0)}</td>
                         <td className="r ui-mono">{ru(preview.background_split?.val ?? 0)}</td>
                         <td />
@@ -373,8 +374,8 @@ export default function SetWizard() {
             </Card>
             <Card title="Проверьте перед сборкой">
               <dl className="tw-kv">
-                <dt>Данные</dt><dd>{datasets.map((id) => dsById.get(id)?.name).filter(Boolean).join(", ") || "—"} · {count(picked.length, "класс", "класса", "классов")} · {kind === "bbox" ? "рамки" : "контуры"}</dd>
-                <dt>Деление</dt><dd>{SPLIT_MODE[mode]}{mode !== "manual" ? `, val ${Math.round(ratio * 100)} % · № ${ru(seed)}` : ""}</dd>
+                <dt>Данные</dt><dd>{datasets.map((id) => dsById.get(id)?.name).filter(Boolean).join(", ") || "—"}<Sep />{count(picked.length, "класс", "класса", "классов")}<Sep />{kind === "bbox" ? "рамки" : "контуры"}</dd>
+                <dt>Деление</dt><dd>{SPLIT_MODE[mode]}{mode !== "manual" ? <>, val {Math.round(ratio * 100)} %<Sep />№ {ru(seed)}</> : null}</dd>
                 {(["train", "val"] as const).map((p) => (
                   <FeedsLine key={p} part={p} rows={feeds} graphs={graphs} preview={preview} />
                 ))}
@@ -385,7 +386,7 @@ export default function SetWizard() {
 
         <aside className="ui-card tw-side" aria-label="Итог">
           <section>
-            <h5>Разделится так{computing && <span className="tw-busy"> · считаю{mode === "smart" ? " умное деление" : ""}{preview?.split_ms ? ` (≈ ${Math.max(1, Math.round(preview.split_ms / 1000))} с)` : "…"}</span>}</h5>
+            <h5>Разделится так{computing && <span className="tw-busy"><Sep />считаю{mode === "smart" ? " умное деление" : ""}{preview?.split_ms ? ` (≈ ${Math.max(1, Math.round(preview.split_ms / 1000))} с)` : "…"}</span>}</h5>
             {preview ? (
               <div className={cx("tw-sum", computing && "tw-stale")}>
                 <StackBar height={12} parts={[{ value: preview.train, color: TRAIN, label: "train" }, { value: preview.val, color: VAL, label: "val" }]} />

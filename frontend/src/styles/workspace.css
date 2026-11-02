@@ -120,6 +120,10 @@ input[type=checkbox]:where(:not(.ui-ctl)):checked::after { border-color: var(--o
    линии и на плотной строке читалась как опечатка. */
 .sep { display: inline-block; flex-shrink: 0; width: 1px; height: .9em; margin-inline: 9px; vertical-align: -.12em; background: var(--rule); }
 h4 .sep, h5 .sep, .mag-card-h .sep { margin-inline: 10px; background: var(--hair); }
+/* Во flex-строке с gap отступ черте уже дан — свой margin удвоил бы его */
+:is(.ts-desc, .ae-vd, .ui-seg button, .tp-tagall) > .sep { margin-inline: 0; }
+/* На плашке цвета класса черта токена пропадает — берём цвет текста плашки */
+:is(.mag-cv-lb, .vc-seg b) .sep { background: currentColor; opacity: .5; }
 
 /* Lists, tables and gallery chrome; image pixels and shape colors are untouched. */
 .mag-table { font-size: 13px; }

@@ -5,11 +5,12 @@
 // Карты — таблицей, строка на карту (решения 10.10.2026): на сервере их бывает восемь, а
 // карточка на каждую уводила очередь за экран. Одна карта — подробности открыты сразу.
 
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import * as api from "../../api/gpu";
 import type { Device, GpuState, Holder, QueueRow } from "../../api/gpu";
 import { useAuth } from "../auth/AuthGate";
 import { NumInput } from "../NumInput";
+import Sep, { withSep } from "../Sep";
 import { Avatar, Badge, Button, Card, Empty, Icon, Input, Legend, Notice, PageHeader, Seg, StackBar, Switch, Table, cx } from "../../ui";
 import type { IconName } from "../../ui";
 import { count } from "../ru";
@@ -123,7 +124,7 @@ export default function HardwarePage() {
 
         <Card flush className="hw-q" title={state.staff ? "Очередь" : "Ваши задачи в очереди"}
           desc={state.staff ? (queue.length ? count(queue.length, "задача ждёт", "задачи ждут", "задач ждут") : "никто не ждёт")
-            : `${queue.length ? `${queue.length} из ${state.queue.total}` : "ваших задач нет"}${state.queue.total ? ` · всего в очереди ${state.queue.total}` : ""}`}>
+            : withSep([queue.length ? `${queue.length} из ${state.queue.total}` : "ваших задач нет", state.queue.total ? `всего в очереди ${state.queue.total}` : ""])}>
           {queue.length === 0 ? (
             <p className="hw-none">{state.staff ? "Карты свободны для новых задач." : "Когда ваша задача будет ждать карту, здесь появится её место и причина."}</p>
           ) : queue.map((row) => (
@@ -214,7 +215,7 @@ function DeviceRows({ device: d, state, many, open, onToggle, onLimit, onKill }:
                       {d.sam2_reserve_mb > 0 && (
                         <tr className="hw-res">
                           <td className="hw-sw-c"><i className="hw-sw" style={{ background: HATCH }} /></td>
-                          <td className="hw-what">полуавтомат SAM2 <span className="t-faint">· резерв под разметку</span></td>
+                          <td className="hw-what">полуавтомат SAM2<span className="t-faint"><Sep />резерв под разметку</span></td>
                           <td className="t-faint">—</td><td className="t-faint">—</td>
                           <td className="r">{gb(d.sam2_reserve_mb)}</td><td className="r t-faint">всегда</td>{state.manage && <td />}
                         </tr>
@@ -308,7 +309,7 @@ function CardSettings({ device: d, state, onLimit }: {
 /** Как модели грузятся на карты — для всех агентов, превью и прогонов сразу. */
 function ModelsCard({ sam3, manage, onSam3 }: { sam3: api.ServerSetting; manage: boolean; onSam3: (v: boolean) => void }) {
   const who = sam3.updated_at
-    ? `изменено: ${[sam3.updated_by, new Date(sam3.updated_at).toLocaleDateString("ru-RU")].filter(Boolean).join(" · ")}`
+    ? <>изменено: {withSep([sam3.updated_by, new Date(sam3.updated_at).toLocaleDateString("ru-RU")])}</>
     : "по умолчанию";
   return (
     <Card flush className="hw-models" title="Модели" desc="Как модели грузятся на карты — для всех агентов, превью и прогонов">
@@ -332,14 +333,14 @@ function ModelsCard({ sam3, manage, onSam3 }: { sam3: api.ServerSetting; manage:
 
 function HolderRow({ holder: h, manage, onKill }: { holder: Holder; manage: boolean; onKill: () => void }) {
   const [label, color] = kindOf(h.kind);
-  // Часть задачи на нескольких картах: «SAM 3 · вход 1008», «батч 8 на карту».
-  const tail = [h.detail, h.label].filter(Boolean).join(" · ");
+  // Часть задачи на нескольких картах: «SAM 3, вход 1008», «батч 8 на карту».
+  const tail = [h.detail, h.label].filter(Boolean);
   return (
     <tr>
       <td className="hw-sw-c"><i className="hw-sw" style={{ background: color }} /></td>
       <td className="hw-what">{h.what ?? label}
         {h.cards && h.cards.length > 1 && <span className="hw-multi">карты {cardList(h.cards)}</span>}
-        {tail && <span className="t-faint"> · {tail}</span>}</td>
+        {tail.length > 0 && <span className="t-faint"><Sep />{withSep(tail)}</span>}</td>
       <td>{h.user ?? <span className="t-faint">—</span>}</td>
       <td>{h.project ?? <span className="t-faint">—</span>}</td>
       <td className="r">{h.cpu ? "—" : gb(h.granted_mb)}</td>
@@ -350,7 +351,7 @@ function HolderRow({ holder: h, manage, onKill }: { holder: Holder; manage: bool
 }
 
 function QueueLine({ row, staff, action, onKill }: { row: QueueRow; staff: boolean; action: string | null; onKill: () => void }) {
-  const who = [staff ? row.user : null, row.project].filter(Boolean).join(" · ");
+  const who = [staff ? row.user : null, row.project].filter(Boolean);
   // Задача на нескольких картах — одной строкой: «4 × 6,1 ГБ», ждёт все карты сразу.
   const multi = row.parts && row.parts.length > 1 ? row.parts : null;
   const want = multi ? (multi.every((p) => p === multi[0]) ? `${multi.length} × ${gb(multi[0])}` : multi.map(gb).join(" + ")) : gb(row.want_mb);
@@ -358,11 +359,11 @@ function QueueLine({ row, staff, action, onKill }: { row: QueueRow; staff: boole
     <div className={cx("hw-qr", row.mine && "mine")}>
       <span className="hw-n">{row.position}</span>
       <div className="hw-qt">
-        <b>{row.what ?? kindOf(row.kind)[0]}{row.detail && <span className="t-faint"> · {row.detail}</span>}
+        <b>{row.what ?? kindOf(row.kind)[0]}{row.detail && <span className="t-faint"><Sep />{row.detail}</span>}
           {multi && <span className="hw-multi">{count(multi.length, "карта", "карты", "карт")}</span>}
           {row.mine && staff && <span className="hw-yours">ваша</span>}</b>
-        {who && <span>{who}</span>}
-        <span>{row.on_cpu ? <b>на процессоре</b> : <>просит <b>{want} ГБ</b></>} · ждёт <b>{waited(row.waiting_seconds)}</b>{row.reason ? ` — ${row.reason}` : row.position > 1 ? ` — за задачей ${row.position - 1}` : ""}</span>
+        {who.length > 0 && <span>{withSep(who)}</span>}
+        <span>{row.on_cpu ? <b>на процессоре</b> : <>просит <b>{want} ГБ</b></>}<Sep />ждёт <b>{waited(row.waiting_seconds)}</b>{row.reason ? ` — ${row.reason}` : row.position > 1 ? ` — за задачей ${row.position - 1}` : ""}</span>
       </div>
       {action && <Button size="sm" variant={action === "Снять" ? "ghost" : "outline"} className={action === "Снять" ? "hw-kill" : undefined} onClick={onKill}>{action}</Button>}
     </div>
@@ -407,13 +408,13 @@ function AccessCard({ onError }: { onError: (msg: string) => void }) {
     }
   };
 
-  const person = (u: api.AccessRow, sub: string) => {
+  const person = (u: api.AccessRow, sub: ReactNode) => {
     const self = u.id === me.user.id;
     return (
       <div key={u.id} className="hw-ar">
         <Avatar name={u.name || u.login} size={28} />
         <div className="hw-at">
-          <b>{u.name || u.login}{self && <span className="t-faint"> · вы</span>}</b>
+          <b>{u.name || u.login}{self && <span className="t-faint"><Sep />вы</span>}</b>
           <span>{sub}</span>
         </div>
         <Seg<Level> size="sm" label={`Доступ к оборудованию: ${u.name || u.login}`} value={u.level ?? "none"}
@@ -433,7 +434,7 @@ function AccessCard({ onError }: { onError: (msg: string) => void }) {
       )}
       <div className="hw-sub">Выдано</div>
       {granted && granted.length > 0 ? (
-        <div className="hw-list">{granted.map((u) => person(u, u.login === u.name ? u.email : `${u.login} · ${u.email}`))}</div>
+        <div className="hw-list">{granted.map((u) => person(u, u.login === u.name ? u.email : withSep([u.login, u.email])))}</div>
       ) : granted && <p className="t-xs t-muted">Прав не выдано никому, кроме назначенных командой на сервере.</p>}
       <p className="t-xs t-faint">
         «Просмотр» — держатели карт и вся очередь. «Управление» — ещё потолок тяжёлых задач, включение карт, «Снять» и выдача прав.

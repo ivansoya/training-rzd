@@ -22,15 +22,15 @@ export function runLine(run: ProjectSummary["last_run"], now = Date.now()): { te
   return { text: n, tone: "idle" };
 }
 
-/** Подзаголовок: сколько проектов, приглашений и где сейчас идёт обучение. */
-export function projectsLine(projects: ProjectSummary[], invitations: number): string {
+/** Куски подзаголовка: сколько проектов, приглашений и где сейчас идёт обучение. */
+export function projectsLine(projects: ProjectSummary[], invitations: number): string[] {
   const parts = [count(projects.length, "проект", "проекта", "проектов")];
   if (invitations) parts.push(count(invitations, "приглашение", "приглашения", "приглашений"));
   const live = projects.filter((p) => p.last_run && ACTIVE.has(p.last_run.status)).length;
   const waiting = projects.filter((p) => p.last_run && WAITING.has(p.last_run.status)).length;
   if (live) parts.push(`обучение идёт в ${count(live, "проекте", "проектах", "проектах")}`);
   if (waiting) parts.push(`в очереди — ${count(waiting, "проект", "проекта", "проектов")}`);
-  return parts.join(" · ");
+  return parts;
 }
 
 /** Доля размеченного; пустой проект — ноль, а не NaN. */

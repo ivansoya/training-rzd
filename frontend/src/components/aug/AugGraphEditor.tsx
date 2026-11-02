@@ -8,6 +8,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import NotFound, { isMissing } from "../NotFound";
+import { withSep } from "../Sep";
 import { useLocation, useParams, useSearchParams } from "react-router-dom";
 import {
   Background,
@@ -677,7 +678,7 @@ function Editor() {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
               if (e.key === "Escape") setTitle(graph?.name ?? "");
             }} />
-          <span className={saveState !== "saved" && saveState !== "saving" ? "bad" : undefined} role="status">{sub.join(" · ")}</span>
+          <span className={saveState !== "saved" && saveState !== "saving" ? "bad" : undefined} role="status">{withSep(sub)}</span>
         </div>
         {readOnly && graph && <Badge icon="lock">{wanted ? "старая версия — только чтение" : "чужой граф — только чтение"}</Badge>}
         <span className="grow" />
@@ -687,7 +688,7 @@ function Editor() {
             ...versions.map((v) => ({
               value: v.id,
               label: `Версия ${v.version}`,
-              hint: [new Date(v.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).replace(".", ""), v.note].filter(Boolean).join(" · "),
+              hint: withSep([new Date(v.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).replace(".", ""), v.note]),
             })),
           ]} />
         <Button size="sm" icon="images" disabled={!output} onClick={() => setSix(true)}

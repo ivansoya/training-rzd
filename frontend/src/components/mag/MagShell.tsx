@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Link, matchPath, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthGate";
 import ErrorBoundary from "../ErrorBoundary";
+import Sep from "../Sep";
 import { LiveProvider } from "../../live/LiveProvider";
 import { Avatar, Empty, Icon, LinkButton, MenuItem, Popover, RailsMark, cx } from "../../ui";
 import Bell from "../shell/Bell";
@@ -93,7 +94,7 @@ export default function MagShell({ children, railBelow }: { children: ReactNode;
               <>
                 <span className="sb-proj-t">
                   <b>{project?.name ?? "Магистраль ML"}</b>
-                  <span>{project ? `${project.code} · ${project.role_label.toLowerCase()}` : "проект не выбран"}</span>
+                  <span>{project ? <>{project.code}<Sep />{project.role_label.toLowerCase()}</> : "проект не выбран"}</span>
                 </span>
                 <Icon name="updown" size={14} />
               </>
@@ -104,7 +105,7 @@ export default function MagShell({ children, railBelow }: { children: ReactNode;
             <>
               <div className="ui-pop-h">Проекты</div>
               {me.projects.map((p) => (
-                <MenuItem key={p.code} selected={p.code === project?.code} hint={`${p.code} · ${p.role_label.toLowerCase()}`}
+                <MenuItem key={p.code} selected={p.code === project?.code} hint={<>{p.code}<Sep />{p.role_label.toLowerCase()}</>}
                   onSelect={() => { close(); navigate(`/projects/${p.code}`); }}>
                   {p.name}
                 </MenuItem>

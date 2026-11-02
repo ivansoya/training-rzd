@@ -138,8 +138,8 @@ describe("доска", () => {
 
   it("строка источников", () => {
     expect(sourceLine({ files: 640, cut: 3, uncut: 1, annotate: 2 }))
-      .toBe("640 изображений · 3 ролика на нарезку (1 не нарезан) · 2 ролика на разметку");
-    expect(sourceLine({ files: 0, cut: 0, uncut: 0, annotate: 0 })).toBe("пустая");
+      .toEqual(["640 изображений", "3 ролика на нарезку (1 не нарезан)", "2 ролика на разметку"]);
+    expect(sourceLine({ files: 0, cut: 0, uncut: 0, annotate: 0 })).toEqual(["пустая"]);
   });
 });
 
@@ -155,21 +155,22 @@ describe("даты", () => {
 describe("карточка таски (решения 14.10.2026)", () => {
   const src = (o: Partial<TaskStats["sources"]> = {}) => ({ files: 0, cut: 0, uncut: 0, annotate: 0, ...o });
   const vids = (o: Partial<TaskStats["videos"]> = {}) => ({ tracks: 0, boxes: 0, agent_done: 0, agent_left: 0, ...o });
-  const text = (line: (string | number)[]) => line.join("");
+  // Куски строки — через «|»: на экране между ними черта
+  const text = (line: (string | number)[][]) => line.map((p) => p.join("")).join(" | ");
   const badges = (l: ReturnType<typeof cardLook>) => l.badges.map((b) => b.text);
 
   it("изображения: брак сделан, отложенные — значком, кадры агента — в «осталось»", () => {
     const l = cardLook("in_progress", { counts: counts({ total: 40, annotated: 20, empty: 5, skipped: 3, new: 12, deleted: 2, agent: 4 }), sources: src({ files: 42 }) });
-    expect(text(l.line)).toBe("сделано 27 · осталось 12");
+    expect(text(l.line)).toBe("сделано 27 | осталось 12");
     expect(badges(l)).toEqual(["4 ждут проверки", "3 отложено"]);
     expect(l.parts.map((p) => p.value)).toEqual([20, 5, 2, 3, 12]);
   });
 
   it("ролик без агента — треки и рамки, с агентом — проверка по кадрам", () => {
     expect(text(cardLook("in_progress", { counts: counts({}), sources: src({ annotate: 1 }), videos: vids({ tracks: 7, boxes: 120 }) }).line))
-      .toBe("7 треков · 120 рамок");
+      .toBe("7 треков | 120 рамок");
     const l = cardLook("in_progress", { counts: counts({}), sources: src({ annotate: 1 }), videos: vids({ tracks: 1, boxes: 3, agent_done: 340, agent_left: 1408 }) });
-    expect(text(l.line)).toBe("проверено 340 · осталось 1408");
+    expect(text(l.line)).toBe("проверено 340 | осталось 1408");
     expect(badges(l)).toEqual(["1 трек, 3 рамки"]);
   });
 
@@ -181,7 +182,7 @@ describe("карточка таски (решения 14.10.2026)", () => {
   it("сданная — все изображения вместе с кадрами роликов", () => {
     const c = counts({ total: 4, annotated: 4, accepted: 4, video_accepted: 422, video: { total: 426, new: 4, skipped: 0, annotated: 422, empty: 0, deleted: 0, agent: 4 } });
     const l = cardLook("done", { counts: c, sources: src({ annotate: 1 }) });
-    expect(text(l.line)).toBe("430 изображений · 426 в датасете");
+    expect(text(l.line)).toBe("430 изображений | 426 в датасете");
     expect(badges(l)).toEqual(["4 ждут проверки"]);
     expect(text(cardLook("closed", { counts: counts({ total: 3, annotated: 3, accepted: 3 }), sources: src() }).line)).toBe("3 изображения в датасете");
   });
@@ -235,10 +236,10 @@ describe("ход агента (решения 29.10.2026)", () => {
 
   it("погашенные пункты и значок доски говорят, что идёт и сколько ждать", () => {
     const going = run({ processed: 4832, rate: 1.8 });
-    expect(busyText(going)).toBe("идёт разведка · осталось ≈ 4 ч 47 мин");
-    expect(busyText(run({ mode: "frames", processed: 3 }))).toBe("идёт разметка · считаю время");
+    expect(busyText(going)).toBe("идёт разведка, осталось ≈ 4 ч 47 мин");
+    expect(busyText(run({ mode: "frames", processed: 3 }))).toBe("идёт разметка, считаю время");
     expect(busyText(run({ status: "waiting_gpu", cpu: true }))).toBe("агент ждёт процессор");
-    expect(agentBadges(going).map((b) => b.text)).toEqual(["агент разведывает", "13 % · ≈ 4 ч 47 мин"]);
+    expect(agentBadges(going).map((b) => b.text)).toEqual(["агент разведывает", ["13 %", "≈ 4 ч 47 мин"]]);
     expect(agentBadges(going)[0].live).toBe(true);
     expect(agentBadges(run({ status: "queued" })).map((b) => b.text)).toEqual(["агент в очереди"]);
   });

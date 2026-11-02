@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { LabelClass, TaskBox } from "../../auth/api";
 import { Button, Dot, Icon, Select, Swatch, cx } from "../../ui";
 import { fmtConf } from "../mag/BoxCanvas";
+import Sep from "../Sep";
 import type { CanvasShape } from "../mag/BoxCanvas";
 import type { FrameAction } from "../mag/frameActions";
 import { ru } from "../ru";
@@ -130,7 +131,7 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
       {agent.length > 0 && (
         <section className="fe-sec fe-objs fe-agent">
           <div className="fe-sec-t">
-            <span className="row"><Icon name="bot" size={13} />Агент · на проверке</span>
+            <span className="row"><Icon name="bot" size={13} /><span>Агент<Sep />на проверке</span></span>
             <span className="ui-mono">{agent.length}</span>
           </div>
           {groups.map(({ agent: a, idx }) => {

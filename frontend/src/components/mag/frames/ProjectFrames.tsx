@@ -15,6 +15,7 @@ import type { Tag } from "../../../api/tags";
 import { useLive } from "../../../live/LiveProvider";
 import { Button, Empty, LinkButton, Notice, PageHeader, Range, Select, ToggleGroup, Icon } from "../../../ui";
 import { count } from "../../ru";
+import { withSep } from "../../Sep";
 import ExportModal from "../ExportModal";
 import { useProject } from "../ProjectShell";
 import { CreateTaskModal } from "../tasks/CreateTaskModal";
@@ -193,7 +194,7 @@ export default function ProjectFrames() {
   const importing = project.status === "importing";
   const header = (
     <PageHeader title="Датасеты"
-      desc={`${count(datasets.length, "датасет", "датасета", "датасетов")} · ${count(detail.stats.images, "кадр", "кадра", "кадров")} · ${count(detail.stats.annotations, "рамка", "рамки", "рамок")}`}
+      desc={withSep([count(datasets.length, "датасет", "датасета", "датасетов"), count(detail.stats.images, "кадр", "кадра", "кадров"), count(detail.stats.annotations, "рамка", "рамки", "рамок")])}
       actions={<>
         <Button icon="download" disabled={importing || !datasets.length} onClick={() => setExporting(true)}
           title={importing ? "Дождитесь окончания импорта" : "Собрать архив с изображениями и разметкой"}>

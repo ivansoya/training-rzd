@@ -9,6 +9,7 @@ import {
 } from "../../../ui";
 import { useAuth } from "../../auth/AuthGate";
 import { ago, count, ru } from "../../ru";
+import Sep, { withSep } from "../../Sep";
 import { ROLES } from "../FriendPicker";
 import type { Role } from "../FriendPicker";
 import { useProject } from "../ProjectShell";
@@ -37,11 +38,11 @@ export default function ProjectMembers() {
   const filtered = query.trim() !== "" || role !== "all";
   const online = members.filter((m) => m.online).length;
 
-  const desc = [
+  const desc = withSep([
     count(members.length, "участник", "участника", "участников"),
     online ? `${ru(online)} в сети` : null,
     pending.length ? `${count(pending.length, "приглашение ждёт", "приглашения ждут", "приглашений ждут")} ответа` : null,
-  ].filter(Boolean).join(" · ");
+  ]);
 
   const changeRole = (m: ProjectMemberInfo, next: Role) => run(async () => {
     await setMemberRole(code, m.id, next);
@@ -51,10 +52,10 @@ export default function ProjectMembers() {
   });
 
   const roleOptions = [
-    { value: "all" as const, label: `Все роли · ${members.length + pending.length}` },
+    { value: "all" as const, label: <>Все роли<Sep />{members.length + pending.length}</> },
     ...ROLES.map((r) => ({
       value: r.value,
-      label: `${r.label} · ${members.filter((m) => m.role === r.value).length + pending.filter((i) => i.role === r.value).length}`,
+      label: <>{r.label}<Sep />{members.filter((m) => m.role === r.value).length + pending.filter((i) => i.role === r.value).length}</>,
     })),
   ];
 
@@ -103,7 +104,7 @@ export default function ProjectMembers() {
             </tbody>
             {invites.length > 0 && (
               <tbody>
-                <tr className="mem-sub"><td colSpan={isAdmin ? 6 : 5}>Ждут ответа · {invites.length}</td></tr>
+                <tr className="mem-sub"><td colSpan={isAdmin ? 6 : 5}>Ждут ответа<Sep />{invites.length}</td></tr>
                 {invites.map((i) => (
                   <InviteRow key={i.id} inv={i} busy={busy}
                     onRevoke={() => run(async () => { await revokeInvitation(code, i.id); await refresh(); })} />
@@ -157,7 +158,7 @@ function MemberRow({ m, self, isAdmin, busy, onRole, onKick }: {
     <tr className={cx(self && "mem-self")}>
       <td>
         <Who name={m.display_name} online={m.online}
-          sub={<><span className="ui-mono">{m.login}</span>{self ? " · это вы" : ` · ${presence(m)}`}</>} />
+          sub={<><span className="ui-mono">{m.login}</span><Sep />{self ? "это вы" : presence(m)}</>} />
       </td>
       <td>
         {isAdmin ? (
@@ -188,7 +189,7 @@ function InviteRow({ inv, busy, onRevoke }: { inv: Invite; busy: boolean; onRevo
     <tr className="mem-inv">
       <td>
         <Who name={inv.user.display_name} pending
-          sub={<>{inv.user.login && <span className="ui-mono">{inv.user.login} · </span>}приглашение отправлено {ago(inv.sent_at)}</>} />
+          sub={<>{inv.user.login && <><span className="ui-mono">{inv.user.login}</span><Sep /></>}приглашение отправлено {ago(inv.sent_at)}</>} />
       </td>
       <td><Badge variant="outline">{inv.role_label}</Badge></td>
       <td className="r"><span className="t-faint">—</span></td>

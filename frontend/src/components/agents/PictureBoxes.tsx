@@ -7,6 +7,7 @@ import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as R
 import * as api from "../../api/agents";
 import { Button, Dialog, Icon, Kbd, Notice, Swatch, cx } from "../../ui";
 import { count } from "../ru";
+import Sep from "../Sep";
 import { useConfirm } from "../mag/tasks/Confirm";
 import { boxAt, cornerAt, moveBox, resizeBox, sameBoxes, spanBox, tidy, usable } from "./pictureBox";
 import type { Box, Corner, Point } from "./pictureBox";
@@ -150,7 +151,7 @@ export default function PictureBoxes({ pictures, start, shelf, color, onSaved, o
   const title = (
     <span className="ep-title">
       Рамки <span className="ep-cls"><Swatch color={color} />{shelf}</span>
-      <span className="t-xs t-faint ep-ed-of">{cur.file_name} · {cur.width}×{cur.height} · {at + 1} из {pictures.length}</span>
+      <span className="t-xs t-faint ep-ed-of">{cur.file_name}<Sep />{cur.width}×{cur.height}<Sep />{at + 1} из {pictures.length}</span>
     </span>
   );
 

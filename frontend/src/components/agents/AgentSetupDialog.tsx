@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import * as api from "../../api/agents";
 import { Button, Dialog, Empty, Field, LinkButton, Notice, Select } from "../../ui";
 import { count } from "../ru";
+import { withSep } from "../Sep";
 import type { AgentToolState } from "../editor/AgentTool";
 import ClassMap, { guess, useAutoMapped } from "./ClassMap";
 import { verdictLook } from "./GpuVerdict";
@@ -82,13 +83,13 @@ export default function AgentSetupDialog({ taskId, tool, onClose, onRunAll }: {
                   setAgentId(v);
                   setVersionId(ctx.agents.find((a) => a.id === v)?.head ?? "");
                 }} options={ctx.agents.map((a) => ({ value: a.id, label: a.name,
-                  hint: `${a.group === "project" ? "подключён к проекту" : "мой"} · ${verdictLook(a.verdict).word}` }))} />}
+                  hint: withSep([a.group === "project" ? "подключён к проекту" : "мой", verdictLook(a.verdict).word]) }))} />}
               </Field>
               <Field label="Версия">
                 {(id) => <Select id={id} full label="Версия" value={version.id} onChange={setVersionId}
                   options={agent.versions.map((v) => ({
                     value: v.id, label: `Версия ${v.version}`,
-                    hint: `${new Date(v.created_at).toLocaleDateString("ru-RU")} · ${count(v.classes.length, "класс", "класса", "классов")}`,
+                    hint: withSep([new Date(v.created_at).toLocaleDateString("ru-RU"), count(v.classes.length, "класс", "класса", "классов")]),
                   }))} />}
               </Field>
             </div>

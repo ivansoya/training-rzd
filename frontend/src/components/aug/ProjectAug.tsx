@@ -9,6 +9,7 @@ import * as api from "../../api/aug";
 import { useAuth } from "../auth/AuthGate";
 import { Button, Card, Empty, Input, LinkButton, MenuItem, Notice, PageHeader, Popover } from "../../ui";
 import { count } from "../ru";
+import { withSep } from "../Sep";
 import { mult } from "./counts";
 import GraphTable from "./GraphTable";
 import { freeName } from "./look";
@@ -75,7 +76,7 @@ export default function ProjectAug() {
     return needle ? all.filter((g) => g.name.toLowerCase().includes(needle)) : all;
   }, [all, q]);
   const desc = linked === null ? "Загружаю…" : all.length === 0 ? "Графы, по которым мастер набора размножает кадры"
-    : `${count(all.length, "граф подключён", "графа подключено", "графов подключено")} · их предлагает мастер набора`;
+    : withSep([count(all.length, "граф подключён", "графа подключено", "графов подключено"), "их предлагает мастер набора"]);
 
   const attach = canEdit && (
     <Popover align="end" width={320} trigger={<Button icon="plus" disabled={working}>Подключить граф</Button>}>
@@ -85,7 +86,7 @@ export default function ProjectAug() {
           <div className="gl-pick">
             {mine.map((g) => (
               <MenuItem key={g.id} icon="workflow" disabled={working}
-                hint={[g.version ? `v${g.version}` : "только черновик", g.stats ? mult(g.stats.multiplier) : ""].filter(Boolean).join(" · ")}
+                hint={withSep([g.version ? `v${g.version}` : "только черновик", g.stats ? mult(g.stats.multiplier) : ""])}
                 onSelect={() => { close(); void act(() => api.linkGraph(code, g.id)); }}>{g.name}</MenuItem>
             ))}
           </div>

@@ -61,7 +61,7 @@ describe("вид узлов агента", () => {
 
   it("строки простых узлов", () => {
     expect(plainLine("nms", { iou: 0.5, agnostic: true })).toBe("IoU 0,5, между классами");
-    expect(plainLine("merge", { inputs: 3 })).toBe("3 входа · подряд");
+    expect(plainLine("merge", { inputs: 3 })).toBe("3 входа, подряд");
     expect(plainLine("sam", { model: "sam2.1_hiera_base_plus" })).toBe("SAM2.1 base+ → контур");
   });
 

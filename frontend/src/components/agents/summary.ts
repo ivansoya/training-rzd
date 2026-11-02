@@ -20,8 +20,8 @@ export interface NodeStat {
   id: string;
   kind: AgentKind;
   title: string;
-  /** Модель и вход, «—» у узлов без модели. */
-  model: string;
+  /** Модель и вход кусками строки, «—» у узлов без модели. */
+  model: string[];
   /** Видов кадра: целый и тайлы; у узлов без тайлинга — 1. */
   views: number | null;
   /** Вызовов модели на кадр превью; у «Уточнения SAM» — кадр кодируется раз, рамки отдельно. */
@@ -52,18 +52,19 @@ export function nodeStats(nodes: SummaryNode[], frame: { w: number; h: number } 
   });
 }
 
-function modelOf(n: SummaryNode): string {
+function modelOf(n: SummaryNode): string[] {
   const p = n.params;
-  if (n.kind === "net") return n.weights ? `${n.weights.name} · ${num(p.imgsz) ?? n.weights.imgsz ?? 640}` : "веса не выбраны";
+  if (n.kind === "net") return n.weights ? [n.weights.name, String(num(p.imgsz) ?? n.weights.imgsz ?? 640)] : ["веса не выбраны"];
   if (n.kind === "text") {
     const m = textModel(p);
-    return m === "sam3" ? `SAM 3 · ${sam3Side(p)}` : `YOLOE-26 ${m} · ${num(p.imgsz) ?? TEXT_IMGSZ}${textHalf(p) ? " · fp16" : ""}`;
+    return m === "sam3" ? ["SAM 3", String(sam3Side(p))]
+      : [`YOLOE-26 ${m}`, String(num(p.imgsz) ?? TEXT_IMGSZ), ...(textHalf(p) ? ["fp16"] : [])];
   }
   if (n.kind === "sam") {
     const id = String(p.model ?? SAM_DEFAULTS.model);
-    return SAM_MODELS.find(([v]) => v === id)?.[1] ?? id;
+    return [SAM_MODELS.find(([v]) => v === id)?.[1] ?? id];
   }
-  return "—";
+  return ["—"];
 }
 
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);

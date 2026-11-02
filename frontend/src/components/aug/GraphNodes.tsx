@@ -18,6 +18,7 @@ import type { CatalogueNode, NodeKind } from "../../api/aug";
 import { Icon, cx } from "../../ui";
 import { branches, grid, inputsCount, times, weights, type Fit } from "./counts";
 import { kindOf, paramSummary, toneOf } from "./look";
+import { withSep } from "../Sep";
 
 /** Что редактор кладёт в провод: число на нём, подсветка и способ его убрать. */
 export interface WireData extends Record<string, unknown> {
@@ -103,7 +104,7 @@ function Card({ id, data, selected, sub, ins, outs, wide, children }: {
   id: string;
   data: NodeData;
   selected?: boolean;
-  sub?: string;
+  sub?: ReactNode;
   ins: string[];
   outs: string[];
   wide?: boolean;
@@ -136,7 +137,7 @@ const flowText = (d: NodeData) => (d.amount !== undefined ? ru(d.amount) : undef
 export function SourceNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
   const n = flowText(d);
-  return <Card id={id} data={d} selected={selected} sub={n ? `${n} кадров · условно` : "обучающая часть набора"} ins={[]} outs={["out"]} />;
+  return <Card id={id} data={d} selected={selected} sub={n ? withSep([`${n} кадров`, "условно"]) : "обучающая часть набора"} ins={[]} outs={["out"]} />;
 }
 
 export function InputNode({ id, data, selected }: NodeProps) {
@@ -152,7 +153,8 @@ export function OutputNode({ id, data, selected }: NodeProps) {
 
 export function AugNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
-  return <Card id={id} data={d} selected={selected} sub={paramSummary(d.catalogue, d.params) || undefined} ins={["in"]} outs={["out"]} />;
+  const p = paramSummary(d.catalogue, d.params);
+  return <Card id={id} data={d} selected={selected} sub={p.length ? withSep(p) : undefined} ins={["in"]} outs={["out"]} />;
 }
 
 export function FlowNode({ id, data, selected }: NodeProps) {
@@ -167,7 +169,7 @@ export function FlowNode({ id, data, selected }: NodeProps) {
 export function MultiplyNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
   const n = times({ id, type: "multiply", params: d.params });
-  return <Card id={id} data={d} selected={selected} sub={`×${n} · своё зерно у копии`} ins={["in"]} outs={["out"]} />;
+  return <Card id={id} data={d} selected={selected} sub={withSep([`×${n}`, "своё зерно у копии"])} ins={["in"]} outs={["out"]} />;
 }
 
 function SplitNode(kind: "split_share" | "split_prob", how: string) {
@@ -178,7 +180,7 @@ function SplitNode(kind: "split_share" | "split_prob", how: string) {
     const total = w.reduce((a, b) => a + b, 0) || 1;
     const shares = w.map((v) => `${Math.round((v / total) * 100)}`).join(" — ");
     return (
-      <Card id={id} data={d} selected={selected} sub={`${shares} · ${how}`} ins={["in"]}
+      <Card id={id} data={d} selected={selected} sub={withSep([shares, how])} ins={["in"]}
         outs={Array.from({ length: branches(node) }, (_, i) => `o${i}`)} />
     );
   };
@@ -192,7 +194,7 @@ function JoinNode(kind: "merge" | "order", how: string) {
     const d = data as NodeData;
     const n = inputsCount({ id, type: kind, params: d.params });
     return (
-      <Card id={id} data={d} selected={selected} sub={`${n} входа · ${how}`}
+      <Card id={id} data={d} selected={selected} sub={withSep([`${n} входа`, how])}
         ins={Array.from({ length: n }, (_, i) => `i${i}`)} outs={["out"]} />
     );
   };
@@ -204,7 +206,7 @@ export const OrderNode = JoinNode("order", "ветка за веткой");
 export function GroupNode({ id, data, selected }: NodeProps) {
   const d = data as NodeData;
   return (
-    <Card id={id} data={d} selected={selected} sub={d.group?.version ? `мой граф · версия ${d.group.version}` : "вложенный граф"}
+    <Card id={id} data={d} selected={selected} sub={d.group?.version ? withSep(["мой граф", `версия ${d.group.version}`]) : "вложенный граф"}
       ins={d.group?.in ?? ["in"]} outs={d.group?.out ?? ["out"]} />
   );
 }

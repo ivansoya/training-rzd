@@ -107,9 +107,11 @@ try {
   console.log("   поверх окна наложений:", await page.locator(".tp-veil").count());
   await letGo();
   await page.locator(".mag-up .mag-btn").click();
+  // Черта <Sep /> текста не даёт — читаем её как « · », чтобы сверять, что части разделены
+  const SEP_TEXT = (el) => { const c = el.cloneNode(true); c.querySelectorAll(".sep").forEach((s) => s.replaceWith(" · ")); return c.textContent; };
   const seen = new Set();
   await wait("450 изображений", async () => {
-    const line = await page.locator(".tp-upload-l").innerText().catch(() => "");
+    const line = await page.locator(".tp-upload-l").evaluate(SEP_TEXT).catch(() => "");
     if (line) seen.add(line.replace(/ · \d+ %$/, "").replace(/\s+/g, " "));
     if (seen.size === 2) await page.screenshot({ path: `${OUT}/drop-4-parts.png` });
     return ((await getTask()).sources?.files?.frames || 0) >= 450;

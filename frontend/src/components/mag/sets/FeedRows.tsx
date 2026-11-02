@@ -8,6 +8,7 @@ import type { Tag } from "../../../api/tags";
 import { Button, ChipToggle, Icon, Pill, Select } from "../../../ui";
 import { mult } from "../../aug/counts";
 import { ru } from "../../ru";
+import Sep from "../../Sep";
 import { TRAIN, VAL } from "./sets";
 
 const NONE = "none";
@@ -51,7 +52,7 @@ export function FeedRows({ part, rows, graphs, tags, preview, frames, onChange }
   const total = preview.filter((p) => p.part === part).reduce((a, p) => a + p.samples, 0);
   const graphOptions = [
     { value: NONE, label: "без графа — как есть" },
-    ...ready.map((g) => ({ value: g.version_id as string, label: `${g.name} · v${g.version}`, hint: mult(g.stats?.multiplier ?? 1) })),
+    ...ready.map((g) => ({ value: g.version_id as string, label: <>{g.name}<Sep />v{g.version}</>, hint: mult(g.stats?.multiplier ?? 1) })),
   ];
 
   return (
@@ -87,7 +88,7 @@ export function FeedRows({ part, rows, graphs, tags, preview, frames, onChange }
                     <Select label="Через что пропускаем" full icon={row.graph_version_id ? "workflow" : undefined}
                       value={row.graph_version_id ?? NONE} onChange={(v) => pickGraph(index, v === NONE ? null : v)}
                       options={graphOptions} />
-                  ) : <span className="tw-same">тот же граф{many && sources[bi] ? ` · «${sources[bi].name}»` : ""}</span>}
+                  ) : <span className="tw-same">тот же граф{many && sources[bi] ? <><Sep />«{sources[bi].name}»</> : null}</span>}
                   <span className="tw-cnt">
                     {got ? <>{ru(got.images)} → <b>{ru(got.samples)}</b>
                       {got.images > 0 && got.samples !== got.images && <span className="t-faint"> ×{(got.samples / got.images).toLocaleString("ru-RU", { maximumFractionDigits: 1 })}</span>}</> : ""}

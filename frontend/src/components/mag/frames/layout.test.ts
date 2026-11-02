@@ -62,7 +62,7 @@ describe("подписи проектов", () => {
   });
   it("строка списка считает приглашения и идущие обучения", () => {
     const live = proj({ last_run: { name: "x", status: "running", epoch: 1, epochs: 2, at: "" } });
-    expect(projectsLine([live, proj({})], 1)).toBe("2 проекта · 1 приглашение · обучение идёт в 1 проекте");
+    expect(projectsLine([live, proj({})], 1)).toEqual(["2 проекта", "1 приглашение", "обучение идёт в 1 проекте"]);
   });
   it("доля пустого проекта — ноль", () => {
     expect(doneShare({ done_count: 0, images_count: 0 })).toBe(0);

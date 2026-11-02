@@ -4,6 +4,7 @@ import type { Tag } from "../../../api/tags";
 import { Button, Check, Chip, ChipToggle, Icon, Input, Popover, Seg, Swatch, TriCheck } from "../../../ui";
 import type { Tri } from "../../../ui";
 import { ru } from "../../ru";
+import { withSep } from "../../Sep";
 
 export interface Filters {
   classes: number[];
@@ -130,7 +131,7 @@ export function FrameFilters({ f, set, classes, tags, splits, matched, total, su
               {strip.map((x) => <i key={x.c.id} style={{ flex: x.n, background: x.c.color }} title={x.c.name} />)}
             </span>
             <span className="t-xs t-muted">
-              {strip.slice(0, 3).map((x) => `${x.c.name} ${Math.round((x.n / sum) * 100)} %`).join(" · ")}
+              {withSep(strip.slice(0, 3).map((x) => `${x.c.name} ${Math.round((x.n / sum) * 100)} %`))}
             </span>
           </>
         )}

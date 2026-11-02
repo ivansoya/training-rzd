@@ -6,6 +6,7 @@ import { useNavigate } from "react-router-dom";
 import * as api from "../../api/aug";
 import { Button, Card, Empty, Input, MenuItem, Notice, PageHeader, Seg } from "../../ui";
 import { count } from "../ru";
+import { withSep } from "../Sep";
 import { useConfirm } from "../mag/tasks/Confirm";
 import GraphTable from "./GraphTable";
 import { freeName } from "./look";
@@ -90,7 +91,7 @@ export default function AugGraphList() {
   }, [all, q]);
   const inSets = all.filter((g) => g.used_by_sets > 0).length;
   const desc = graphs === null ? "Загружаю…"
-    : [count(all.length, "граф", "графа", "графов"), inSets ? `${inSets} в наборах` : ""].filter(Boolean).join(" · ");
+    : withSep([count(all.length, "граф", "графа", "графов"), inSets ? `${inSets} в наборах` : ""]);
 
   return (
     <div className="page">

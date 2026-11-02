@@ -7,6 +7,7 @@ import type { TaskLight } from "../../../auth/api";
 import { takeIntoTask } from "../../../api/gallery";
 import { Button, Icon, LinkButton, MenuItem, Popover } from "../../../ui";
 import { count, plural, ru } from "../../ru";
+import Sep, { withSep } from "../../Sep";
 
 export function TakeBar({ code, title, ids, unseen, onClear, onNew, onError }: {
   code: string;
@@ -23,7 +24,7 @@ export function TakeBar({ code, title, ids, unseen, onClear, onNew, onError }: {
 }) {
   const [tasks, setTasks] = useState<TaskLight[] | null>(null);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState<{ text: string; taskId: string } | null>(null);
+  const [done, setDone] = useState<{ text: string[]; taskId: string } | null>(null);
 
   const load = useCallback(() => {
     listTasks(code).then((r) => setTasks(r.tasks.filter((t) => t.fill))).catch(() => setTasks([]));
@@ -42,8 +43,8 @@ export function TakeBar({ code, title, ids, unseen, onClear, onNew, onError }: {
       onClear();
       setDone({
         taskId: t.id,
-        text: `В «${t.name}» ${plural(got.added, "ушёл", "ушли", "ушли")} ${count(got.added, "кадр", "кадра", "кадров")}`
-          + (skipped ? ` · пропущено ${ru(skipped)} — уже в тасках` : ""),
+        text: [`В «${t.name}» ${plural(got.added, "ушёл", "ушли", "ушли")} ${count(got.added, "кадр", "кадра", "кадров")}`,
+          skipped ? `пропущено ${ru(skipped)} — уже в тасках` : ""],
       });
     } catch (e) {
       onError((e as Error).message);
@@ -58,14 +59,14 @@ export function TakeBar({ code, title, ids, unseen, onClear, onNew, onError }: {
       {done && (
         <div className="fr-take-done" role="status">
           <Icon name="tick" size={14} />
-          <span>{done.text}</span>
+          <span>{withSep(done.text)}</span>
           <LinkButton size="sm" to={`/projects/${code}/tasks/${done.taskId}`}>Открыть таску</LinkButton>
         </div>
       )}
       {title !== null && (
         <div className="fr-take-bar">
           <Button variant="ghost" size="sm" icon="x" aria-label="Снять выбор и выйти из отбора" onClick={onClear} />
-          <span className="fr-take-ds t-ell">Отбор · {title}</span>
+          <span className="fr-take-ds t-ell">Отбор<Sep />{title}</span>
           <span>выбрано <b className="ui-mono">{ru(n)}</b></span>
           {unseen > 0 && <span className="t-xs t-muted">из них не видно {ru(unseen)}</span>}
           <i className="fr-take-sep" />

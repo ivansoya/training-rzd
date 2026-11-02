@@ -62,7 +62,7 @@ test("классы: таблица, группы, правка и судьба �
 
   await page.goto(`/projects/${project.code}/classes`);
   await expect(page.getByRole("heading", { level: 1, name: "Классы" })).toBeVisible();
-  await expect(page.getByText("2 класса · 6 боксов")).toBeVisible();
+  await expect(page.locator(".ui-ph-t p")).toHaveText(/^2 класса, 6 боксов$/);
   // вагон — кадры 0, 2, 4: два train и один val
   await expect(row(page, "вагон").locator("td").nth(3)).toHaveText("3");
   await expect(row(page, "вагон").locator("td").nth(4)).toHaveText("3");

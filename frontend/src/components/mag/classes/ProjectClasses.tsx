@@ -9,6 +9,7 @@ import {
   Button, Card, Empty, Input, MenuItem, Notice, Popover, Progress, Swatch, Table, cx,
 } from "../../../ui";
 import { count, pct, ru } from "../../ru";
+import { withSep } from "../../Sep";
 import { useProject } from "../ProjectShell";
 import { ClassPanel } from "./ClassPanel";
 import { ClassesHead } from "./ClassesHead";
@@ -75,7 +76,7 @@ export default function ProjectClasses() {
   const selectedGroup = panel?.kind === "group" ? superclasses.find((s) => s.id === panel.id) ?? null : null;
 
   const desc = classes.length
-    ? `${count(classes.length, "класс", "класса", "классов")} · ${count(boxes, "бокс", "бокса", "боксов")}`
+    ? withSep([count(classes.length, "класс", "класса", "классов"), count(boxes, "бокс", "бокса", "боксов")])
     : "Классов пока нет";
 
   return (
@@ -161,7 +162,7 @@ function Row({ cls, on, onOpen }: { cls: LabelClass; on: boolean; onOpen: () => 
       <td className="r ui-mono t-xs t-faint">{indexLabel(cls.class_index)}</td>
       <td className="r ui-mono">{cls.annotations ? ru(cls.annotations) : <span className="t-faint" title="Не встречен">—</span>}</td>
       <td className="r ui-mono">{cls.images ? ru(cls.images) : <span className="t-faint">—</span>}</td>
-      <td title={sp ? `train ${ru(sp.train)} · val ${ru(sp.val)}${sp.other ? ` · без сплита ${ru(sp.other)}` : ""}` : undefined}>
+      <td title={sp ? `train ${ru(sp.train)}, val ${ru(sp.val)}${sp.other ? `, без сплита ${ru(sp.other)}` : ""}` : undefined}>
         {share === null ? <span className="t-faint">—</span> : (
           <span className="row">
             <Progress value={share} max={0.3} color={share < VAL_LOW ? "var(--st-skip)" : "var(--c2)"}

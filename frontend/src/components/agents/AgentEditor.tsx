@@ -19,6 +19,7 @@ import type { GraphDoc, GraphEdge, GraphNode } from "../../api/aug";
 import { Badge, Button, Icon, LinkButton, MenuItem, Notice, Popover, Select, cx } from "../../ui";
 import { hasLayer } from "../../ui/useEscape";
 import { ago, count } from "../ru";
+import Sep, { withSep } from "../Sep";
 import { edgeKey, findCycle } from "../aug/counts";
 import * as hist from "../aug/history";
 import { WireDraft, edgeTypes, type WireData } from "../aug/GraphNodes";
@@ -889,7 +890,7 @@ function Editor() {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
               if (e.key === "Escape") setTitle(graph?.name ?? "");
             }} />
-          <span className={saveState !== "saved" && saveState !== "saving" ? "bad" : undefined} role="status">{sub.join(" · ")}</span>
+          <span className={saveState !== "saved" && saveState !== "saving" ? "bad" : undefined} role="status">{withSep(sub)}</span>
         </div>
         {readOnly && graph && <Badge icon="lock">{wanted ? "старая версия — только чтение" : "чужой агент — только чтение"}</Badge>}
         <span className="grow" />
@@ -902,7 +903,7 @@ function Editor() {
             ...versions.map((v) => ({
               value: v.id,
               label: `Версия ${v.version}`,
-              hint: [new Date(v.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).replace(".", ""), v.note].filter(Boolean).join(" · "),
+              hint: withSep([new Date(v.created_at).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).replace(".", ""), v.note]),
             })),
           ]} />
         <Button size="sm" icon="images" disabled={!graph?.mine || Boolean(flaw) || !preview.project} onClick={() => setSix(true)}
@@ -1066,7 +1067,7 @@ function Editor() {
         return (
           <div className="ui-pop ge-menu ae-hmenu" role="menu" style={{ left: humanMenu.x, top: humanMenu.y }}
             onPointerDown={(e) => e.stopPropagation()}>
-            <div className="ui-pop-h">{humanMenu.shape.cls} · ручная рамка</div>
+            <div className="ui-pop-h">{humanMenu.shape.cls}<Sep />ручная рамка</div>
             <MenuItem icon="images" disabled={"why" in t} hint={"why" in t ? t.why : undefined}
               onSelect={() => { setHumanMenu(null); void addHuman(humanMenu.shape); }}>
               {"why" in t ? "В образцы класса" : `В образцы «${t.cls.name}»`}

@@ -382,7 +382,7 @@
 .mag-cv-lb.ghost.on { opacity: 1; border-style: solid; background: var(--bc); }
 .mag-cv-lb.ghost.on .mag-cv-mark { color: inherit; }
 
-/* Плашка проверки над нижней панелью: «Агент: 4 рамки на проверке · Подтвердить кадр · Отклонить все» */
+/* Плашка проверки над нижней панелью: «Агент: 4 рамки на проверке», «Подтвердить кадр», «Отклонить все» */
 .ed-review { bottom: 64px; padding: 4px 4px 4px 12px; gap: 8px; border-color: color-mix(in srgb, var(--agent) 55%, var(--border)); }
 .ed-review-t { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--fg); }
 .ed-review-t .ui-ic, .ed-review-t > i { color: var(--agent-fg); }
@@ -401,7 +401,7 @@
 .mag-fs-cell.agent { border-color: var(--agent-hi); }
 .mag-fs-cell.agent .mag-fs-n { color: var(--agent-fg); }
 
-/* Группа «Агент · на проверке» в панели объектов */
+/* Группа «Агент», через черту «на проверке», в панели объектов */
 .fe-agent .fe-sec-t .ui-ic { color: var(--agent-fg); }
 .fe-agent-g + .fe-agent-g { margin-top: 6px; }
 .fe-agent-h { display: flex; align-items: center; gap: 8px; min-height: 30px; padding: 0 2px 0 4px; font-size: 12.5px; font-weight: 500; color: var(--agent-fg); }

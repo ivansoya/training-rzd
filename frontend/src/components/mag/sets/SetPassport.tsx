@@ -5,6 +5,7 @@ import type { Run } from "../../../api/runs";
 import type { SetClass, TrainSet } from "../../../api/trainsets";
 import { Button, Icon, Legend, Pill, StackBar, Swatch } from "../../../ui";
 import { count, ru } from "../../ru";
+import Sep from "../../Sep";
 import { dec } from "../runs/runs";
 import { BuildProgress, SetBadge, WarnBadge, when } from "./SetList";
 import { SPLIT_MODE, TRAIN, VAL, bytes, map50Of, multiplier } from "./sets";
@@ -70,7 +71,7 @@ export function SetPassport({ set, code, classes, warnings, runs, canEdit, build
 
       {c && (
         <section>
-          <h5>Деление · {SPLIT_MODE[set.split_mode]}</h5>
+          <h5>Деление<Sep />{SPLIT_MODE[set.split_mode]}</h5>
           <StackBar height={12} label={`train ${c.train}, val ${c.val}`} parts={[
             { value: c.train, color: TRAIN, label: "train" }, { value: c.val, color: VAL, label: "val" },
           ]} />
@@ -96,14 +97,14 @@ export function SetPassport({ set, code, classes, warnings, runs, canEdit, build
       {classes.length > 0 && (
         <section>
           <h5>
-            <span>Классы · {classes.length}</span><span className="grow" />
+            <span>Классы<Sep />{classes.length}</span><span className="grow" />
             <Legend items={[{ label: "train", color: TRAIN }, { label: "val", color: VAL }]} />
           </h5>
           <div className="ts-cls">
             {classes.map((x) => {
               const thin = x.train > 0 && x.val <= THIN_VAL;
               return (
-                <div key={x.export_id} className="ts-cls-r" title={`train ${ru(x.train)} · val ${ru(x.val)} объектов`}>
+                <div key={x.export_id} className="ts-cls-r" title={`train ${ru(x.train)}, val ${ru(x.val)} объектов`}>
                   <Swatch color={x.color} />
                   <span className="t-ell">{x.name}</span>
                   {thin ? <span className="ts-thin" title={x.val ? `В val всего ${x.val} — метрика будет шумной` : "В val нет — качество не измерить"}>
@@ -142,7 +143,7 @@ function RunLine({ r, code, top }: { r: Run; code: string; top: boolean }) {
     <li>
       <Link to={`/projects/${code}/runs/${r.number}`} className={top ? "ts-run top" : "ts-run"}>
         <span className="ui-mono ts-run-no">№{r.number}</span>
-        <span className="ts-run-t"><span className="t-sm">{r.base_model} · {count(r.epochs, "эпоха", "эпохи", "эпох")}</span>
+        <span className="ts-run-t"><span className="t-sm">{r.base_model}<Sep />{count(r.epochs, "эпоха", "эпохи", "эпох")}</span>
           <span className="t-xs t-faint">{when(r.created_at)}</span></span>
         <span className="ts-run-m"><b className="ui-mono">{m != null ? dec(m) : "—"}</b><span>mAP50</span></span>
         <Icon name="chevR" size={14} />

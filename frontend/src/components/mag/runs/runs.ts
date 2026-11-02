@@ -159,7 +159,8 @@ export function paramText(key: string, value: unknown): string {
   return String(value);
 }
 
-export type ParamRow = [string, string];
+/** Значение — строкой или кусками через черту. */
+export type ParamRow = [string, string | string[]];
 
 /** Параметры прогона группами карточки «Параметры»: модель, обучение, данные, аугментации, железо. */
 export function paramGroups(run: Run, classes: number | null):
@@ -175,7 +176,7 @@ export function paramGroups(run: Run, classes: number | null):
   ];
   const cards = Number(p.gpus ?? 1);
   const train: ParamRow[] = TRAIN_KEYS.filter(has).map((k) => [PARAM_LABEL[k] ?? k,
-    k === "batch" && cards > 1 ? `${paramText(k, p[k])} на карту · общий ${paramText(k, Number(p[k]) * cards)}` : paramText(k, p[k])]);
+    k === "batch" && cards > 1 ? [`${paramText(k, p[k])} на карту`, `общий ${paramText(k, Number(p[k]) * cards)}`] : paramText(k, p[k])]);
   const c = run.set?.counts;
   const data: ParamRow[] = run.set ? [
     ["Набор", run.set.name],

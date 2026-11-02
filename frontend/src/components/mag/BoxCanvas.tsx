@@ -13,6 +13,7 @@ import { imageFileUrl, imagePreviewUrl } from "../../auth/api";
 import * as poly from "./polygon";
 import { inkOn } from "../editor/look";
 import { Icon } from "../../ui";
+import Sep from "../Sep";
 import type { Point, Ring } from "./polygon";
 import {
   HIT,
@@ -245,7 +246,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   height: number;
   boxes: CanvasShape[];
   labelOf: (classIndex: number) => { name: string; color: string };
-  /** Приписка к подписи рамки — агент, когда их на кадре несколько: «вагон · YOLOE-РСМ». */
+  /** Приписка к подписи рамки через черту — агент, когда их на кадре несколько: «вагон», «YOLOE-РСМ». */
   captionOf?: (index: number) => string | undefined;
   /** Индексы объектов, которые рисуются прерывисто: объект на кадре есть, но
    *  заслонён, и в разметку этот кадр не пойдёт. */
@@ -1286,7 +1287,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
               >
                 {s.pending && <Icon name="bot" size={12} className="mag-cv-mark" />}
                 {meta.name || s.class_index}
-                {captionOf?.(i) && <span className="mag-cv-ag"> · {captionOf(i)}</span>}
+                {captionOf?.(i) && <span className="mag-cv-ag"><Sep />{captionOf(i)}</span>}
                 {s.pending && s.conf != null && <b className="mag-cv-conf">{fmtConf(s.conf)}</b>}
               </span>
             );

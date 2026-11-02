@@ -5,6 +5,7 @@
 import type { CSSProperties } from "react";
 import { Swatch, cx } from "../../ui";
 import { count, ru } from "../ru";
+import Sep from "../Sep";
 import type { AgentKind } from "./look";
 import { MATCH_IOU, type Verdict } from "./verdict";
 
@@ -46,12 +47,12 @@ export default function AgentFound({ kind, title, verdict, colorOf, unchecked }:
           <div className="ae-vd-c miss"><b className="ui-mono">{ru(missed)}</b><small><i />не нашёл</small></div>
         </div>
         <p className="ae-vd-sum">
-          Точность <b className="ui-mono">{pct(hit, hit + wrong)}</b> · полнота <b className="ui-mono">{pct(hit, hit + missed)}</b>
-          <span> · совпадение рамок от IoU {String(MATCH_IOU).replace(".", ",")}</span>
+          Точность <b className="ui-mono">{pct(hit, hit + wrong)}</b><Sep />полнота <b className="ui-mono">{pct(hit, hit + missed)}</b>
+          <span><Sep />совпадение рамок от IoU {String(MATCH_IOU).replace(".", ",")}</span>
         </p>
         {v.byClass.length > 0 ? (
           <div className="ae-f-cls">
-            <div className="ae-f-h"><h5>По классам</h5><span className="ae-f-key">верно · ложных · не нашёл</span></div>
+            <div className="ae-f-h"><h5>По классам</h5><span className="ae-f-key">верно<Sep />ложных<Sep />не нашёл</span></div>
             {v.byClass.map((r) => {
               const all = r.hit + r.wrong + r.missed;
               return (
@@ -74,7 +75,7 @@ export default function AgentFound({ kind, title, verdict, colorOf, unchecked }:
         {v.skipped.length > 0 && (
           <p className="ae-vd-skip">
             Не сверяется — узел эти классы не ищет, их разметка на кадре скрыта:{" "}
-            {v.skipped.map((s) => `${s.cls} · ${count(s.count, "рамка", "рамки", "рамок")}`).join(", ")}
+            {v.skipped.map((s) => `${s.cls} (${count(s.count, "рамка", "рамки", "рамок")})`).join(", ")}
           </p>
         )}
       </>
@@ -85,7 +86,7 @@ export default function AgentFound({ kind, title, verdict, colorOf, unchecked }:
     <section className="ge-sec ae-found">
       <div className="ae-f-title">
         <b>Сверка с разметкой</b>
-        {title && <span className="t-ell" title={title}>{title} · на этом кадре</span>}
+        {title && <span className="t-ell" title={title}>{title}<Sep />на этом кадре</span>}
       </div>
       {body}
     </section>
