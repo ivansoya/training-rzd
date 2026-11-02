@@ -15,7 +15,7 @@ let tag = "";
 const check = (ok, what) => { console.log(`[${tag}] ${ok ? "OK  " : "FAIL"} ${what}`); if (!ok) bad.push(`${tag}: ${what}`); };
 
 const browser = await chromium.launch();
-const page = await browser.newPage({ viewport: { width: 1600, height: 1100 } });
+const page = await browser.newPage({ viewport: { width: +process.env.WIDTH || 1600, height: 1100 } });
 page.on("pageerror", (e) => bad.push(`ошибка страницы: ${e.message}`));
 await page.goto(BASE + "/");
 await page.evaluate((pass) => fetch("/api/auth/login", { method: "POST", headers: { "Content-Type": "application/json" },
@@ -58,6 +58,19 @@ for (const code of PROJECTS) {
   const bars = await page.locator(".ov-task-p .ui-stack").count();
   const legend = await page.locator(`${tasksCard} .ui-legend`).count();
   check((bars > 0) === (legend > 0), `легенда ${legend ? "есть" : "нет"} при полосах: ${bars}`);
+  // 29.10: колонка хода одной ширины — полосы с одного x, числа целиком, без слов, на имя не заезжают
+  const cols = await page.locator(".ov-tasks li").evaluateAll((lis) => lis.map((li) => {
+    const n = li.querySelector(".ov-task-n").getBoundingClientRect(), p = li.querySelector(".ov-task-p").getBoundingClientRect();
+    const w = li.querySelector(".ov-task-w").getBoundingClientRect(), m = li.querySelector(".ov-task-m").getBoundingClientRect();
+    const line = li.querySelector(".ov-task-p .tb-line"), bar = li.querySelector(".ov-task-p .ui-stack");
+    return { px: Math.round(p.left), pw: Math.round(p.width), bar: bar && Math.round(bar.getBoundingClientRect().left),
+      gap: Math.min(w.left - n.right, p.left - m.right), cut: line ? line.scrollWidth > line.clientWidth : false, line: line?.innerText ?? "" };
+  }));
+  check(new Set(cols.map((c) => c.px)).size === 1 && new Set(cols.map((c) => c.pw)).size === 1, `колонка хода одна (${cols.map((c) => `${c.px}+${c.pw}`).join(", ")})`);
+  check(new Set(cols.filter((c) => c.bar !== null).map((c) => c.bar)).size <= 1, `полосы с одного x (${cols.map((c) => c.bar).join(", ")})`);
+  check(cols.every((c) => !c.cut), `числа не обрезаны (${cols.map((c) => c.line).join(" | ")})`);
+  check(cols.every((c) => !/проверено|осталось|сделано/.test(c.line)), "без слов «проверено/осталось/сделано»");
+  check(cols.every((c) => c.gap >= 8), `правая колонка не заезжает на имя и источник (зазор ≥ ${Math.min(...cols.map((c) => Math.round(c.gap)))})`);
   await page.locator(tasksCard).screenshot({ path: `${OUT}/overview-${tag}-tasks.png` });
 
   if (await page.waitForSelector(".ov-gpu", { timeout: 15000 }).then(() => true, () => false)) {

@@ -162,6 +162,7 @@ describe("карточка таски (решения 14.10.2026)", () => {
   it("изображения: брак сделан, отложенные — значком, кадры агента — в «осталось»", () => {
     const l = cardLook("in_progress", { counts: counts({ total: 40, annotated: 20, empty: 5, skipped: 3, new: 12, deleted: 2, agent: 4 }), sources: src({ files: 42 }) });
     expect(text(l.line)).toBe("сделано 27 | осталось 12");
+    expect(text(l.short!)).toBe("27 / 42");
     expect(badges(l)).toEqual(["4 ждут проверки", "3 отложено"]);
     expect(l.parts.map((p) => p.value)).toEqual([20, 5, 2, 3, 12]);
   });
@@ -171,6 +172,7 @@ describe("карточка таски (решения 14.10.2026)", () => {
       .toBe("7 треков | 120 рамок");
     const l = cardLook("in_progress", { counts: counts({}), sources: src({ annotate: 1 }), videos: vids({ tracks: 1, boxes: 3, agent_done: 340, agent_left: 1408 }) });
     expect(text(l.line)).toBe("проверено 340 | осталось 1408");
+    expect(text(l.short!)).toBe("340 / 1748");
     expect(badges(l)).toEqual(["1 трек, 3 рамки"]);
   });
 
@@ -183,6 +185,7 @@ describe("карточка таски (решения 14.10.2026)", () => {
     const c = counts({ total: 4, annotated: 4, accepted: 4, video_accepted: 422, video: { total: 426, new: 4, skipped: 0, annotated: 422, empty: 0, deleted: 0, agent: 4 } });
     const l = cardLook("done", { counts: c, sources: src({ annotate: 1 }) });
     expect(text(l.line)).toBe("430 изображений | 426 в датасете");
+    expect(text(l.short!)).toBe("426 / 430");
     expect(badges(l)).toEqual(["4 ждут проверки"]);
     expect(text(cardLook("closed", { counts: counts({ total: 3, annotated: 3, accepted: 3 }), sources: src() }).line)).toBe("3 изображения в датасете");
   });

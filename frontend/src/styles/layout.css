@@ -148,7 +148,7 @@
 /* Таска — две строки: имя и когда размечали, источник с людьми и ход работы; линия между тасками, как в ленте */
 .ov-tasks { list-style: none; margin: 0; padding: 0; }
 .ov-tasks li {
-  display: grid; grid-template-columns: 8px minmax(0, 1fr) auto; grid-template-rows: 20px 18px; gap: 3px 10px; align-items: center;
+  display: grid; grid-template-columns: 8px minmax(0, 1fr) 180px; grid-template-rows: 20px 18px; gap: 3px 10px; align-items: center;
   padding: 11px 0; border-bottom: 1px solid var(--border); min-width: 0;
 }
 .ov-tasks li:first-child { padding-top: 0; }
@@ -158,10 +158,10 @@
 .ov-task-w { justify-self: end; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .ov-task-m { grid-column: 2; display: flex; align-items: center; gap: 6px; min-width: 0; }
 .ov-task-m .ui-ic { color: var(--faint); flex: none; }
-.ov-task-p { grid-column: 3; justify-self: end; display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+/* Колонка хода одной ширины во всех строках: полосы встают друг под другом, имя не теснится */
+.ov-task-p { grid-column: 3; display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; }
 .ov-task-p .ui-stack { width: 72px; flex: none; }
-/* Строка чисел обзора: потолок, чтобы правая колонка не съедала имя таски */
-.ov-task-p .tb-line { max-width: 240px; }
+.ov-task-p .tb-line { flex: 1; text-align: right; }
 .ov-task-m, .ov-task-p { transition: opacity .3s var(--ease); }
 .ov-task-m.stale, .ov-task-p.stale { opacity: .55; }
 .ov-sep { height: 1px; border: 0; margin: 4px 0; background: var(--border); }

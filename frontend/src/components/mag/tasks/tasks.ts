@@ -93,6 +93,8 @@ export interface CardBadge { text: string | string[]; title: string; tone?: stri
  *  счётом и значки по важности — что не влезет в строку, обрежется с конца. */
 export interface CardLook {
   parts: StackPart[]; line: (string | number)[][]; title: string; badges: CardBadge[]; quiet?: boolean;
+  /** Обзору — «сделано / всего» без слов (29.10.2026): смысл несут полоса и легенда. */
+  short?: (string | number)[][];
 }
 
 const plus = (a: Counts, b: Counts): Counts => Object.fromEntries(
@@ -119,7 +121,7 @@ export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sour
     const line = !images ? [["изображений нет"]]
       : ds === images ? [[images, ` ${word} в датасете`]] : [[images, ` ${word}`], [ds, " в датасете"]];
     waiting((c.agent || 0) + (c.video?.agent || 0));
-    return { parts: boardParts(plus(c, c.video ?? {})), line, title: flat(line), badges, quiet: !images };
+    return { parts: boardParts(plus(c, c.video ?? {})), line, title: flat(line), badges, quiet: !images, short: images ? [[ds, " / ", images]] : undefined };
   }
 
   const rolls = s.sources.annotate;
@@ -138,13 +140,14 @@ export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sour
     const line = [["сделано ", doneOf(c)], ["осталось ", c.new || 0]];
     const title = `Сделано ${ru(doneOf(c))}: размечено ${ru(c.annotated)}, фон ${ru(c.empty)}, брак ${ru(c.deleted || 0)}`
       + `${c.skipped ? `; отложено ${ru(c.skipped)}` : ""}; осталось ${ru(c.new)}${c.agent ? `, из них ${ru(c.agent)} ждут проверки агента` : ""}`;
-    return { parts: boardParts(c), line, title, badges };
+    return { parts: boardParts(c), line, title, badges, short: [[doneOf(c), " / ", framesOf(c) + (c.deleted || 0)]] };
   }
   if (rolls && checking) {
     badges.push({ text: made, title: made, icon: "film" });
     return {
       parts: [{ value: v.agent_done, color: "var(--agent-hi)", label: "Проверено" }, { value: v.agent_left, color: "var(--st-new)", label: "Ждёт проверки" }],
       line: [["проверено ", v.agent_done], ["осталось ", v.agent_left]], title: checkTitle, badges,
+      short: [[v.agent_done, " / ", v.agent_done + v.agent_left]],
     };
   }
   if (rolls) {

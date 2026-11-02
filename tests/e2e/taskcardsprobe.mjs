@@ -181,7 +181,8 @@ try {
     const n = li.querySelector(".ov-task-n")?.getBoundingClientRect();
     return { text: li.querySelector(".ov-task-p")?.textContent?.trim(), over: !!p && (p.right > r.right + 1 || (n && n.right > p.left + 1 && n.bottom > p.top && n.top < p.bottom)) };
   }));
-  check("обзор: строки тем же счётом, без наездов", ov.length > 0 && ov.every((x) => !x.over) && ov.some((x) => x.text?.startsWith("сделано")),
+  // Обзор с 29.10 — «сделано / всего» без слов
+  check("обзор: строки «сделано / всего», без наездов", ov.length > 0 && ov.every((x) => !x.over) && ov.some((x) => /^\d+ \/ \d+$/.test(x.text ?? "")),
     ov.map((x) => x.text).join(" | "));
   await page.screenshot({ path: `${OUT}/cards-overview.png`, fullPage: true });
   console.log("ошибки страницы:", errors.length ? errors : "нет");
