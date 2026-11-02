@@ -161,6 +161,8 @@ try {
       }
       const zone = [...card.querySelectorAll(".tb-zone > *")].map((x) => x.getBoundingClientRect());
       for (let i = 1; i < zone.length; i++) if (zone[i].top < zone[i - 1].bottom - 0.5) out.push(`${name}: строки зоны наезжают`);
+      // 29.10: значки переносятся рядами, а не режутся многоточием
+      for (const t of card.querySelectorAll(".tb-badges .t-ell")) if (t.scrollWidth > t.clientWidth + 1) out.push(`${name}: значок обрезан «${t.textContent}»`);
       const foot = card.querySelector(".tb-foot");
       if (foot && foot.scrollWidth > foot.clientWidth + 1) out.push(`${name}: подвал не влез`);
       const ln = card.querySelector(".tb-line");

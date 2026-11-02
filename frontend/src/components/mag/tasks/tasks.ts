@@ -90,7 +90,7 @@ export function boardParts(c: Counts): StackPart[] {
 /** Текст значка — строкой или кусками через черту. */
 export interface CardBadge { text: string | string[]; title: string; tone?: string; icon?: IconName; live?: boolean }
 /** Карточка таски на доске и в обзоре: полоса, строка кусками через черту (числа внутри куска — отдельно), подсказка с полным
- *  счётом и значки по важности — что не влезет в строку, обрежется с конца. */
+ *  счётом и значки по важности — что не влезет в ряд, переносится ниже. */
 export interface CardLook {
   parts: StackPart[]; line: (string | number)[][]; title: string; badges: CardBadge[]; quiet?: boolean;
   /** Обзору — «сделано / всего» без слов (29.10.2026): смысл несут полоса и легенда. */

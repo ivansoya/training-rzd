@@ -216,7 +216,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
   const zone = cx("tb-zone", v.stale && "stale", v.loading && "ui-shim", !v.has && !v.loading && "wait");
   const cls = cx("ui-card tb-card", movable && "movable", dragged && "dragged", landed && "landed");
   const face = s ? cardLook(t.status, s) : null;
-  // Идущий агент — первым значком (решение 29.10.2026): что не влезет, обрежется с конца
+  // Идущий агент — первым значком (решение 29.10.2026); не влезло в ряд — переносится, а не режется
   const badges = [...(t.agent ? agentBadges(t.agent) : []), ...(face?.badges ?? [])];
   if (t.status === "closed") {
     return (
@@ -240,8 +240,8 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
         <Icon name={s && (s.sources.cut || s.sources.annotate) ? "film" : "images"} size={14} />
         {s ? <span className="t-ell">{withSep(sourceLine(s.sources))}</span> : <i className="ui-sk pill" style={{ width: 120 }} />}
       </span>
-      {/* Три строки всегда — полоса, числа, значки: после загрузки высота карточки не меняется.
-          Каждая — в одну строку с многоточием: перенос ложился на соседнюю строку */}
+      {/* Три строки всегда — полоса, числа, значки; числа в одну строку с многоточием.
+          Значки переносятся рядами: карточка растёт, только когда их больше ряда */}
       <span className={zone}>
         {!face ? (
           <>

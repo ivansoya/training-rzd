@@ -494,28 +494,25 @@ a.pcard:hover { border-color: var(--input); }
 .tb-nums { display: flex; gap: 10px; flex-wrap: wrap; font: 500 11.5px var(--mono); color: var(--muted-fg); }
 .tb-nums span { display: inline-flex; align-items: center; gap: 4px; }
 .tb-nums i { width: 7px; height: 7px; border-radius: 2px; }
-.tb-badges { display: flex; gap: 6px; flex-wrap: nowrap; overflow: hidden; min-width: 0; }
-/* Значок сжимается с многоточием, а не режется посреди буквы; полный текст — в подсказке.
-   Сжимается только последний — значки идут по важности. Даже сжатие на доли пикселя ставит многоточие,
-   поэтому у первых ровно 0 */
-.tb-badges > .ui-badge { flex: 0 0 auto; min-width: 0; }
-.tb-badges > .ui-badge:last-child { flex-shrink: 1; }
-.tb-badges > .ui-badge > .t-ell { min-width: 0; }
-/* Числа карточки: три строки постоянной высоты — полоса, числа, значки, — заготовка и итог одной высоты.
+/* Значки переносятся рядами, а не режутся с края (29.10.2026): обрезанным уходил и «вопрос», и ход агента.
+   Один ряд держим всегда — у заготовки та же высота; лишние ряды карточка получает, когда пришли числа */
+.tb-badges { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 6px; min-height: 20px; min-width: 0; }
+/* Значок шире самой карточки (узкая колонка) переносит текст внутри себя: сперва он уходит на свой ряд,
+   сжимается и переносит слова, только когда и там не влез */
+.tb-badges > .ui-badge { flex: 0 1 auto; min-width: 0; max-width: 100%; height: auto; min-height: 20px; padding-block: 2px; box-sizing: border-box; }
+.tb-badges > .ui-badge > .t-ell { min-width: 0; white-space: normal; line-height: 15px; }
+/* Числа карточки: полоса и строка чисел постоянной высоты, значки — сколько рядов надо.
    Колонка minmax(0, 1fr): строка в одну линию иначе раздвигала бы сетку шире карточки */
-.tb-zone { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 6px 17px 20px; gap: 10px; align-items: center; min-width: 0; }
+.tb-zone { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: 6px 17px auto; gap: 10px; align-items: center; min-width: 0; }
 /* Строка чисел — всегда одна: перенос ложился на значки (строки зоны фиксированной высоты) */
 .tb-line { display: block; min-width: 0; font-size: 12px; line-height: 17px; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .tb-line b { font-weight: 600; color: var(--fg); }
 .tb-line.quiet { color: var(--faint); }
-/* Узкая карточка (5 колонок на окне до ~1500 px): строке чисел — две строки, значкам — два ряда, подвалу — два ряда.
-   Высота зависит только от ширины, а не от пришедших чисел: карточка после загрузки не прыгает */
+/* Узкая карточка (5 колонок на окне до ~1500 px): строке чисел — две строки, подвалу — два ряда */
 .tb-card { container-type: inline-size; }
 @container (max-width: 180px) {
-  .tb-zone { grid-template-rows: 6px 34px 46px; }
+  .tb-zone { grid-template-rows: 6px 34px auto; }
   .tb-line { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-  .tb-badges { flex-wrap: wrap; align-content: flex-start; row-gap: 6px; height: 46px; }
-  .tb-badges > .ui-badge { flex-shrink: 1; }
   .tb-foot { flex-direction: column; gap: 2px; }
   .tb-when { align-self: flex-start; max-width: 100%; flex-shrink: 1; }
   /* Закрытая — нарочно в одну строку: многоточие и подсказка */
