@@ -16,7 +16,7 @@ import { useProject } from "../ProjectShell";
 import { useConfirm } from "./Confirm";
 import { CreateTaskModal } from "./CreateTaskModal";
 import {
-  BOARD, STATUS, agentBadges, boardColumns, boxedRecently, cardLook, closePlan, closeText, handoverText, sourceLine, statusNote,
+  BOARD, STATUS, agentBadges, boardColumns, boxedRecently, cardLook, closePlan, closeText, handoverText, questionBadge, sourceLine, statusNote,
   teamLine, waitingOf,
 } from "./tasks";
 import { look, useTaskBoard } from "./useTaskBoard";
@@ -217,7 +217,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
   const cls = cx("ui-card tb-card", movable && "movable", dragged && "dragged", landed && "landed");
   const face = s ? cardLook(t.status, s) : null;
   // Идущий агент — первым значком (решение 29.10.2026); не влезло в ряд — переносится, а не режется
-  const badges = [...(t.agent ? agentBadges(t.agent) : []), ...(face?.badges ?? [])];
+  const badges = [...(t.agent ? agentBadges(t.agent) : []), ...questionBadge(t.questions), ...(face?.badges ?? [])];
   if (t.status === "closed") {
     return (
       <Link to={to} className={cx(cls, "closed")} draggable={false}>

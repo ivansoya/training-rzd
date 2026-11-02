@@ -816,6 +816,89 @@ class TaskEvent(Base):
     user: Mapped[User | None] = relationship()
 
 
+class TaskQuestion(Base, AuditMixin):
+    """Вопрос в разметке (решение 29.10.2026): обсуждение спорного места таски.
+
+    Место — изображение таски или кадр ролика, объект на нём — по желанию.
+    Открытый держит своё место в таске: изображение и кадр ролика при «Готово»
+    в датасет не уходят (`common.questions.holds`), а «Закрыть» отказывает.
+    Живёт в таске и в датасет не едет.
+    """
+
+    __tablename__ = "task_questions"
+    __table_args__ = (sa.Index("ix_task_questions_task", "task_id", "status"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    image_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("images.id", ondelete="SET NULL"), nullable=True
+    )
+    video_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_videos.id", ondelete="SET NULL"), nullable=True
+    )
+    frame_no: Mapped[int | None] = mapped_column(sa.Integer)
+    # Объект без внешнего ключа: запись кадра стирает рамки и вставляет их с прежними id,
+    # ключ обнулял бы ссылку на каждой правке. Есть ли объект — проверяем при чтении.
+    object_id: Mapped[uuid.UUID | None] = mapped_column(sa.Uuid)
+    # ann — рамка изображения, track — трек ролика, box — одиночная рамка кадра ролика
+    object_kind: Mapped[str | None] = mapped_column(sa.String(8))
+    class_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("classes.id", ondelete="SET NULL"), nullable=True
+    )
+    # Место текстом: ролик при закрытии удаляется, а обсуждение помнит «ролик.mp4, 0:23»
+    place: Mapped[str] = mapped_column(sa.String(300), nullable=False)
+    time_ms: Mapped[int | None] = mapped_column(sa.Integer)
+    status: Mapped[str] = mapped_column(sa.String(8), nullable=False, default="open", server_default="open")
+    resolved_by: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+    # Последнее сообщение — по нему список свежими сверху
+    last_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, default=utcnow)
+
+
+class QuestionMessage(Base):
+    """Сообщение обсуждения; первое — сам вопрос."""
+
+    __tablename__ = "question_messages"
+    __table_args__ = (sa.Index("ix_question_messages_q", "question_id", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_questions.id", ondelete="CASCADE"), nullable=False
+    )
+    author_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        sa.DateTime(timezone=True), nullable=False, default=utcnow
+    )
+    edited_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True))
+
+
+class QuestionInbox(Base):
+    """Колокольчик: что человеку пришло по вопросам. Строка на вопрос — последнее событие;
+    уходит, когда обсуждение открыли или решили."""
+
+    __tablename__ = "question_inbox"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    question_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("task_questions.id", ondelete="CASCADE"), primary_key=True
+    )
+    # new — новый вопрос в вашей таске, reply — ответ в обсуждении, где вы писали
+    kind: Mapped[str] = mapped_column(sa.String(8), nullable=False)
+    message_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("question_messages.id", ondelete="SET NULL"), nullable=True
+    )
+    at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False, default=utcnow)
+
+
 class EmailConfirmation(Base):
     """One-shot token behind the confirmation link sent at registration.
     Only the SHA-256 of the token is stored; rows expire after 24 h."""
@@ -1015,7 +1098,7 @@ class GpuLease(Base):
     spread: Mapped[bool] = mapped_column(
         sa.Boolean, nullable=False, default=False, server_default=sa.false()
     )
-    # Что из задачи лежит в этой части: «SAM 3 · вход 1008».
+    # Что из задачи лежит в этой части: «SAM 3, вход 1008».
     label: Mapped[str | None] = mapped_column(sa.String(80))
     # Бронь процессора: человек разрешил задаче считать на нём (решение 11.10.2026), карты нет.
     on_cpu: Mapped[bool] = mapped_column(

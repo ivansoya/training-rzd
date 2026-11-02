@@ -15,6 +15,7 @@ import { setImageTags, setVideoTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
 import { runContext } from "../../../api/agents";
 import type { RunMode, RunView } from "../../../api/agents";
+import type { Question } from "../../../api/questions";
 import { Button, Notice, Progress, Sheet, cx, hasLayer } from "../../../ui";
 import { count, plural, ru } from "../../ru";
 import AgentRunDialog, { AgentRunBar } from "../../agents/AgentRunDialog";
@@ -24,6 +25,8 @@ import { useAgentTool } from "../../editor/AgentTool";
 import Sep from "../../Sep";
 import ScoutOverview from "../../agents/ScoutOverview";
 import { useScouts } from "../../agents/scout";
+import { openByVideo } from "../questions/questions";
+import { useQuestions } from "../questions/useQuestions";
 import AnnotationEditor, { saveSettled } from "../AnnotationEditor";
 import UploadImagesModal from "../UploadImagesModal";
 import VideoAnnotator from "../VideoAnnotator";
@@ -32,6 +35,7 @@ import { useConfirm } from "./Confirm";
 import { AddMenu, AnnotateCard, CutCard, DropVeil, FramesCard, TaskEmpty } from "./Sources";
 import type { AgentHooks } from "./Sources";
 import { droppedFiles, kindOf, parts, useFileDrag, zoneKind } from "./drop";
+import { questionGo } from "./taskQuestions";
 import type { Zone } from "./drop";
 import { EventList, TaskPassport } from "./TaskPassport";
 import type { FrameState } from "./tasks";
@@ -61,6 +65,9 @@ async function allImages(taskId: string, params: { status?: string; source?: str
   return out;
 }
 
+/** К «Вопросам» паспорта: место вопроса не открыть или «Закрыть» упёрлось в открытые. */
+const toQuestions = () => document.getElementById("task-questions")?.scrollIntoView({ behavior: "smooth", block: "center" });
+
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && !!t.closest("input, textarea, select, button, a, [contenteditable='true'], [role='option']");
 
@@ -82,19 +89,31 @@ export default function TaskPage() {
   const [picked, setPicked] = useState<File[] | null>(null);
   const [history, setHistory] = useState(false);
   const [confirm, confirmNode] = useConfirm();
+  // Один список вопросов на страницу и оба редактора
+  const qs = useQuestions(taskId, me.user.id);
+  // Текст отказа «Закрыть» из-за открытых вопросов — у такой ошибки кнопка к ним
+  const [refused, setRefused] = useState<string | null>(null);
 
   // Открытый кадр живёт в адресе (?frame=<id>): «Назад» закрывает редактор
   const [editing, setEditing] = useState<{ list: TaskImage[]; index: number } | null>(null);
   const [search, setSearch] = useSearchParams();
   const frameParam = search.get("frame");
+  // Открытый вопрос (?q=<id>) — колокольчик и строки «Вопросов»: редактор встаёт на его обсуждение
+  const qParam = search.get("q");
   const pushed = useRef(false);
   const setFrame = useCallback((id: string | null, replace: boolean) => {
     setSearch((prev) => {
       const next = new URLSearchParams(prev);
-      if (id) next.set("frame", id); else next.delete("frame");
+      // Редактор закрыт — вопрос из адреса отыгран
+      if (id) next.set("frame", id); else { next.delete("frame"); next.delete("q"); }
       return next;
     }, { replace });
   }, [setSearch]);
+  const dropQ = useCallback(() => setSearch((prev) => {
+    const next = new URLSearchParams(prev);
+    next.delete("q");
+    return next;
+  }, { replace: true }), [setSearch]);
   const openEditor = useCallback((list: TaskImage[], index: number) => {
     setEditing({ list, index });
     setFrame(list[index].id, false);
@@ -164,11 +183,44 @@ export default function TaskPage() {
     allImages(taskId, {}).then((list) => {
       if (!alive) return;
       const at = list.findIndex((i) => i.id === frameParam);
-      if (at >= 0) setEditing({ list, index: at }); else setFrame(null, true);
+      if (at >= 0) { setEditing({ list, index: at }); return; }
+      pushed.current = false;
+      setFrame(null, true);
+      // Кадра вопроса в таске нет (сдан, убран) — показываем вопрос в паспорте
+      if (qParam) { qs.read(qParam); toQuestions(); }
     }).catch((e) => setError((e as Error).message));
     return () => { alive = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frameParam, taskId]);
+
+  // Вопрос в адресе — открываем его место один раз: кадр через ?frame, ролик — редактором ролика
+  const doneQ = useRef<string | null>(null);
+  const qList = qs.list;
+  const taskVideos = task?.videos;
+  useEffect(() => {
+    if (!qParam) { doneQ.current = null; return; }
+    if (!qList || !taskVideos || doneQ.current === qParam) return;
+    doneQ.current = qParam;
+    const q = qList.find((x) => x.id === qParam);
+    const go = questionGo(q, taskVideos);
+    if (go && "image" in go) { if (frameParam !== go.image) setFrame(go.image, true); return; }
+    if (go) { setReviewing(false); setAnnotating(go.video); return; }
+    if (q) qs.read(q.id);
+    dropQ();
+    toQuestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qParam, qList, taskVideos]);
+
+  /** Строка «Вопросов»: кадр — шагом истории, как обычный вход в редактор; ролик — на месте. */
+  const openQuestion = (q: Question) => {
+    setSearch((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set("q", q.id);
+      if (q.image_id) next.set("frame", q.image_id);
+      return next;
+    }, { replace: !q.image_id });
+    pushed.current = !!q.image_id;
+  };
 
   // Редактор закрылся — перечитываем таску: он уже отправил последнюю правку
   const wasEditing = useRef(false);
@@ -204,7 +256,11 @@ export default function TaskPage() {
   const guard = useCallback(async (fn: () => Promise<void>) => {
     setBusy(true);
     setError(null);
-    try { await fn(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
+    try { await fn(); } catch (e) {
+      const text = (e as Error).message;
+      setError(text);
+      setRefused((e as { code?: string }).code === "open_questions" ? text : null);
+    } finally { setBusy(false); }
   }, []);
 
   // Сдача идёт фоном: её работа — в карточке таски, видна всем. Пока идёт — только просмотр.
@@ -463,6 +519,7 @@ export default function TaskPage() {
 
   const sources = buildSources(task, numbers?.by_source ?? null);
   const annotateVideos = task.videos.filter((v) => v.mode === "annotate");
+  const asked = openByVideo(qs.list ?? []);
   // Ход агента — в блоке, по которому он идёт
   const live = agentBusy ? agentRun : null;
   const runOn = (frames: string | null, videos: string[], modes: RunMode[]) =>
@@ -495,7 +552,7 @@ export default function TaskPage() {
   const cards = [
     ...sources.map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (
       <CutCard key={b.key} block={b} look={numbersLook} taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable}
-        run={runOn(b.key, (b.videos || []).map((v) => v.id), ["frames", "scout"])} agent={agent}
+        run={runOn(b.key, (b.videos || []).map((v) => v.id), ["frames", "scout"])} agent={agent} asked={asked}
         onAnnotate={() => openFiltered({ source: b.key })} onReview={() => review(b.key)}
         onCut={setCutting} onDelete={removeVideo} onVideoTags={saveVideoTags}
         onTagCreated={(t) => setTags((p) => [...p, t])} />
@@ -508,7 +565,7 @@ export default function TaskPage() {
       <AnnotateCard key="annotate" videos={annotateVideos} working={opened.length > 0} handing={!!handJob || !!watched} pending={pending} fresh={page.fresh.videos} at={page.at}
         classes={numbers?.classes ?? []}
         taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable}
-        run={runOn(null, annotateVideos.map((v) => v.id), ["annotate", "scout"])} here={here} people={members} agent={agent}
+        run={runOn(null, annotateVideos.map((v) => v.id), ["annotate", "scout"])} here={here} people={members} agent={agent} asked={asked}
         onAdd={() => onAdd("annotate")} onOpen={(v) => openVideo(v)} onReview={(v) => openVideo(v, true)}
         onDelete={removeVideo} onVideoTags={saveVideoTags}
         onTagCreated={(t) => setTags((p) => [...p, t])} />
@@ -532,7 +589,12 @@ export default function TaskPage() {
         </div>
       </div>
 
-      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+      {error && (
+        <Notice tone="error" onClose={() => setError(null)}
+          action={error === refused && <Button size="sm" variant="outline" icon="question" onClick={toQuestions}>К вопросам</Button>}>
+          {error}
+        </Notice>
+      )}
       {notice && <Notice tone="ok" onClose={() => setNotice(null)}>{notice}</Notice>}
       {agentRun && <AgentRunBar taskId={task.id} run={agentRun} onRun={onRun} onFinished={load} />}
       {upload?.error && <Notice tone="error" onClose={() => dismissUploadError(task.id)}>{upload.error}</Notice>}
@@ -557,8 +619,8 @@ export default function TaskPage() {
           {dragOn && (!empty || !fillable) && <DropVeil drag={dragOn} refusal={refusal} onAdd={onAdd} onDrop={drop} />}
         </div>
         <TaskPassport task={task} numbers={numbers} numbersLook={numbersLook} pendingFrames={pendingFrames} pendingLook={pendingLook}
-          events={events} workers={workers} busy={busy || !!handJob || !!watched} handing={handing}
-          onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
+          events={events} workers={workers} busy={busy || !!handJob || !!watched} handing={handing} questions={qs.list}
+          onQuestion={openQuestion} onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
           onAssign={(ids) => void reassign(ids)} onHistory={() => setHistory(true)} />
       </div>
 
@@ -599,11 +661,13 @@ export default function TaskPage() {
       )}
       {annotating && (
         <VideoAnnotator code={code!} taskId={task.id} taskName={task.name} video={annotating} readOnly={!editable} review={reviewing} people={members}
-          onClose={() => { setAnnotating(null); void load(); }} />
+          questions={qs} question={qParam}
+          onClose={() => { setAnnotating(null); void load(); if (qParam) dropQ(); }} />
       )}
       {editing && editing.list[editing.index] && (
         <AnnotationEditor code={code!} scope={{ kind: "task", taskId: task.id, taskName: task.name }} images={editing.list} index={editing.index}
           readOnly={!editable} canTag={task.rights.tag_frames} tags={tags} people={members}
+          questions={qs} question={qParam}
           onTags={(imageId, ids) => void saveImageTags(imageId, ids)}
           onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
           onIndex={(i) => {

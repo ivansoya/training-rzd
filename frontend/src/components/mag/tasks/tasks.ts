@@ -401,3 +401,11 @@ export function agentBadges(a: NonNullable<TaskLight["agent"]>): CardBadge[] {
   return [{ text: what, title, tone: "var(--agent-fg)", icon: "bot", live: true },
     { text: [`${runPct(a)} %`, leftText(a, "")!], title, tone: "var(--agent-fg)" }];
 }
+
+/** Значок открытых вопросов — после хода агента, раньше «ждут проверки» (решение 29.10.2026). */
+export function questionBadge(q: TaskLight["questions"]): CardBadge[] {
+  if (!q?.open) return [];
+  const who = q.last_by ? `${q.last_by}, ` : "";
+  return [{ text: count(q.open, "вопрос", "вопроса", "вопросов"), icon: "question", tone: "var(--q)",
+    title: `${count(q.open, "открытый вопрос", "открытых вопроса", "открытых вопросов")}\nпоследний: ${who}${ago(q.last_at)}` }];
+}

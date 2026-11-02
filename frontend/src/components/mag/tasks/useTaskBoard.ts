@@ -113,6 +113,13 @@ export function useTaskBoard(code: string, me: string, pick?: (list: TaskLight[]
     }, 15000);
   });
   useEffect(() => () => window.clearTimeout(agentTimer.current), []);
+  // Вопросы в разметке — значок на карточке: перечитываем лёгкий список через пару секунд, пачкой
+  const askTimer = useRef<number | undefined>(undefined);
+  useLive("question", () => {
+    if (askTimer.current !== undefined) return;
+    askTimer.current = window.setTimeout(() => { askTimer.current = undefined; void refresh([]); }, 2000);
+  });
+  useEffect(() => () => window.clearTimeout(askTimer.current), []);
 
   /** Карточка переезжает сразу; ответ сервера её поправит. */
   const patch = useCallback((id: string, fields: Partial<TaskLight>) => {

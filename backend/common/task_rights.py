@@ -58,6 +58,19 @@ def joins_on_take(status, target, assignees):
     return status == "queued" and target == "in_progress" and not assignees
 
 
+def can_ask(status, role):
+    """Вопрос задаёт и отвечает любой, кто видит таску, — и наблюдатель (решение 29.10.2026):
+    обсуждение данных не меняет. Закрытая таска — только чтение."""
+    return status != "closed" and role in ("viewer", "editor", "admin")
+
+
+def can_settle(status, role, me, assignees, author):
+    """«Решено», «Открыть снова» и удаление обсуждения: автор вопроса и те, кто правит таску."""
+    if status == "closed":
+        return False
+    return me == author or role == "admin" or (_editor(role) and me in assignees)
+
+
 def rights(status, role, me, assignees, author):
     """Всё сразу — для ответа клиенту."""
     return {
@@ -66,4 +79,5 @@ def rights(status, role, me, assignees, author):
         "tag_frames": can_tag_frame(status, role, me, assignees),
         "moves": sorted(moves(status, role, me, assignees)),
         "assign": role == "admin" and status != "closed",
+        "ask": can_ask(status, role),
     }

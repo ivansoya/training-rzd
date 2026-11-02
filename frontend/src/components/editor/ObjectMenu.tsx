@@ -32,7 +32,7 @@ export default function ObjectMenu({
   onDelete?: () => void;
   deleteLabel?: string;
   onClose: () => void;
-  /** Откуда объект: «Разметил: агент X vN, уверенность 0,82 · запустил …». */
+  /** Откуда объект: «Разметил: агент X vN, уверенность 0,82», ниже «запустил …». */
   note?: ReactNode;
 }) {
   const box = useRef<HTMLDivElement>(null);

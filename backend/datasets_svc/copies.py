@@ -11,7 +11,7 @@ import uuid
 
 from sqlalchemy import delete, insert, select
 
-from common import config, task_frames
+from common import config, questions, task_frames
 from common.models import Annotation, Dataset, Image, ImageTag
 
 SUBDIRS = ("images", "thumbs", "preview")
@@ -150,6 +150,9 @@ def hand_over(db, task, drop):
     ).scalars()}
     waiting = set(db.execute(select(Annotation.image_id).where(
         Annotation.image_id.in_([c.id for c in copies]), Annotation.pending.is_(True))).scalars())
+    # Копия с открытым вопросом тоже ждёт: спорное на исходник не ложится (решение 29.10.2026)
+    waiting |= set(db.execute(select(Image.id).where(
+        Image.id.in_([c.id for c in copies]), questions.holds())).scalars())
     place = {}
     for c in copies:
         o = originals.get(c.origin_image_id)

@@ -8,12 +8,13 @@ import type { ScoutLane } from "../agents/scout";
 import { hiddenRanges, keyAt, trackEnd } from "../mag/trackMath";
 import { extensionFrame, visibleSpans } from "../mag/timelineMath";
 import { ru } from "../ru";
+import { firstLine } from "../mag/questions/questions";
 import { ClassFilter, shownOf } from "./ClassFilter";
 import type { FilterEntry } from "./ClassFilter";
 import { classKey } from "./filter";
 import { nearestTick } from "./review";
 import { clampView, clockText, scoutHeat, timeTicks, zoomAt, zoomText } from "./video";
-import type { View } from "./video";
+import type { AskTick, View } from "./video";
 import type { Chunk } from "./chunks";
 
 export interface LaneAction {
@@ -31,7 +32,7 @@ type Label = (ci: number) => { name: string; color: string };
 
 export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selected, editable, hidden, filter,
   covered, marks, plan, singles, agent, scout, scouted, scoutDots, scoutOpen, view, onView, onWidth, chunks, loaded, inFlight, loading,
-  onScout, onSelect, onHide, onAction, onSeek }: {
+  asks = [], onAsk, onScout, onSelect, onHide, onAction, onSeek }: {
   /** Треки, прошедшие фильтр классов (выбранный — всегда). */
   tracks: VideoTrack[];
   numbers: Map<string, number>;
@@ -71,6 +72,10 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   inFlight: number | null;
   /** Разметка ещё грузится — «Разметка грузится» в углу шкалы. */
   loading: boolean;
+  /** Открытые вопросы ролика: риска на дорожке трека, прочие — на линейке с пузырьком. */
+  asks?: AskTick[];
+  /** Щелчок по риске вопроса — к его кадру и обсуждению. */
+  onAsk?: (id: string) => void;
   onScout: () => void;
   onSelect: (id: string) => void;
   onHide: (id: string) => void;
@@ -174,6 +179,19 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   const flt = shownOf([...filter.classes, ...filter.agent], filter.off);
   const fltOn = flt.shown < flt.total;
   const showAll = <Button variant="ghost" size="sm" onClick={() => filter.onChange(new Set())}>Показать все</Button>;
+  // Дорожки трека нет (снят фильтром, разведка, трек удалён) — вопрос о нём остаётся на линейке
+  const laneIds = new Set(scoutOpen ? [] : tracks.map((t) => t.id));
+  const askTick = (a: AskTick, pin = false) => (
+    <i key={a.q.id} className="ve-q" style={{ left: pct(a.frame) }} title={`Кадр ${a.frame}: ${firstLine(a.q)}`}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        onAsk?.(a.q.id);
+      }}>
+      {pin && <span className="q-pin"><Icon name="question" size={10} /></span>}
+    </i>
+  );
 
   return (
     <div className="ve-tl" aria-label="Дорожки" ref={root}>
@@ -208,6 +226,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
             {ticks.map((k) => (
               <span key={k.frame} className={cx("ve-tick", k.frame === 0 && view.from === 0 && "first")} style={{ left: pct(k.frame) }}>{clockText(k.t)}</span>
             ))}
+            {asks.filter((a) => !a.track || !laneIds.has(a.track)).map((a) => askTick(a, true))}
             <i className="ve-ph head" style={{ left: pct(frame) }} aria-hidden="true" />
           </div>
         </div>
@@ -247,7 +266,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
           title="Рамки и контуры одного кадра; щелчок по риске — к кадру">
           <TickLane {...tickLane} hatched frames={singles.map((x) => x.frame)} kind="single"
             color={(k) => labelOf(singles[k].ci).color}
-            label={(f, k) => `${labelOf(singles[k].ci).name || "объект"} · кадр ${f}`} />
+            label={(f, k) => `${labelOf(singles[k].ci).name || "объект"}, кадр ${f}`} />
         </Row>
       </div>
 
@@ -288,7 +307,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
             <div className="ve-l" {...pointer}
               onPointerDown={(e) => begin(e, e.altKey && editable ? "hide" : "seek", t.id)}
               onDoubleClick={(e) => {
-                if (editable && !(e.target as HTMLElement).closest(".ve-kf,.ve-grip")) onAction({ kind: "add-key", trackId: t.id, frame: at(e.clientX) });
+                if (editable && !(e.target as HTMLElement).closest(".ve-kf,.ve-grip,.ve-q")) onAction({ kind: "add-key", trackId: t.id, frame: at(e.clientX) });
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
@@ -336,6 +355,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
               {g && g.drag.kind !== "seek" && (g.drag.kind === "hide"
                 ? <i className="ve-hid ghost" style={span(Math.min(g.frame, g.drag.from), Math.max(g.frame, g.drag.from))} />
                 : <i className="ve-ghost" style={{ left: pct(g.frame) }} />)}
+              {asks.filter((a) => a.track === t.id).map((a) => askTick(a))}
               {head}
             </div>
           </div>
@@ -503,9 +523,9 @@ export function ZoomBar({ view, last, onZoom, onFit }: { view: View; last: numbe
   const whole = view.len >= Math.max(1, last);
   return (
     <span className="ve-zoom" role="group" aria-label="Масштаб дорожек">
-      <Button variant="ghost" size="sm" icon="minus" aria-label="Мельче" title="Мельче · Ctrl+колесо" disabled={whole} onClick={() => onZoom(0.5)} />
+      <Button variant="ghost" size="sm" icon="minus" aria-label="Мельче" title="Мельче (Ctrl+колесо)" disabled={whole} onClick={() => onZoom(0.5)} />
       <b className="ui-mono">{zoomText(view, last)}</b>
-      <Button variant="ghost" size="sm" icon="plus" aria-label="Крупнее" title="Крупнее · Ctrl+колесо" onClick={() => onZoom(2)} />
+      <Button variant="ghost" size="sm" icon="plus" aria-label="Крупнее" title="Крупнее (Ctrl+колесо)" onClick={() => onZoom(2)} />
       <Button variant="ghost" size="sm" disabled={whole} onClick={onFit} title="Весь ролик на ширину дорожек">Весь</Button>
     </span>
   );

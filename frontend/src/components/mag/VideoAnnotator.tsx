@@ -33,6 +33,10 @@ import type {
   VideoTrack,
 } from "../../auth/api";
 import { scoutStats } from "../../api/agents";
+import type { Question } from "../../api/questions";
+import { QuestionCompose } from "./questions/QuestionThread";
+import type { QuestionsApi } from "./questions/useQuestions";
+import { atPlace } from "./questions/questions";
 import type { RunView, ScoutStats } from "../../api/agents";
 import { Button, Notice, hasLayer } from "../../ui";
 import BoxCanvas, { fmtConf } from "./BoxCanvas";
@@ -66,14 +70,14 @@ import { digitClass, isTyping, ownsArrows } from "../editor/look";
 import type { KeyGroup } from "../editor/look";
 import { LaneMenu, Lanes, ZoomBar } from "../editor/Lanes";
 import type { LaneAction } from "../editor/Lanes";
-import { HereSide, Transport } from "../editor/VideoPanels";
+import { HereSide, QuestionsSide, Transport } from "../editor/VideoPanels";
 import { ReviewBar, ScoutBar } from "../editor/ReviewBars";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
 import { agentGroups, isTaken, nextFrame, scoutFrameAt, settlePending } from "../editor/review";
 import { useClassFilter } from "../editor/ClassFilter";
 import { agentKey, agentShown, classKey, countClasses } from "../editor/filter";
 import {
-  DOCK_DEFAULT, annotatedFrames, clampDock, coveredSpans, followView, fullView, itemKey, seekToTrack, singleAgent, singleTicks, trackNumbers, zoomAt,
+  DOCK_DEFAULT, annotatedFrames, askTicks, askedHere, clampDock, coveredSpans, followView, fullView, itemKey, seekToTrack, singleAgent, singleTicks, trackNumbers, zoomAt,
 } from "../editor/video";
 import type { Item, View } from "../editor/video";
 import { chunkAt, chunkPlan, nextChunk } from "../editor/chunks";
@@ -114,6 +118,10 @@ const KEYS: KeyGroup[] = [
     ["Enter", "Подтвердить кадр; при выбранной находке разведки — взять её в разметку"],
     ["Shift+[ / Shift+]", "Предыдущий и следующий кадр на проверке"],
     ["Правка рамки", "Поправленная рамка агента считается проверенной"],
+  ] },
+  { title: "Вопросы", keys: [
+    ["C", "Вопрос к выбранному объекту на этом кадре, без выбора — к кадру"],
+    ["Alt+[ / Alt+]", "Предыдущий и следующий кадр с открытым вопросом"],
   ] },
   { title: "Вид", keys: [
     ["Колесо", "Зум"],
@@ -185,6 +193,8 @@ export default function VideoAnnotator({
   review = false,
   onClose,
   people,
+  questions,
+  question = null,
 }: {
   code: string;
   taskId: string;
@@ -196,6 +206,10 @@ export default function VideoAnnotator({
   onClose: () => void;
   /** Участники проекта — имя соседа, чью правку подтянули. */
   people: TaskPerson[];
+  /** Вопросы таски — один экземпляр на страницу; нет — вопросов в редакторе нет. */
+  questions?: QuestionsApi;
+  /** Открыть на кадре этого вопроса с развёрнутым обсуждением. */
+  question?: string | null;
 }) {
   const fps = video.fps || 25;
 
@@ -1392,6 +1406,67 @@ export default function VideoAnnotator({
     }));
   }, [items, boxes, frozen, auto, refine, editSingle]);
 
+  // --- вопросы (решения 29.10.2026) ---------------------------------------- #
+  // Вопрос привязан к кадру; объект — трек или одиночная из `items`: там только пришедшие с сервера, с id
+  const [asking, setAsking] = useState<{
+    n: number; frame: number; label: string; color?: string; object?: { id: string; kind: "track" | "box" };
+  } | null>(null);
+  const [focusQ, setFocusQ] = useState<string | null>(null);
+  const qList = questions?.list;
+  const canAsk = !!questions?.canAsk;
+  const asks = useMemo(() => askTicks(qList ?? [], video.id), [qList, video.id]);
+  const askedIdx = useMemo(() => askedHere(qList ?? [], video.id, frame, items), [qList, video.id, frame, items]);
+  // При проигрывании панель не разворачивает обсуждение на один кадр — моргала бы на каждом вопросе
+  const qAt = playing ? null : frame;
+  const qHere = useMemo(() => {
+    const at = qAt === null ? [] : atPlace(qList ?? [], { video_id: video.id, frame_no: qAt });
+    return [...at.filter((q) => q.id === focusQ), ...at.filter((q) => q.id !== focusQ)];
+  }, [qList, video.id, qAt, focusQ]);
+
+  /** C и меню: объект — вопрос к нему на этом кадре, null — к кадру. Свежая рамка без id ждёт сохранения. */
+  const askAbout = useCallback((i: number | null) => {
+    if (!canAsk) return;
+    const it = i === null ? null : items[i];
+    if (i !== null && !it) return;
+    // n — новое поле при каждом C: autoFocus снова ставит курсор в вопрос
+    const n = Date.now();
+    if (!it) { setAsking({ n, frame, label: "кадр целиком" }); return; }
+    const c = labelOf((it.kind === "track" ? it.track.class_index : it.box.class_index) ?? -1);
+    setAsking(it.kind === "track"
+      ? { n, frame, label: `${trackName(it.track, labelOf)} #${numbers.get(it.track.id) ?? ""}`, color: c.color,
+          object: { id: it.track.id, kind: "track" } }
+      : { n, frame, label: c.name || "объект", color: c.color, object: { id: it.box.id, kind: "box" } });
+  }, [canAsk, items, frame, labelOf, numbers]);
+
+  const sendAsk = useCallback(async (text: string) => {
+    if (!asking || !questions) return;
+    const { frame: at, object } = asking;
+    const q = await questions.ask(
+      { video_id: video.id, frame_no: at, ...(object ? { object_id: object.id, object_kind: object.kind } : {}) }, text);
+    if (q) { setAsking(null); setFocusQ(q.id); }
+  }, [asking, questions, video.id]);
+
+  /** Риска, строка панели или вопрос со страницы таски — к его кадру, обсуждение развёрнуто. */
+  const toQuestion = useCallback((q: Question) => {
+    if (q.frame_no === null) return;
+    setFocusQ(q.id);
+    if (q.frame_no !== frame) { stop(); setFrame(q.frame_no); }
+  }, [frame, stop]);
+
+  const goAsked = useCallback((dir: 1 | -1) => {
+    const to = nextFrame(asks.map((a) => a.frame), frame, dir);
+    if (to !== null) { stop(); setFrame(to); }
+  }, [asks, frame, stop]);
+
+  // Пришли со страницы таски к вопросу — встаём на его кадр, один раз на вопрос
+  const aimed = useRef<string | null>(null);
+  useEffect(() => {
+    const q = question ? qList?.find((x) => x.id === question && x.video_id === video.id) : undefined;
+    if (!q || aimed.current === q.id) return;
+    aimed.current = q.id;
+    toQuestion(q);
+  }, [question, qList, video.id, toQuestion]);
+
   // --- клавиши ------------------------------------------------------------- #
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -1404,12 +1479,19 @@ export default function VideoAnnotator({
         e.preventDefault();
         return;
       }
+      // Alt+[ ] — соседний кадр с открытым вопросом; [ ] и Shift+[ ] остаются своими
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === "BracketLeft" || e.code === "BracketRight")) {
+        goAsked(e.code === "BracketLeft" ? -1 : 1);
+        e.preventDefault();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const step = e.shiftKey ? 10 : 1;
       switch (e.code) {
         case "Escape":
           if (autoPrev || autoPts.length) clearAuto();
           else if (ghostOn !== null) setGhostOn(null);
+          else if (asking) setAsking(null);
           else if (tool !== "select") setTool("select");
           else if (selected !== null || pickedTrack) pick(null);
           else void closeEditor();
@@ -1439,6 +1521,7 @@ export default function VideoAnnotator({
         case "KeyE": toggleEmpty(); break;
         case "KeyR": if (scoutAll.length) toggleScout(); break;
         case "KeyK": putKey(); break;
+        case "KeyC": askAbout(selected); break;
         case "Digit0": canvas.current?.fit(); break;
         case "Delete":
         case "Backspace":
@@ -1472,7 +1555,7 @@ export default function VideoAnnotator({
     };
   }, [tool, frozen, autoPrev, autoPts, clearAuto, closeEditor, togglePlay, go, auto.state, pickAuto,
       selected, pickedTrack, pick, apply, items, classes, pickClass, commitAuto, toggleEmpty, putKey,
-      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent, undoStep]);
+      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent, undoStep, goAsked, askAbout, asking]);
 
   // --- масштаб дорожек ------------------------------------------------------ #
   // Окно масштаба; null — весь ролик. Ширина дорожек — от самих дорожек (ограничение 12 px на кадр).
@@ -1514,8 +1597,11 @@ export default function VideoAnnotator({
   /** Меню объекта: проверка и контур — первой группой, превращения — второй. */
   function objectActions(i: number | null, part?: number): MenuAction[][] {
     const item = i === null ? undefined : items[i];
-    if (i === null || !item || frozen) return [];
-    const main: MenuAction[] = [];
+    if (i === null || !item) return [];
+    // Спросить можно и там, где править нельзя
+    const main: MenuAction[] = canAsk
+      ? [{ label: "Задать вопрос", icon: "question", hint: "C", run: () => { askAbout(i); setMenu(null); } }] : [];
+    if (frozen) return [main];
     if (item.kind === "single" && item.box.pending) {
       main.push({ label: "Подтвердить", icon: "tick", agent: true, run: () => { confirmOne(i); setMenu(null); } });
     }
@@ -1621,6 +1707,7 @@ export default function VideoAnnotator({
             height={video.height || 1}
             boxes={draft ?? boxes}
             dashed={dashed}
+            asked={askedIdx}
             hiddenItems={hiddenIdx}
             labelOf={labelOf}
             editable={!frozen && !shown.lagging}
@@ -1716,6 +1803,14 @@ export default function VideoAnnotator({
                 if (k !== null && ghosts[k]) canvas.current?.reveal(ghosts[k]);
               }}
               onTake={frozen ? undefined : (_k, as) => take("one", as)} />
+            {questions && (
+              <QuestionsSide qs={questions} here={qHere} rest={asks.filter((a) => a.frame !== qAt).map((a) => a.q)}
+                total={asks.length} focus={focusQ} onPick={toQuestion}
+                compose={asking && (
+                  <QuestionCompose key={asking.n} label={asking.label} color={asking.color} onAsk={sendAsk}
+                    onCancel={() => setAsking(null)} />
+                )} />
+            )}
           </Float>
 
           {autoPrev && (
@@ -1746,7 +1841,7 @@ export default function VideoAnnotator({
             speed={speed} quality={quality} qualities={clip.manifest?.qualities || []} empty={emptyState}
             frozen={viewOnly} canKey={!!currentTrack && !!stateAt(currentTrack, frame)}
             onGo={go} onPlay={togglePlay} onSpeed={(v) => changeSpeed(v, frame)} onQuality={setQuality}
-            onEmpty={toggleEmpty} onKey={putKey}
+            onEmpty={toggleEmpty} onKey={putKey} onAsk={canAsk ? () => askAbout(null) : undefined}
             zoom={<ZoomBar view={shownView} last={lastFrame} onZoom={zoomStep} onFit={() => setView(null)} />} />
           <Lanes tracks={laneTracks} numbers={numbers} filter={filter} frame={frame} lastFrame={lastFrame} fps={fps}
             labelOf={labelOf} selected={pickedTrack} editable={!viewOnly} hidden={hiddenTracks}
@@ -1755,6 +1850,7 @@ export default function VideoAnnotator({
             onScout={toggleScout}
             view={shownView} onView={setView} onWidth={setLaneW}
             chunks={chunks ?? []} loaded={loaded} inFlight={fetching} loading={!!skel && (chunks === null || loaded.size < chunks.length)}
+            asks={asks} onAsk={(id) => { const a = asks.find((x) => x.q.id === id); if (a) toQuestion(a.q); }}
             onSelect={selectTrack} onHide={(id) => toggleHidden(`t:${id}`)} onAction={onLane} onSeek={seek} />
         </div>
       </div>

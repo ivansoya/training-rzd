@@ -39,11 +39,13 @@ export function Who({ box }: { box?: TaskBox }) {
   );
 }
 
-export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selected, hidden, frozen,
+export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selected, hidden, frozen, asked,
   onSelect, onHide, onHideMany, onClass, onDelete, onAddContour, onConfirm }: {
   status: string;
   tags: ReactNode;
   boxes: CanvasShape[];
+  /** Номера объектов с открытым вопросом. */
+  asked?: Set<number>;
   labelOf: Label;
   meta: Map<string, TaskBox>;
   classes: LabelClass[];
@@ -82,6 +84,7 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
           onKeyDown={(e) => { if (e.key === "Enter") onSelect(on ? null : i); }}>
           <Swatch color={c.color} />
           <span className="t-ell grow">{c.name || `класс ${b.class_index}`}</span>
+          {asked?.has(i) && <Icon name="question" size={13} className="fe-obj-q" />}
           {b.parts && b.parts.length > 1 && <span className="t-xs t-faint">×{b.parts.length}</span>}
           {b.pending && b.conf != null
             ? <span className="ui-mono t-xs fe-conf">{fmtConf(b.conf)}</span>
@@ -179,7 +182,7 @@ export function FrameInfo({ rows }: { rows: ([ReactNode, ReactNode] | null | und
 }
 
 export function FrameBar({ index, total, of, canPrev, canNext, actions, status, onPrev, onNext,
-  onToggle, onTrash, onGo, trashLabel = "Брак", goLabel = "Далее" }: {
+  onToggle, onTrash, onGo, onAsk, trashLabel = "Брак", goLabel = "Далее" }: {
   /** Место в показанных кадрах; −1 — фильтр не оставил ни одного. */
   index: number;
   total: number;
@@ -194,6 +197,8 @@ export function FrameBar({ index, total, of, canPrev, canNext, actions, status, 
   onToggle: (s: "empty" | "skipped") => void;
   onTrash: () => void;
   onGo: () => void;
+  /** Вопрос к кадру целиком; нет — спрашивать здесь нельзя. */
+  onAsk?: () => void;
   /** В датасете брак — «Удалить из датасета». */
   trashLabel?: string;
   /** Нетронутая копия кадра датасета: «Далее» принимает её как есть. */
@@ -213,6 +218,9 @@ export function FrameBar({ index, total, of, canPrev, canNext, actions, status, 
       {actions.includes("skip") && (
         <Button variant="ghost" size="sm" kbd="S" className="fe-v skipped" aria-pressed={status === "skipped"}
           onClick={() => onToggle("skipped")}>Отложить</Button>
+      )}
+      {onAsk && (
+        <Button variant="ghost" size="sm" icon="question" kbd="C" className="fe-v ask" onClick={onAsk}>Вопрос</Button>
       )}
       {actions.includes("trash") && (
         <Button variant="ghost" size="sm" kbd="X" className="fe-v deleted" onClick={onTrash}>{trashLabel}</Button>

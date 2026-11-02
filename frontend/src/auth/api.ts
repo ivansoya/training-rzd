@@ -883,6 +883,8 @@ export interface TaskLight extends Omit<TaskSummary, "counts" | "rights"> {
   fill?: boolean;
   /** Идущий по таске агент — значок на карточке; null — не идёт. */
   agent?: Pick<RunView, "status" | "mode" | "cpu" | "processed" | "total" | "rate"> | null;
+  /** Открытые вопросы в разметке: сколько, кто и когда писал последним (решение 29.10.2026). */
+  questions?: { open: number; last_at: string; last_by?: string | null } | null;
 }
 
 /** Счётчики карточки доски: по одному запросу на таску. */

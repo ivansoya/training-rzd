@@ -19,6 +19,7 @@ import type { Dragged } from "./drop";
 import type { ReelState, SourceBlock, SourceCounts } from "./tasks";
 import { STATES, coverage, dayOf, etaText, leftText, reelLine, reelStates, runPct, runWord, stateParts } from "./tasks";
 import { hereNames } from "../here";
+import { questionsWord } from "../questions/questions";
 import type { Here } from "../here";
 import { look as lookOf } from "./useTaskBoard";
 import type { Fresh, Look } from "./useTaskBoard";
@@ -347,8 +348,13 @@ export function Rail({ parts, tone }: { parts: [number, number][]; tone?: "track
   );
 }
 
+/** Открытые вопросы ролика — значком у строки. */
+function Asked({ n }: { n?: number }) {
+  return n ? <Badge tone="var(--q)" icon="question">{questionsWord(n)}</Badge> : null;
+}
+
 /** Ролики на нарезку: общий счёт кадров и строка на каждый ролик со своим планом. */
-export function CutCard({ block, look, taskId, code, tags, editable, fillable, run, agent, onAnnotate, onReview,
+export function CutCard({ block, look, taskId, code, tags, editable, fillable, run, agent, asked, onAnnotate, onReview,
   onCut, onDelete, onVideoTags, onTagCreated }: {
   block: SourceBlock;
   look: Look;
@@ -361,6 +367,8 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
   fillable: boolean;
   run?: RunView | null;
   agent: AgentHooks;
+  /** Открытых вопросов по роликам. */
+  asked: Map<string, number>;
   onAnnotate: () => void;
   onReview: () => void;
   onCut: (v: TaskVideoItem) => void;
@@ -393,7 +401,7 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
       {fillable && <TagAll videos={videos} code={code} tags={tags} onVideoTags={onVideoTags} onTagCreated={onTagCreated} />}
       <div className="tp-reels">
         {videos.map((v) => (
-          <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={fillable}
+          <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={fillable} asked={asked.get(v.id)}
             agentState={<ReelAgent s={reels?.get(v.id)} scout={run?.mode === "scout"} />}
             menu={(editable || fillable) && (
               <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
@@ -448,8 +456,9 @@ function TagAll({ videos, code, tags, onVideoTags, onTagCreated }: {
   );
 }
 
-function ReelRow({ v, taskId, code, tags, editable, agentState, menu, onCut, onTags, onTagCreated }: {
+function ReelRow({ v, taskId, code, tags, editable, asked, agentState, menu, onCut, onTags, onTagCreated }: {
   v: TaskVideoItem;
+  asked?: number;
   /** Где ролик в прогоне агента — строкой под ним. */
   agentState: ReactNode;
   taskId: string;
@@ -472,7 +481,7 @@ function ReelRow({ v, taskId, code, tags, editable, agentState, menu, onCut, onT
         <b className="t-ell" title={v.file_name}>{v.file_name}</b>
         <span className="t-xs t-muted">{fmtTime(v.duration_ms || 0)}<Sep />{v.width}×{v.height}<Sep />{fmtBytes(v.size_bytes)}</span>
         <Rail parts={coverage(v)} />
-        <span className="tp-reel-s"><PrepareLine prepare={v.prepare} /></span>
+        <span className="tp-reel-s"><PrepareLine prepare={v.prepare} /><Asked n={asked} /></span>
       </div>
       <div className="tp-reel-c">
         <b className="ui-mono">{v.frames ? ru(v.frames) : "—"}</b>
@@ -523,7 +532,7 @@ function classOf(classes: TaskClass[], o: PendingObject): { name: string; color:
 }
 
 /** Ролики на разметку: каждый со своей шкалой, объектами и тем, что уйдёт при сдаче. */
-export function AnnotateCard({ videos, working, handing, pending, fresh, at, classes, taskId, code, tags, editable, fillable, run, here, people, agent, onAdd,
+export function AnnotateCard({ videos, working, handing, pending, fresh, at, classes, taskId, code, tags, editable, fillable, run, here, people, agent, asked, onAdd,
   onOpen, onReview, onDelete, onVideoTags, onTagCreated }: {
   videos: TaskVideoItem[];
   /** Таска не сдана: разметка роликов ещё уйдёт при сдаче, и у них есть сводка. */
@@ -547,6 +556,8 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
   here: Here;
   people: TaskPerson[];
   agent: AgentHooks;
+  /** Открытых вопросов по роликам. */
+  asked: Map<string, number>;
   onAdd: () => void;
   onOpen: (v: TaskVideoItem) => void;
   /** Открыть ролик на первом кадре с непроверенным агента. */
@@ -589,6 +600,7 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
                 {handing ? <Badge tone="var(--c1)" live>сдаётся</Badge>
                   : !working ? <Badge tone="var(--st-done)" icon="tick">сдан</Badge>
                   : names.length > 0 && <span className="tp-here"><Badge tone="var(--c1)" live title={who}><span className="t-ell">{who}</span></Badge></span>}
+                <Asked n={asked.get(v.id)} />
                 <span className="grow" />
                 {editable && !known && (
                   <Button variant="ghost" size="sm" icon="bot" className="is-agent" disabled>Проверить <span className="ui-sk pill" style={{ width: 34 }} /></Button>

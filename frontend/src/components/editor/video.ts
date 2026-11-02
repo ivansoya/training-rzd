@@ -1,6 +1,8 @@
 // Логика редактора видео «Дорожки снизу»: служебные дорожки, состояние трека на кадре, высота дока.
 
 import type { VideoSingleBox, VideoTrack } from "../../auth/api";
+import type { Question } from "../../api/questions";
+import { askedObjects, atPlace, open } from "../mag/questions/questions";
 import { hiddenRanges, keyAt, stateAt, trackEnd } from "../mag/trackMath";
 import { visibleSpans } from "../mag/timelineMath";
 import { agentShown, classKey } from "./filter";
@@ -54,6 +56,23 @@ export function singleTicks(singles: VideoSingleBox[]): { frame: number; ci: num
     out.push({ frame: s.frame_no, ci: s.class_index });
   }
   return out.sort((a, b) => a.frame - b.frame);
+}
+
+/** Открытый вопрос ролика на дорожках; `track` — дорожка вопроса о треке, null — линейка. */
+export interface AskTick { q: Question; frame: number; track: string | null }
+
+/** Открытые вопросы ролика по кадрам — риски дорожек, список панели и ход Alt+[ ]. */
+export function askTicks(list: Question[], videoId: string): AskTick[] {
+  return open(list)
+    .flatMap((q) => (q.video_id === videoId && q.frame_no !== null
+      ? [{ q, frame: q.frame_no, track: q.object_kind === "track" && !q.object_gone ? q.object_id : null }] : []))
+    .sort((a, b) => a.frame - b.frame);
+}
+
+/** Объекты кадра с открытым вопросом на этом же кадре — пузырёк на холсте: вопрос привязан к кадру. */
+export function askedHere(list: Question[], videoId: string, frame: number, items: Item[]): Set<number> {
+  const ids = askedObjects(atPlace(list, { video_id: videoId, frame_no: frame }));
+  return new Set(items.flatMap((it, i) => (ids.has(it.kind === "track" ? it.track.id : it.box.id) ? [i] : [])));
 }
 
 /** Кадры с одиночными рамками — любыми: на проверке, принятыми, своими; ход [ и ] (отзыв 20.10.2026:

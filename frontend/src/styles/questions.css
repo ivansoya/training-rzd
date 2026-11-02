@@ -1,0 +1,86 @@
+/* Вопросы в разметке (решения 29.10.2026, макет «Вопросы в разметке»): обсуждение, пузырёк, значки */
+.qt { display: flex; flex-direction: column; gap: 10px; padding: 11px 12px; border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--card); text-align: left; color: var(--fg); font: inherit; min-width: 0; }
+.qt.open { border-color: color-mix(in srgb, var(--q) 38%, transparent); }
+.qt-mini { gap: 5px; }
+.qt-mini:hover { background: color-mix(in srgb, var(--hover) 40%, var(--card)); }
+.qt-open { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 0; border: 0; background: none; color: inherit;
+  font: inherit; text-align: left; cursor: pointer; }
+.qt-act { display: flex; align-items: center; gap: 6px; }
+.qt-h { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.qt-at { flex: none; margin-left: auto; }
+.qt-h .ui-ic { color: var(--q); flex: none; }
+.qt-cls { display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 7px; border-radius: var(--r-sm);
+  background: var(--muted); font-size: 11.5px; white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.qt-cls i { width: 7px; height: 7px; border-radius: 2px; flex: none; }
+.qt-cls.quiet { color: var(--muted-fg); }
+.qt-line { font-size: 13px; }
+.qt-m { display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 8px; }
+.qt-m-h { display: flex; align-items: baseline; gap: 6px; font-size: 12px; min-width: 0; }
+.qt-m-h b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qt-m-h > span { color: var(--faint); font-size: 11.5px; white-space: nowrap; }
+.qt-m-act { margin-left: auto; display: inline-flex; gap: 8px; }
+.qt-m-act button { padding: 0; border: 0; background: none; color: var(--muted-fg); font: inherit; font-size: 11.5px; cursor: pointer; }
+.qt-m-act button:hover { color: var(--fg); }
+.qt-m p { margin: 3px 0 0; font-size: 13px; line-height: 18px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.qt-reply { display: flex; flex-direction: column; gap: 8px; }
+.qt-reply textarea { box-sizing: border-box; width: 100%; min-height: 58px; resize: vertical; padding: 8px 10px; border-radius: var(--r);
+  border: 1px solid var(--input); background: var(--bg); color: var(--fg); font: 13px/18px var(--font); }
+.qt-reply textarea:focus { outline: 2px solid var(--ring); outline-offset: -1px; }
+.qt-reply > .ui-btn { align-self: flex-end; }
+
+/* Пузырёк у объекта на холсте и в ленте: открытый вопрос */
+.q-pin { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50% 50% 50% 4px; background: var(--q);
+  color: #1a1600; box-shadow: 0 2px 6px rgb(0 0 0 / .5); pointer-events: none; }
+.q-pin .ui-ic { color: inherit; }
+/* На холсте — над правым верхним углом рамки, снаружи: на углу он закрывал ручку растяжки */
+.mag-cv-q { position: absolute; transform: translate(2px, calc(-100% - 2px)); z-index: 1; }
+
+/* Страница таски: «Вопросы» в паспорте — строки во всю ширину, всё в одну строку с многоточием */
+.tp-qs-h { display: flex; align-items: center; gap: 8px; }
+.tp-qs-h > .ui-ic { color: var(--q); }
+.tp-qs { display: flex; flex-direction: column; margin: 0 -18px; }
+.tp-q { display: flex; flex-direction: column; gap: 5px; min-width: 0; padding: 10px 18px; border: 0; border-top: 1px solid var(--border);
+  background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; transition: background .15s; }
+.tp-q:first-child { border-top: 0; }
+.tp-q:hover { background: var(--hover); }
+.tp-q.done { opacity: .55; }
+.tp-q-1, .tp-q-2 { display: flex; align-items: center; gap: 7px; min-width: 0; white-space: nowrap; }
+.tp-q-1 { font-size: 12.5px; color: var(--muted-fg); }
+.tp-q-1 > .ui-ic { flex: none; color: var(--faint); }
+.tp-q-1 > .t-ell, .tp-q-2 > .t-ell { flex: 1; min-width: 0; }
+.tp-q-1 > b { flex: none; font: 500 12px var(--mono); color: var(--fg); }
+.tp-q-2 { font-size: 13px; }
+.tp-q-2 > .qt-cls { flex: none; max-width: 50%; }
+.tp-q-3 { font-size: 11.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tp-held { display: flex; align-items: flex-start; gap: 6px; color: var(--q); }
+.tp-held > .ui-ic { flex: none; margin-top: 2px; }
+
+/* Колокольчик: вопрос или ответ — ссылка на место */
+.bell-q { display: grid; grid-template-columns: 28px minmax(0, 1fr); gap: 10px; align-items: start; margin: 0 -6px; padding: 10px 12px;
+  color: var(--fg); text-decoration: none; transition: background .15s; }
+.bell-q:hover { background: var(--hover); color: var(--fg); }
+.bell-qi { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; color: var(--q);
+  background: color-mix(in srgb, var(--q) 12%, transparent); }
+.bell-q .bell-t > * { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bell-q .bell-t > small { font-size: 11.5px; color: var(--faint); }
+
+/* Редактор кадров: раздел справа под объектами — своя прокрутка, объектам остаётся место */
+.fe-qs { flex: 0 1 auto; max-height: 60%; min-height: 0; overflow-y: auto; gap: 10px; border-top: 1px solid var(--border); border-bottom: 0;
+  scrollbar-width: thin; scrollbar-color: var(--input) transparent; }
+.fe-qs-n, .fe-obj-q, .fe-v.ask .ui-ic, .ed-omenu .lucide-message-circle { color: var(--q); }
+.fe-obj-q { flex: none; }
+/* Лента: пузырёк в правом верхнем углу, над обводкой текущего */
+.mag-fs-q { position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; z-index: 3; }
+/* Отбор «С вопросами» под «Классами»: подпись сжимается, число — нет */
+.fe-film-h { display: flex; flex-direction: column; gap: 6px; }
+.fe-qflt.on { border-color: color-mix(in srgb, var(--q) 60%, transparent); }
+.fe-flt.fe-qflt { padding: 0 6px; font-size: 12px; }
+.fe-qflt .ui-btn-l { min-width: 0; gap: 4px; }
+.fe-qflt-n { flex: none; color: var(--q); }
+
+/* Ролик: риска вопроса во всю высоту дорожки, на линейке — с пузырьком. Ниже ромбов: ключ на том же кадре тянется,
+   по бокам запас — в 3 px не целятся */
+.ve-q { position: absolute; top: 2px; bottom: 2px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--q); z-index: 1; cursor: pointer; }
+.ve-q::before { content: ""; position: absolute; inset: 0 -5px; }
+.ve-q .q-pin { position: absolute; left: 5px; top: 0; width: 16px; height: 16px; pointer-events: auto; }

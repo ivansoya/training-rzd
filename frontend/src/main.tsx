@@ -61,6 +61,7 @@ import "./styles/layout.css";
 import "./styles/graphed.css";
 import "./styles/cut.css";
 import "./styles/editor-ui.css";
+import "./styles/questions.css";
 
 // Один сайт. Старое приложение на /tools удалено вместе со своими файловыми
 // датасетами: всё, что оно умело, живёт теперь внутри проектов.

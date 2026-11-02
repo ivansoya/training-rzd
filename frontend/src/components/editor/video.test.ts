@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { VideoSingleBox, VideoTrack } from "../../auth/api";
+import type { Question } from "../../api/questions";
+import { nextFrame } from "./review";
 import {
-  annotatedFrames, clampDock, clampView, clockText, coveredSpans, followView, fullView, mergeSpans, presenceAt, scoutHeat, seekToTrack,
+  annotatedFrames, askTicks, askedHere, clampDock, clampView, clockText, coveredSpans, followView, fullView, mergeSpans, presenceAt, scoutHeat, seekToTrack,
   singleTicks, timeTicks, trackNumbers, zoomAt, zoomText,
 } from "./video";
 
@@ -143,5 +145,42 @@ describe("[ и ] — кадры с любыми одиночными", () => {
   it("фильтр классов: снятый класс прячет и пришедшие, и непроверенные из сводки; принятые неизвестного класса видны", () => {
     const off = new Set(["c:2"]);
     expect(annotatedFrames(marks, singles, loaded, off)).toEqual([5, 150, 170]);
+  });
+});
+
+describe("вопросы в ролике (решения 29.10.2026)", () => {
+  const q = (over: Partial<Question>): Question => ({
+    id: "q", status: "open", place: "x", image_id: null, video_id: "v", frame_no: 0, time_ms: null,
+    object_id: null, object_kind: null, object_gone: false, class: null, author: "А", author_id: "a",
+    created_at: "2026-10-29T10:00:00Z", last_at: "2026-10-29T10:00:00Z", resolved_by: null, resolved_at: null,
+    can_settle: true, messages: [], ...over,
+  });
+  const list = [
+    q({ id: "track", frame_no: 15, object_id: "t1", object_kind: "track" }),
+    q({ id: "box", frame_no: 40, object_id: "s40", object_kind: "box" }),
+    q({ id: "frame", frame_no: 5 }),
+    q({ id: "gone", frame_no: 15, object_id: "t9", object_kind: "track", object_gone: true }),
+    q({ id: "done", frame_no: 30, status: "resolved" }),
+    q({ id: "other", video_id: "w", frame_no: 7 }),
+  ];
+
+  it("риски: только открытые этого ролика по кадрам; дорожка — у живого трека, остальное на линейке", () => {
+    expect(askTicks(list, "v").map((t) => [t.q.id, t.frame, t.track])).toEqual([
+      ["frame", 5, null], ["track", 15, "t1"], ["gone", 15, null], ["box", 40, null],
+    ]);
+  });
+
+  it("Alt+[ ]: соседний кадр с открытым вопросом, решённые не держат", () => {
+    const frames = askTicks(list, "v").map((t) => t.frame);
+    expect(nextFrame(frames, 15, 1)).toBe(40);
+    expect(nextFrame(frames, 15, -1)).toBe(5);
+    expect(nextFrame(frames, 29, 1)).toBe(40);
+  });
+
+  it("пузырёк — у объекта только на кадре вопроса: трек по id трека, одиночная по своему id", () => {
+    const items = [{ kind: "track" as const, track: track(), hidden: false }, { kind: "single" as const, box: single(15) }];
+    expect(askedHere(list, "v", 15, items)).toEqual(new Set([0]));
+    expect(askedHere(list, "v", 16, items)).toEqual(new Set());
+    expect(askedHere(list, "v", 40, [{ kind: "single", box: single(40) }])).toEqual(new Set([0]));
   });
 });

@@ -55,6 +55,9 @@ import {
 } from "../editor/review";
 import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad } from "../editor/look";
 import type { KeyGroup } from "../editor/look";
+import type { QuestionsApi } from "./questions/useQuestions";
+import { askedObjects, atPlace, nextAsked, open as openOf } from "./questions/questions";
+import { QuestionCompose, QuestionThread } from "./questions/QuestionThread";
 
 /** Снимок истории правок: разметка кадра и сам кадр — история идёт сквозь кадры. */
 type Snap = { img: string; boxes: CanvasShape[] };
@@ -103,6 +106,12 @@ const KEYS: KeyGroup[] = [
     ["Shift+правая", "Убрать участок из показанного"],
   ] },
 ];
+
+/** Вопросы есть только в таске — в датасете группы не показываем. */
+const ASK_KEYS: KeyGroup = { title: "Вопросы", keys: [
+  ["C", "Вопрос к выбранному объекту, без выбора — к кадру"],
+  ["Alt+[ / Alt+]", "Предыдущий и следующий кадр с открытым вопросом"],
+] };
 
 const GREY = { name: "", color: "#9aa4ae" };
 const SIDE_W = 280;
@@ -163,6 +172,8 @@ export default function AnnotationEditor({
   onTagCreated,
   canTag,
   people,
+  questions,
+  question,
 }: {
   code: string;
   scope: EditorScope;
@@ -187,6 +198,10 @@ export default function AnnotationEditor({
   onTagCreated: (tag: Tag) => void;
   /** Участники проекта — имя соседа, чью правку подтянули. */
   people: TaskPerson[];
+  /** Вопросы таски — один список страницы; нет — вопросов здесь нет (датасет). */
+  questions?: QuestionsApi;
+  /** Обсуждение, ради которого открыли кадр, — развёрнуто в панели. */
+  question?: string | null;
 }) {
   const image = images[index];
   const taskId = scope.kind === "task" ? scope.taskId : null;
@@ -366,10 +381,25 @@ export default function AnnotationEditor({
   // Снятый класс, которого в кадрах нет, фильтра не включает: иначе пустые кадры выпали бы молча
   const off = useMemo(() => (fltEntries.some((e) => fltOff.has(e.key)) ? fltOff : NO_OFF), [fltEntries, fltOff]);
   const fltOn = off.size > 0;
-  /** Кадр в работе: подходит фильтру; текущий — всегда, выпадает при уходе с него. */
-  const passes = useCallback((i: number) => i === index || frameShown(images[i]?.boxes, off), [images, index, off]);
+
+  // Вопросы в разметке (решения 29.10.2026): пузырьки, раздел справа, отбор ленты «С вопросами»
+  const qList = questions?.list;
+  const askedIds = useMemo(() => askedObjects(qList ?? []), [qList]);
+  const askedImgs = useMemo(() => new Set(openOf(qList ?? []).flatMap((q) => (q.image_id ? [q.image_id] : []))), [qList]);
+  const askedN = useMemo(() => images.filter((im) => askedImgs.has(im.id)).length, [images, askedImgs]);
+  const askedIdx = useMemo(() => new Set(boxes.flatMap((b, i) => (b.id && askedIds.has(b.id) ? [i] : []))), [boxes, askedIds]);
+  const [onlyAsked, setOnlyAsked] = useState(false);
+  // Последний вопрос решили — отбор гаснет, а не оставляет ленту пустой
+  const askOnly = onlyAsked && askedN > 0;
+
+  /** Подходит отбору: классам и, если включено, открытому вопросу. */
+  const fits = useCallback((i: number) => frameShown(images[i]?.boxes, off) && (!askOnly || askedImgs.has(images[i]?.id ?? "")),
+    [images, off, askOnly, askedImgs]);
+  /** Кадр в работе: подходит отбору; текущий — всегда, выпадает при уходе с него. */
+  const passes = useCallback((i: number) => i === index || fits(i), [index, fits]);
   const shown = useMemo(() => images.map((_, i) => i).filter(passes), [images, passes]);
-  const none = fltOn && !shown.some((i) => frameShown(images[i].boxes, off));
+  const narrowed = fltOn || askOnly;
+  const none = narrowed && !shown.some(fits);
   const pos = none ? -1 : shown.indexOf(index);
 
   // Всё, что нужно записи, — через ref: запись стоит в очереди и может
@@ -564,6 +594,36 @@ export default function AnnotationEditor({
   const close = useCallback(async () => {
     if (await flush()) onClose();
   }, [flush, onClose]);
+
+  // Куда пишется новый вопрос; объект — по серверному id, его у только что нарисованного ещё нет
+  const [compose, setCompose] = useState<{ img: string; object?: string } | null>(null);
+  // Развёрнутое обсуждение: присланное страницей или только что заданное
+  const [qOpen, setQOpen] = useState(question ?? null);
+  useEffect(() => { if (question) setQOpen(question); }, [question]);
+  useEffect(() => { setCompose(null); }, [image?.id]);
+
+  /** C, «Вопрос», «Задать вопрос». Новый объект сперва записываем — вопрос держится за его id. */
+  const startAsk = useCallback(async (i: number | null) => {
+    const img = live.current.image;
+    if (!questions?.canAsk || !img) return;
+    setPanels(true);
+    if (i === null) { setCompose({ img: img.id }); return; }
+    if (!boxesRef.current[i]?.id && !(await flush())) return;
+    if (live.current.image?.id !== img.id) return;
+    // «new-…» — запасной номер фигуры, которую сервер отбросил
+    const id = boxesRef.current[i]?.id;
+    if (!id || id.startsWith("new-")) { setError("Объект не записан, вопрос к нему не задать"); return; }
+    setCompose({ img: img.id, object: id });
+  }, [questions?.canAsk, flush]);
+
+  /** Alt+[ ] — к соседнему кадру ленты с открытым вопросом. */
+  const goAsked = useCallback((dir: 1 | -1) => {
+    const cur = images[index];
+    if (!qList || !cur) return;
+    const key = nextAsked(qList, shown.map((i) => `i:${images[i].id}`), `i:${cur.id}`, dir);
+    const i = key ? images.findIndex((im) => `i:${im.id}` === key) : -1;
+    if (i >= 0) void jump(i);
+  }, [qList, images, index, shown, jump]);
 
   // Отказ сервера или чужая правка: свою не спасти — показать то, что записано.
   // При «stale» свежая разметка пришла в ответе, второго запроса не нужно.
@@ -1124,6 +1184,12 @@ export default function AnnotationEditor({
         e.preventDefault();
         return;
       }
+      // [ ] — с рамками, Shift — на проверке, Alt — с открытым вопросом
+      if (e.altKey && !e.ctrlKey && !e.metaKey && (e.code === "BracketLeft" || e.code === "BracketRight")) {
+        goAsked(e.code === "BracketLeft" ? -1 : 1);
+        e.preventDefault();
+        return;
+      }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       // Shift+P — «присоединить контур к выбранному». Единственное сочетание с
       // Shift, поэтому проверяем его до общего разбора, а не заводим ветку.
@@ -1160,6 +1226,7 @@ export default function AnnotationEditor({
         case "BracketLeft": goReview(-1); break;
         case "BracketRight": goReview(1); break;
         case "KeyG": void runAgent(); break;
+        case "KeyC": void startAsk(selected); break;
         case "ArrowRight": go(1); break;
         case "ArrowLeft": go(-1); break;
         case "KeyV":
@@ -1230,12 +1297,18 @@ export default function AnnotationEditor({
   }, [go, next, close, step, selected, selPart, splitParts, classes, tool, autoOn,
       addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
       pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty,
-      confirmFrame, goReview, runAgent, ds, emptyInDataset, dropFromDataset]);
+      confirmFrame, goReview, runAgent, ds, emptyInDataset, dropFromDataset, goAsked, startAsk]);
 
   /** Что можно сделать с объектом под правой кнопкой, кроме смены класса.
    *
    *  Действия появляются только когда им есть на чём сработать: пункт, который
    *  ничего не сделает, хуже отсутствующего — по нему нажимают и ждут. */
+  /** «Задать вопрос» — первым и в просмотре: спрашивают и те, кто не правит. */
+  function askActions(i: number | null): MenuAction[] {
+    if (i === null || !questions?.canAsk) return [];
+    return [{ label: "Задать вопрос", icon: "question", hint: "C", run: () => { setMenu(null); void startAsk(i); } }];
+  }
+
   /** Главное в меню объекта: проверка рамки агента и перевод рамки в контур. */
   function mainActions(i: number | null): MenuAction[] {
     const me = i === null ? undefined : boxes[i];
@@ -1340,6 +1413,11 @@ export default function AnnotationEditor({
   const shownStatus = ds && image.task_status === "new" && boxes.length ? "annotated" : image.task_status;
   const autoTitle = auto.state === "ready" ? undefined
     : auto.state === "error" ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}` : "Модель готовится…";
+  // Обсуждения кадра: развёрнуто выбранное, его нет здесь — первое открытое
+  const here = qList ? atPlace(qList, { image_id: image.id }) : [];
+  const expanded = (here.find((q) => q.id === qOpen) ?? here.find((q) => q.status === "open"))?.id;
+  const askAt = compose?.object ? boxes.find((b) => b.id === compose.object) : undefined;
+  const askLook = askAt && labelOf(askAt.class_index);
 
   return (
     <div className="ed fe" role="dialog" aria-modal="true" aria-label="Разметка кадров">
@@ -1349,7 +1427,7 @@ export default function AnnotationEditor({
         title={title}
         sub={<>
           Кадр <span className="ui-mono">{at < 0 ? "—" : ru(at + 1)}</span> из <span className="ui-mono">{ru(of)}</span>
-          {fltOn && <span className="t-faint"> ({ds ? "в группе" : "в таске"} {ru(ds ? ds.total : images.length)})</span>}<Sep />{image.file_name}
+          {narrowed && <span className="t-faint"> ({ds ? "в группе" : "в таске"} {ru(ds ? ds.total : images.length)})</span>}<Sep />{image.file_name}
         </>}
         extra={ds ? undefined :
           <div className="ed-prog" title={STATUS_LOOK.map((s) => `${s.label}: ${progress.counts[s.id]}`).join(", ")}>
@@ -1410,6 +1488,7 @@ export default function AnnotationEditor({
           height={ih}
           boxes={boxes}
           hiddenItems={hidden}
+          asked={askedIdx}
           labelOf={labelOf}
           editable={!frozen}
           tool={tool}
@@ -1509,6 +1588,13 @@ export default function AnnotationEditor({
                     Классы{fltOn && <span className="fr-fcount">{shownOf(fltEntries, fltOff).shown}</span>}
                   </Button>
                 } />
+              {questions && (
+                <Button variant="outline" size="sm" className={cx("fe-flt fe-qflt", askOnly && "on")}
+                  aria-pressed={askOnly} disabled={!askedN} title="Только кадры с открытым вопросом"
+                  onClick={() => setOnlyAsked(!askOnly)}>
+                  <span className="t-ell">С вопросами</span><span className="ui-mono fe-qflt-n">{ru(askedN)}</span>
+                </Button>
+              )}
             </div>
             {none ? (
               <div className="fe-film-none" style={{ width: filmW }}>
@@ -1520,7 +1606,7 @@ export default function AnnotationEditor({
                 vertical
                 items={shown.map((i) => {
                   const im = images[i];
-                  const out = i === index && !frameShown(im.boxes, off);
+                  const out = i === index && !fits(i);
                   return {
                     id: im.id,
                     width: im.width,
@@ -1530,6 +1616,7 @@ export default function AnnotationEditor({
                     ring: im.task_status + ((i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending)) ? " agent" : "")
                       + (out ? " out" : ""),
                     title: `${im.file_name} — ${im.annotations} разметок${out ? "; не по фильтру, уйдёт из ленты" : ""}`,
+                    asked: askedImgs.has(im.id),
                   };
                 })}
                 index={pos}
@@ -1571,6 +1658,7 @@ export default function AnnotationEditor({
               classes={classes}
               selected={selected}
               hidden={hidden}
+              asked={askedIdx}
               frozen={frozen}
               onSelect={(i) => { pick(i); if (i !== null && boxes[i]) canvas.current?.reveal(boxes[i]); }}
               onHide={(i) => setHidden((h) => {
@@ -1588,6 +1676,25 @@ export default function AnnotationEditor({
               onAddContour={(i) => { pick(i); setAddTo(i); setTool("polygon"); }}
               onConfirm={confirmOne}
             />
+            {questions && (here.length > 0 || compose) && (
+              <section className="fe-sec fe-qs">
+                <div className="fe-sec-t">Вопросы <span className="ui-mono fe-qs-n">{here.filter((q) => q.status === "open").length}</span></div>
+                {compose && (
+                  <QuestionCompose label={compose.object ? askLook?.name || "объект" : "Кадр целиком"} color={askLook?.color}
+                    onCancel={() => setCompose(null)}
+                    onAsk={async (text) => {
+                      const q = await questions.ask(compose.object
+                        ? { image_id: compose.img, object_id: compose.object, object_kind: "ann" }
+                        : { image_id: compose.img }, text);
+                      if (q) { setCompose(null); setQOpen(q.id); }
+                    }} />
+                )}
+                {here.map((q) => (
+                  <QuestionThread key={q.id} q={q} qs={questions} expanded={q.id === expanded} onExpand={() => setQOpen(q.id)} />
+                ))}
+                {questions.error && <Notice tone="error">{questions.error}</Notice>}
+              </section>
+            )}
           </Float>
         )}
 
@@ -1596,7 +1703,8 @@ export default function AnnotationEditor({
             {autoPrev ? (
               <AutoBar onCommit={commitAuto} onCancel={clearAuto} />
             ) : (
-              <FrameBar index={at} total={of} of={fltOn ? (ds ? ds.total : images.length) : undefined}
+              <FrameBar index={at} total={of} of={narrowed ? (ds ? ds.total : images.length) : undefined}
+                onAsk={questions?.canAsk ? () => void startAsk(null) : undefined}
                 canPrev={canPrev} canNext={canNext}
                 actions={actions} status={image.task_status}
                 trashLabel={ds ? "Удалить из датасета" : undefined}
@@ -1620,7 +1728,7 @@ export default function AnnotationEditor({
           grid={grid} onGrid={() => setGrid((g) => !g)} />
       </div>
 
-      <KeysDialog open={keysOpen} onOpenChange={setKeysOpen} groups={KEYS} />
+      <KeysDialog open={keysOpen} onOpenChange={setKeysOpen} groups={questions ? [...KEYS, ASK_KEYS] : KEYS} />
       {mapOpen && <AgentSetupDialog taskId={taskId ?? { code }} tool={agentTool} onClose={() => setMapOpen(false)} />}
       {confirmNode}
 
@@ -1631,7 +1739,7 @@ export default function AnnotationEditor({
           current={menu.i === null ? active : boxes[menu.i]?.class_index ?? null}
           onPick={(ci) => { pickClass(ci, menu.i); setMenu(null); }}
           deleteLabel="объект"
-          groups={[mainActions(menu.i), menuActions(menu) ?? []]}
+          groups={[[...askActions(menu.i), ...mainActions(menu.i)], menuActions(menu) ?? []]}
           note={menu.i !== null && meta.get(boxes[menu.i]?.id ?? "")?.agent
             ? <Who box={meta.get(boxes[menu.i]?.id ?? "")} /> : undefined}
           onDelete={

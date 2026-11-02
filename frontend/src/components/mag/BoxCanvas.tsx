@@ -1,4 +1,5 @@
 import {
+  Fragment,
   forwardRef,
   useCallback,
   useEffect,
@@ -248,6 +249,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   labelOf: (classIndex: number) => { name: string; color: string };
   /** Приписка к подписи рамки через черту — агент, когда их на кадре несколько: «вагон», «YOLOE-РСМ». */
   captionOf?: (index: number) => string | undefined;
+  /** Индексы объектов с открытым вопросом — пузырёк в правом верхнем углу (решение 29.10.2026). */
+  asked?: Set<number>;
   /** Индексы объектов, которые рисуются прерывисто: объект на кадре есть, но
    *  заслонён, и в разметку этот кадр не пойдёт. */
   dashed?: Set<number>;
@@ -320,7 +323,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, captionOf, dashed, hidden, hiddenItems,
+    imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, captionOf, asked, dashed, hidden, hiddenItems,
     labels = true, editable = false, waiting = false, tool = "select", auto = false,
     autoMode = "points", autoPoints, autoPreview = null, activeClass = null,
     selected = null, selectedPart = null, splitParts = false, canMovePoly = false,
@@ -1269,8 +1272,10 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             // Скрытая остаётся в разметке прозрачной — так она проявляется и гаснет плавно
             const off = Math.min(rx - lx, by - py) < LABEL_AT && i !== selected && i !== hot;
             return (
+              <Fragment key={i}>
+              {/* Пузырёк вопроса — и у мелкой рамки без подписи: вопрос важнее тесноты */}
+              {asked?.has(i) && <span className="q-pin mag-cv-q" style={{ left: rx, top: py }}><Icon name="question" size={11} /></span>}
               <span
-                key={i}
                 aria-hidden={off || undefined}
                 className={"mag-cv-lb" + (off ? " off" : "") + (i === selected ? " on" : "") +
                   (hot === i ? " hot" : "") + (inkOn(meta.color) === "dark" ? " ink-dark" : "")}
@@ -1290,6 +1295,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                 {captionOf?.(i) && <span className="mag-cv-ag"><Sep />{captionOf(i)}</span>}
                 {s.pending && s.conf != null && <b className="mag-cv-conf">{fmtConf(s.conf)}</b>}
               </span>
+              </Fragment>
             );
           })}
           {ghosts?.map((g, k) => {

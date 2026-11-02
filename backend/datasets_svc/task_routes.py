@@ -21,7 +21,7 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import aliased
 
-from common import agent_graph, attribution, config, images, jobs, live, tags, task_frames, task_rights
+from common import agent_graph, attribution, config, images, jobs, live, questions, tags, task_frames, task_rights
 from common.auth import current_user, has_role, project_by_code, role_in
 from common.db import SessionLocal
 from common.models import (
@@ -32,9 +32,11 @@ from common.models import (
     LabelClass,
     Project,
     ProjectMember,
+    QuestionMessage,
     Task,
     TaskAssignee,
     TaskEvent,
+    TaskQuestion,
     TaskVideo,
     User,
     VideoAnnotation,
@@ -398,6 +400,26 @@ def _light_list(db, tasks, user, role):
         "processed": r.processed, "total": r.total, "rate": agent_graph.run_rate(r.status, r.stats, r.processed, now),
     } for r in db.execute(select(AgentRun).where(
         AgentRun.task_id.in_(ids), AgentRun.status.in_(("queued", "waiting_gpu", "running")))).scalars()} if ids else {}
+    # Открытые вопросы — значком на доске; в подсказке, кто и когда писал последним (решение 29.10.2026)
+    asked = {}
+    if ids:
+        for tid, n, last in db.execute(
+            select(TaskQuestion.task_id, func.count(TaskQuestion.id), func.max(TaskQuestion.last_at))
+            .where(TaskQuestion.task_id.in_(ids), TaskQuestion.status == "open").group_by(TaskQuestion.task_id)
+        ):
+            asked[tid] = {"open": n, "last_at": last.isoformat()}
+        if asked:
+            # Автор последнего сообщения среди открытых вопросов таски
+            latest = (select(TaskQuestion.task_id, QuestionMessage.author_id, QuestionMessage.created_at)
+                      .join(QuestionMessage, QuestionMessage.question_id == TaskQuestion.id)
+                      .where(TaskQuestion.task_id.in_(list(asked)), TaskQuestion.status == "open")
+                      .order_by(TaskQuestion.task_id, QuestionMessage.created_at.desc())
+                      .distinct(TaskQuestion.task_id))
+            last_by = {tid: uid for tid, uid, _ in db.execute(latest)}
+            who = set(last_by.values()) - {None}
+            known = {u.id: u.display_name for u in db.execute(select(User).where(User.id.in_(who))).scalars()} if who else {}
+            for tid, uid in last_by.items():
+                asked[tid]["last_by"] = known.get(uid)
     out = []
     for t in tasks:
         last_box = boxed.get(t.id)
@@ -423,6 +445,7 @@ def _light_list(db, tasks, user, role):
             # Можно ли пополнять — «В таску ▾» в датасете предлагает только такие
             "fill": task_rights.can_fill(t.status, role, user.id, teams[t.id], t.created_by),
             "agent": runs.get(t.id),
+            "questions": asked.get(t.id),
         })
     return out
 
@@ -961,7 +984,8 @@ def _accept(db, task, user):
     """Размеченные и фоновые кадры уходят в датасет; остальные ждут.
 
     Кадр с непроверенной рамкой агента тоже ждёт: непроверенное в данные
-    проекта не попадает, а выбросить его молча значило бы потерять работу."""
+    проекта не попадает, а выбросить его молча значило бы потерять работу.
+    Так же ждёт кадр с открытым вопросом — на нём самом или на кадре его ролика."""
     pending = db.execute(
         select(Image).where(
             Image.task_id == task.id,
@@ -969,6 +993,7 @@ def _accept(db, task, user):
             Image.dataset_id.is_(None),
             Image.origin_image_id.is_(None),
             ~task_frames.has_pending(),
+            ~questions.holds(),
         )
     ).scalars().all()
     # Копии кадров датасета в датасет не идут — их правки ложатся на исходники
@@ -1109,10 +1134,19 @@ def _agent_running(db, task):
     return None
 
 
+def _open_questions(db, task):
+    """Закрытие удалило бы удержанные вопросом кадры вместе с разметкой (решение 29.10.2026)."""
+    n = db.execute(select(func.count(TaskQuestion.id)).where(
+        TaskQuestion.task_id == task.id, TaskQuestion.status == "open")).scalar_one()
+    if n:
+        return jsonify({"error": f"Закрыть нельзя: {n} {questions.open_word(n)}.", "code": "open_questions", "open": n}), 409
+    return None
+
+
 def _close_blockers(db, task):
     """409, если закрытие оборвало бы работу; иначе None. Разметку роликов закрытие
     из работы сперва сдаёт (`_start_handover`) и только потом удаляет ролики."""
-    return _video_busy(db, task) or _agent_running(db, task)
+    return _video_busy(db, task) or _agent_running(db, task) or _open_questions(db, task)
 
 
 def _close(db, task, user):

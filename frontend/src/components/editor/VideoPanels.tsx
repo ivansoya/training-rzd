@@ -2,9 +2,12 @@
 
 import type { ReactNode } from "react";
 import type { ClipQuality, LabelClass, VideoTrack } from "../../auth/api";
-import { Button, Icon, Select, Seg, Swatch, Switch, cx } from "../../ui";
+import type { Question } from "../../api/questions";
+import { Button, Icon, Notice, Select, Seg, Swatch, Switch, cx } from "../../ui";
 import type { SelectOption } from "../../ui";
 import { fmtConf } from "../mag/BoxCanvas";
+import { QuestionThread } from "../mag/questions/QuestionThread";
+import type { QuestionsApi } from "../mag/questions/useQuestions";
 import Sep from "../Sep";
 import type { CanvasShape } from "../mag/BoxCanvas";
 import { exportCount, fmtFrameTime, frameToMs, trackEnd } from "../mag/trackMath";
@@ -199,6 +202,33 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
   );
 }
 
+/** «Вопросы» ролика (решения 29.10.2026): на этом кадре — развёрнуты, прочие открытые — строкой, щелчок ведёт к кадру. */
+export function QuestionsSide({ qs, here, rest, total, focus, compose, onPick }: {
+  qs: QuestionsApi;
+  /** Вопросы этого кадра, выбранный — первым. */
+  here: Question[];
+  /** Открытые на других кадрах ролика. */
+  rest: Question[];
+  /** Открытых в ролике. */
+  total: number;
+  focus: string | null;
+  compose?: ReactNode;
+  onPick: (q: Question) => void;
+}) {
+  if (!compose && !here.length && !rest.length) return null;
+  return (
+    <section className="fe-sec fe-qs">
+      <div className="fe-sec-t">Вопросы <span className="ui-mono fe-qs-n">{total}</span></div>
+      {qs.error && <Notice tone="error">{qs.error}</Notice>}
+      {compose}
+      {here.map((q) => (
+        <QuestionThread key={q.id} q={q} qs={qs} video expanded={q.status === "open" || q.id === focus} onExpand={() => onPick(q)} />
+      ))}
+      {rest.map((q) => <QuestionThread key={q.id} q={q} qs={qs} video expanded={false} onExpand={() => onPick(q)} />)}
+    </section>
+  );
+}
+
 function TrackState({ track, frame }: { track: VideoTrack; frame: number }) {
   const p = presenceAt(track, frame);
   if (!p) return null;
@@ -252,7 +282,7 @@ export function qualityOptions(list: ClipQuality[]): SelectOption<string>[] {
 }
 
 export function Transport({ frame, lastFrame, fps, playing, pending, speed, quality, qualities, empty, frozen, canKey,
-  onGo, onPlay, onSpeed, onQuality, onEmpty, onKey, zoom }: {
+  onGo, onPlay, onSpeed, onQuality, onEmpty, onKey, onAsk, zoom }: {
   frame: number;
   lastFrame: number;
   fps: number;
@@ -272,6 +302,8 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
   onQuality: (id: string) => void;
   onEmpty: () => void;
   onKey: () => void;
+  /** Вопрос к кадру целиком; нет — спрашивать нельзя. Не гаснет в просмотре. */
+  onAsk?: () => void;
   /** Плашка масштаба дорожек — справа в строке. */
   zoom?: ReactNode;
 }) {
@@ -304,6 +336,7 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
       <Button size="sm" icon="diamond" kbd="K" disabled={frozen || !canKey}
         title={canKey ? "Ключ выбранного трека на этом кадре" : "Выберите трек, который живёт на этом кадре"}
         onClick={onKey}>Ключ</Button>
+      {onAsk && <Button variant="ghost" size="sm" icon="question" className="fe-v ask" title="Вопрос к кадру целиком" onClick={onAsk}>Вопрос</Button>}
       {zoom && <><i className="ed-vsep" />{zoom}</>}
     </div>
   );
