@@ -14,7 +14,8 @@ import { plural, ru } from "../ru";
 import Sep, { withSep } from "../Sep";
 import VideoStrip from "./VideoStrip";
 import { NumInput } from "../NumInput";
-import { ScoutBand, scoutHits, taskColors, useScouts } from "../agents/scout";
+import { ScoutBand, ScoutControls, scoutHits, taskColors, useScouts } from "../agents/scout";
+import { scoutStarts, timeTicks } from "../agents/scoutMath";
 import { scoutStats } from "../../api/agents";
 import type { ScoutStats } from "../../api/agents";
 import { scoutFrameAt } from "../editor/review";
@@ -260,6 +261,9 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   // Покадровые находки разведки — точкам полосы и призракам поверх плеера
   const [found, setFound] = useState<ScoutStats | null>(null);
   const [scoutOff, setScoutOff] = useState<Set<string>>(new Set());
+  const colors = useMemo(() => taskColors(scouts), [scouts]);
+  const scoutFrames = useMemo(() => scoutStarts(scout?.segments ?? {}, scoutOff), [scout, scoutOff]);
+  const scoutFps = scout?.fps || video.fps || 25;
   const scoutAt = scout?.created_at;
   useEffect(() => {
     if (!scoutAt) { setFound(null); return; }
@@ -420,6 +424,15 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     if (videoRef.current) videoRef.current.currentTime = t / 1000;
   }
 
+  function pickScoutFrame(frame: number) {
+    videoRef.current?.pause();
+    const ms = Math.min(duration, (frame + 0.5) * 1000 / scoutFps);
+    seek(ms);
+    setView((v) => ms >= v.start && ms <= v.start + v.span ? v : {
+      ...v, start: clampStart(ms - v.span / 2, v.span),
+    });
+  }
+
   function stepFrame(dir: number) {
     const v = videoRef.current;
     if (!v) return;
@@ -469,7 +482,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     ? scoutFrameAt(found.checked, Math.floor(at / frameMs + 1e-6), playing,
       Math.min(Math.ceil((found.step || 1) / 2), Math.round(1000 / frameMs)))
     : null;
-  const ghostHits = scoutHere === null ? [] : scoutHits(found, scoutHere, taskColors(scouts), scoutOff);
+  const ghostHits = scoutHere === null ? [] : scoutHits(found, scoutHere, colors, scoutOff);
   const scoutRef = useRef(!!scout);
   scoutRef.current = !!scout;
   const scoutShownRef = useRef(scoutShown);
@@ -693,6 +706,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   }
 
   const zoomed = view.span < duration - 1;
+  const ticks = [view.start, ...timeTicks(view.start / 1000, (view.start + view.span) / 1000, 1).map((s) => s * 1000), view.start + view.span];
   const draw = gesture?.kind === "draw" && gesture.moved ? gesture : null;
   const menuSeg = menu ? segs.find((s) => s.id === menu.segId) ?? null : null;
   const planFacts: [string, ReactNode][] = est.error ? [] : [
@@ -711,10 +725,8 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
       className="vc" title={video.file_name}
       desc={withSep([fmtTime(duration), `${video.fps} к/с`, `${video.width}×${video.height}`, fmtBytes(video.size_bytes)])}
       footer={<>
-        <span className="t-xs t-faint vc-keys">
-          {editable ? withSep(["Протяжка по ленте — участок", "Shift+протяжка — сдвиг", "колесо — масштаб", "F — кадр", "Пробел, ← → — плеер"])
-            : withSep(["Колесо — масштаб", "протяжка — сдвиг", "Пробел, ← → — плеер"])}
-        </span>
+        {scout && <ScoutControls scout={scout} stats={found} colors={colors} starts={scoutFrames} fps={scoutFps} at={at}
+          shown={scoutShown} onShown={showScout} off={scoutOff} onOff={setScoutOff} onPick={pickScoutFrame} disabled={busy} />}
         <span className="grow" />
         <Button variant="ghost" onClick={() => void requestClose()} disabled={busy}>{editable ? "Отмена" : "Закрыть"}</Button>
         {editable && (
@@ -786,6 +798,10 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
             {zoomed ? <WindowStrip className="vc-strip" src={src} from={view.start} span={view.span} />
               : <VideoStrip className="vc-strip" taskId={taskId} videoId={video.id} draggable={false}
                 aspect={video.width && video.height ? video.width / video.height : undefined} />}
+            <div className="vc-ticks" aria-hidden="true">
+              {ticks.map((ms, i) => <span key={ms} className={cx(i === 0 && "first", i === ticks.length - 1 && "last")}
+                style={{ left: `${pct(ms)}%` }}>{view.span < 10000 ? fmtPrecise(ms) : fmtTime(ms)}</span>)}
+            </div>
             {segs.map((s, i) => {
               const color = TONES[i % TONES.length];
               return (
@@ -857,31 +873,8 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
             )}
           </div>
 
-          {/* Разведка — полосой ровно под лентой, в её окне; шкала времени — под полосой. */}
-          {(() => {
-            const ticks = (
-              <div className="vc-ticks">
-                <span>{fmtTime(view.start)}</span>
-                <span>{zoomed ? `окно ${fmtTime(view.span)}` : "весь ролик"}</span>
-                <span>{fmtTime(view.start + view.span)}</span>
-              </div>
-            );
-            return scout ? (
-              <ScoutBand scout={scout} colors={taskColors(scouts)}
-                view={view} at={at} editable={editable} onSeek={seek}
-                shown={scoutShown} onShown={showScout}
-                stats={found} onOff={setScoutOff}
-                onPick={(frame) => {
-                  // Середина периода кадра: на его границе плеер показал бы соседний
-                  videoRef.current?.pause();
-                  seek(Math.min(duration, (frame + 0.5) * frameMs));
-                }}
-                onPlan={(ranges) => ranges.forEach(([a, b]) => addSeg(a, Math.min(b, duration)))}
-                onWheel={(ratio, deltaY, shift) => zoomAt(ratio, deltaY, shift, trackRef.current?.getBoundingClientRect().width ?? 1)}>
-                {ticks}
-              </ScoutBand>
-            ) : ticks;
-          })()}
+          {scout && scoutShown && <ScoutBand starts={scoutFrames} fps={scoutFps} view={view} at={at} onSeek={seek} onPick={pickScoutFrame}
+            onWheel={(ratio, deltaY, shift) => zoomAt(ratio, deltaY, shift, trackRef.current?.getBoundingClientRect().width ?? 1)} />}
         </div>
 
         <aside className="vc-side">

@@ -2,6 +2,13 @@
 // Без React — чтобы проверяться тестом и не тянуть циклы между окнами.
 
 import { PALETTE } from "./agentDoc";
+import type { Scout } from "../../api/agents";
+
+// Начала участков выбранных классов, без повторов и по времени.
+export function scoutStarts(segments: Scout["segments"], off: ReadonlySet<string>): number[] {
+  return [...new Set(Object.entries(segments).filter(([name]) => !off.has(name))
+    .flatMap(([, spans]) => spans.map(([start]) => start)))].sort((a, b) => a - b);
+}
 
 /** 0:59, 12:05, 1:02:05 — время ролика в секундах. */
 export function clock(sec: number): string {

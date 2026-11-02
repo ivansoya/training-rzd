@@ -3,7 +3,7 @@
 /* От угла, а не translate по центру: сдвиг делает окно опорой для fixed — подсказка кадра и меню шага сползали бы. */
 .ui-dialog.vc { left: 16px; top: 24px; translate: none; }
 .vc-body { position: relative; flex: 1; min-height: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
-.vc-keys { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vc .ui-dialog-f { align-items: center; }
 
 /* ---------- слева: плеер и лента ---------- */
 .vc-left { display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid var(--border); background: var(--bg); }
@@ -29,7 +29,7 @@
 .vc-player .ui-seg { margin-right: 4px; }
 
 .vc-track {
-  position: relative; height: 84px; flex: none; overflow: hidden; touch-action: none; user-select: none;
+  position: relative; height: 48px; flex: none; overflow: hidden; touch-action: none; user-select: none;
   border-top: 1px solid var(--border); background: var(--stage);
 }
 .vc-track.cut { cursor: crosshair; }
@@ -39,7 +39,7 @@
 
 /* Участок: середина мышь не ловит — по ней перематывают и рисуют; ухватить можно за края и метку. */
 .vc-seg {
-  position: absolute; top: 0; bottom: 16px; display: flex; justify-content: center; align-items: flex-start; pointer-events: none;
+  position: absolute; top: 14px; bottom: 16px; display: flex; justify-content: center; align-items: flex-start; pointer-events: none;
   border: 1px solid var(--sc); border-radius: var(--r-sm); background: color-mix(in srgb, var(--sc) 14%, transparent);
   transition: box-shadow .16s, background-color .16s;
 }
@@ -56,7 +56,7 @@
 
 /* Участок, который тянут прямо сейчас. */
 .vc-ghost {
-  position: absolute; top: 0; bottom: 16px; display: flex; justify-content: center; align-items: flex-start; pointer-events: none;
+  position: absolute; top: 14px; bottom: 16px; display: flex; justify-content: center; align-items: flex-start; pointer-events: none;
   border: 1px dashed var(--fg); border-radius: var(--r-sm); background: color-mix(in srgb, var(--fg) 12%, transparent);
 }
 .vc-ghost b { font: 600 10px var(--mono); color: var(--bg); background: var(--fg); padding: 2px 7px; border-radius: 0 0 var(--r-sm) var(--r-sm); }
@@ -87,7 +87,10 @@
 .vc-peek img, .vc-peek-wait { display: block; width: 168px; height: 96px; object-fit: cover; background: var(--stage); }
 .vc-peek b { padding: 3px 0; text-align: center; font: 600 10.5px var(--mono); }
 
-.vc-ticks { display: flex; justify-content: space-between; padding: 5px 10px; font: 500 10.5px var(--mono); color: var(--faint); background: var(--sidebar); border-top: 1px solid var(--border); }
+.vc-ticks { position: absolute; inset: 0 0 auto; height: 14px; pointer-events: none; background: var(--on-frame-bg); color: var(--on-frame); font: 400 10px/14px var(--mono); }
+.vc-ticks span { position: absolute; padding: 0 4px; transform: translateX(-50%); white-space: nowrap; }
+.vc-ticks .first { transform: none; }
+.vc-ticks .last { transform: translateX(-100%); }
 
 /* ---------- справа: план ---------- */
 .vc-side {

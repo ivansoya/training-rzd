@@ -1,19 +1,14 @@
 // Разведка ролика на шкалах: полоса в нарезке, строки в редакторе ролика,
 // кнопка у ролика.
 //
-// Решения владельца: разведка — информация, а не разметка. В нарезке — одна
-// полоса ровно под лентой, у каждого класса своя дорожка; её показывают и
-// прячут, чипы гасят классы, «Участки в план» добавляет участки горящих
-// классов в план. Посмотреть найденное — щелчок по точке проверенного кадра:
-// плеер встаёт на кадр, находки — призраками поверх (2026-10-07, вместо
-// карточки при наведении). В редакторе ролика — строки дорожек (editor/Lanes).
+// В нарезке начала участков отмечены одной полосой; фильтр и переходы — внизу окна.
 
 import { useEffect, useRef, useState } from "react";
-import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
+import type { PointerEvent as ReactPointerEvent } from "react";
 import * as api from "../../api/agents";
 import { useLive } from "../../live/LiveProvider";
-import { cx } from "../../ui";
-import { nearestTick } from "../editor/review";
+import { Button, Check, Popover, cx } from "../../ui";
+import { nearestTick, nextFrame } from "../editor/review";
 import { scoutColors } from "./scoutMath";
 
 export interface ScoutLane {
@@ -57,9 +52,6 @@ export function useScouts(taskId: string) {
 }
 
 const msOf = (frame: number, fps: number) => Math.round((frame * 1000) / fps);
-// Дорожка класса в полосе нарезки: 4 px и зазор в 1 px.
-const LANE = 4;
-const GAP = 1;
 
 /** Находки кадра для показа поверх плеера: имя и цвет — класса проекта, если сопоставлен. */
 export type ScoutHit = { name: string; color: string; conf: number; x: number; y: number; w: number; h: number };
@@ -74,33 +66,15 @@ export function scoutHits(stats: api.ScoutStats | null, frame: number, colors: M
 }
 
 /** Полоса разведки ровно под лентой нарезки, в её же окне `view` (мс). */
-export function ScoutBand({ scout, stats, colors, view, at, editable, shown: visible, onShown, onSeek, onPick,
-  onOff, onPlan, onWheel, children }: {
-  scout: api.Scout;
-  /** Покадровые находки — точкам полосы и призракам; грузит хозяин, полоса их не ждёт. */
-  stats: api.ScoutStats | null;
-  colors: Map<string, string>;
+export function ScoutBand({ starts, fps, view, at, onSeek, onPick, onWheel }: {
+  starts: readonly number[];
+  fps: number;
   view: { start: number; span: number };
-  /** Где сейчас плеер, мс. */
   at: number;
-  editable: boolean;
-  /** Показана ли полоса: разведку прячут, когда она мешает. */
-  shown: boolean;
-  onShown: (v: boolean) => void;
   onSeek: (ms: number) => void;
-  /** Щелчок по точке проверенного кадра: плеер — на кадр, находки — призраками. */
   onPick: (frame: number) => void;
-  /** Погашенные чипами классы — их не показывают и призраками. */
-  onOff?: (off: Set<string>) => void;
-  onPlan: (ranges: [number, number][]) => void;
-  /** Колесо над полосой — то же приближение, что над лентой. */
   onWheel: (ratio: number, deltaY: number, shift: boolean) => void;
-  /** Шкала времени ленты: встаёт между полосой и чипами. */
-  children?: ReactNode;
 }) {
-  const fps = scout.fps || 25;
-  const lanes = scoutLanes(scout, colors);
-  const [off, setOff] = useState<Set<string>>(new Set());
   const [near, setNear] = useState<number | null>(null);
   const bar = useRef<HTMLDivElement>(null);
   const wheel = useRef(onWheel);
@@ -116,80 +90,91 @@ export function ScoutBand({ scout, stats, colors, view, at, editable, shown: vis
     };
     el.addEventListener("wheel", listen, { passive: false });
     return () => el.removeEventListener("wheel", listen);
-  }, [visible]);
-
-  const shown = lanes.filter((l) => !off.has(l.name));
-  if (!lanes.length) return <>{children}</>;
+  }, []);
 
   const a = (view.start / 1000) * fps;
   const span = Math.max(1, (view.span / 1000) * fps);
-  const height = Math.max(1, shown.length) * (LANE + GAP) + 3;
-  // Проверенные кадры, где нашлись горящие классы, — точки в окне ленты
-  const hitsOf = (f: number) => (stats?.frames[String(f)] || []).filter((d) => !off.has(d[0]));
-  const dots = Object.keys(stats?.frames || {}).map(Number)
-    .filter((f) => f >= a && f <= a + span && hitsOf(f).length > 0).sort((x, y) => x - y);
+  const dots = starts.filter((f) => f >= a && f <= a + span);
   const xs = (w: number) => dots.map((f) => ((f - a) / span) * w);
   const nearAt = (e: ReactPointerEvent<HTMLElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
     return nearestTick(xs(r.width), e.clientX - r.left);
   };
-  const pick = (f: number) => onPick(f);
-
   return (
-    <div className="ag-band">
-      {visible && (
-        <div className="ag-band-bar" ref={bar} style={{ height: height + 10 }}
-          onPointerMove={(e) => setNear(nearAt(e))}
-          onPointerLeave={() => setNear(null)}
-          onPointerDown={(e) => {
-            if (e.button !== 0) return;
-            const k = nearAt(e);
-            if (k !== null) { pick(dots[k]); return; }
-            const r = e.currentTarget.getBoundingClientRect();
-            onSeek(msOf(a + ((e.clientX - r.left) / Math.max(1, r.width)) * span, fps));
-          }}>
-          <svg viewBox={`${a} 0 ${span} ${height}`} preserveAspectRatio="none" style={{ height }} aria-hidden="true">
-            {shown.map((l, k) => l.spans.map(([s, e]) => (
-              <rect key={`${l.name}:${s}`} x={s} y={2 + k * (LANE + GAP)} width={e - s + 1} height={LANE} style={{ fill: l.color }} />
-            )))}
-          </svg>
-          <div className="ag-band-dots" aria-hidden="true">
-            {dots.map((f, k) => (
-              <i key={f} className={cx(k === near && "near")} style={{ left: `${((f - a) / span) * 100}%` }}
-                title={`Кадр ${f}: ${hitsOf(f).length} находок`} />
-            ))}
-          </div>
-          <i className="ag-band-head" style={{ left: `${((at - view.start) / Math.max(1, view.span)) * 100}%` }} />
-        </div>
-      )}
-      {children}
-      <div className="ag-band-legend">
-        <button type="button" className="ag-band-title" aria-pressed={visible} onClick={() => onShown(!visible)}
-          title={visible ? "Спрятать разведку (R)" : "Показать разведку (R)"}>
-          <span className="ag-band-eye" aria-hidden="true">◎</span>Разведка
-        </button>
-        {visible && lanes.map((l) => (
-          <button key={l.name} type="button" className="ag-band-chip" aria-pressed={!off.has(l.name)}
-            title={`${l.spans.length} уч. — нажмите, чтобы ${off.has(l.name) ? "показать" : "скрыть"}`}
-            onClick={() => setOff((prev) => {
-              const next = new Set(prev);
-              if (next.has(l.name)) next.delete(l.name);
-              else next.add(l.name);
-              onOff?.(next);
-              return next;
-            })}>
-            <i style={{ background: l.color }} />{stats?.mapped[l.name]?.name ?? l.name}<small>{l.spans.length}</small>
-          </button>
+    <div className="ag-band-bar" ref={bar}
+      title={near !== null && dots[near] !== undefined ? `Начало участка: кадр ${dots[near]}` : "Обнаружения разведки"}
+      onPointerMove={(e) => setNear(nearAt(e))} onPointerLeave={() => setNear(null)}
+      onPointerDown={(e) => {
+        if (e.button !== 0) return;
+        const k = nearAt(e);
+        if (k !== null) { onPick(dots[k]); return; }
+        const r = e.currentTarget.getBoundingClientRect();
+        onSeek(msOf(a + ((e.clientX - r.left) / Math.max(1, r.width)) * span, fps));
+      }}>
+      {!starts.length && <span className="ag-band-empty">Нет обнаружений для выбранных классов</span>}
+      <div className="ag-band-dots" aria-hidden="true">
+        {dots.map((f, k) => (
+          <i key={f} className={cx(k === near && "near", Math.floor(at * fps / 1000) === f && "current")}
+            style={{ left: `${((f - a) / span) * 100}%` }} />
         ))}
-        <span className="ag-band-sp" />
-        {editable && visible && (
-          <button type="button" className="mag-ghost mag-ghost-inline" disabled={!shown.length}
-            onClick={() => onPlan(shown.flatMap((l) =>
-              l.spans.map(([s, e]) => [msOf(s, fps), msOf(e + 1, fps)] as [number, number])))}>
-            Участки в план
-          </button>
-        )}
       </div>
+      <i className="ag-band-head" style={{ left: `${((at - view.start) / Math.max(1, view.span)) * 100}%` }} />
+    </div>
+  );
+}
+
+export function ScoutControls({ scout, stats, colors, starts, fps, at, shown, onShown, off, onOff, onPick, disabled }: {
+  scout: api.Scout;
+  stats: api.ScoutStats | null;
+  colors: Map<string, string>;
+  starts: readonly number[];
+  fps: number;
+  at: number;
+  shown: boolean;
+  onShown: (shown: boolean) => void;
+  off: ReadonlySet<string>;
+  onOff: (off: Set<string>) => void;
+  onPick: (frame: number) => void;
+  disabled: boolean;
+}) {
+  const lanes = scoutLanes(scout, colors);
+  const frame = Math.floor(at * fps / 1000);
+  const count = starts.filter((f) => f <= frame).length;
+  const selected = lanes.filter((l) => !off.has(l.name)).length;
+  const navigate = (dir: 1 | -1) => {
+    const target = nextFrame(starts, frame, dir);
+    if (target !== null) onPick(target);
+  };
+  return (
+    <div className="ag-band-controls">
+      <Button size="sm" className="ag-band-toggle" icon="scan" kbd="R" aria-pressed={shown} disabled={disabled}
+        onClick={() => onShown(!shown)} title={shown ? "Спрятать разведку (R)" : "Показать разведку (R)"}>Разведка</Button>
+      {shown && <>
+        <span className="ag-band-nav-label">Обнаружения</span>
+        <div className="ag-band-nav">
+          <Button size="sm" icon="skipb" aria-label="Предыдущее обнаружение" disabled={disabled || !starts.length} onClick={() => navigate(-1)} />
+          <span className="ag-band-count ui-mono" role="status" aria-live="polite">{count || (starts.length ? "—" : 0)} / {starts.length}</span>
+          <Button size="sm" icon="skipf" aria-label="Следующее обнаружение" disabled={disabled || !starts.length} onClick={() => navigate(1)} />
+        </div>
+        <Popover side="top" width={290} className="ag-band-filter" trigger={
+          <Button size="sm" icon="filter" iconEnd="chevD" disabled={disabled}>Классы <span className="ui-mono">{selected} / {lanes.length}</span></Button>
+        }>
+          {(close) => <>
+            <div className="ui-pop-h"><span>Классы разведки</span><Button size="sm" variant="ghost" icon="x" aria-label="Закрыть классы" onClick={close} /></div>
+            <div className="ag-band-filter-all"><span>Выбрано {selected} из {lanes.length}</span><Button size="sm" variant="ghost" onClick={() => onOff(new Set())}>Выбрать все</Button></div>
+            <div className="ag-band-filter-list">
+              {lanes.map((l) => <Check key={l.name} checked={!off.has(l.name)} onChange={(checked) => {
+                const next = new Set(off);
+                if (checked) next.delete(l.name); else next.add(l.name);
+                onOff(next);
+              }}>
+                <i className="ag-band-swatch" style={{ background: stats?.mapped[l.name]?.color ?? l.color }} />
+                <span>{stats?.mapped[l.name]?.name ?? l.name}</span><small className="ui-mono">{l.spans.length}</small>
+              </Check>)}
+            </div>
+          </>}
+        </Popover>
+      </>}
     </div>
   );
 }

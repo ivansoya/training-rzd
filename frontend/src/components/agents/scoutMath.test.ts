@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { clampView, clock, nearest, sampledCount, scoutColors, timeTicks } from "./scoutMath";
+import { clampView, clock, nearest, sampledCount, scoutColors, scoutStarts, timeTicks } from "./scoutMath";
+import { nextFrame } from "../editor/review";
 
 describe("счёт окон разведки", () => {
+  it("переходит по началам участков выбранных классов, включая пересекающиеся", () => {
+    const segments: Parameters<typeof scoutStarts>[0] = {
+      "Мусор": [[100, 200, 3], [400, 450, 2]],
+      "Человек": [[100, 150, 2], [175, 225, 3], [300, 350, 2]],
+    };
+    const starts = scoutStarts(segments, new Set());
+    expect(starts).toEqual([100, 175, 300, 400]);
+    expect(nextFrame(starts, 175, 1)).toBe(300);
+    expect(nextFrame(starts, 400, 1)).toBe(100);
+    expect(nextFrame(starts, 100, -1)).toBe(400);
+    expect(scoutStarts(segments, new Set(["Человек"]))).toEqual([100, 400]);
+    expect(scoutStarts(segments, new Set(Object.keys(segments)))).toEqual([]);
+  });
+
   it("время ролика", () => {
     expect(clock(59.9)).toBe("0:59");
     expect(clock(725)).toBe("12:05");
