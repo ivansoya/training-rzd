@@ -26,7 +26,7 @@ const LABEL_AT = 40;
 const ringPath = (parts: [number, number][][]) =>
   parts.filter((r) => r.length > 2).map((r) => "M" + r.map(([x, y]) => `${x} ${y}`).join("L") + "Z").join("");
 
-export default function Marks({ width, height, items }: { width: number; height: number; items: Mark[] }) {
+export default function Marks({ width, height, items, highlight }: { width: number; height: number; items: Mark[]; highlight?: string | null }) {
   const [room, setRoom] = useState({ w: 0, h: 0 });
   const [hot, setHot] = useState<string | null>(null);
   const watch = useRef<ResizeObserver | null>(null);
@@ -47,7 +47,7 @@ export default function Marks({ width, height, items }: { width: number; height:
         {items.map((m) => {
           const d = m.parts?.length ? ringPath(m.parts) : `M${m.x} ${m.y}h${m.w}v${m.h}h${-m.w}Z`;
           return (
-            <g key={m.key} className={cx("mag-cv-sh", m.dashed && "occluded", m.ghost && "mk-ghost", hot === m.key && "hot")}
+            <g key={m.key} className={cx("mag-cv-sh", m.dashed && "occluded", m.ghost && "mk-ghost", (hot === m.key || highlight === m.key) && "hot")}
               style={{ ["--bc" as string]: m.color }}
               onPointerEnter={() => setHot(m.key)} onPointerLeave={() => setHot((h) => (h === m.key ? null : h))}>
               <path className="mag-cv-hit" d={d} />
@@ -60,9 +60,10 @@ export default function Marks({ width, height, items }: { width: number; height:
       <div className="mk-labels" ref={box}>
         {k > 0 && items.map((m) => {
           if (m.label == null) return null;
-          const off = Math.min(m.w, m.h) * k < LABEL_AT && hot !== m.key;
+          const active = hot === m.key || highlight === m.key;
+          const off = Math.min(m.w, m.h) * k < LABEL_AT && !active;
           return (
-            <span key={m.key} aria-hidden={off || undefined} className={cx("mag-cv-lb", off && "off", m.ghost && "ghost", hot === m.key && "hot")}
+            <span key={m.key} aria-hidden={off || undefined} className={cx("mag-cv-lb", off && "off", m.ghost && "ghost", active && "hot")}
               style={{ left: ox + m.x * k, top: oy + m.y * k, ["--bc" as string]: m.color }}
               onPointerEnter={() => setHot(m.key)} onPointerLeave={() => setHot((h) => (h === m.key ? null : h))}>
               {m.label}

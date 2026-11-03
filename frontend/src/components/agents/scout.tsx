@@ -8,7 +8,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 import * as api from "../../api/agents";
 import { useLive } from "../../live/LiveProvider";
 import { Button, Check, Popover, cx } from "../../ui";
-import { nearestTick, nextFrame } from "../editor/review";
+import { nearestTick } from "../editor/review";
 import { scoutColors } from "./scoutMath";
 
 export interface ScoutLane {
@@ -123,7 +123,7 @@ export function ScoutBand({ starts, fps, view, at, onSeek, onPick, onWheel }: {
   );
 }
 
-export function ScoutControls({ scout, stats, colors, starts, fps, at, shown, onShown, off, onOff, onPick, disabled }: {
+export function ScoutControls({ scout, stats, colors, starts, fps, at, shown, onShown, off, onOff, onNavigate, disabled }: {
   scout: api.Scout;
   stats: api.ScoutStats | null;
   colors: Map<string, string>;
@@ -134,17 +134,13 @@ export function ScoutControls({ scout, stats, colors, starts, fps, at, shown, on
   onShown: (shown: boolean) => void;
   off: ReadonlySet<string>;
   onOff: (off: Set<string>) => void;
-  onPick: (frame: number) => void;
+  onNavigate: (dir: 1 | -1) => void;
   disabled: boolean;
 }) {
   const lanes = scoutLanes(scout, colors);
   const frame = Math.floor(at * fps / 1000);
   const count = starts.filter((f) => f <= frame).length;
   const selected = lanes.filter((l) => !off.has(l.name)).length;
-  const navigate = (dir: 1 | -1) => {
-    const target = nextFrame(starts, frame, dir);
-    if (target !== null) onPick(target);
-  };
   return (
     <div className="ag-band-controls">
       <Button size="sm" className="ag-band-toggle" icon="scan" kbd="R" aria-pressed={shown} disabled={disabled}
@@ -152,9 +148,11 @@ export function ScoutControls({ scout, stats, colors, starts, fps, at, shown, on
       {shown && <>
         <span className="ag-band-nav-label">Обнаружения</span>
         <div className="ag-band-nav">
-          <Button size="sm" icon="skipb" aria-label="Предыдущее обнаружение" disabled={disabled || !starts.length} onClick={() => navigate(-1)} />
+          <Button size="sm" icon="skipb" aria-label="Предыдущее обнаружение" aria-keyshortcuts="Control+ArrowLeft"
+            title="Предыдущее обнаружение (Ctrl+←)" disabled={disabled || !starts.length} onClick={() => onNavigate(-1)} />
           <span className="ag-band-count ui-mono" role="status" aria-live="polite">{count || (starts.length ? "—" : 0)} / {starts.length}</span>
-          <Button size="sm" icon="skipf" aria-label="Следующее обнаружение" disabled={disabled || !starts.length} onClick={() => navigate(1)} />
+          <Button size="sm" icon="skipf" aria-label="Следующее обнаружение" aria-keyshortcuts="Control+ArrowRight"
+            title="Следующее обнаружение (Ctrl+→)" disabled={disabled || !starts.length} onClick={() => onNavigate(1)} />
         </div>
         <Popover side="top" width={290} className="ag-band-filter" trigger={
           <Button size="sm" icon="filter" iconEnd="chevD" disabled={disabled}>Классы <span className="ui-mono">{selected} / {lanes.length}</span></Button>

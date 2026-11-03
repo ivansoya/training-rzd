@@ -18,7 +18,7 @@ import { ScoutBand, ScoutControls, scoutHits, taskColors, useScouts } from "../a
 import { scoutStarts, timeTicks } from "../agents/scoutMath";
 import { scoutStats } from "../../api/agents";
 import type { ScoutStats } from "../../api/agents";
-import { scoutFrameAt } from "../editor/review";
+import { nextFrame, scoutFrameAt } from "../editor/review";
 import Marks from "../editor/Marks";
 import { fmtConf } from "./BoxCanvas";
 import { useConfirm } from "./tasks/Confirm";
@@ -261,6 +261,8 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   // Покадровые находки разведки — точкам полосы и призракам поверх плеера
   const [found, setFound] = useState<ScoutStats | null>(null);
   const [scoutOff, setScoutOff] = useState<Set<string>>(new Set());
+  const [objectsOpen, setObjectsOpen] = useState(true);
+  const [highlightedHit, setHighlightedHit] = useState<string | null>(null);
   const colors = useMemo(() => taskColors(scouts), [scouts]);
   const scoutFrames = useMemo(() => scoutStarts(scout?.segments ?? {}, scoutOff), [scout, scoutOff]);
   const scoutFps = scout?.fps || video.fps || 25;
@@ -433,6 +435,12 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     });
   }
 
+  function navigateScout(dir: 1 | -1) {
+    const frame = Math.floor((videoRef.current?.currentTime ?? at / 1000) * scoutFps + 1e-6);
+    const target = nextFrame(scoutFrames, frame, dir);
+    if (target !== null) pickScoutFrame(target);
+  }
+
   function stepFrame(dir: number) {
     const v = videoRef.current;
     if (!v) return;
@@ -476,13 +484,16 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     setSelected(id);
   }
 
-  // Какой проверенный кадр сейчас на экране: при проигрывании находка держится полшага
-  // до и после своего кадра (не дольше секунды), на паузе — только ровно свой кадр
+  // Ближайший проверенный кадр удерживается до секунды и на паузе, и при проигрывании.
+  const scoutCurrentFrame = Math.floor(at * scoutFps / 1000 + 1e-6);
   const scoutHere = found && scoutShown
-    ? scoutFrameAt(found.checked, Math.floor(at / frameMs + 1e-6), playing,
-      Math.min(Math.ceil((found.step || 1) / 2), Math.round(1000 / frameMs)))
+    ? scoutFrameAt(found.checked, scoutCurrentFrame, true,
+      Math.min(Math.ceil((found.step || 1) / 2), Math.round(scoutFps)))
     : null;
   const ghostHits = scoutHere === null ? [] : scoutHits(found, scoutHere, colors, scoutOff);
+  useEffect(() => setHighlightedHit(null), [scoutHere, scoutOff]);
+  const navigateScoutRef = useRef(navigateScout);
+  navigateScoutRef.current = navigateScout;
   const scoutRef = useRef(!!scout);
   scoutRef.current = !!scout;
   const scoutShownRef = useRef(scoutShown);
@@ -492,6 +503,15 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
       if (layerDepth() > depth.current || busy || done) return;
       const tag = (e.target as HTMLElement | null)?.tagName;
       if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
+      if ((e.target as HTMLElement | null)?.isContentEditable || e.altKey || e.metaKey) return;
+      if (e.ctrlKey) {
+        if (scoutRef.current && (e.code === "ArrowLeft" || e.code === "ArrowRight")) {
+          e.preventDefault();
+          navigateScoutRef.current(e.code === "ArrowLeft" ? -1 : 1);
+        }
+        return;
+      }
+      if (e.code === "Space" && (e.target as HTMLElement | null)?.closest(".vc-objects")) return;
       // По коду клавиши: в русской раскладке key у этих клавиш другой.
       if (e.code === "Space") {
         e.preventDefault();
@@ -726,7 +746,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
       desc={withSep([fmtTime(duration), `${video.fps} к/с`, `${video.width}×${video.height}`, fmtBytes(video.size_bytes)])}
       footer={<>
         {scout && <ScoutControls scout={scout} stats={found} colors={colors} starts={scoutFrames} fps={scoutFps} at={at}
-          shown={scoutShown} onShown={showScout} off={scoutOff} onOff={setScoutOff} onPick={pickScoutFrame} disabled={busy} />}
+          shown={scoutShown} onShown={showScout} off={scoutOff} onOff={setScoutOff} onNavigate={navigateScout} disabled={busy} />}
         <span className="grow" />
         <Button variant="ghost" onClick={() => void requestClose()} disabled={busy}>{editable ? "Отмена" : "Закрыть"}</Button>
         {editable && (
@@ -747,15 +767,35 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
                 Браузер не воспроизводит этот формат — плеер останется чёрным. Участки можно отметить по киноленте ниже: кадры нарежет сервер.
               </div>
             )}
-            {/* Находки разведки: на паузе — ровно этого кадра, при проигрывании держатся вокруг своего кадра */}
+            {/* Находки ближайшего проверенного кадра разведки поверх плеера. */}
             {ghostHits.length > 0 && video.width && video.height && (
               <div className="vc-ghosts" onClick={togglePlay}>
-                <Marks width={video.width} height={video.height} items={ghostHits.map((h, k) => ({
+                <Marks width={video.width} height={video.height} highlight={highlightedHit} items={ghostHits.map((h, k) => ({
                   key: String(k), x: h.x, y: h.y, w: h.w, h: h.h, color: h.color, ghost: true,
                   label: <><i className="mag-cv-mark">◎</i>{h.name}<b className="mag-cv-conf">{fmtConf(h.conf)}</b></>,
                 }))} />
               </div>
             )}
+            {ghostHits.length > 0 && <section className={cx("vc-objects", !objectsOpen && "collapsed")} aria-label="Найденные объекты">
+              <div className="vc-objects-head">
+                <span>Объекты <b className="ui-mono">{ghostHits.length}</b></span>
+                <Button size="sm" variant="ghost" icon={objectsOpen ? "chevU" : "chevD"}
+                  aria-label={objectsOpen ? "Свернуть список объектов" : "Показать список объектов"} aria-expanded={objectsOpen}
+                  onClick={() => { setObjectsOpen((v) => !v); setHighlightedHit(null); }} />
+              </div>
+              {objectsOpen && <>
+                {scoutHere !== null && <div className="vc-objects-time ui-mono"
+                  title={scoutHere !== scoutCurrentFrame ? "Находки ближайшего проверенного кадра разведки" : "Время кадра разведки"}>
+                  {scoutHere !== scoutCurrentFrame && "≈ "}{fmtPrecise((scoutHere + 0.5) * 1000 / scoutFps)}
+                </div>}
+                <div className="vc-objects-list">
+                  {ghostHits.map((h, k) => <button key={k} type="button" className="vc-object"
+                    aria-pressed={highlightedHit === String(k)} onClick={() => setHighlightedHit((v) => v === String(k) ? null : String(k))}>
+                    <i style={{ background: h.color }} /><span>{h.name}</span><b className="ui-mono">{fmtConf(h.conf)}</b>
+                  </button>)}
+                </div>
+              </>}
+            </section>}
             {/* Скрытый плеер под подсказки: перематывать основной нельзя. */}
             <video ref={peekRef} className="vc-hidden" src={src} preload="auto" muted onSeeked={onPeekSeeked}
               onLoadedData={() => setPeekReady(true)} />
@@ -820,8 +860,8 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
                     }}>
                     {fmtTime(s.end_ms - s.start_ms)}<Sep />{fmtStep(s.step_ms)}
                   </b>
-                  <i className="h l" onPointerDown={(e) => grabSeg(e, s, "l")} />
-                  <i className="h r" onPointerDown={(e) => grabSeg(e, s, "r")} />
+                  <i className={cx("h l", drag?.id === s.id && drag.edge === "l" && "dragging")} onPointerDown={(e) => grabSeg(e, s, "l")} />
+                  <i className={cx("h r", drag?.id === s.id && drag.edge === "r" && "dragging")} onPointerDown={(e) => grabSeg(e, s, "r")} />
                 </span>
               );
             })}
