@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import type { ClipQuality, LabelClass, VideoTrack } from "../../auth/api";
 import type { Question } from "../../api/questions";
-import { Button, Icon, Notice, Select, Seg, Swatch, Switch, cx } from "../../ui";
+import { Button, Icon, Notice, Select, Swatch, Switch, cx } from "../../ui";
 import type { SelectOption } from "../../ui";
 import { fmtConf } from "../mag/BoxCanvas";
 import { QuestionThread } from "../mag/questions/QuestionThread";
@@ -281,8 +281,8 @@ export function qualityOptions(list: ClipQuality[]): SelectOption<string>[] {
   });
 }
 
-export function Transport({ frame, lastFrame, fps, playing, pending, speed, quality, qualities, empty, frozen, canKey,
-  onGo, onPlay, onSpeed, onQuality, onEmpty, onKey, onAsk, zoom }: {
+export function Transport({ frame, lastFrame, fps, playing, pending, speed, quality, qualities, frozen, canKey, canAnnotated,
+  onGo, onAnnotated, onPlay, onSpeed, onQuality, onKey, onAsk, zoom }: {
   frame: number;
   lastFrame: number;
   fps: number;
@@ -292,15 +292,14 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
   speed: number;
   quality: string;
   qualities: ClipQuality[];
-  /** Пометка «фоновый» на кадре: off — снята, on — действует, idle — стоит, но на кадре объект. */
-  empty: "off" | "on" | "idle" | "busy";
   frozen: boolean;
   canKey: boolean;
+  canAnnotated: boolean;
   onGo: (delta: number) => void;
+  onAnnotated: (dir: 1 | -1) => void;
   onPlay: () => void;
   onSpeed: (v: number) => void;
   onQuality: (id: string) => void;
-  onEmpty: () => void;
   onKey: () => void;
   /** Вопрос к кадру целиком; нет — спрашивать нельзя. Не гаснет в просмотре. */
   onAsk?: () => void;
@@ -310,12 +309,16 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
   const w = String(lastFrame).length;
   return (
     <div className="ve-tr" role="toolbar" aria-label="Проигрывание">
-      <Button variant="ghost" size="sm" icon="skipb" aria-label="Назад на 10 кадров (Shift+←)" onClick={() => onGo(-10)} />
+      <Button variant="ghost" size="sm" icon="skipb" aria-label="Предыдущий размеченный кадр ([)"
+        disabled={!canAnnotated} onClick={() => onAnnotated(-1)} />
+      <Button variant="ghost" size="sm" icon="chevsL" aria-label="Назад на 10 кадров (Shift+←)" onClick={() => onGo(-10)} />
       <Button variant="ghost" size="sm" icon="chevL" aria-label="Кадр назад (←)" onClick={() => onGo(-1)} />
       <Button variant="primary" size="sm" icon={playing ? "pause" : "play"} className="ve-play"
         aria-label={playing ? "Остановить (Пробел)" : "Играть (Пробел)"} onClick={onPlay} />
       <Button variant="ghost" size="sm" icon="chevR" aria-label="Кадр вперёд (→)" onClick={() => onGo(1)} />
-      <Button variant="ghost" size="sm" icon="skipf" aria-label="Вперёд на 10 кадров (Shift+→)" onClick={() => onGo(10)} />
+      <Button variant="ghost" size="sm" icon="chevsR" aria-label="Вперёд на 10 кадров (Shift+→)" onClick={() => onGo(10)} />
+      <Button variant="ghost" size="sm" icon="skipf" aria-label="Следующий размеченный кадр (])"
+        disabled={!canAnnotated} onClick={() => onAnnotated(1)} />
       <span className="ve-time ui-mono">{fmtFrameTime(frameToMs(frame, fps))}</span>
       {/* Номер добит цифровым пробелом до ширины последнего: строка не дёргается на переходе через десяток */}
       <span className="ve-pos t-sm t-muted">
@@ -323,16 +326,11 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
       </span>
       <i className={cx("ve-wait", pending && "on")} aria-hidden={!pending} />
       <span className="grow" />
-      <Seg size="sm" label="Скорость" value={String(speed)} onChange={(v) => onSpeed(Number(v))}
-        options={SPEEDS.map((v) => ({ value: String(v), label: speedText(v), title: v > 1 ? "Быстрее единицы — через кадр" : undefined }))} />
+      <Select size="sm" label="Скорость" value={String(speed)} onChange={(v) => onSpeed(Number(v))}
+        options={SPEEDS.map((v) => ({ value: String(v), label: speedText(v), hint: v > 1 ? "Через кадр" : undefined }))} />
       <Select size="sm" label="Качество" icon="settings" value={quality || undefined} options={qualityOptions(qualities)}
         onChange={onQuality} />
       <i className="ed-vsep" />
-      <Button variant="ghost" size="sm" kbd="E" className={cx("fe-v", "empty", empty === "idle" && "idle")}
-        aria-pressed={empty === "on"} disabled={frozen || empty === "busy"}
-        title={empty === "busy" ? "На этом кадре есть объект — фоновым он быть не может"
-          : empty === "idle" ? "Пометка не действует: на кадре объект. Нажмите, чтобы снять" : "Кадр фоновый: объектов на нём нет"}
-        onClick={onEmpty}>Пусто</Button>
       <Button size="sm" icon="diamond" kbd="K" disabled={frozen || !canKey}
         title={canKey ? "Ключ выбранного трека на этом кадре" : "Выберите трек, который живёт на этом кадре"}
         onClick={onKey}>Ключ</Button>

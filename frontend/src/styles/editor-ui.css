@@ -225,14 +225,12 @@
 
 /* док: транспорт и дорожки */
 .ve-dock { display: flex; flex-direction: column; min-height: 0; background: var(--sidebar); }
-.ve-tr { display: flex; align-items: center; gap: 4px; flex: none; min-width: 0; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.ve-tr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; flex: none; min-width: 0; padding: 6px 10px; border-bottom: 1px solid var(--border); }
 .ve-time { font-size: 12.5px; padding: 0 4px 0 10px; white-space: nowrap; }
 .ve-pos { white-space: nowrap; }
 .ve-wait { width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: var(--faint); opacity: 0; transition: opacity .15s; flex: none; }
 .ve-wait.on { opacity: 1; animation: ed-blink 1s ease-in-out infinite; }
 .ve-tr .ui-select { min-width: 128px; }
-/* ¼ и 2× сами по себе разной ширины — ряд не должен дёргаться */
-.ve-tr .ui-seg button { min-width: 34px; justify-content: center; }
 .fe-v.empty.idle { color: var(--muted-fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-empty) 45%, transparent); }
 
 .ve-tl {

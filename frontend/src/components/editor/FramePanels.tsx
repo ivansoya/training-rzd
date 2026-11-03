@@ -181,7 +181,7 @@ export function FrameInfo({ rows }: { rows: ([ReactNode, ReactNode] | null | und
   );
 }
 
-export function FrameBar({ index, total, of, canPrev, canNext, actions, status, onPrev, onNext,
+export function FrameBar({ index, total, of, canPrev, canNext, canAnnotated, actions, status, onPrev, onNext, onAnnotated,
   onToggle, onTrash, onGo, onAsk, trashLabel = "Брак", goLabel = "Далее" }: {
   /** Место в показанных кадрах; −1 — фильтр не оставил ни одного. */
   index: number;
@@ -190,10 +190,12 @@ export function FrameBar({ index, total, of, canPrev, canNext, actions, status, 
   of?: number;
   canPrev: boolean;
   canNext: boolean;
+  canAnnotated: boolean;
   actions: FrameAction[];
   status: string;
   onPrev: () => void;
   onNext: () => void;
+  onAnnotated: (dir: 1 | -1) => void;
   onToggle: (s: "empty" | "skipped") => void;
   onTrash: () => void;
   onGo: () => void;
@@ -206,15 +208,15 @@ export function FrameBar({ index, total, of, canPrev, canNext, actions, status, 
 }) {
   return (
     <>
+      <Button variant="ghost" size="sm" icon="skipb" aria-label="Предыдущий размеченный кадр ([)"
+        disabled={!canAnnotated} onClick={() => onAnnotated(-1)} />
       <Button variant="ghost" size="sm" icon="chevL" aria-label="Предыдущий кадр (←)" disabled={!canPrev} onClick={onPrev} />
       <span className="ui-mono t-sm fe-pos">{index < 0 ? "—" : index + 1} / {total}</span>
       {of !== undefined && <span className="t-xs fe-of">из {ru(of)}</span>}
       <Button variant="ghost" size="sm" icon="chevR" aria-label="Следующий кадр (→)" disabled={!canNext} onClick={onNext} />
+      <Button variant="ghost" size="sm" icon="skipf" aria-label="Следующий размеченный кадр (])"
+        disabled={!canAnnotated} onClick={() => onAnnotated(1)} />
       <i className="ed-vsep" />
-      {actions.includes("empty") && (
-        <Button variant="ghost" size="sm" kbd="E" className="fe-v empty" aria-pressed={status === "empty"}
-          onClick={() => onToggle("empty")}>Пусто</Button>
-      )}
       {actions.includes("skip") && (
         <Button variant="ghost" size="sm" kbd="S" className="fe-v skipped" aria-pressed={status === "skipped"}
           onClick={() => onToggle("skipped")}>Отложить</Button>

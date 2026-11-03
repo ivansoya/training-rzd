@@ -75,7 +75,7 @@ export function askedHere(list: Question[], videoId: string, frame: number, item
   return new Set(items.flatMap((it, i) => (ids.has(it.kind === "track" ? it.track.id : it.box.id) ? [i] : [])));
 }
 
-/** Кадры с одиночными рамками — любыми: на проверке, принятыми, своими; ход [ и ] (отзыв 20.10.2026:
+/** Кадры с одиночной разметкой и ключами треков; ход [ и ] (отзыв 20.10.2026:
  *  принятые не пропускать). Пришедший кусок судим по его рамкам с фильтром классов, не пришедший — по
  *  сводке каркаса: там классы есть только у непроверенных, и принятые неизвестного класса не прячем. */
 export function annotatedFrames(
@@ -83,8 +83,14 @@ export function annotatedFrames(
   singles: readonly VideoSingleBox[],
   loaded: (frame: number) => boolean,
   off: Set<string>,
+  tracks: readonly VideoTrack[] = [],
 ): number[] {
   const out = new Set<number>();
+  for (const t of tracks) {
+    if (off.has(classKey(t.class_index))) continue;
+    const end = trackEnd(t);
+    for (const k of t.keys) if (k.frame_no >= t.start_frame && k.frame_no <= end) out.add(k.frame_no);
+  }
   for (const s of singles) if (!off.has(classKey(s.class_index))) out.add(s.frame_no);
   for (const [f, n, p, cis] of marks) {
     if (n > 0 && !loaded(f) && (p < n || agentShown(cis, off))) out.add(f);

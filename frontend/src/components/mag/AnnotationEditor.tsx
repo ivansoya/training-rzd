@@ -54,6 +54,7 @@ import {
   agentGroups, confirmAll, confirmWhere, nextFlagged, pendingCount, rejectAll, rejectWhere, settlePending,
 } from "../editor/review";
 import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad } from "../editor/look";
+import { detachContour } from "../editor/shapes";
 import type { KeyGroup } from "../editor/look";
 import type { QuestionsApi } from "./questions/useQuestions";
 import { askedObjects, atPlace, nextAsked, open as openOf } from "./questions/questions";
@@ -85,7 +86,7 @@ const KEYS: KeyGroup[] = [
     ["X", "Брак; у забракованного — вернуть"],
     ["Пробел", "Далее; при показанном полуавтоматом — закрепить"],
     ["← / →", "Предыдущий и следующий кадр"],
-    ["[ / ]", "Предыдущий и следующий кадр с рамками — и принятые, и свои"],
+    ["[ / ]", "Предыдущий и следующий размеченный кадр — с рамками или контурами"],
   ] },
   { title: "Агент", keys: [
     ["G", "Агент на этом кадре: рамки встанут на проверку"],
@@ -805,9 +806,10 @@ export default function AnnotationEditor({
 
   /** [ ] — к соседнему кадру с разметкой; с Shift — только на проверке. */
   const goReview = useCallback((dir: 1 | -1, onlyPending = false) => {
-    const i = nextFlagged(onlyPending ? flagged() : annotatedFlags(), index, dir);
-    if (i !== null && i !== index) void jump(i);
-  }, [flagged, annotatedFlags, index, jump]);
+    const from = navAt.current;
+    const i = nextFlagged(onlyPending ? flagged() : annotatedFlags(), from, dir);
+    if (i !== null && i !== from) void jump(i);
+  }, [flagged, annotatedFlags, jump]);
 
   /** После «Принять все» и «Отклонить все»: к следующему на проверке, иначе просто к следующему. */
   const onward = useCallback(async () => {
@@ -1391,6 +1393,20 @@ export default function AnnotationEditor({
 
     if (me.parts && me.parts.length > 1 && m.part !== undefined) {
       acts.push({
+        label: "Выделить контур в новый объект",
+        hint: "тот же класс; можно изменить отдельно",
+        run: () => {
+          const next = detachContour(boxesRef.current, i, m.part!);
+          if (next !== boxesRef.current) {
+            edit(next);
+            pick(next.length - 1, 0);
+            setAddTo(null);
+            setTool("select");
+          }
+          setMenu(null);
+        },
+      });
+      acts.push({
         label: "Убрать этот контур",
         hint: `останется ${me.parts.length - 1}`,
         run: () => { dropPart(i, m.part as number); setMenu(null); },
@@ -1552,6 +1568,11 @@ export default function AnnotationEditor({
             </ToolMenu>
             <AgentTool tool={agentTool} disabled={frozen} onRun={() => void runAgent()} onMap={() => setMapOpen(true)} />
             <i className="ed-vsep" />
+            {actions.includes("empty") && <>
+              <Button variant="ghost" size="sm" kbd="E" className="fe-v empty" aria-pressed={image?.task_status === "empty"}
+                disabled={!!autoPrev} onClick={() => void (ds ? emptyInDataset() : toggle("empty"))}>Пусто</Button>
+              <i className="ed-vsep" />
+            </>}
             <ClassPicker classes={classes} active={active}
               onPick={(ci) => pickClass(ci)}
               onCreate={frozen ? undefined : async (name) => {
@@ -1706,6 +1727,7 @@ export default function AnnotationEditor({
               <FrameBar index={at} total={of} of={narrowed ? (ds ? ds.total : images.length) : undefined}
                 onAsk={questions?.canAsk ? () => void startAsk(null) : undefined}
                 canPrev={canPrev} canNext={canNext}
+                canAnnotated={annotatedFlags().some((on, i) => on && i !== index)} onAnnotated={goReview}
                 actions={actions} status={image.task_status}
                 trashLabel={ds ? "Удалить из датасета" : undefined}
                 goLabel={acceptCopy ? "Принять и далее" : undefined}

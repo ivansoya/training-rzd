@@ -1,6 +1,6 @@
 import {
   Activity, Archive, ArrowLeft, ArrowRight, Ban, Bell, Bot, Box, Check, ChevronDown, ChevronLeft,
-  ChevronRight, ChevronUp, ChevronsUpDown, Circle, CircleCheck, CircleHelp, Clock, Copy, Cpu, Crosshair,
+  ChevronRight, ChevronUp, ChevronsLeft, ChevronsRight, ChevronsUpDown, Circle, CircleCheck, CircleHelp, Clock, Copy, Cpu, Crosshair,
   Database, Diamond, Download, Droplet, Ellipsis, ExternalLink, Eye, EyeOff, Film, Folder,
   Funnel, FunnelX, GripVertical, Hand, History, House, Image, Images, Info, Keyboard, Layers, LayoutGrid, Link2, List,
   Lock, LockOpen, LogOut, Maximize2, Merge, MessageCircle, Minimize2, Minus, MousePointer2, Pause, Pencil, Pentagon, Play, Plus,
@@ -16,7 +16,7 @@ import { cx } from "./cx";
 const ICONS = {
   activity: Activity, archive: Archive, back: ArrowLeft, forward: ArrowRight, ban: Ban, bell: Bell,
   bot: Bot, box: Box, tick: Check, chevD: ChevronDown, chevL: ChevronLeft, chevR: ChevronRight,
-  chevU: ChevronUp, updown: ChevronsUpDown, circle: Circle, ok: CircleCheck, help: CircleHelp, clock: Clock,
+  chevU: ChevronUp, chevsL: ChevronsLeft, chevsR: ChevronsRight, updown: ChevronsUpDown, circle: Circle, ok: CircleCheck, help: CircleHelp, clock: Clock,
   copy: Copy, cpu: Cpu, crosshair: Crosshair, database: Database, diamond: Diamond,
   download: Download, drop: Droplet, more: Ellipsis, external: ExternalLink, eye: Eye,
   eyeoff: EyeOff, film: Film, folder: Folder, filter: Funnel, funnelx: FunnelX, grip: GripVertical, hand: Hand, history: History,

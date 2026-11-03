@@ -146,6 +146,21 @@ describe("[ и ] — кадры с любыми одиночными", () => {
     const off = new Set(["c:2"]);
     expect(annotatedFrames(marks, singles, loaded, off)).toEqual([5, 150, 170]);
   });
+
+  it("включает ключи треков вместе с одиночными, без повторов и промежуточных кадров", () => {
+    const frames = annotatedFrames(marks, singles, loaded, new Set(), [track()]);
+    expect(frames).toEqual([5, 10, 20, 150, 160, 170]);
+    expect(nextFrame(frames, 10, 1)).toBe(20);
+    expect(nextFrame(frames, 20, -1)).toBe(10);
+    expect(nextFrame(frames, 170, 1)).toBe(5);
+    expect(nextFrame(frames, 5, -1)).toBe(170);
+  });
+
+  it("ключи вне жизни трека и ключи выключенного класса пропускает", () => {
+    const cut = track({ start_frame: 11, end_frame: 19 });
+    expect(annotatedFrames([], [], loaded, new Set(), [cut])).toEqual([]);
+    expect(annotatedFrames([], [], loaded, new Set(["c:0"]), [track()])).toEqual([]);
+  });
 });
 
 describe("вопросы в ролике (решения 29.10.2026)", () => {

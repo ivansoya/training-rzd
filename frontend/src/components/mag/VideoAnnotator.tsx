@@ -38,7 +38,7 @@ import { QuestionCompose } from "./questions/QuestionThread";
 import type { QuestionsApi } from "./questions/useQuestions";
 import { atPlace } from "./questions/questions";
 import type { RunView, ScoutStats } from "../../api/agents";
-import { Button, Notice, hasLayer } from "../../ui";
+import { Button, Notice, cx, hasLayer } from "../../ui";
 import BoxCanvas, { fmtConf } from "./BoxCanvas";
 import { useLive } from "../../live/LiveProvider";
 import type { CanvasGhost, CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
@@ -81,6 +81,7 @@ import {
 } from "../editor/video";
 import type { Item, View } from "../editor/video";
 import { chunkAt, chunkPlan, nextChunk } from "../editor/chunks";
+import { detachContour } from "../editor/shapes";
 import type { Chunk } from "../editor/chunks";
 import { useHereBeat } from "./here";
 
@@ -100,7 +101,7 @@ const KEYS: KeyGroup[] = [
     ["Пробел", "Играть или остановить; при показанном полуавтоматом — закрепить"],
     ["← / →", "Кадр назад и вперёд"],
     ["Shift+← / Shift+→", "На 10 кадров"],
-    ["[ / ]", "Кадр с рамками назад и вперёд — и принятые, и свои"],
+    ["[ / ]", "Размеченный кадр назад и вперёд: рамки, контуры и ключи треков"],
     ["K", "Ключ выбранного трека на этом кадре"],
     ["E", "Кадр фоновый: объектов нет (ещё раз — снять)"],
   ] },
@@ -732,7 +733,7 @@ export default function VideoAnnotator({
         // Добавили фигуру — она последняя. Нажатие без протяжки — ещё не рамка.
         const fresh = next[next.length - 1];
         if (fresh.w < 1 || fresh.h < 1) return;
-        if (tool === "track") {
+        if (tool === "track" && !fresh.parts?.length) {
           const ref: { id?: string } = {};
           after.push({ kind: "new-track", ref });
           guard(async () => {
@@ -1040,9 +1041,9 @@ export default function VideoAnnotator({
     toNextPending();
   }, [pendingHere, rewrite, pick, toNextPending]);
 
-  /** Кадры с любыми одиночными рамками — ход [ и ]. */
+  /** Кадры с одиночной разметкой и ключами треков — ход [ и ]. */
   const annotated = useMemo(
-    () => annotatedFrames(skel?.marks || [], data?.singles || [], (f) => loaded.has(chunkAt(chunks ?? [], f)), fltOff),
+    () => annotatedFrames(skel?.marks || [], data?.singles || [], (f) => loaded.has(chunkAt(chunks ?? [], f)), fltOff, data?.tracks),
     [skel, data, loaded, chunks, fltOff]);
 
   /** [ ] — к соседнему кадру с разметкой; с Shift — только на проверке. */
@@ -1628,6 +1629,23 @@ export default function VideoAnnotator({
       const rings = boxes[i]?.parts?.length || 0;
       if (rings > 1 && part !== undefined) {
         more.push({
+          label: "Выделить контур в новый объект", icon: "split",
+          hint: "тот же класс; можно изменить отдельно",
+          run: () => {
+            apply((was) => {
+              const at = was.items.findIndex((it) => it.kind === "single" && it.box.id === item.box.id);
+              const next = detachContour(was.shapes, at, part);
+              if (next !== was.shapes) {
+                pick(next.length - 1, 0);
+                selShape.current = next[next.length - 1];
+              }
+              return next;
+            });
+            setTool("select");
+            setMenu(null);
+          },
+        });
+        more.push({
           label: "Убрать этот контур",
           hint: `останется ${rings - 1}`,
           run: () => {
@@ -1757,6 +1775,12 @@ export default function VideoAnnotator({
             <AgentTool tool={agentTool} disabled={frozen || shown.lagging} onRun={() => void runAgent()}
               onMap={() => setSetupOpen(true)} />
             <i className="ed-vsep" />
+            <Button variant="ghost" size="sm" kbd="E" className={cx("fe-v", "empty", emptyState === "idle" && "idle")}
+              aria-pressed={emptyState === "on"} disabled={viewOnly || emptyState === "busy"}
+              title={emptyState === "busy" ? "На этом кадре есть объект — фоновым он быть не может"
+                : emptyState === "idle" ? "Пометка не действует: на кадре объект. Нажмите, чтобы снять" : "Кадр фоновый: объектов на нём нет"}
+              onClick={toggleEmpty}>Пусто</Button>
+            <i className="ed-vsep" />
             <ClassPicker classes={classes} active={active} disabled={frozen && !classes.length}
               onPick={(ci) => pickClass(ci)}
               onCreate={frozen ? undefined : async (name) => {
@@ -1838,10 +1862,11 @@ export default function VideoAnnotator({
 
         <div className="ve-dock">
           <Transport frame={frame} lastFrame={lastFrame} fps={fps} playing={playing} pending={shown.pending}
-            speed={speed} quality={quality} qualities={clip.manifest?.qualities || []} empty={emptyState}
+            speed={speed} quality={quality} qualities={clip.manifest?.qualities || []}
             frozen={viewOnly} canKey={!!currentTrack && !!stateAt(currentTrack, frame)}
+            canAnnotated={annotated.some((f) => f !== frame)} onAnnotated={goReview}
             onGo={go} onPlay={togglePlay} onSpeed={(v) => changeSpeed(v, frame)} onQuality={setQuality}
-            onEmpty={toggleEmpty} onKey={putKey} onAsk={canAsk ? () => askAbout(null) : undefined}
+            onKey={putKey} onAsk={canAsk ? () => askAbout(null) : undefined}
             zoom={<ZoomBar view={shownView} last={lastFrame} onZoom={zoomStep} onFit={() => setView(null)} />} />
           <Lanes tracks={laneTracks} numbers={numbers} filter={filter} frame={frame} lastFrame={lastFrame} fps={fps}
             labelOf={labelOf} selected={pickedTrack} editable={!viewOnly} hidden={hiddenTracks}
