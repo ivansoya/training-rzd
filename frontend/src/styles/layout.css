@@ -344,7 +344,7 @@ a.pcard:hover { border-color: var(--input); }
 }
 .fr-take > * { pointer-events: auto; }
 .fr-take-bar {
-  display: flex; align-items: center; gap: 12px; padding: 6px; white-space: nowrap; font-size: 13.5px; max-width: calc(100vw - 32px);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 6px; white-space: nowrap; font-size: 13.5px; max-width: calc(100vw - 32px);
   background: var(--card); border: 1px solid var(--input); border-radius: var(--r-lg); box-shadow: var(--shadow-float);
   animation: fr-take-in .2s var(--ease);
 }

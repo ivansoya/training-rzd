@@ -1296,6 +1296,102 @@ def _dataset_usage(db, project, dataset):
     }
 
 
+def _transfer_datasets(db, project, source_id, target_id):
+    try:
+        source_id, target_id = uuid.UUID(str(source_id)), uuid.UUID(str(target_id))
+    except (ValueError, AttributeError, TypeError):
+        return None, None, (jsonify({"error": "Выберите датасет назначения."}), 400)
+    if source_id == target_id:
+        return None, None, (jsonify({"error": "Выберите другой датасет."}), 400)
+    rows = db.execute(select(Dataset).where(
+        Dataset.project_id == project.id, Dataset.id.in_([source_id, target_id]),
+    ).order_by(Dataset.id).with_for_update()).scalars().all()
+    found = {row.id: row for row in rows}
+    if source_id not in found or target_id not in found:
+        return None, None, (jsonify({"error": "Датасет не найден в этом проекте."}), 404)
+    return found[source_id], found[target_id], None
+
+
+def _transfer_busy(db, project):
+    if db.execute(select(func.count()).select_from(DataprepJob).where(
+            DataprepJob.project_id == project.id,
+            DataprepJob.status.in_(("queued", "running")))).scalar_one():
+        return "Идёт подготовка данных. Дождитесь её окончания."
+    if db.execute(select(func.count()).select_from(AgentRun).where(
+            AgentRun.project_id == project.id,
+            AgentRun.status.in_(("queued", "waiting_gpu", "running")))).scalar_one():
+        return "Работает агент разметки. Дождитесь его окончания."
+    return None
+
+
+@bp.post("/api/projects/<code>/datasets/<dataset_id>/move")
+def move_dataset_images(code, dataset_id):
+    """Перенести выбранные кадры целиком, не меняя их id и разметку."""
+    db, project, err = _resolve(code, "editor")
+    if err:
+        return err
+    try:
+        data = json_body()
+        source, target, err = _transfer_datasets(db, project, dataset_id, data.get("target_dataset_id"))
+        if err:
+            return err
+        raw = data.get("image_ids")
+        if not isinstance(raw, list) or not raw:
+            return jsonify({"error": "Выберите кадры для переноса."}), 400
+        try:
+            ids = sorted({uuid.UUID(str(value)) for value in raw})
+        except (ValueError, AttributeError, TypeError):
+            return jsonify({"error": "Некорректный список кадров."}), 400
+        busy = _transfer_busy(db, project)
+        if busy:
+            return jsonify({"error": busy, "code": "project_busy"}), 409
+        # Порции не ограничивают число выбранных кадров; все записываются одной транзакцией.
+        for start in range(0, len(ids), 1000):
+            batch = ids[start:start + 1000]
+            found = db.execute(select(Image.id).where(
+                Image.project_id == project.id, Image.dataset_id == source.id, Image.id.in_(batch),
+            ).order_by(Image.id).with_for_update()).scalars().all()
+            if len(found) != len(batch):
+                return jsonify({"error": "Часть выбранных кадров уже не находится в исходном датасете. Обновите страницу."}), 409
+            if task_frames.live_copies(db, batch):
+                return jsonify({"error": "Часть кадров уже правится в таске. Обновите выбор."}), 409
+            db.execute(update(Image).where(Image.id.in_(batch)).values(dataset_id=target.id))
+        db.commit()
+        return jsonify({"moved": len(ids), "target_id": str(target.id)})
+    finally:
+        db.close()
+
+
+@bp.post("/api/projects/<code>/datasets/<dataset_id>/merge")
+def merge_datasets(code, dataset_id):
+    """Перенести все кадры и убрать исходный датасет одной транзакцией."""
+    db, project, err = _resolve(code, "admin")
+    if err:
+        return err
+    try:
+        source, target, err = _transfer_datasets(db, project, dataset_id, json_body().get("target_dataset_id"))
+        if err:
+            return err
+        busy = _transfer_busy(db, project)
+        if busy:
+            return jsonify({"error": busy, "code": "project_busy"}), 409
+        usage = _dataset_usage(db, project, source)
+        if usage["tasks"]:
+            names = ", ".join(t["name"] for t in usage["tasks"])
+            return jsonify({"error": f"Датасет держат незакрытые таски: {names}. Закройте их.", "code": "dataset_held"}), 409
+        if usage["unbuilt_sets"]:
+            names = ", ".join(usage["unbuilt_sets"])
+            return jsonify({"error": f"Датасет выбран в несобранных наборах: {names}. Измените их отбор.", "code": "dataset_in_sets"}), 409
+        moved = db.execute(update(Image).where(Image.dataset_id == source.id).values(dataset_id=target.id)).rowcount
+        db.execute(update(Image).where(Image.dataset_before_delete == source.id).values(dataset_before_delete=target.id))
+        db.execute(update(Task).where(Task.target_dataset_id == source.id).values(target_dataset_id=target.id))
+        db.delete(source)
+        db.commit()
+        return jsonify({"moved": moved, "target_id": str(target.id)})
+    finally:
+        db.close()
+
+
 @bp.patch("/api/projects/<code>/datasets/<dataset_id>")
 def rename_dataset(code, dataset_id):
     """Имя — подпись для людей, поэтому правит его редактор. Идентификатор не

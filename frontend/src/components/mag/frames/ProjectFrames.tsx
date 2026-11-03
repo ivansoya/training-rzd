@@ -14,7 +14,7 @@ import { listTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
 import { useLive } from "../../../live/LiveProvider";
 import { Button, Empty, LinkButton, Notice, PageHeader, Range, Select, ToggleGroup, Icon } from "../../../ui";
-import { count } from "../../ru";
+import { count, plural } from "../../ru";
 import { withSep } from "../../Sep";
 import ExportModal from "../ExportModal";
 import { useProject } from "../ProjectShell";
@@ -26,6 +26,7 @@ import type { Filters } from "./FrameFilters";
 import { FrameGroup } from "./FrameGroup";
 import type { GroupDef, Picking } from "./FrameGroup";
 import { TakeBar } from "./TakeBar";
+import { TransferDialog } from "./TransferDialog";
 import type { Overlays } from "./FrameTile";
 
 type GroupBy = "dataset" | "split" | "none";
@@ -190,6 +191,8 @@ export default function ProjectFrames() {
 
   const [exporting, setExporting] = useState(false);
   const [dsEdit, setDsEdit] = useState<{ id: string; name: string; mode: "rename" | "delete" } | null>(null);
+  const [transfer, setTransfer] = useState<{ source: { id: string; name: string }; ids: string[] | null } | null>(null);
+  const [transferNote, setTransferNote] = useState<string | null>(null);
 
   const importing = project.status === "importing";
   const header = (
@@ -229,6 +232,7 @@ export default function ProjectFrames() {
     <div className="page">
       {header}
       {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
+      {transferNote && <Notice tone="ok" onClose={() => setTransferNote(null)}>{transferNote}</Notice>}
 
       <FrameFilters f={f} set={set} classes={classes} tags={tags} splits={sum?.splits ?? {}}
         matched={sum ? sum.matched : null} total={sum?.total ?? detail.stats.images} summary={sum?.summary ?? null} />
@@ -272,6 +276,7 @@ export default function ProjectFrames() {
               tags={tags} onTagCreated={(t) => setTags((prev) => [...prev, t])}
               onEdited={afterEdit} onError={setError}
               canDelete={isAdmin} picking={g.dataset && canEdit ? pickingOf(g.key) : undefined}
+              onMerge={g.dataset && isAdmin ? () => setTransfer({ source: g.dataset!, ids: null }) : undefined}
               onDataset={g.dataset && canEdit ? (mode) => setDsEdit({ ...g.dataset!, mode }) : undefined} />
           ))}
         </div>
@@ -280,7 +285,8 @@ export default function ProjectFrames() {
       {canEdit && (
         <TakeBar code={code} title={pick ? datasets.find((d) => d.id === pick.ds)?.name ?? "" : null}
           ids={sel ? [...sel] : []} unseen={unseen}
-          onClear={() => setPick(null)} onNew={setCreating} onError={setError} />
+          onClear={() => setPick(null)} onNew={setCreating} onError={setError}
+          onMove={() => { const d = datasets.find((item) => item.id === pick?.ds); if (d && sel) setTransfer({ source: d, ids: [...sel] }); }} />
       )}
       {creating && (
         <CreateTaskModal isAdmin={isAdmin} fromDataset={creating} onClose={() => setCreating(null)}
@@ -296,6 +302,13 @@ export default function ProjectFrames() {
           onRemoved={() => { linkedEdited.current = true; setLinked([]); closeLinked(); afterEdit(); }} />
       )}
       {exporting && <ExportModal detail={detail} onClose={() => setExporting(false)} />}
+      {transfer && <TransferDialog code={code} source={transfer.source} datasets={datasets} ids={transfer.ids}
+        onClose={() => setTransfer(null)} onDone={async (moved, target) => {
+          const name = datasets.find((d) => d.id === target)?.name ?? "датасет";
+          setTransfer(null); setPick(null);
+          setTransferNote(`В «${name}» ${plural(moved, "перенесён", "перенесены", "перенесены")} ${count(moved, "кадр", "кадра", "кадров")}.`);
+          afterEdit();
+        }} />}
       {dsEdit && (
         <DatasetDialog code={code} dataset={dsEdit} mode={dsEdit.mode} onClose={() => setDsEdit(null)}
           onDone={async () => {

@@ -38,7 +38,7 @@ export interface Picking {
 
 /** Группа галереи: сворачивается, грузит кадры порциями, в DOM держит только видимые ряды. */
 export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, onCollapse, tags, onTagCreated,
-  onEdited, onDataset, canDelete, picking, onError }: {
+  onEdited, onDataset, onMerge, canDelete, picking, onError }: {
   def: GroupDef;
   code: string;
   base: ImagesQuery;
@@ -53,6 +53,7 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
   onEdited: () => void;
   /** Правка датасета группы — только у группировки по датасетам и у редактора. */
   onDataset?: (mode: "rename" | "delete") => void;
+  onMerge?: () => void;
   canDelete?: boolean;
   /** Отбор кадров — только у групп-датасетов и у редактора. */
   picking?: Picking;
@@ -151,6 +152,9 @@ export function FrameGroup({ def, code, base, filterKey, ov, tile, collapsed, on
               )}
               {onDataset && (
                 <MenuItem icon="edit" onSelect={() => { close(); onDataset("rename"); }}>Переименовать…</MenuItem>
+              )}
+              {onMerge && (
+                <MenuItem icon="merge" onSelect={() => { close(); onMerge(); }}>Слить с другим датасетом…</MenuItem>
               )}
               {onDataset && canDelete && (
                 <MenuItem icon="trash" danger onSelect={() => { close(); onDataset("delete"); }}>Удалить датасет…</MenuItem>

@@ -3,7 +3,7 @@
 // Отдельный модуль, а не auth/api.ts: там и так всё подряд, а у датасетов
 // своя жизнь — переименование, удаление с ценой, счёт разметки в своих кадрах.
 
-import { del, get, patch } from "./http";
+import { del, get, patch, post } from "./http";
 import type { ClassesInfo } from "../auth/api";
 
 /** Классы проекта со счётом разметки в том множестве кадров, которое смотрят:
@@ -36,3 +36,9 @@ export const datasetUsage = (code: string, id: string) =>
 
 export const deleteDataset = (code: string, id: string) =>
   del<{ ok: true; images: number; annotations: number }>(dsPath(code, id));
+
+export const moveDatasetImages = (code: string, id: string, target: string, ids: string[]) =>
+  post<{ moved: number; target_id: string }>(`${dsPath(code, id)}/move`, { target_dataset_id: target, image_ids: ids });
+
+export const mergeDatasets = (code: string, id: string, target: string) =>
+  post<{ moved: number; target_id: string }>(`${dsPath(code, id)}/merge`, { target_dataset_id: target });

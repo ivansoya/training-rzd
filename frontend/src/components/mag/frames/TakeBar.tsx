@@ -9,7 +9,7 @@ import { Button, Icon, LinkButton, MenuItem, Popover } from "../../../ui";
 import { count, plural, ru } from "../../ru";
 import Sep, { withSep } from "../../Sep";
 
-export function TakeBar({ code, title, ids, unseen, onClear, onNew, onError }: {
+export function TakeBar({ code, title, ids, unseen, onClear, onNew, onMove, onError }: {
   code: string;
   /** Датасет в режиме отбора; null — режима нет, видна только плашка итога. */
   title: string | null;
@@ -20,6 +20,7 @@ export function TakeBar({ code, title, ids, unseen, onClear, onNew, onError }: {
   /** Снять выбор и выйти из отбора. */
   onClear: () => void;
   onNew: (ids: string[]) => void;
+  onMove: () => void;
   onError: (message: string) => void;
 }) {
   const [tasks, setTasks] = useState<TaskLight[] | null>(null);
@@ -70,6 +71,7 @@ export function TakeBar({ code, title, ids, unseen, onClear, onNew, onError }: {
           <span>выбрано <b className="ui-mono">{ru(n)}</b></span>
           {unseen > 0 && <span className="t-xs t-muted">из них не видно {ru(unseen)}</span>}
           <i className="fr-take-sep" />
+          <Button size="sm" icon="forward" disabled={busy || !n} onClick={onMove}>В другой датасет…</Button>
           <Popover side="top" align="end" width={330} onOpenChange={(v) => v && load()}
             trigger={<Button variant="primary" size="sm" icon="check" iconEnd="chevD" disabled={busy || !n}>В таску</Button>}>
             {(close) => (
