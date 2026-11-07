@@ -1824,7 +1824,7 @@ export default function VideoAnnotator({
             hiddenItems={hiddenIdx}
             labelOf={labelOf}
             editable={!frozen && !shown.lagging}
-            waiting={shown.lagging}
+            waiting={shown.lagging || !frameLoaded}
             tool={tool === "select" ? "select" : tool === "polygon" ? "polygon" : "box"}
             auto={autoLive}
             selectedPart={selPart}

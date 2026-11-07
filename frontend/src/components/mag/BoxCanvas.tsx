@@ -184,19 +184,20 @@ function isPoly(s: CanvasShape): boolean {
  * значило бы моргать при каждом шаге стрелкой.
  */
 function BitmapView({
-  bitmap, width, height, style,
+  bitmap, width, height, style, onPainted,
 }: {
   bitmap: ImageBitmap | null;
   width: number;
   height: number;
   /** Вписывание в сцену — то же, что у картинки: по ширине и высоте места. */
   style: CSSProperties;
+  onPainted: (bitmap: ImageBitmap | null) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
   useLayoutEffect(() => {
     const canvas = ref.current;
-    if (!canvas || !bitmap) return;
+    if (!canvas || !bitmap) { onPainted(null); return; }
     // Холст всегда размером исходного кадра, а ступень качества растягивается
     // на него. Раньше холст брал размер картинки ступени, и на 480p кадр на
     // экране становился меньше (852×480 против 1920×1080) при том же «100%»
@@ -208,14 +209,16 @@ function BitmapView({
       canvas.height = h;
     }
     const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+    if (!ctx) { onPainted(null); return; }
     try {
       ctx.drawImage(bitmap, 0, 0, w, h);
+      onPainted(bitmap);
     } catch {
+      onPainted(null);
       // Картинку успели закрыть, пока мы до неё добирались: следующий кадр
       // приедет и перерисует. Ронять отрисовку из-за этого незачем.
     }
-  }, [bitmap, width, height]);
+  }, [bitmap, width, height, onPainted]);
 
   // До первого кадра размер берётся у исходника: иначе холст встанет в свои
   // стандартные 300×150 и вся вёрстка дёрнется, когда приедет картинка.
@@ -329,7 +332,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
 }>(function BoxCanvas(
   {
     imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, captionOf, agentOf, asked, dashed, hidden, hiddenItems,
-    labels = true, editable = false, waiting = false, tool = "select", auto = false,
+    labels = true, editable: canEdit = false, waiting = false, tool = "select", auto = false,
     autoMode = "points", autoPoints, autoPreview = null, activeClass = null,
     selected = null, multiSelected, selectedPart = null, splitParts = false, canMovePoly = false,
     grid = true, reserve = 210, onSelect, onMultiSelect, onBoxes, onDrawn,
@@ -338,6 +341,44 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   },
   ref
 ) {
+  const imageSource = src || imagePreviewUrl(imageId);
+  const request = useMemo(() => ({ id: imageId, src: imageSource, bitmap }), [imageId, imageSource, bitmap]);
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [loadedImage, setLoadedImage] = useState<typeof request | null>(null);
+  const [painted, setPainted] = useState<{ request: typeof request; bitmap: ImageBitmap } | null>(null);
+  const onPainted = useCallback((next: ImageBitmap | null) => {
+    setPainted((prev) => next ? (prev?.request === request && prev.bitmap === next ? prev : { request, bitmap: next }) : null);
+  }, [request]);
+  const frameReady = !waiting && (bitmap !== undefined
+    ? !!bitmap && painted?.request === request && painted.bitmap === bitmap
+    : loadedImage === request);
+  const editable = canEdit && frameReady;
+
+  useLayoutEffect(() => {
+    if (bitmap !== undefined) return;
+    const image = imageRef.current;
+    if (!image) return;
+    let live = true;
+    const expected = new URL(imageSource, document.baseURI).href;
+    const loaded = () => {
+      if (!image.complete || !image.naturalWidth || image.currentSrc !== expected) return;
+      void image.decode().then(() => {
+        if (live && image.complete && image.naturalWidth && image.currentSrc === expected) {
+          setLoadedImage(request);
+        }
+      }).catch(() => {});
+    };
+    const failed = () => { if (live) setLoadedImage(null); };
+    image.addEventListener("load", loaded);
+    image.addEventListener("error", failed);
+    loaded(); // Из кеша load мог прийти раньше подписки.
+    return () => {
+      live = false;
+      image.removeEventListener("load", loaded);
+      image.removeEventListener("error", failed);
+    };
+  }, [request, imageSource, bitmap]);
+
   const [lasso, setLasso] = useState<CanvasBox | null>(null);
   const [view, setView] = useState({ s: 1, x: 0, y: 0 });
   const [hires, setHires] = useState(false);
@@ -874,6 +915,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   return (
     <div
       className={`mag-cv ${grid ? "grid" : ""} cur-${cursor}`}
+      aria-busy={!frameReady}
       ref={stageRef}
       onPointerDown={onStageDown}
       onPointerMove={onStageMove}
@@ -888,13 +930,15 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           {bitmap !== undefined ? (
             <BitmapView
               bitmap={bitmap}
+              onPainted={onPainted}
               width={width}
               height={height}
               style={fitStyle}
             />
           ) : (
             <img
-              src={src || imagePreviewUrl(imageId)}
+              ref={imageRef}
+              src={imageSource}
               alt={fileName || ""}
               draggable={false}
               style={fitStyle}
@@ -903,7 +947,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           {/* Оригинал приезжает вторым слоем: подмена src дала бы моргание.
               У кадра видео второго размера нет — слой не нужен. */}
           {hires && !src && bitmap === undefined && (
-            <img className="mag-cv-hires" src={imageFileUrl(imageId)} alt="" draggable={false} />
+            <img key={imageId} className="mag-cv-hires" src={imageFileUrl(imageId)} alt="" draggable={false} />
           )}
         </div>
       </div>
@@ -911,7 +955,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       {/* Разметка целиком: объекты, якоря, вершины, подсказки модели. Слой не
           ловит события сам — их ловят только нарисованные в нём фигуры, иначе
           он забрал бы у сцены панораму. */}
-      <svg
+      {frameReady && <><svg
         className={"mag-cv-layer" + (alt && editable ? " alt" : "")}
         width="100%"
         height="100%"
@@ -1318,6 +1362,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           })}
         </div>
       )}
+      </>}
     </div>
   );
 });
