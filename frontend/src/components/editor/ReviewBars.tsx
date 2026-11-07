@@ -66,7 +66,7 @@ export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, 
       <i className="ed-vsep" />
       {many ? pickAgent("Отклонить всё от…", onRejectAgent) : (
         <Button variant="ghost" size="sm" disabled={disabled} onClick={onReject}
-          title="Убрать с кадра всё непроверенное агента">Отклонить все</Button>
+          title="Убрать с кадра всё непроверенное агента (Shift+Enter)">Отклонить все</Button>
       )}
       {many && pickAgent("Принять всё от…", onConfirmAgent)}
       <Button variant="agent" size="sm" kbd="⏎" disabled={disabled} onClick={onConfirm}

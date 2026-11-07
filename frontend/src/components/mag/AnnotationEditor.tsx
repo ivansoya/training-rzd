@@ -54,7 +54,7 @@ import {
   agentGroups, confirmAll, confirmWhere, nextFlagged, pendingCount, rejectAll, rejectWhere, settlePending,
 } from "../editor/review";
 import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad } from "../editor/look";
-import { detachContour } from "../editor/shapes";
+import { detachContour, mergeContours, togglePolygonSelection } from "../editor/shapes";
 import type { KeyGroup } from "../editor/look";
 import type { QuestionsApi } from "./questions/useQuestions";
 import { askedObjects, atPlace, nextAsked, open as openOf } from "./questions/questions";
@@ -72,11 +72,13 @@ const KEYS: KeyGroup[] = [
     ["Shift+P", "Следующий контур ляжет в выбранный объект"],
     ["A", "Полуавтомат SAM2 поверх рамки или контура"],
     ["1–9", "Класс: при выбранном объекте — перекрасить его"],
-    ["Alt", "Новая точка контура под курсором"],
+    ["Alt+щелчок", "Добавить точку на ребре выбранного контура"],
+    ["Правая по точке", "Удалить точку выбранного контура"],
   ] },
   { title: "Правка", keys: [
-    ["Del", "Удалить объект, а при раздельных частях — часть"],
-    ["Ctrl+Z", "Отменить правку"],
+    ["Del / Backspace", "Удалить выбранный объект или часть; при рисовании — последнюю точку"],
+    ["Ctrl+щелчок", "Выбрать несколько полигонов одного класса для объединения"],
+    ["Ctrl+Z", "Отменить правку; при рисовании контура — убрать последнюю точку"],
     ["Ctrl+Shift+Z / Ctrl+Y", "Повторить"],
     ["Esc", "Снять начатое по шагу, на дне — выйти из разметки"],
   ] },
@@ -91,6 +93,7 @@ const KEYS: KeyGroup[] = [
   { title: "Агент", keys: [
     ["G", "Агент на этом кадре: рамки встанут на проверку"],
     ["Enter", "Подтвердить кадр: оставшиеся рамки агента верны"],
+    ["Shift+Enter", "Отклонить все непроверенные объекты агентов на этом кадре"],
     ["Shift+[ / Shift+]", "Предыдущий и следующий кадр на проверке"],
     ["Правка рамки", "Поправленная рамка агента считается проверенной"],
   ] },
@@ -219,6 +222,7 @@ export default function AnnotationEditor({
   const [active, setActive] = useState<number | null>(null);
   const [boxes, setBoxes] = useState<CanvasShape[]>([]);
   const [selected, setSelected] = useState<number | null>(null);
+  const [multiSelected, setMultiSelected] = useState<Set<number>>(new Set());
   // Какая часть выбранного объекта под рукой. У разорванного вагона половины
   // лежат в разных местах кадра, и «подвинуть объект» — не то же, что
   // «подвинуть эту половину».
@@ -270,9 +274,21 @@ export default function AnnotationEditor({
     prev: number | null;
   } | null>(null);
   const pick = useCallback((i: number | null, part: number | null = null) => {
+    setMultiSelected(new Set());
     setSelected(i);
     setSelPart(i === null ? null : part);
   }, []);
+
+  useEffect(() => { setMultiSelected(new Set()); }, [boxes, tool]);
+  useEffect(() => { if (selected === null) setMultiSelected(new Set()); }, [selected]);
+
+  const pickAdditional = useCallback((i: number) => {
+    const next = togglePolygonSelection(boxes, selected, multiSelected, i);
+    if (!next) { setError("Объединять можно только полигоны одного класса."); return; }
+    setSelected(next.selected);
+    setSelPart(null);
+    setMultiSelected(next.group);
+  }, [boxes, selected, multiSelected]);
 
   const [scale, setScale] = useState(1);
   const [filmW, setFilmW] = useState(120);
@@ -488,7 +504,7 @@ export default function AnnotationEditor({
   /** Правка разметки. Снимок «до» уходит в историю — один на жест мыши и по
    *  одному на каждую правку с клавиатуры или из меню. */
   const edit = useCallback((raw: CanvasShape[]) => {
-    // Правка рамки агента — её проверка: пунктир уходит сразу, как и на сервере.
+    // Правка рамки агента — её проверка, как и на сервере.
     const next = settlePending(boxesRef.current, raw);
     if (gesture.current !== "recorded") {
       hist.current = history.record(hist.current, { img: live.current.image?.id ?? "", boxes: boxesRef.current });
@@ -1193,8 +1209,12 @@ export default function AnnotationEditor({
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
-      // Shift+P — «присоединить контур к выбранному». Единственное сочетание с
-      // Shift, поэтому проверяем его до общего разбора, а не заводим ветку.
+      if (e.shiftKey && (e.code === "Enter" || e.code === "NumpadEnter")) {
+        if (!e.repeat && !canvas.current?.drawing() && !autoPrev && !autoPts.length) rejectFrame();
+        e.preventDefault();
+        return;
+      }
+      // Shift+P — присоединить контур; Shift+[ ] — кадры на проверке.
       if (e.shiftKey) {
         if (e.code === "KeyP" && !frozen) { addContour(); e.preventDefault(); }
         if (e.code === "BracketLeft" || e.code === "BracketRight") { goReview(e.code === "BracketLeft" ? -1 : 1, true); e.preventDefault(); }
@@ -1299,7 +1319,7 @@ export default function AnnotationEditor({
   }, [go, next, close, step, selected, selPart, splitParts, classes, tool, autoOn,
       addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
       pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty,
-      confirmFrame, goReview, runAgent, ds, emptyInDataset, dropFromDataset, goAsked, startAsk]);
+      confirmFrame, rejectFrame, goReview, runAgent, ds, emptyInDataset, dropFromDataset, goAsked, startAsk]);
 
   /** Что можно сделать с объектом под правой кнопкой, кроме смены класса.
    *
@@ -1347,6 +1367,18 @@ export default function AnnotationEditor({
     const me = boxes[i];
     if (!me) return undefined;
     const acts: { label: string; hint?: string; run: () => void }[] = [];
+
+    if (multiSelected.size > 1 && multiSelected.has(i) && selected !== null) {
+      return [{ label: "Объединить", icon: "merge" as const, run: () => {
+        const next = mergeContours(boxesRef.current, multiSelected, selected);
+        if (next !== boxesRef.current) {
+          const target = selected - [...multiSelected].filter((n) => n !== selected && n < selected).length;
+          edit(next);
+          pick(target);
+        }
+        setMenu(null);
+      } }];
+    }
 
     acts.push({
       label: "Добавить контур",
@@ -1495,6 +1527,7 @@ export default function AnnotationEditor({
       >
         <BoxCanvas
           ref={canvas}
+          agentOf={(i) => { const b = meta.get(boxes[i]?.id ?? ""); return !!b?.agent && b.source === "model"; }}
           captionOf={agentsHere.length > 1
             ? (i) => (boxes[i]?.pending ? agentKeyOf(meta.get(boxes[i].id ?? ""))?.name : undefined) : undefined}
           imageId={image.id}
@@ -1514,12 +1547,14 @@ export default function AnnotationEditor({
           autoPreview={autoPrev}
           activeClass={active}
           selected={selected}
+          multiSelected={multiSelected}
           selectedPart={selPart}
           splitParts={splitParts}
           canMovePoly={canMovePoly}
           grid={grid}
           reserve={56}
           onSelect={pick}
+          onMultiSelect={pickAdditional}
           onBoxes={edit}
           onDrawn={() => { if (!lock) setTool("select"); }}
           onPolygon={onPolygon}
@@ -1568,11 +1603,13 @@ export default function AnnotationEditor({
             </ToolMenu>
             <AgentTool tool={agentTool} disabled={frozen} onRun={() => void runAgent()} onMap={() => setMapOpen(true)} />
             <i className="ed-vsep" />
-            {actions.includes("empty") && <>
-              <Button variant="ghost" size="sm" kbd="E" className="fe-v empty" aria-pressed={image?.task_status === "empty"}
-                disabled={!!autoPrev} onClick={() => void (ds ? emptyInDataset() : toggle("empty"))}>Пусто</Button>
-              <i className="ed-vsep" />
-            </>}
+            {actions.includes("empty") && <ToolButton icon="ban" label="Пусто" k="E" pressed={image?.task_status === "empty"}
+              disabled={!!autoPrev} onClick={() => void (ds ? emptyInDataset() : toggle("empty"))} />}
+            {questions?.canAsk && <ToolButton icon="question" label="Вопрос к кадру" k="C" pressed={false}
+              title="Вопрос к кадру; C — к выбранному объекту" onClick={() => void startAsk(null)} />}
+            <ToolButton icon="trash" label="Очистить кадр" pressed={false} disabled={frozen || !!autoPrev || boxes.length === 0}
+              onClick={() => { edit([]); pick(null); }} />
+            <i className="ed-vsep" />
             <ClassPicker classes={classes} active={active}
               onPick={(ci) => pickClass(ci)}
               onCreate={frozen ? undefined : async (name) => {
@@ -1725,7 +1762,6 @@ export default function AnnotationEditor({
               <AutoBar onCommit={commitAuto} onCancel={clearAuto} />
             ) : (
               <FrameBar index={at} total={of} of={narrowed ? (ds ? ds.total : images.length) : undefined}
-                onAsk={questions?.canAsk ? () => void startAsk(null) : undefined}
                 canPrev={canPrev} canNext={canNext}
                 canAnnotated={annotatedFlags().some((on, i) => on && i !== index)} onAnnotated={goReview}
                 actions={actions} status={image.task_status}
@@ -1759,13 +1795,15 @@ export default function AnnotationEditor({
           classes={classes}
           at={{ x: menu.x, y: menu.y }}
           current={menu.i === null ? active : boxes[menu.i]?.class_index ?? null}
-          onPick={(ci) => { pickClass(ci, menu.i); setMenu(null); }}
+          onPick={multiSelected.size > 1 && menu.i !== null && multiSelected.has(menu.i)
+            ? undefined : (ci) => { pickClass(ci, menu.i); setMenu(null); }}
           deleteLabel="объект"
-          groups={[[...askActions(menu.i), ...mainActions(menu.i)], menuActions(menu) ?? []]}
+          groups={multiSelected.size > 1 && menu.i !== null && multiSelected.has(menu.i)
+            ? [menuActions(menu) ?? []] : [[...askActions(menu.i), ...mainActions(menu.i)], menuActions(menu) ?? []]}
           note={menu.i !== null && meta.get(boxes[menu.i]?.id ?? "")?.agent
             ? <Who box={meta.get(boxes[menu.i]?.id ?? "")} /> : undefined}
           onDelete={
-            menu.i === null || frozen
+            menu.i === null || frozen || (multiSelected.size > 1 && multiSelected.has(menu.i))
               ? undefined
               : () => {
                   const i = menu.i as number;

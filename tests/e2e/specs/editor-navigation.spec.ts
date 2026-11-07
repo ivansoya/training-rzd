@@ -35,6 +35,18 @@ async function detach(editor: Locator) {
   await expect(editor.locator(".ed-save")).toContainText("Сохранено");
 }
 
+async function mergePolygons(editor: Locator) {
+  const polygons = editor.locator(".mag-cv-sh.poly:not(.mag-cv-ov)");
+  await expect(polygons).toHaveCount(2);
+  await polygons.nth(0).locator(".mag-cv-hit").first().click();
+  await polygons.nth(1).locator(".mag-cv-hit").first().click({ modifiers: ["Control"] });
+  await expect(editor.locator(".mag-cv-sh.poly.on:not(.mag-cv-ov)")).toHaveCount(2);
+  await polygons.nth(1).locator(".mag-cv-hit").first().click({ button: "right" });
+  await editor.page().getByRole("menuitem", { name: "Объединить", exact: true }).click();
+  await expect(polygons).toHaveCount(1);
+  await expect(polygons.locator(".mag-cv-hit")).toHaveCount(2);
+}
+
 test("кадры: стрелки и клавиши пропускают пустые; контур отделяется, сохраняется и отменяется", async ({ page }) => {
   const { project, task } = await setup(page);
   const buffer = Buffer.from(await page.evaluate(() => {
@@ -64,14 +76,21 @@ test("кадры: стрелки и клавиши пропускают пуст
   await expect(header).toContainText("frame-3.jpg");
   await editor.getByRole("button", { name: "Предыдущий размеченный кадр ([)", exact: true }).click();
   await expect(header).toContainText("frame-1.jpg");
-  await editor.getByRole("button", { name: "Следующий кадр (→)", exact: true }).click();
+  await page.goto(`/projects/${project.code}/tasks/${task.id}?frame=${images[1].id}`);
+  await expect(header).toContainText("frame-2.jpg");
   const emptyFrame = editor.locator(".ed-top").getByRole("button", { name: /Пусто/ });
   await expect(emptyFrame).toBeVisible();
+  await expect(emptyFrame.locator(".ed-tool-k")).toHaveText("E");
+  await expect(editor.locator(".ed-top").getByRole("button", { name: "Вопрос к кадру" }).locator(".ed-tool-k")).toHaveText("C");
+  await expect(editor.locator(".ed-bot").getByRole("button", { name: /Вопрос/ })).toHaveCount(0);
   await emptyFrame.click();
+  await expect.poll(async () => (await listing()).find((im: { id: string }) => im.id === images[1].id).task_status).toBe("empty");
+  await page.goto(`/projects/${project.code}/tasks/${task.id}?frame=${images[1].id}`);
   await expect(emptyFrame).toHaveAttribute("aria-pressed", "true");
   await emptyFrame.click();
   await expect(emptyFrame).toHaveAttribute("aria-pressed", "false");
-  await editor.getByRole("button", { name: "Предыдущий кадр (←)", exact: true }).click();
+  await page.goto(`/projects/${project.code}/tasks/${task.id}?frame=${images[0].id}`);
+  await expect(header).toContainText("frame-1.jpg");
   await page.keyboard.press("BracketLeft");
   await expect(header).toContainText("frame-3.jpg");
   await page.keyboard.press("BracketRight");
@@ -80,8 +99,16 @@ test("кадры: стрелки и клавиши пропускают пуст
   await detach(editor);
   const boxes = async () => (await listing()).find((im: { id: string }) => im.id === images[0].id).boxes;
   await expect.poll(async () => (await boxes()).length).toBe(2);
+  await mergePolygons(editor);
+  await expect.poll(async () => (await boxes()).length).toBe(1);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await boxes()).length).toBe(2);
+  await editor.locator(".mag-cv-sh.poly:not(.mag-cv-ov) .mag-cv-hit").last().click();
   await page.keyboard.press("Digit2");
   await expect.poll(async () => (await boxes()).map((b: { class_index: number }) => b.class_index).sort()).toEqual([0, 1]);
+  await editor.locator(".mag-cv-sh.poly:not(.mag-cv-ov) .mag-cv-hit").first().click({ modifiers: ["Control"] });
+  await expect(editor.getByText("Объединять можно только полигоны одного класса.")).toBeVisible();
+  await expect(editor.locator(".mag-cv-sh.poly.on:not(.mag-cv-ov)")).toHaveCount(1);
   await page.keyboard.press("Control+z");
   await expect.poll(async () => (await boxes()).map((b: { class_index: number }) => b.class_index)).toEqual([0, 0]);
   await page.keyboard.press("Control+z");
@@ -91,6 +118,10 @@ test("кадры: стрелки и клавиши пропускают пуст
   await expect.poll(async () => (await boxes()).length).toBe(2);
   await page.reload();
   await expect(editor.locator(".mag-cv-sh.poly:not(.mag-cv-ov)")).toHaveCount(2);
+  await editor.locator(".ed-top").getByRole("button", { name: "Очистить кадр" }).click();
+  await expect.poll(async () => (await boxes()).length).toBe(0);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await boxes()).length).toBe(2);
   await editor.screenshot({ path: test.info().outputPath("frame-editor.png") });
 });
 
@@ -111,6 +142,11 @@ test("видео: переход по одиночным и ключам; отд
   const track = await created.json();
   const key = await page.request.put(`/api/video-tracks/${track.id}/keys/15`, { data: { geometry, extend: true } });
   expect(key.ok(), await key.text()).toBeTruthy();
+  const hiddenCreated = await page.request.post(`${path}/tracks`, { data: { class_index: 0, frame_no: 0, geometry } });
+  expect(hiddenCreated.ok(), await hiddenCreated.text()).toBeTruthy();
+  const hiddenTrack = await hiddenCreated.json();
+  expect((await page.request.put(`/api/video-tracks/${hiddenTrack.id}/keys/15`, { data: { geometry, extend: true } })).ok()).toBeTruthy();
+  expect((await page.request.patch(`/api/video-tracks/${hiddenTrack.id}`, { data: { hidden_ranges: [[5, 12]] } })).ok()).toBeTruthy();
   for (const f of [10, 25]) {
     const res = await page.request.put(`${path}/frames/${f}/boxes`, { data: { boxes: [compound] } });
     expect(res.ok(), await res.text()).toBeTruthy();
@@ -121,10 +157,12 @@ test("видео: переход по одиночным и ключам; отд
   const ruler = editor.getByRole("slider", { name: "Кадр", exact: true });
   await expect(ruler).toHaveAttribute("aria-valuenow", "0");
   await expect(editor.locator(".ed-top").getByRole("button", { name: /Пусто/ })).toBeVisible();
+  await expect(editor.locator(".ed-top").getByRole("button", { name: "Вопрос к кадру" }).locator(".ed-tool-k")).toHaveText("C");
+  await expect(editor.locator(".ve-tr").getByRole("button", { name: /Вопрос/ })).toHaveCount(0);
   const speed = editor.getByRole("combobox", { name: "Скорость" });
   await speed.click();
-  await page.getByRole("option", { name: "½" }).click();
-  await expect(speed).toContainText("½");
+  await page.getByRole("option", { name: "0,5×" }).click();
+  await expect(speed).toContainText("0,5×");
   const tenForward = editor.getByRole("button", { name: "Вперёд на 10 кадров (Shift+→)" });
   await expect(tenForward.locator("svg")).toHaveClass(/lucide-chevrons-right/);
   await tenForward.click();
@@ -149,7 +187,13 @@ test("видео: переход по одиночным и ключам; отд
   const annotations = async () => (await (await page.request.get(`${path}/annotations`)).json());
   const boxes = async () => (await annotations()).singles.filter((s: { frame_no: number }) => s.frame_no === 10);
   await expect.poll(async () => (await boxes()).length).toBe(2);
-  expect((await annotations()).tracks).toHaveLength(1);
+  expect((await annotations()).tracks).toHaveLength(2);
+  await page.keyboard.press("KeyV");
+  await mergePolygons(editor);
+  await expect.poll(async () => (await boxes()).length).toBe(1);
+  await page.keyboard.press("Control+z");
+  await expect.poll(async () => (await boxes()).length).toBe(2);
+  await editor.locator(".mag-cv-sh.poly:not(.mag-cv-ov) .mag-cv-hit").last().click();
   await page.keyboard.press("Digit2");
   await expect.poll(async () => (await boxes()).map((b: { class_index: number }) => b.class_index).sort()).toEqual([0, 1]);
   await page.keyboard.press("Control+z");
@@ -158,6 +202,21 @@ test("видео: переход по одиночным и ключам; отд
   await expect.poll(async () => (await boxes()).length).toBe(1);
   await page.keyboard.press("Control+Shift+z");
   await expect.poll(async () => (await boxes()).length).toBe(2);
+  await editor.locator(".ed-top").getByRole("button", { name: "Очистить кадр" }).click();
+  const clear = page.getByRole("dialog", { name: "Очистить кадр?" });
+  await expect(clear).toContainText("треки останутся на остальных");
+  await clear.getByRole("button", { name: "Очистить", exact: true }).click();
+  await expect.poll(async () => (await boxes()).length).toBe(0);
+  await expect.poll(async () => (await annotations()).tracks.find((t: { id: string }) => t.id === track.id).hidden_ranges).toEqual([[10, 11]]);
+  await expect.poll(async () => (await annotations()).tracks.find((t: { id: string }) => t.id === hiddenTrack.id).hidden_ranges).toEqual([[5, 12]]);
+  await expect(editor.locator(".mag-cv-sh:not(.mag-cv-ov)")).toHaveCount(0);
+  await editor.getByRole("button", { name: "Кадр назад (←)" }).click();
+  await expect(ruler).toHaveAttribute("aria-valuenow", "9");
+  await expect(editor.locator(".mag-cv-sh:not(.mag-cv-ov):not(.occluded)")).toHaveCount(1);
+  await editor.getByRole("button", { name: "Кадр вперёд (→)" }).click();
+  await editor.getByRole("button", { name: "Кадр вперёд (→)" }).click();
+  await expect(ruler).toHaveAttribute("aria-valuenow", "11");
+  await expect(editor.locator(".mag-cv-sh:not(.mag-cv-ov):not(.occluded)")).toHaveCount(1);
   expect(await editor.locator(".ve-tr").evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   await editor.screenshot({ path: test.info().outputPath("video-editor.png") });
 });

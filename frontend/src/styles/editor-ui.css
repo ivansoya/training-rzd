@@ -52,6 +52,7 @@
 .ed-tool:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
 .ed-tool[aria-pressed="true"] { background: var(--primary); color: var(--primary-fg); }
 .ed-tool:disabled { opacity: .45; cursor: not-allowed; }
+.ed-tool.empty-idle { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-empty) 45%, transparent); }
 .ed-tool-k { position: absolute; right: 2px; bottom: 1px; font: 600 8.5px var(--mono); opacity: .7; }
 .ed-tool-lock { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .ed-tool.warming { animation: ed-blink 1.2s ease-in-out infinite; }
@@ -165,6 +166,8 @@
 .fe-obj-r:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .fe-obj-r .ui-btn { opacity: 0; }
 .fe-obj-r:hover .ui-btn, .fe-obj.on .ui-btn, .fe-obj.off .ui-btn, .fe-obj-r .ui-btn:focus-visible { opacity: 1; }
+.fe-obj-r .ui-btn-icon { flex: none; }
+.fe-obj-r .fe-obj-delete:hover:not(:disabled) { color: var(--destructive); }
 .fe-obj.off .fe-obj-r > :not(.ui-btn) { opacity: .45; }
 .fe-obj-b { display: flex; flex-direction: column; gap: 8px; padding: 2px 8px 10px; }
 /* Сведения о кадре в блоке «Кадр»: датасет, сплит, исходник копии (решения 14.10.2026) */
@@ -185,7 +188,6 @@
 
 /* ---------- «Фокус»: решения снизу ---------- */
 .fe-pos { min-width: 72px; text-align: center; }
-.fe-v.empty[aria-pressed="true"] { background: color-mix(in srgb, var(--st-empty) 20%, transparent); color: var(--fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-empty) 60%, transparent); }
 .fe-v.skipped[aria-pressed="true"] { background: color-mix(in srgb, var(--st-skip) 18%, transparent); color: var(--fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-skip) 60%, transparent); }
 .fe-v.deleted:hover:not(:disabled) { color: var(--st-del); }
 
@@ -231,7 +233,7 @@
 .ve-wait { width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: var(--faint); opacity: 0; transition: opacity .15s; flex: none; }
 .ve-wait.on { opacity: 1; animation: ed-blink 1s ease-in-out infinite; }
 .ve-tr .ui-select { min-width: 128px; }
-.fe-v.empty.idle { color: var(--muted-fg); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--st-empty) 45%, transparent); }
+.ve-tr .ui-select[aria-label="Скорость"] { min-width: 0; width: 76px; }
 
 .ve-tl {
   position: relative; flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto;
@@ -346,17 +348,11 @@
 .ve-menu { width: 250px; }
 
 /* ---------- агент на кадре: «на проверке» и находки разведки ---------- */
-/* Рамка агента — сплошная, плотная и светлым цветом агента на тёмной подложке: её для того и видно,
-   чтобы проверить. Пунктира нет — «на проверке» говорит цвет. Контур и заливка — цвета класса;
-   у контура рамкой служит габарит, ему вместо подложки — тень */
-.mag-cv-sh.pending:not(.poly) .mag-cv-line { stroke: var(--agent-fg); stroke-width: 2; }
-.mag-cv-sh.pending:not(.poly) .mag-cv-hull { stroke-width: 4; }
-.mag-cv-sh.pending.on:not(.poly) .mag-cv-line { stroke-width: 2.5; }
-.mag-cv-sh.pending.on:not(.poly) .mag-cv-hull { stroke-width: 4.5; }
-.mag-cv-sh.pending.poly .mag-cv-cage {
-  stroke: var(--agent-fg); stroke-width: 2; stroke-dasharray: none; opacity: 1;
-  filter: drop-shadow(0 0 1px rgba(0, 0, 0, .9));
+.mag-cv-sh.pending > .mag-cv-hit,
+.mag-cv-sh.pending.hot > .mag-cv-hit {
+  fill: color-mix(in srgb, var(--agent-fg) 12%, transparent);
 }
+
 .mag-cv-mark { font-style: normal; font-size: 9px; color: var(--agent-fg); margin-right: 5px; line-height: 1; flex: none; }
 .mag-cv-lb.on .mag-cv-mark { color: inherit; }
 .mag-cv-conf { font: 500 10.5px var(--mono); margin-left: 6px; opacity: .75; }

@@ -38,7 +38,7 @@ import { QuestionCompose } from "./questions/QuestionThread";
 import type { QuestionsApi } from "./questions/useQuestions";
 import { atPlace } from "./questions/questions";
 import type { RunView, ScoutStats } from "../../api/agents";
-import { Button, Notice, cx, hasLayer } from "../../ui";
+import { Button, Notice, hasLayer } from "../../ui";
 import BoxCanvas, { fmtConf } from "./BoxCanvas";
 import { useLive } from "../../live/LiveProvider";
 import type { CanvasGhost, CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
@@ -81,7 +81,7 @@ import {
 } from "../editor/video";
 import type { Item, View } from "../editor/video";
 import { chunkAt, chunkPlan, nextChunk } from "../editor/chunks";
-import { detachContour } from "../editor/shapes";
+import { detachContour, mergeContours, togglePolygonSelection } from "../editor/shapes";
 import type { Chunk } from "../editor/chunks";
 import { useHereBeat } from "./here";
 
@@ -93,14 +93,18 @@ const KEYS: KeyGroup[] = [
     ["T", "Трек: объект, живущий во времени"],
     ["A", "Полуавтомат SAM2 поверх рамки, контура или трека"],
     ["1–9", "Класс: при выбранном объекте — перекрасить его"],
-    ["Del", "Удалить выбранное: у трека — ключ на этом кадре"],
-    ["Ctrl+Z", "Отменить правку одиночных рамок, и «Принять/Отклонить» тоже; треки не отменяются"],
+    ["Alt+щелчок", "Добавить точку на ребре выбранного контура"],
+    ["Правая по точке", "Удалить точку выбранного контура"],
+    ["Del / Backspace", "Удалить выбранное, у трека — ключ; при рисовании — последнюю точку"],
+    ["Ctrl+щелчок", "Выбрать несколько полигонов одного класса для объединения"],
+    ["Ctrl+Z", "Отменить правку одиночных объектов; при рисовании — убрать последнюю точку. Треки не отменяются"],
     ["Ctrl+Shift+Z / Ctrl+Y", "Повторить"],
   ] },
   { title: "Время", keys: [
     ["Пробел", "Играть или остановить; при показанном полуавтоматом — закрепить"],
     ["← / →", "Кадр назад и вперёд"],
     ["Shift+← / Shift+→", "На 10 кадров"],
+    ["Home / End", "На первый или последний кадр, когда выбрана линейка"],
     ["[ / ]", "Размеченный кадр назад и вперёд: рамки, контуры и ключи треков"],
     ["K", "Ключ выбранного трека на этом кадре"],
     ["E", "Кадр фоновый: объектов нет (ещё раз — снять)"],
@@ -113,10 +117,13 @@ const KEYS: KeyGroup[] = [
     ["Alt+протяжка", "Заслонить участок трека"],
     ["R", "Разведка: находки на кадре и дорожки по классам вместо треков"],
     ["Щелчок у риски", "К кадру ближайшей риски — агента, разведки, одиночных"],
+    ["Ctrl+колесо", "Масштаб дорожек под указателем"],
+    ["Shift+колесо", "Прокрутить дорожки по времени"],
   ] },
   { title: "Агент и разведка", keys: [
     ["G", "Агент на этом кадре: рамки встанут на проверку"],
     ["Enter", "Подтвердить кадр; при выбранной находке разведки — взять её в разметку"],
+    ["Shift+Enter", "Отклонить все непроверенные объекты агентов на этом кадре"],
     ["Shift+[ / Shift+]", "Предыдущий и следующий кадр на проверке"],
     ["Правка рамки", "Поправленная рамка агента считается проверенной"],
   ] },
@@ -256,6 +263,7 @@ export default function VideoAnnotator({
   const [autoOn, setAutoOn] = useState(false);
   const [selPart, setSelPart] = useState<number | null>(null);
   const [selected, setSelected] = useState<number | null>(null);
+  const [multiSelected, setMultiSelected] = useState<Set<number>>(new Set());
   const [pickedTrack, setPickedTrack] = useState<string | null>(null);
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
@@ -494,6 +502,7 @@ export default function VideoAnnotator({
     for (const track of data?.tracks || []) {
       const state = stateAt(track, frame);
       if (!state || track.class_index === null) continue;
+      if (state.hidden && keyAt(track, frame)?.cleared_frame) continue;
       if (state.hidden) dim.add(bs.length);
       its.push({ kind: "track", track, hidden: state.hidden });
       bs.push({ class_index: track.class_index, ...state.geometry });
@@ -549,6 +558,7 @@ export default function VideoAnnotator({
 
   // Выбор один: трек держится и на других кадрах, одиночная — только на своём.
   const pick = useCallback((i: number | null, part: number | null = null) => {
+    setMultiSelected(new Set());
     setSelected(i);
     setSelPart(part);
     const it = i === null ? null : itemsRef.current[i];
@@ -556,6 +566,19 @@ export default function VideoAnnotator({
     selId.current = it?.kind === "single" ? it.box.id ?? null : null;
     selShape.current = i === null ? null : (draftRef.current ?? shapesRef.current)[i] ?? null;
   }, []);
+
+  useEffect(() => { setMultiSelected(new Set()); }, [frame, tool, boxes]);
+  useEffect(() => { if (selected === null) setMultiSelected(new Set()); }, [selected]);
+
+  const pickAdditional = useCallback((i: number) => {
+    if (frozen || busy || shown.lagging || inFlight.current || pendingCommit.current || items[i]?.kind !== "single") return;
+    const next = togglePolygonSelection(boxes, selected, multiSelected, i);
+    if (!next) { setError("Объединять можно только полигоны одного класса."); return; }
+    setPickedTrack(null);
+    setSelected(next.selected);
+    setSelPart(null);
+    setMultiSelected(next.group);
+  }, [frozen, busy, shown.lagging, items, boxes, selected, multiSelected]);
 
   useEffect(() => {
     if (!pickedTrack) return;
@@ -624,9 +647,9 @@ export default function VideoAnnotator({
   }, [load]);
 
   /** Записать одиночные кадра и перечитать его. Наткнулись на чужую правку — ставим её версию. */
-  const putFrame = useCallback(async (at: number, list: SingleWire[], undo = false) => {
+  const putFrame = useCallback(async (at: number, list: SingleWire[], undo = false, clearTracks?: VideoTrack[]) => {
     try {
-      const res = await saveFrameBoxes(taskId, video.id, at, list, revs.current.get(at) ?? null, undo);
+      const res = await saveFrameBoxes(taskId, video.id, at, list, revs.current.get(at) ?? null, undo, clearTracks);
       if (res.rev) revs.current.set(at, res.rev); else revs.current.delete(at);
     } catch (e) {
       const got = (e as ApiError).code === "stale" ? (e as ApiError).data as { singles: VideoSingleBox[]; rev: string | null } : null;
@@ -989,6 +1012,45 @@ export default function VideoAnnotator({
     guard(() => putFrame(at, list));
     return true;
   }, [flushDraft, sentOf, frame, frozen, singlesOf, guard, putFrame, remember]);
+
+  const mergeSelected = useCallback(() => {
+    if (frozen || busy || inFlight.current || pendingCommit.current || selected === null) return;
+    const was = sentOf(frame);
+    if (!was || [...multiSelected].some((i) => was.items[i]?.kind !== "single")) return;
+    const merged = mergeContours(was.shapes, multiSelected, selected);
+    if (merged === was.shapes) return;
+    const target = selected - [...multiSelected].filter((i) => i !== selected && i < selected).length;
+    const list: SingleWire[] = [];
+    was.items.forEach((item, i) => {
+      if (item.kind !== "single" || (multiSelected.has(i) && i !== selected)) return;
+      list.push(wireOf(i === selected ? merged[target] : was.shapes[i], item.box.id));
+    });
+    remember(frame, singlesOf(was, (s) => s));
+    sent.current = null;
+    pick(null);
+    guard(() => putFrame(frame, list));
+  }, [frozen, busy, selected, sentOf, frame, multiSelected, remember, singlesOf, pick, guard, putFrame]);
+
+  const clearFrame = useCallback(async () => {
+    if (frozen || busy || playing || autoPrev) return;
+    if (!(await settle())) return;
+    const at = frame;
+    const tracks = (dataNow.current?.tracks || []).filter((t) => {
+      const state = stateAt(t, at);
+      return state !== null;
+    });
+    if (!tracks.length) {
+      if (rewrite((_s, item) => item?.kind === "track" ? _s : null)) pick(null);
+      return;
+    }
+    if (!(await confirm({ title: "Очистить кадр?", ok: "Очистить", danger: true, icon: "trash",
+      desc: "Объекты удалятся с этого кадра, треки останутся на остальных. Очистку кадра с треками нельзя отменить через Ctrl+Z." }))) return;
+    if (frameNow.current !== at || !(await settle())) return;
+    pick(null);
+    await guard(async () => {
+      await putFrame(at, [], false, tracks);
+    });
+  }, [frozen, busy, playing, autoPrev, settle, frame, rewrite, pick, confirm, guard, putFrame]);
 
   /** Отмена и повтор: правка была на другом кадре — туда, и кадр пишется прежним списком с пометкой «отмена»,
    *  сервер вернёт стёртое своей записью прежней версией — агентовой и «на проверке». */
@@ -1487,6 +1549,11 @@ export default function VideoAnnotator({
         return;
       }
       if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.shiftKey && (e.code === "Enter" || e.code === "NumpadEnter")) {
+        if (!e.repeat && !frozen && !canvas.current?.drawing() && !autoPrev && !autoPts.length) rejectFrame();
+        e.preventDefault();
+        return;
+      }
       const step = e.shiftKey ? 10 : 1;
       switch (e.code) {
         case "Escape":
@@ -1556,7 +1623,7 @@ export default function VideoAnnotator({
     };
   }, [tool, frozen, autoPrev, autoPts, clearAuto, closeEditor, togglePlay, go, auto.state, pickAuto,
       selected, pickedTrack, pick, apply, items, classes, pickClass, commitAuto, toggleEmpty, putKey,
-      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, goReview, runAgent, undoStep, goAsked, askAbout, asking]);
+      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, rejectFrame, goReview, runAgent, undoStep, goAsked, askAbout, asking]);
 
   // --- масштаб дорожек ------------------------------------------------------ #
   // Окно масштаба; null — весь ролик. Ширина дорожек — от самих дорожек (ограничение 12 px на кадр).
@@ -1599,6 +1666,9 @@ export default function VideoAnnotator({
   function objectActions(i: number | null, part?: number): MenuAction[][] {
     const item = i === null ? undefined : items[i];
     if (i === null || !item) return [];
+    if (!frozen && multiSelected.size > 1 && multiSelected.has(i)) {
+      return [[{ label: "Объединить", icon: "merge", run: () => { mergeSelected(); setMenu(null); } }]];
+    }
     // Спросить можно и там, где править нельзя
     const main: MenuAction[] = canAsk
       ? [{ label: "Задать вопрос", icon: "question", hint: "C", run: () => { askAbout(i); setMenu(null); } }] : [];
@@ -1715,6 +1785,7 @@ export default function VideoAnnotator({
           )}
           <BoxCanvas
             ref={canvas}
+            agentOf={(i) => items[i]?.kind === "single" && !!items[i].box.agent && items[i].box.source === "model"}
             captionOf={agentsHere.length > 1
               ? (i) => (boxes[i]?.pending ? singleAgent(items[i])?.name : undefined) : undefined}
             imageId={`${video.id}:${frame}`}
@@ -1739,10 +1810,12 @@ export default function VideoAnnotator({
             autoPreview={autoPrev}
             activeClass={active}
             selected={selected}
+            multiSelected={multiSelected}
             reserve={56}
             // Выбор с холста — объект или пустое место — снимает и выбранную находку разведки;
             // щелчок по самой находке холст сообщает следом, и она выбирается снова
             onSelect={(i, part) => { setGhostOn(null); pick(i, part ?? null); }}
+            onMultiSelect={pickAdditional}
             onBoxes={onBoxes}
             onDrawn={() => setTool("select")}
             onScale={setScale}
@@ -1775,11 +1848,16 @@ export default function VideoAnnotator({
             <AgentTool tool={agentTool} disabled={frozen || shown.lagging} onRun={() => void runAgent()}
               onMap={() => setSetupOpen(true)} />
             <i className="ed-vsep" />
-            <Button variant="ghost" size="sm" kbd="E" className={cx("fe-v", "empty", emptyState === "idle" && "idle")}
-              aria-pressed={emptyState === "on"} disabled={viewOnly || emptyState === "busy"}
+            <ToolButton icon="ban" label="Пусто" k="E" className={emptyState === "idle" ? "empty-idle" : undefined}
+              pressed={emptyState === "on"} disabled={viewOnly || emptyState === "busy"}
               title={emptyState === "busy" ? "На этом кадре есть объект — фоновым он быть не может"
                 : emptyState === "idle" ? "Пометка не действует: на кадре объект. Нажмите, чтобы снять" : "Кадр фоновый: объектов на нём нет"}
-              onClick={toggleEmpty}>Пусто</Button>
+              onClick={toggleEmpty} />
+            {canAsk && <ToolButton icon="question" label="Вопрос к кадру" k="C" pressed={false}
+              title="Вопрос к кадру; C — к выбранному объекту" onClick={() => askAbout(null)} />}
+            <ToolButton icon="trash" label="Очистить кадр" pressed={false}
+              disabled={frozen || busy || playing || !!autoPrev || !items.length}
+              onClick={() => void clearFrame()} />
             <i className="ed-vsep" />
             <ClassPicker classes={classes} active={active} disabled={frozen && !classes.length}
               onPick={(ci) => pickClass(ci)}
@@ -1866,7 +1944,7 @@ export default function VideoAnnotator({
             frozen={viewOnly} canKey={!!currentTrack && !!stateAt(currentTrack, frame)}
             canAnnotated={annotated.some((f) => f !== frame)} onAnnotated={goReview}
             onGo={go} onPlay={togglePlay} onSpeed={(v) => changeSpeed(v, frame)} onQuality={setQuality}
-            onKey={putKey} onAsk={canAsk ? () => askAbout(null) : undefined}
+            onKey={putKey}
             zoom={<ZoomBar view={shownView} last={lastFrame} onZoom={zoomStep} onFit={() => setView(null)} />} />
           <Lanes tracks={laneTracks} numbers={numbers} filter={filter} frame={frame} lastFrame={lastFrame} fps={fps}
             labelOf={labelOf} selected={pickedTrack} editable={!viewOnly} hidden={hiddenTracks}
@@ -1913,14 +1991,14 @@ export default function VideoAnnotator({
           classes={classes}
           at={{ x: menu.x, y: menu.y }}
           current={menu.i === null ? active : boxes[menu.i]?.class_index ?? null}
-          onPick={(ci) => {
+          onPick={multiSelected.size > 1 && menu.i !== null && multiSelected.has(menu.i) ? undefined : (ci) => {
             if (menu.i === null) setActive(ci);
             else recolor(menu.i, ci);
             setMenu(null);
           }}
           deleteLabel={menu.i !== null && items[menu.i]?.kind === "track" ? "трек целиком" : "объект"}
           onDelete={
-            menu.i === null || !items[menu.i] || frozen
+            menu.i === null || !items[menu.i] || frozen || (multiSelected.size > 1 && multiSelected.has(menu.i))
               ? undefined
               : () => {
                   dropItem(items[menu.i as number]);

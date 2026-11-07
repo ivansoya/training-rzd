@@ -104,7 +104,11 @@ def _resolve_track(track_id, needed="editor"):
     if busy:
         db.close()
         return None, None, None, None, busy
-    return db, task, db.get(VideoTrack, tid), user, None
+    track = db.execute(select(VideoTrack).where(VideoTrack.id == tid).with_for_update()).scalar_one_or_none()
+    if track is None:
+        db.close()
+        return None, None, None, None, (jsonify({"error": "Трек не найден."}), 404)
+    return db, task, track, user, None
 
 
 def _writable(task, user, role, video):
@@ -180,10 +184,22 @@ def _track_json(track, keys):
         "label": track.label,
         "hidden_ranges": track.hidden_ranges or [],
         "keys": [
-            {"frame_no": k.frame_no, "geometry": k.geometry, "source": k.source}
+            {"frame_no": k.frame_no, "geometry": k.geometry, "source": k.source,
+             "cleared_frame": bool((k.attributes or {}).get("cleared_frame"))}
             for k in keys
         ],
     }
+
+
+def _clear_boundary_geometry(track, keys, frame_no):
+    """Граница не должна менять интерполяцию на соседних кадрах округлением."""
+    before = next(k for k in reversed(keys) if k.frame_no <= frame_no)
+    after = next((k for k in keys if k.frame_no > frame_no), None)
+    if not after or not track.interpolate:
+        return dict(before.geometry)
+    part = (frame_no - before.frame_no) / (after.frame_no - before.frame_no)
+    return {name: float(before.geometry[name]) + (float(after.geometry[name]) - float(before.geometry[name])) * part
+            for name in ("x", "y", "w", "h")}
 
 
 # --------------------------------------------------------------------------- #
@@ -735,6 +751,7 @@ def create_track(task_id, video_id):
         if geometry is None:
             return jsonify({"error": "Рамка слишком мала."}), 400
 
+        db.execute(select(TaskVideo.id).where(TaskVideo.id == video.id).with_for_update())
         track = VideoTrack(
             video_id=video.id,
             class_id=cls.id,
@@ -1118,6 +1135,9 @@ def put_frame_boxes(task_id, video_id, frame_no):
         bad = _frame_error(video, frame_no)
         if bad:
             return bad
+        clear_tracks = json_body().get("clear_tracks", False)
+        if not isinstance(clear_tracks, bool):
+            raise InputError("clear_tracks: ожидается true или false.", "clear_tracks")
         by_index = {
             c.class_index: c
             for c in db.execute(
@@ -1127,6 +1147,8 @@ def put_frame_boxes(task_id, video_id, frame_no):
         raws = json_body().get("boxes")
         if not isinstance(raws, list) or not all(isinstance(r, dict) for r in raws):
             raise InputError("boxes: ожидается список фигур.", "boxes")
+        if clear_tracks and raws:
+            raise InputError("При очистке кадра список фигур должен быть пуст.", "boxes")
         # То же, что и на кадре таски: молча пропустить бокс с исчезнувшим
         # классом здесь значит стереть его — сохранение сносит всю одиночную
         # разметку кадра и вставляет заново.
@@ -1168,6 +1190,26 @@ def put_frame_boxes(task_id, video_id, frame_no):
                 "code": "stale", "rev": rev,
                 "singles": _singles_json(db, rows, _class_index(db, project)),
             }), 409
+        tracks_to_clear = []
+        if clear_tracks:
+            expected = json_body().get("track_versions")
+            if not isinstance(expected, list):
+                raise InputError("track_versions: ожидается список треков.", "track_versions")
+            tracks = db.execute(select(VideoTrack).where(VideoTrack.video_id == video.id)
+                                .order_by(VideoTrack.id).with_for_update()).scalars().all()
+            actual = []
+            for track in tracks:
+                keys = db.execute(select(VideoAnnotation).where(VideoAnnotation.track_id == track.id)
+                                  .order_by(VideoAnnotation.frame_no)).scalars().all()
+                wire = {"start_frame": track.start_frame, "end_frame": track.end_frame,
+                        "interpolate": track.interpolate, "hidden_ranges": track.hidden_ranges or []}
+                points = [{"frame_no": k.frame_no, "geometry": k.geometry} for k in keys]
+                state = tracklib.state_at(wire, points, frame_no)
+                if state:
+                    actual.append({"id": str(track.id), **wire, "keys": points})
+                    tracks_to_clear.append((track, keys, wire, points, state["hidden"]))
+            if sorted(expected, key=lambda t: str(t.get("id", "")) if isinstance(t, dict) else "") != sorted(actual, key=lambda t: t["id"]):
+                return jsonify({"error": "Треки изменились. Обновите кадр и повторите очистку.", "code": "tracks_changed"}), 409
         existing = {
             str(a.id): {
                 "class_id": a.class_id, "ann_type": a.ann_type,
@@ -1193,6 +1235,23 @@ def put_frame_boxes(task_id, video_id, frame_no):
             ann_id = _uuid_or_none(row.pop("id"))
             db.add(VideoAnnotation(video_id=video.id, track_id=None, frame_no=frame_no,
                                    **row, **({"id": ann_id} if ann_id else {})))
+        if clear_tracks:
+            for track, keys, wire, points, already_hidden in tracks_to_clear:
+                end = tracklib.track_end(wire, points)
+                for at in ((frame_no,) if already_hidden else (frame_no, frame_no + 1)):
+                    if at > end:
+                        continue
+                    key = next((k for k in keys if k.frame_no == at), None)
+                    if key is None:
+                        geometry = _clear_boundary_geometry(track, keys, at)
+                        key = VideoAnnotation(video_id=video.id, track_id=track.id, frame_no=at,
+                                              class_id=track.class_id, ann_type="bbox", geometry=geometry,
+                                              source="human")
+                        db.add(key)
+                    if at == frame_no:
+                        key.attributes = {**(key.attributes or {}), "cleared_frame": True}
+                if not already_hidden:
+                    track.hidden_ranges = tracklib.normalize_ranges((track.hidden_ranges or []) + [[frame_no, frame_no + 1]])
         db.commit()
         _ping(db, task.id, task.project_id, user, v=str(video.id), f=frame_no)
         return jsonify({"saved": len(settled), "pending": sum(1 for r in settled if r["pending"]),

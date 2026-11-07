@@ -68,7 +68,7 @@
 /* Редактор кадров: раздел справа под объектами — своя прокрутка, объектам остаётся место */
 .fe-qs { flex: 0 1 auto; max-height: 60%; min-height: 0; overflow-y: auto; gap: 10px; border-top: 1px solid var(--border); border-bottom: 0;
   scrollbar-width: thin; scrollbar-color: var(--input) transparent; }
-.fe-qs-n, .fe-obj-q, .fe-v.ask .ui-ic, .ed-omenu .lucide-message-circle { color: var(--q); }
+.fe-qs-n, .fe-obj-q, .ed-omenu .lucide-message-circle { color: var(--q); }
 .fe-obj-q { flex: none; }
 /* Лента: пузырёк в правом верхнем углу, над обводкой текущего */
 .mag-fs-q { position: absolute; top: 4px; right: 4px; width: 18px; height: 18px; z-index: 3; }

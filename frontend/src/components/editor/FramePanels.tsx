@@ -92,6 +92,10 @@ export function FrameSide({ status, tags, boxes, labelOf, meta, classes, selecte
           <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
             aria-label={off ? "Показать на кадре" : "Скрыть на кадре"}
             onClick={(e) => { e.stopPropagation(); onHide(i); }} />
+          <Button variant="ghost" size="sm" icon="trash" className="fe-obj-delete"
+            aria-label="Удалить объект" disabled={frozen}
+            onKeyDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDelete(i); }} />
         </div>
         {on && (
           <div className="fe-obj-b">
@@ -182,7 +186,7 @@ export function FrameInfo({ rows }: { rows: ([ReactNode, ReactNode] | null | und
 }
 
 export function FrameBar({ index, total, of, canPrev, canNext, canAnnotated, actions, status, onPrev, onNext, onAnnotated,
-  onToggle, onTrash, onGo, onAsk, trashLabel = "Брак", goLabel = "Далее" }: {
+  onToggle, onTrash, onGo, trashLabel = "Брак", goLabel = "Далее" }: {
   /** Место в показанных кадрах; −1 — фильтр не оставил ни одного. */
   index: number;
   total: number;
@@ -199,8 +203,6 @@ export function FrameBar({ index, total, of, canPrev, canNext, canAnnotated, act
   onToggle: (s: "empty" | "skipped") => void;
   onTrash: () => void;
   onGo: () => void;
-  /** Вопрос к кадру целиком; нет — спрашивать здесь нельзя. */
-  onAsk?: () => void;
   /** В датасете брак — «Удалить из датасета». */
   trashLabel?: string;
   /** Нетронутая копия кадра датасета: «Далее» принимает её как есть. */
@@ -220,9 +222,6 @@ export function FrameBar({ index, total, of, canPrev, canNext, canAnnotated, act
       {actions.includes("skip") && (
         <Button variant="ghost" size="sm" kbd="S" className="fe-v skipped" aria-pressed={status === "skipped"}
           onClick={() => onToggle("skipped")}>Отложить</Button>
-      )}
-      {onAsk && (
-        <Button variant="ghost" size="sm" icon="question" kbd="C" className="fe-v ask" onClick={onAsk}>Вопрос</Button>
       )}
       {actions.includes("trash") && (
         <Button variant="ghost" size="sm" kbd="X" className="fe-v deleted" onClick={onTrash}>{trashLabel}</Button>

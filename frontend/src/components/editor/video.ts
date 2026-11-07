@@ -201,4 +201,4 @@ export function clockText(t: number): string {
 }
 
 export const SPEEDS = [0.25, 0.5, 1, 2] as const;
-export const speedText = (v: number) => (v === 0.25 ? "¼" : v === 0.5 ? "½" : `${v}×`);
+export const speedText = (v: number) => `${String(v).replace(".", ",")}×`;

@@ -39,10 +39,10 @@ export function Float({ className, children, label, role }: {
 }
 
 /** Кнопка инструмента: значок и клавиша в углу. */
-export function ToolButton({ icon, label, k, pressed, disabled, title, warming, locked, onClick }: {
+export function ToolButton({ icon, label, k, pressed, disabled, title, warming, locked, className, onClick }: {
   icon: IconName;
   label: string;
-  k: string;
+  k?: string;
   pressed: boolean;
   disabled?: boolean;
   /** Подсказка вместо подписи: например, почему инструмент недоступен. */
@@ -51,13 +51,14 @@ export function ToolButton({ icon, label, k, pressed, disabled, title, warming, 
   warming?: boolean;
   /** Залипание: рисовать подряд. */
   locked?: boolean;
+  className?: string;
   onClick: () => void;
 }) {
   return (
-    <button type="button" className={cx("ed-tool", warming && "warming")} aria-pressed={pressed}
-      aria-label={label} title={title ?? `${label} (${k})`} disabled={disabled} onClick={onClick}>
+    <button type="button" className={cx("ed-tool", warming && "warming", className)} aria-pressed={pressed}
+      aria-label={label} title={title ?? (k ? `${label} (${k})` : label)} disabled={disabled} onClick={onClick}>
       <Icon name={icon} />
-      <span className="ed-tool-k">{k}</span>
+      {k && <span className="ed-tool-k">{k}</span>}
       {locked && <i className="ed-tool-lock" aria-label="залипание" />}
     </button>
   );

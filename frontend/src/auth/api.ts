@@ -1402,6 +1402,7 @@ export interface TrackKey {
   frame_no: number;
   geometry: { x: number; y: number; w: number; h: number };
   source: string;
+  cleared_frame?: boolean;
 }
 
 export interface VideoTrack {
@@ -1589,11 +1590,16 @@ export async function saveFrameBoxes(
   /** Версия кадра, которую видели: запись поверх чужой правки получит 409 «stale» со свежими фигурами. */
   rev?: string | null,
   /** Ctrl+Z: сервер вернёт стёртое и изменённое своей записью прежней версией — агентовой, «на проверке». */
-  undo?: boolean
+  undo?: boolean,
+  clearTracks?: VideoTrack[]
 ): Promise<{ saved: number; rev: string | null }> {
   return asJson(
     await put(`tasks/${taskId}/videos/${videoId}/frames/${frameNo}/boxes`,
-      { boxes, ...(rev === undefined ? {} : { rev }), ...(undo ? { undo: true } : {}) })
+      { boxes, ...(rev === undefined ? {} : { rev }), ...(undo ? { undo: true } : {}),
+        ...(clearTracks ? { clear_tracks: true, track_versions: clearTracks.map((t) => ({
+          id: t.id, start_frame: t.start_frame, end_frame: t.end_frame, interpolate: t.interpolate,
+          hidden_ranges: t.hidden_ranges, keys: t.keys.map((k) => ({ frame_no: k.frame_no, geometry: k.geometry })),
+        })) } : {}) })
   );
 }
 

@@ -89,6 +89,10 @@ export function HereSide({ items, shapes, frame, numbers, labelOf, classes, sele
           <Button variant="ghost" size="sm" icon={off ? "eyeoff" : "eye"}
             aria-label={off ? "Показать на кадре" : "Скрыть на кадре"}
             onClick={(e) => { e.stopPropagation(); onHide(key); }} />
+          <Button variant="ghost" size="sm" icon="trash" className="fe-obj-delete"
+            aria-label={it.kind === "track" ? "Удалить трек" : "Удалить объект"} disabled={frozen}
+            onKeyDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onDelete(i); }} />
         </div>
         {on && (
           <div className="fe-obj-b">
@@ -282,7 +286,7 @@ export function qualityOptions(list: ClipQuality[]): SelectOption<string>[] {
 }
 
 export function Transport({ frame, lastFrame, fps, playing, pending, speed, quality, qualities, frozen, canKey, canAnnotated,
-  onGo, onAnnotated, onPlay, onSpeed, onQuality, onKey, onAsk, zoom }: {
+  onGo, onAnnotated, onPlay, onSpeed, onQuality, onKey, zoom }: {
   frame: number;
   lastFrame: number;
   fps: number;
@@ -301,8 +305,6 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
   onSpeed: (v: number) => void;
   onQuality: (id: string) => void;
   onKey: () => void;
-  /** Вопрос к кадру целиком; нет — спрашивать нельзя. Не гаснет в просмотре. */
-  onAsk?: () => void;
   /** Плашка масштаба дорожек — справа в строке. */
   zoom?: ReactNode;
 }) {
@@ -334,7 +336,6 @@ export function Transport({ frame, lastFrame, fps, playing, pending, speed, qual
       <Button size="sm" icon="diamond" kbd="K" disabled={frozen || !canKey}
         title={canKey ? "Ключ выбранного трека на этом кадре" : "Выберите трек, который живёт на этом кадре"}
         onClick={onKey}>Ключ</Button>
-      {onAsk && <Button variant="ghost" size="sm" icon="question" className="fe-v ask" title="Вопрос к кадру целиком" onClick={onAsk}>Вопрос</Button>}
       {zoom && <><i className="ed-vsep" />{zoom}</>}
     </div>
   );

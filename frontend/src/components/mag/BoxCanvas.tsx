@@ -12,8 +12,8 @@ import {
 import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import { imageFileUrl, imagePreviewUrl } from "../../auth/api";
 import * as poly from "./polygon";
-import { inkOn } from "../editor/look";
-import { Icon } from "../../ui";
+import { inkOn, isTyping } from "../editor/look";
+import { hasLayer, Icon } from "../../ui";
 import Sep from "../Sep";
 import type { Point, Ring } from "./polygon";
 import {
@@ -65,7 +65,7 @@ export interface CanvasShape extends CanvasBox {
   id?: string;
   /** model — фигура от полуавтомата или агента, пока её не правили руками. */
   source?: "human" | "model";
-  /** Рамка агента ждёт проверки: пунктир и знак агента в ярлыке. */
+  /** Рамка агента ждёт проверки: знак агента в ярлыке. */
   pending?: boolean;
   /** Уверенность агента — в ярлык непроверенной рамки. */
   conf?: number | null;
@@ -249,6 +249,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   labelOf: (classIndex: number) => { name: string; color: string };
   /** Приписка к подписи рамки через черту — агент, когда их на кадре несколько: «вагон», «YOLOE-РСМ». */
   captionOf?: (index: number) => string | undefined;
+  /** Подтверждённый объект тоже сохраняет отметку, если его разметил агент. */
+  agentOf?: (index: number) => boolean;
   /** Индексы объектов с открытым вопросом — пузырёк в правом верхнем углу (решение 29.10.2026). */
   asked?: Set<number>;
   /** Индексы объектов, которые рисуются прерывисто: объект на кадре есть, но
@@ -275,6 +277,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   autoPreview?: CanvasPreview | null;
   activeClass?: number | null;
   selected?: number | null;
+  /** Несколько выбранных полигонов одного класса. */
+  multiSelected?: ReadonlySet<number>;
   /** Какая часть выбранного объекта выделена. Части одного объекта выделяются
    *  по отдельности: у разорванного вагона половины лежат в разных местах
    *  кадра, и подвинуть их вместе — не то же самое, что подвинуть каждую. */
@@ -292,6 +296,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   /** Сколько пикселей по вертикали занято шапкой и лентой. */
   reserve?: number;
   onSelect?: (i: number | null, part?: number | null) => void;
+  onMultiSelect?: (i: number) => void;
   onBoxes?: (next: CanvasShape[]) => void;
   onDrawn?: () => void;
   onScale?: (s: number) => void;
@@ -323,11 +328,11 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, captionOf, asked, dashed, hidden, hiddenItems,
+    imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, captionOf, agentOf, asked, dashed, hidden, hiddenItems,
     labels = true, editable = false, waiting = false, tool = "select", auto = false,
     autoMode = "points", autoPoints, autoPreview = null, activeClass = null,
-    selected = null, selectedPart = null, splitParts = false, canMovePoly = false,
-    grid = true, reserve = 210, onSelect, onBoxes, onDrawn,
+    selected = null, multiSelected, selectedPart = null, splitParts = false, canMovePoly = false,
+    grid = true, reserve = 210, onSelect, onMultiSelect, onBoxes, onDrawn,
     onScale, onContext, onPolygon, onAutoPoint, onAutoBox, onAutoCommit,
     ghosts, ghostOn = null, onGhost, onGhostContext,
   },
@@ -584,6 +589,12 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   useEffect(() => {
     if (!draft.length) return;
     function onKey(e: KeyboardEvent) {
+      if (e.shiftKey && (e.code === "Enter" || e.code === "NumpadEnter")) {
+        if (hasLayer() || isTyping(e.target)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
       if (e.code === "Escape") { setDraft([]); setGhost(null); }
       else if (e.code === "Enter" || e.code === "NumpadEnter") closeDraft();
       // Ctrl+Z посреди контура убирает последнюю точку: отмена у редактора
@@ -924,7 +935,6 @@ const BoxCanvas = forwardRef<CanvasHandle, {
 
         {(() => {
         let top: ReactNode = null;
-        const frames: ReactNode[] = [];
         const shapes = boxes.map((s, i) => {
           if (hidden?.has(s.class_index) || hiddenItems?.has(i)) return null;
           const meta = labelOf(s.class_index);
@@ -936,7 +946,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           const sh = py2 - py;
           const contour = isPoly(s);
           const cls =
-            "mag-cv-sh" + (contour ? " poly" : "") + (on ? " on" : "") +
+            "mag-cv-sh" + (contour ? " poly" : "") + (on || multiSelected?.has(i) ? " on" : "") +
             (dashed?.has(i) ? " occluded" : "") + (s.pending ? " pending" : "");
           // Рамка одна и та же в покое и в выборе: объект не должен менять
           // форму от того, что на него нажали. Отличают его заливка и вес
@@ -946,7 +956,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             : `M${px} ${py}H${px2}V${py2}H${px}Z`;
           const { corners, mids } = affordance(sw, sh);
           const vertices =
-            contour && on && editable && showVertices(s.parts!, width, height, rect);
+            contour && on && editable && (multiSelected?.size ?? 0) < 2 && showVertices(s.parts!, width, height, rect);
 
           function menu(
             e: ReactPointerEvent | React.MouseEvent,
@@ -958,7 +968,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             // Shift+правая в полуавтомате — «убрать этот участок», точку уже
             // поставил обработчик холста; меню тут лишнее.
             if (auto && (e as React.MouseEvent).shiftKey) return;
-            onSelect?.(i, at?.part ?? null);
+            if (!multiSelected?.has(i)) onSelect?.(i, at?.part ?? null);
             onContext(
               i,
               (e as React.MouseEvent).clientX,
@@ -977,6 +987,12 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             // сцену нетронутым — иначе объект начал бы переезжать вместо того,
             // чтобы под ним появилась вершина.
             if (tool === "polygon" && editable && !auto) return;
+            if (editable && !auto && tool === "select" && (e.ctrlKey || e.metaKey) && contour && onMultiSelect) {
+              e.preventDefault();
+              e.stopPropagation();
+              onMultiSelect(i);
+              return;
+            }
             if (!auto) onSelect?.(i, part);
             // В полуавтомате объект не таскают: Shift по нему — «доуточни вот
             // этот», обычный клик — начало нового. В режиме области событие
@@ -1095,16 +1111,6 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             </>
           );
           if (on) top = <g className={cls + " mag-cv-ov"} style={{ ["--bc" as string]: meta.color }}>{tools}</g>;
-          // Рамка агента — поверх всех контуров, событий не берёт
-          if (s.pending) {
-            frames.push(
-              <g key={`f${i}`} className={cls + " mag-cv-ov"} style={{ ["--bc" as string]: meta.color, pointerEvents: "none" }}>
-                {contour
-                  ? <rect className="mag-cv-cage" x={px} y={py} width={Math.max(sw, 0)} height={Math.max(sh, 0)} />
-                  : <><path className="mag-cv-hull" d={outline} /><path className="mag-cv-line" d={outline} /></>}
-              </g>
-            );
-          }
           return (
             <g key={i} className={cls + (hot === i ? " hot" : "")} style={{ ["--bc" as string]: meta.color }}
               onPointerEnter={() => setHot(i)} onPointerLeave={() => setHot((h) => (h === i ? null : h))}>
@@ -1171,7 +1177,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
               x={gx} y={gy} width={Math.max(gx2 - gx, 0)} height={Math.max(gy2 - gy, 0)} />
           );
         });
-        return <>{shapes}{frames}{ghostFrames}{top}</>;
+        return <>{shapes}{ghostFrames}{top}</>;
         })()}
 
         {/* Контур, который рисуют. Начальная точка выделена: в неё и целятся,
@@ -1290,7 +1296,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   onSelect?.(i, null);
                 }}
               >
-                {s.pending && <Icon name="bot" size={12} className="mag-cv-mark" />}
+                {(s.pending || agentOf?.(i)) && <span title="Разметил агент"><Icon name="bot" size={12} className="mag-cv-mark" /></span>}
                 {meta.name || s.class_index}
                 {captionOf?.(i) && <span className="mag-cv-ag"><Sep />{captionOf(i)}</span>}
                 {s.pending && s.conf != null && <b className="mag-cv-conf">{fmtConf(s.conf)}</b>}

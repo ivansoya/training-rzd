@@ -27,7 +27,7 @@ export default function ObjectMenu({
   /** Подпись кнопки, когда класса в проекте нет (находка с несопоставленным классом агента). */
   classLabel?: string;
   classHint?: string;
-  onPick: (classIndex: number) => void;
+  onPick?: (classIndex: number) => void;
   groups: MenuAction[][];
   onDelete?: () => void;
   deleteLabel?: string;
@@ -88,7 +88,7 @@ export default function ObjectMenu({
       <div className="ui-pop ed-cmenu ed-omenu" ref={box} style={pos} role="menu"
         onContextMenu={(e) => e.preventDefault()}>
         <button ref={trigger} type="button" className={"ui-opt ed-omenu-cls" + (open ? " on" : "")}
-          aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          aria-haspopup="menu" aria-expanded={open} disabled={!onPick} onClick={() => setOpen((v) => !v)}>
           {cls ? <Swatch color={cls.color} /> : <Icon name="tag" size={14} />}
           <span className="ui-opt-t">
             <span className="t-ell">{cls?.name ?? classLabel ?? "Класс"}</span>
@@ -119,7 +119,7 @@ export default function ObjectMenu({
           </>
         )}
       </div>
-      {open && (
+      {open && onPick && (
         <div className="ui-pop ed-cmenu ed-omenu-fly" ref={fly} role="menu"
           style={flyPos ?? { left: -9999, top: 0 }} onContextMenu={(e) => e.preventDefault()}>
           <ClassPicker classes={classes} current={current} onPick={onPick} />

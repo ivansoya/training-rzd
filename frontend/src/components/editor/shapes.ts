@@ -16,3 +16,31 @@ export function detachContour(shapes: CanvasShape[], index: number, part: number
     { class_index: shape.class_index, kind: "polygon", parts: [ring], ...detached, source: "human" },
   ];
 }
+
+/** Несколько объектов одного класса становятся одним объектом с прежними контурами. */
+export function mergeContours(shapes: CanvasShape[], indices: ReadonlySet<number>, anchor: number): CanvasShape[] {
+  const keep = shapes[anchor];
+  if (indices.size < 2 || !indices.has(anchor) || !keep?.parts?.length) return shapes;
+  const picked = [...indices].sort((a, b) => a - b);
+  if (picked.some((i) => !shapes[i]?.parts?.length || shapes[i].class_index !== keep.class_index)) return shapes;
+  const parts = picked.flatMap((i) => shapes[i].parts!);
+  const box = bounds(parts);
+  if (!box) return shapes;
+  return shapes.flatMap((shape, i) => i === anchor
+    ? [{ ...keep, kind: "polygon" as const, parts, ...box, pending: false }]
+    : indices.has(i) ? [] : [shape]);
+}
+
+/** Ctrl+клик меняет выбор только среди полигонов одного класса. */
+export function togglePolygonSelection(shapes: CanvasShape[], selected: number | null, group: ReadonlySet<number>, index: number):
+  { selected: number | null; group: Set<number> } | null {
+  const target = shapes[index];
+  if (!target?.parts?.length) return null;
+  const current = selected === null ? undefined : shapes[selected];
+  if (!current?.parts?.length) return { selected: index, group: new Set() };
+  if (target.class_index !== current.class_index) return null;
+  const next = new Set(group.size ? group : [selected!]);
+  if (next.has(index)) next.delete(index); else next.add(index);
+  if (next.size <= 1) return { selected: next.values().next().value ?? null, group: new Set() };
+  return { selected: next.has(selected!) ? selected : next.values().next().value!, group: next };
+}
