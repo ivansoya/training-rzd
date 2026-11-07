@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getTaskStats, listTasks } from "../../../auth/api";
 import type { TaskLight, TaskStats } from "../../../auth/api";
 import { cached, remember } from "../../../api/cache";
+import { getJob } from "../../../api/jobs";
 import { useLive } from "../../../live/LiveProvider";
 import { requestOrder } from "./tasks";
 
@@ -87,11 +88,39 @@ export function useTaskBoard(code: string, me: string, pick?: (list: TaskLight[]
     return () => { round.current += 1; };
   }, [key, refresh]);
 
+  // Сдачу могли запустить на другой странице или до открытия доски.
+  const handovers = JSON.stringify((snap?.list ?? []).flatMap((t) => {
+    const job = t.handover || snap?.stats[t.id]?.handover;
+    return job ? [[t.id, job]] : [];
+  }));
+  useEffect(() => {
+    const pending = new Map<string, string>(JSON.parse(handovers));
+    if (!pending.size) return undefined;
+    let alive = true;
+    let timer: number | undefined;
+    const check = async () => {
+      const completed: string[] = [];
+      await Promise.all([...pending].map(async ([id, job]) => {
+        try {
+          const state = await getJob(job);
+          if (state.status !== "running") { pending.delete(id); completed.push(id); }
+        } catch {
+          // Временный обрыв не означает, что сдача закончилась.
+        }
+      }));
+      if (!alive) return;
+      if (completed.length) void refresh(completed);
+      if (pending.size) timer = window.setTimeout(() => void check(), 1000);
+    };
+    void check();
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [handovers, refresh]);
+
   // Соседи правят таски: их карточки перечитываем пачкой раз в пару секунд, а не на каждую рамку
   const touched = useRef(new Set<string>());
   const timer = useRef<number | undefined>(undefined);
   useLive("task", (e) => {
-    if (e.u === me) return;
+    if (e.u === me && !e.s) return;
     touched.current.add(e.id);
     if (timer.current !== undefined) return;
     timer.current = window.setTimeout(() => {

@@ -440,6 +440,7 @@ def _light_list(db, tasks, user, role):
             "status_at": (moved.get(t.id) or t.created_at).isoformat(),
             "last_box_at": last_box.isoformat() if last_box else None,
             "last_at": last.isoformat(),
+            "handover": (video_busy.current(video_busy.task_key(t.id)) or {}).get("job_id"),
             # Куда карточку можно перетащить по доске — те же переходы, что у кнопок таски.
             "moves": sorted(task_rights.moves(t.status, role, user.id, teams[t.id])),
             # Можно ли пополнять — «В таску ▾» в датасете предлагает только такие
@@ -942,7 +943,7 @@ def _run_handover(job_id, task_id, target, user_id, video_ids):
     """Сдача одной транзакцией: кадры роликов, приёмка, новое состояние. Упала — не записано ничего,
     таска остаётся в работе."""
     db = SessionLocal()
-    made, project_id = [], None
+    made, project_id, outcome = [], None, None
     try:
         task = db.execute(select(Task).where(Task.id == task_id).with_for_update()).scalar_one()
         project_id = task.project_id
@@ -963,20 +964,23 @@ def _run_handover(job_id, task_id, target, user_id, video_ids):
         made = []
         _drop_after_commit(db)
         materialize.drop_frame_files(project_id, task_id, dropped)
-        jobs.update(job_id, status="done", processed=base, result={**result, **sums})
-        _ping(db, task_id, project_id, user, s=target)
+        outcome = {"status": "done", "processed": base, "result": {**result, **sums}}
     except (videolib.VideoError, tracklib.TrackError) as exc:
         db.rollback()
-        jobs.update(job_id, status="error", error=str(exc))
+        outcome = {"status": "error", "error": str(exc)}
     except Exception as exc:  # noqa: BLE001
         db.rollback()
-        jobs.update(job_id, status="error", error=public_error(exc, "Сдать таску не удалось."))
+        outcome = {"status": "error", "error": public_error(exc, "Сдать таску не удалось.")}
     finally:
         # Упал коммит — строки откатились, а файлы новых кадров уже на томе.
         if made:
             materialize.drop_frame_files(project_id, task_id, made)
         for vid in [video_busy.task_key(task_id), *video_ids]:
             video_busy.release(vid)
+        if outcome:
+            jobs.update(job_id, **outcome)
+            if outcome["status"] == "done":
+                _ping(db, task_id, project_id, user, s=target)
         db.close()
 
 

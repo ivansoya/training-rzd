@@ -105,7 +105,7 @@ export function useTaskPage(taskId: string, me: string) {
   // Соседи правят таску: состояние и состав — сразу (от них права), правки кадров — пачкой раз в пару секунд
   const timer = useRef<number | undefined>(undefined);
   useLive("task", (e) => {
-    if (e.id !== taskId || e.u === me) return;
+    if (e.id !== taskId || (e.u === me && !e.s)) return;
     if (e.s) {
       window.clearTimeout(timer.current);
       timer.current = undefined;
