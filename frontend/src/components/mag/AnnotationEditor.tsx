@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ensureClass,
   deleteImage,
@@ -342,7 +342,7 @@ export default function AnnotationEditor({
   useLive("classes", loadClasses);
 
   // Кадр сменился — берём его разметку как есть. История не сбрасывается: её снимки помнят свой кадр.
-  useEffect(() => {
+  useLayoutEffect(() => {
     const next = (image?.boxes || []).map((b) => ({
       id: b.id, class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
       ...(b.pending ? { pending: true, conf: b.conf ?? null } : {}),

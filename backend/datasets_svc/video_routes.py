@@ -24,6 +24,7 @@ from common.db import SessionLocal
 from common.models import (
     AgentRun,
     Annotation,
+    AugGraphVersion,
     Image,
     VideoScout,
     LabelClass,
@@ -39,7 +40,7 @@ from datasets_svc import video_index
 from common import shapes
 from datasets_svc import video_queue as queue
 from common import video_tracks as tracklib
-from common.web import InputError, json_body
+from common.web import InputError, int_field, json_body
 from datasets_svc.materialize import collect, frame_is_free
 from datasets_svc.task_routes import (
     _clamp_box,
@@ -1483,6 +1484,66 @@ def move_key(track_id, frame_no):
 # Очистка непроверенного агентов
 # --------------------------------------------------------------------------- #
 SOURCE_WORDS = {"files": "изображения", "videos": "ролики на нарезку"}
+
+
+@bp.post("/api/tasks/<task_id>/videos/<video_id>/agent-reject")
+def reject_agent_range(task_id, video_id):
+    """Отклонить непроверенные одиночные агента на включительном участке кадров."""
+    db, task, project, user, role, video = _resolve_video(task_id, video_id, "editor")
+    if db is None:
+        return video
+    try:
+        denied = _writable(task, user, role, video)
+        if denied:
+            return denied
+        data = json_body()
+        if _last_frame(video) is None:
+            return jsonify({"error": "Дождитесь подготовки видео."}), 409
+        first = int_field(data, "from_frame", lo=0, hi=_last_frame(video), required=True, label="Начало участка")
+        last = int_field(data, "to_frame", lo=first, hi=_last_frame(video), required=True, label="Конец участка")
+        agent = data.get("agent_id")
+        if agent is not None and agent != "unknown" and _uuid_or_none(agent) is None:
+            raise InputError("Выберите агента или всех агентов.", "agent_id")
+        if not isinstance(data.get("dry", False), bool):
+            raise InputError("dry: ожидается логическое значение.", "dry")
+        if db.execute(select(AgentRun.id).where(
+                AgentRun.task_id == task.id, AgentRun.status.in_(("queued", "waiting_gpu", "running")))).first():
+            return jsonify({"error": "По таске идёт агент — дождитесь его конца или остановите.",
+                            "code": "agent_running"}), 409
+        on = [VideoAnnotation.video_id == video.id, VideoAnnotation.track_id.is_(None),
+              VideoAnnotation.source == "model", VideoAnnotation.pending.is_(True)]
+        # Список агентов ролика остаётся на месте при смене участка, без загрузки рамок.
+        versions = db.execute(select(VideoAnnotation.agent_version_id, func.count(VideoAnnotation.id))
+                              .where(*on).group_by(VideoAnnotation.agent_version_id)).all()
+        names = attribution.agent_names(db, {v for v, _ in versions if v})
+        agents = {}
+        for version, boxes in versions:
+            name = names.get(version)
+            key = name["id"] if name else "unknown"
+            group = agents.setdefault(key, {"id": key, "name": name["name"] if name else "Без имени агента", "boxes": 0})
+            group["boxes"] += boxes
+        on.append(VideoAnnotation.frame_no.between(first, last))
+        if agent == "unknown":
+            on.append(VideoAnnotation.agent_version_id.is_(None))
+        elif agent is not None:
+            on.append(VideoAnnotation.agent_version_id.in_(select(AugGraphVersion.id).where(
+                AugGraphVersion.graph_id == _uuid_or_none(agent))))
+        if data.get("dry", False):
+            boxes, frames = db.execute(select(func.count(VideoAnnotation.id),
+                                             func.count(distinct(VideoAnnotation.frame_no))).where(*on)).one()
+        else:
+            removed = db.execute(VideoAnnotation.__table__.delete().where(*on)
+                                 .returning(VideoAnnotation.frame_no)).scalars().all()
+            boxes, frames = len(removed), len(set(removed))
+            if boxes:
+                _log(db, task, user, "agent_cleared", place=f"«{video.file_name}», кадры {first}–{last}",
+                     boxes=boxes, frames=frames)
+                db.commit()
+                _ping(db, task.id, task.project_id, user)
+        return jsonify({"boxes": boxes, "frames": frames,
+                        "agents": sorted(agents.values(), key=lambda a: (a["name"], a["id"]))})
+    finally:
+        db.close()
 
 
 @bp.post("/api/tasks/<task_id>/agent-clear")

@@ -12,6 +12,7 @@ import {
   markEmptyFrame,
   moveTrackKey,
   previewMaterialize,
+  rejectVideoAgentRange,
   putTrackKey,
   saveFrameBoxes,
   takeScout,
@@ -21,6 +22,7 @@ import {
 } from "../../auth/api";
 import type {
   ApiError,
+  AgentRejectRange,
   AutoRefine,
   LabelClass,
   MaterializePreview,
@@ -72,6 +74,7 @@ import { LaneMenu, Lanes, ZoomBar } from "../editor/Lanes";
 import type { LaneAction } from "../editor/Lanes";
 import { HereSide, QuestionsSide, Transport } from "../editor/VideoPanels";
 import { ReviewBar, ScoutBar } from "../editor/ReviewBars";
+import RejectRangeBar from "../editor/RejectRangeBar";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
 import { agentGroups, isTaken, nextFrame, scoutFrameAt, settlePending } from "../editor/review";
 import { useClassFilter } from "../editor/ClassFilter";
@@ -267,6 +270,8 @@ export default function VideoAnnotator({
   const [pickedTrack, setPickedTrack] = useState<string | null>(null);
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
+  const [rejectRange, setRejectRange] = useState<AgentRejectRange | null>(null);
+  const [rangeBusy, setRangeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [plan, setPlan] = useState<MaterializePreview | null>(null);
@@ -341,7 +346,7 @@ export default function VideoAnnotator({
   const frameLoaded = !!skel && chunks !== null && (chunkHere < 0 || loaded.has(chunkHere));
   const viewOnly = readOnly || !data?.editable || unplayable;
   useHereBeat(taskId, video.id, !viewOnly);
-  const frozen = viewOnly || !frameLoaded;
+  const frozen = viewOnly || rangeBusy || !frameLoaded;
   const onPlayFrame = useCallback((f: number) => setFrame(f), []);
   // Проигрывание ждёт картинку: иначе полоса убегает вперёд, кадр замирает, и кусок ролика проходит незамеченным.
   const behind = useRef(false);
@@ -940,8 +945,9 @@ export default function VideoAnnotator({
   }, [flushDraft]);
 
   const closeEditor = useCallback(async () => {
+    if (rangeBusy) return;
     if (await settle()) onClose();
-  }, [settle, onClose]);
+  }, [settle, onClose, rangeBusy]);
 
   // Перечитали посреди очереди — на экране остаются свои правки, а не прочитанное.
   useEffect(() => { if (!inFlight.current && !pendingCommit.current) setDraft(null); }, [data]);
@@ -975,19 +981,19 @@ export default function VideoAnnotator({
 
   // Пометке и ключу трека одиночные кадра не нужны — занятость знает сводка каркаса
   const toggleEmpty = useCallback(() => {
-    if (viewOnly) return;
+    if (viewOnly || rangeBusy) return;
     if (!markedHere && busyHere) return;
     guard(async () => {
       if (markedHere) await unmarkEmptyFrame(taskId, video.id, frame);
       else await markEmptyFrame(taskId, video.id, frame);
       await load();
     });
-  }, [viewOnly, markedHere, busyHere, guard, load, taskId, video.id, frame]);
+  }, [viewOnly, rangeBusy, markedHere, busyHere, guard, load, taskId, video.id, frame]);
 
   const putKey = useCallback(() => {
-    if (viewOnly || !currentTrack || !stateAt(currentTrack, frame)) return;
+    if (viewOnly || rangeBusy || !currentTrack || !stateAt(currentTrack, frame)) return;
     guard(async () => { await putTrackKey(currentTrack.id, frame, {}); await load(); });
-  }, [viewOnly, currentTrack, frame, guard, load]);
+  }, [viewOnly, rangeBusy, currentTrack, frame, guard, load]);
 
   // --- проверка агента и разведка ----------------------------------------- #
   /** Кадры с непроверенной разметкой агента, по порядку. */
@@ -1659,6 +1665,24 @@ export default function VideoAnnotator({
   const autoTitle = auto.state === "ready" ? undefined
     : auto.state === "error" ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}` : "Модель готовится…";
   const problem = error || clip.error || shown.error;
+  const rejectTools = rejectRange && <RejectRangeBar taskId={taskId} videoId={video.id} range={rejectRange}
+    lastFrame={lastFrame} fps={fps} onBusy={setRangeBusy}
+    onRange={setRejectRange} onClose={() => setRejectRange(null)}
+    onReject={async (range) => {
+      if (!await settle()) throw new Error("Не удалось сохранить текущую правку. Повторите после сохранения.");
+      stop();
+      const result = await rejectVideoAgentRange(taskId, video.id, range);
+      sent.current = null;
+      setDraft(null);
+      pick(null);
+      // Старые снимки участка вернули бы отклонённые предложения; историю остальных кадров сохраняем.
+      if (result.boxes) hist.current = {
+        past: hist.current.past.filter((s) => s.frame < range.from_frame || s.frame > range.to_frame), future: [],
+      };
+      await load("all");
+      setRejectRange(null);
+      setNote(`Отклонено: ${count(result.boxes, "объект", "объекта", "объектов")} на ${count(result.frames, "кадре", "кадрах", "кадрах")}.`);
+    }} />;
   const saveState = error ? "refused" : busy ? "saving" : "saved";
   const emptyState = markedHere ? (busyHere ? "idle" : "on") : busyHere ? "busy" : "off";
 
@@ -1779,9 +1803,9 @@ export default function VideoAnnotator({
             // Место под нижнюю плашку держим всегда: появится она — кадр не должен вписываться заново
             ["--pb" as string]: "66px", ["--pl" as string]: "16px" }}
         >
-          {/* Кадр готовится: гасим картинку и показываем кружок */}
+          {/* Короткий переход не меняет панели; долгое ожидание отмечаем у края сцены. */}
           {shown.pending && (
-            <div className="ve-busy" role="status" aria-label="Готовлю кадр"><span /></div>
+            <div className="ve-busy" role="status">Готовлю кадр…</div>
           )}
           <BoxCanvas
             ref={canvas}
@@ -1829,8 +1853,7 @@ export default function VideoAnnotator({
             onGhostContext={frozen ? undefined : (k, x, y) => setMenu({ i: null, x, y, ghost: k })}
           />
 
-          {/* Пока кадр догоняет, панель гаснет: рисовать нельзя, и это видно сразу */}
-          <Float className={shown.lagging ? "ed-top waiting" : "ed-top"} role="toolbar" label="Инструменты">
+          <Float className="ed-top" role="toolbar" label="Инструменты">
             <ToolButton icon="pointer" label="Выбор" k="V" pressed={tool === "select"} onClick={() => setTool("select")} />
             <ToolButton icon="bbox" label="Рамка на кадре" k="B" pressed={tool === "box"} disabled={frozen}
               onClick={() => setTool("box")} />
@@ -1921,7 +1944,12 @@ export default function VideoAnnotator({
             </Float>
           )}
           {!autoPrev && !viewOnly && (reviewHere > 0 || (agentFrames.length > 0 && !ghosts.length)) && (
-            <ReviewBar count={reviewHere} left={agentFrames.length} disabled={!frameLoaded}
+            <ReviewBar count={reviewHere} left={agentFrames.length} disabled={!frameLoaded || rangeBusy} rangeSelecting={!!rejectRange}
+              onRejectRange={() => {
+                stop();
+                if (rejectRange) setRejectRange(null);
+                else void settle().then((ok) => { if (ok) setRejectRange({ from_frame: frame, to_frame: frame }); });
+              }}
               onPrev={() => goReview(-1)} onNext={() => goReview(1)} onConfirm={confirmFrame} onReject={rejectFrame}
               agents={agentsHere.map((g) => ({ agent: g.agent, count: g.idx.length }))}
               onConfirmAgent={confirmAgent} onRejectAgent={rejectAgent} />
@@ -1949,6 +1977,7 @@ export default function VideoAnnotator({
           <Lanes tracks={laneTracks} numbers={numbers} filter={filter} frame={frame} lastFrame={lastFrame} fps={fps}
             labelOf={labelOf} selected={pickedTrack} editable={!viewOnly} hidden={hiddenTracks}
             covered={covered} marks={marks} plan={plan ? plan.frames : null} singles={ticks} agent={agentFrames}
+            selection={rejectRange} onSelection={setRejectRange} selectionTools={rejectTools} selectionBusy={rangeBusy}
             scout={scout} scouted={scoutAll.length > 0} scoutDots={scoutDots} scoutOpen={scoutOn && scoutAll.length > 0}
             onScout={toggleScout}
             view={shownView} onView={setView} onWidth={setLaneW}

@@ -1630,6 +1630,17 @@ export interface MaterializePreview {
 /** Где чистить: блоки кадров (как у прогона агента) и размечаемые ролики. */
 export interface AgentClearScope { sources?: string[]; videos?: string[] }
 
+export interface AgentRejectRange { from_frame: number; to_frame: number; agent_id?: string }
+export interface AgentRejectPreview {
+  boxes: number;
+  frames: number;
+  agents: { id: string; name: string; boxes: number }[];
+}
+
+export async function rejectVideoAgentRange(taskId: string, videoId: string, range: AgentRejectRange, dry = false): Promise<AgentRejectPreview> {
+  return asJson(await post(`tasks/${taskId}/videos/${videoId}/agent-reject`, { ...range, dry }));
+}
+
 /** «Очистить непроверенное агентов»; `dry` — только счёт тем же отбором, для окна подтверждения. */
 export async function clearAgentUnchecked(
   taskId: string,

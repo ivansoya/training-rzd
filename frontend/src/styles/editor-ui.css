@@ -4,6 +4,7 @@
 .ed {
   position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column;
   background: var(--stage); color: var(--fg); font-family: var(--font);
+  animation: ed-in .16s var(--ease);
 }
 
 /* ---------- шапка ---------- */
@@ -38,7 +39,7 @@
   position: absolute; z-index: 5; display: flex; align-items: center; gap: 4px; padding: 4px;
   background: color-mix(in srgb, var(--card) 94%, transparent); border: 1px solid var(--border);
   border-radius: var(--r-lg); box-shadow: var(--shadow-float); backdrop-filter: blur(10px);
-  animation: ed-in .16s var(--ease);
+  transition: border-color .16s var(--ease), background-color .16s var(--ease);
 }
 @keyframes ed-in { from { opacity: 0; } }
 .ed-top { top: 14px; left: 50%; translate: -50% 0; }
@@ -47,7 +48,7 @@
 .ed-tool {
   position: relative; width: 32px; height: 32px; display: grid; place-items: center; flex: none;
   padding: 0; border: 0; border-radius: var(--r-md); background: transparent; color: var(--muted-fg); cursor: pointer;
-  transition: background .12s, color .12s;
+  transition: background .12s, color .12s, opacity .16s var(--ease);
 }
 .ed-tool:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
 .ed-tool[aria-pressed="true"] { background: var(--primary); color: var(--primary-fg); }
@@ -65,6 +66,7 @@
 .ed-cls {
   display: inline-flex; align-items: center; gap: 8px; height: 32px; max-width: 240px; padding: 0 8px 0 10px;
   border: 0; border-radius: var(--r-md); background: var(--hover); color: var(--fg); font: 500 13px var(--font); cursor: pointer;
+  transition: opacity .16s var(--ease), background .12s;
 }
 .ed-cls:hover:not(:disabled), .ed-cls[data-state="open"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 55%, transparent); }
 .ed-cls:disabled { opacity: .5; cursor: not-allowed; }
@@ -200,20 +202,18 @@
 .ed-grip:hover i, .ed-grip:active i, .ed-grip:focus-visible i { background: var(--primary); width: 64px; }
 .ed-grip:focus-visible { outline: none; }
 
-.ed-top.waiting .ed-tool, .ed-top.waiting .ed-cls { opacity: .45; }
-
 /* ---------- видео «Дорожки снизу» ---------- */
 .ve-body { flex: 1; min-height: 0; display: grid; grid-template-rows: minmax(220px, 1fr) 9px minmax(0, var(--dock, 300px)); }
 .ve-body > .ed-main { min-height: 0; }
 .ve-side { bottom: 60px; }
 .ve-prep { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted-fg); white-space: nowrap; }
 .ve-prep i { width: 7px; height: 7px; border-radius: 50%; background: var(--c1); animation: ed-blink 1s ease-in-out infinite; }
-.ve-busy { position: absolute; inset: 0; z-index: 4; display: grid; place-items: center; pointer-events: none; }
-.ve-busy span {
-  width: 28px; height: 28px; border-radius: 50%; border: 2.5px solid color-mix(in srgb, var(--fg) 22%, transparent);
-  border-top-color: var(--fg); animation: ve-spin .8s linear infinite;
+.ve-busy {
+  position: absolute; bottom: 14px; left: 14px; z-index: 4; pointer-events: none;
+  padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--card); color: var(--muted-fg); font-size: 12px;
+  animation: ed-in .16s var(--ease);
 }
-@keyframes ve-spin { to { rotate: 360deg; } }
 
 /* что на кадре: строка трека */
 .ve-pres { font-size: 11.5px; color: var(--faint); flex: none; }
@@ -348,11 +348,11 @@
 .ve-menu { width: 250px; }
 
 /* ---------- агент на кадре: «на проверке» и находки разведки ---------- */
+/* До проверки слегка тонируем саму фигуру; граница остаётся цвета класса. */
 .mag-cv-sh.pending > .mag-cv-hit,
 .mag-cv-sh.pending.hot > .mag-cv-hit {
   fill: color-mix(in srgb, var(--agent-fg) 12%, transparent);
 }
-
 .mag-cv-mark { font-style: normal; font-size: 9px; color: var(--agent-fg); margin-right: 5px; line-height: 1; flex: none; }
 .mag-cv-lb.on .mag-cv-mark { color: inherit; }
 .mag-cv-conf { font: 500 10.5px var(--mono); margin-left: 6px; opacity: .75; }
@@ -383,12 +383,26 @@
 .ed-review-t b { font-family: var(--mono); font-weight: 600; }
 .ed-review.scout { border-color: var(--border); }
 /* Стрелки к соседнему кадру на проверке: слева плашка начинается стрелкой — без лишнего отступа */
-.ed-review:has(> .ed-review-go) { padding-left: 4px; }
-.ed-review-go.ui-btn-sm.ui-btn-icon { width: 26px; }
+.ed-review:has(.ed-review-go) { padding-left: 4px; }
+.ed-review-go.ui-btn-sm.ui-btn-icon { flex: 0 0 26px; width: 26px; min-width: 26px; padding: 0; }
+.ed-review-nav { display: flex; align-items: center; gap: 6px; min-width: 0; }
 /* Кадр без непроверенного: плашка сжата и тише — только «ещё N» и стрелки */
 .ed-review.calm { border-color: var(--border); }
 .ed-review.calm .ed-review-t { color: var(--muted-fg); }
 .ed-review.calm .ed-review-t b { color: var(--fg); }
+.ed-review .ed-review-t { white-space: nowrap; }
+.ed-review .ed-review-actions { display: flex; align-items: center; gap: 8px; }
+.ed-review .ui-btn:disabled { cursor: default; }
+.ed-review .ui-btn { transition: opacity .16s var(--ease), background-color .12s, color .12s; }
+.ve-reject-selection { position: absolute; top: 2px; bottom: 2px; min-width: 2px; background: color-mix(in srgb, var(--agent) 24%, transparent); border-inline: 1px solid var(--agent-fg); pointer-events: none; }
+.ve-range-lane { cursor: crosshair; background: color-mix(in srgb, var(--agent) 7%, transparent); }
+.ve-range-handle { position: absolute; top: 2px; bottom: 2px; width: 9px; translate: -50% 0; z-index: 4; padding: 0; border: 0; border-radius: 2px; background: var(--agent-fg); cursor: ew-resize; }
+.ve-range-handle:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.ve-reject-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 12px; min-width: 0; border-block: 1px solid color-mix(in srgb, var(--agent) 45%, var(--border)); background: color-mix(in srgb, var(--agent) 8%, var(--sidebar)); }
+.ve-reject-fields { display: flex; align-items: center; gap: 7px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.ve-reject-fields .ui-input { width: 7ch; min-width: 0; height: 28px; padding: 0 6px; font: 12px var(--mono); }
+.ve-reject-fields .ui-select { width: 150px; min-width: 0; }
+.ve-reject-summary { flex: 1; min-width: 110px; font-size: 12px; color: var(--agent-fg); }
 .ed-review.scout .ed-review-t > i { color: var(--muted-fg); font-style: normal; }
 
 /* Лента: кадр на проверке обведён цветом агента — он поверх состояния, потому что ждёт действия */
@@ -458,5 +472,13 @@
 /* Кадр не по фильтру, на котором стоим: пунктир — уйдёт из ленты при уходе */
 .mag-fs-cell.out { opacity: .85; }
 .mag-fs-cell.out::after { content: ""; position: absolute; inset: 0; border-radius: 4px; border: 1.5px dashed var(--fg); pointer-events: none; z-index: 3; }
+@media (max-width: 900px) {
+  .ed-review { max-width: calc(100% - 28px); flex-wrap: wrap; justify-content: center; }
+  .ed-review .ed-review-t { min-width: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ed, .ed-float, .ve-busy { animation: none; }
+  .ed-float, .ed-tool, .ed-cls, .ed-review .ui-btn { transition: none; }
+}
 .fe-film-none { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px 8px; font-size: 12px; line-height: 1.4; color: var(--muted-fg); }
 .fe-of { color: var(--faint); margin: 0 4px 0 -2px; }

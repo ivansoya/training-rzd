@@ -194,7 +194,7 @@ function BitmapView({
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const canvas = ref.current;
     if (!canvas || !bitmap) return;
     // Холст всегда размером исходного кадра, а ступень качества растягивается
@@ -848,9 +848,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
 
   const cursor = dragKind === "pan"
     ? "grabbing"
-    : waiting ? "wait"
     : auto && editable ? "auto"
-    : shift || !editable ? "pan"
+    : shift || (!editable && !waiting) ? "pan"
     : tool === "box" || tool === "polygon" ? "draw" : "pick";
 
   const sx = useCallback(

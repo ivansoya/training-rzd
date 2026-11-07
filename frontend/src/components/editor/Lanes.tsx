@@ -32,7 +32,11 @@ type Label = (ci: number) => { name: string; color: string };
 
 export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selected, editable, hidden, filter,
   covered, marks, plan, singles, agent, scout, scouted, scoutDots, scoutOpen, view, onView, onWidth, chunks, loaded, inFlight, loading,
-  asks = [], onAsk, onScout, onSelect, onHide, onAction, onSeek }: {
+  asks = [], selection, selectionTools, selectionBusy, onSelection, onAsk, onScout, onSelect, onHide, onAction, onSeek }: {
+  selection?: { from_frame: number; to_frame: number } | null;
+  selectionTools?: ReactNode;
+  selectionBusy?: boolean;
+  onSelection?: (range: { from_frame: number; to_frame: number }) => void;
   /** Треки, прошедшие фильтр классов (выбранный — всегда). */
   tracks: VideoTrack[];
   numbers: Map<string, number>;
@@ -85,6 +89,7 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   const lane = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
+  const rangeDrag = useRef<{ from: number; edge?: "start" | "end" } | null>(null);
   const [ghost, setGhost] = useState<{ drag: Drag; frame: number } | null>(null);
   const [width, setWidth] = useState(800);
   const onWidthRef = useRef(onWidth);
@@ -167,6 +172,30 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
   }
   const pointer = { onPointerMove: move, onPointerUp: finish, onPointerCancel: cancel, onLostPointerCapture: cancel };
   const seekHere = (e: ReactPointerEvent<HTMLElement>) => begin(e, "seek");
+  const selectRange = (x: number) => {
+    const d = rangeDrag.current;
+    if (!d || !selection || !onSelection || selectionBusy) return;
+    const f = at(x);
+    onSelection(d.edge === "start" ? { ...selection, from_frame: Math.min(f, selection.to_frame) }
+      : d.edge === "end" ? { ...selection, to_frame: Math.max(f, selection.from_frame) }
+      : { from_frame: Math.min(d.from, f), to_frame: Math.max(d.from, f) });
+  };
+  const rangeHandle = (edge: "start" | "end") => {
+    if (!selection) return null;
+    const value = edge === "start" ? selection.from_frame : selection.to_frame;
+    return <button type="button" className="ve-range-handle" data-edge={edge} style={{ left: pct(value) }}
+      role="slider" aria-label={edge === "start" ? "Начало участка" : "Конец участка"}
+      aria-valuemin={0} aria-valuemax={lastFrame} aria-valuenow={value} disabled={selectionBusy}
+      onKeyDown={(e) => {
+        const step = e.shiftKey ? 10 : 1;
+        const f = e.key === "Home" ? 0 : e.key === "End" ? lastFrame
+          : e.key === "ArrowLeft" ? Math.max(0, value - step) : e.key === "ArrowRight" ? Math.min(lastFrame, value + step) : null;
+        if (f === null) return;
+        e.preventDefault(); e.stopPropagation();
+        onSelection?.(edge === "start" ? { ...selection, from_frame: Math.min(f, selection.to_frame) }
+          : { ...selection, to_frame: Math.max(f, selection.from_frame) });
+      }} />;
+  };
   const head = <i className="ve-ph" style={{ left: pct(frame) }} aria-hidden="true" />;
   const ticks = timeTicks(lastFrame, fps, width, 64, view);
   const heat = scoutHeat(scout);
@@ -244,12 +273,34 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
           </div>
         </Row>
 
-        {agent.length > 0 && (
+        {(agent.length > 0 || selection) && (
           <Row name={<><Icon name="bot" size={14} className="ve-agent-ic" />Агент<span className="ui-mono t-faint">{agent.length}</span></>}
             title="Кадры с непроверенной разметкой агента; щелчок — к кадру, Shift+[ и Shift+] — к соседнему">
-            <TickLane {...tickLane} hatched frames={agent} kind="agent" label={(f) => `Кадр ${f}: разметка агента на проверке`} />
+            {selection && onSelection ? (
+              <div className="ve-l ve-range-lane" aria-label="Выделение участка на дорожке агента"
+                onPointerDown={(e) => {
+                  if (e.button !== 0 || selectionBusy) return;
+                  e.preventDefault(); e.stopPropagation();
+                  const edge = (e.target as HTMLElement).closest<HTMLButtonElement>("[data-edge]")?.dataset.edge as "start" | "end" | undefined;
+                  rangeDrag.current = { from: at(e.clientX), edge };
+                  e.currentTarget.setPointerCapture(e.pointerId);
+                  selectRange(e.clientX);
+                }}
+                onPointerMove={(e) => selectRange(e.clientX)}
+                onPointerUp={(e) => { selectRange(e.clientX); rangeDrag.current = null; }}
+                onPointerCancel={() => { rangeDrag.current = null; }} onLostPointerCapture={() => { rangeDrag.current = null; }}>
+                {hatch}
+                {agent.map((f) => <i key={f} className="ve-t agent" style={{ left: pct(f) }} />)}
+                {selection.to_frame >= selection.from_frame && <>
+                  <i className="ve-reject-selection" style={span(selection.from_frame, selection.to_frame)} aria-hidden="true" />
+                  {rangeHandle("start")}{rangeHandle("end")}
+                </>}
+                {head}
+              </div>
+            ) : <TickLane {...tickLane} hatched frames={agent} kind="agent" label={(f) => `Кадр ${f}: разметка агента на проверке`} />}
           </Row>
         )}
+        {selectionTools}
 
         {scouted && (
           <Row on={scoutOpen} title={scoutOpen ? "Разведка по классам — R вернёт треки" : "Где агент что-то нашёл; R — по классам"}
@@ -361,9 +412,9 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
           </div>
         );
       })}
-      {!scoutOpen && !tracks.length && (filter.cut > 0
-        ? <p className="ve-none"><Icon name="filter" size={14} />Треки скрыты фильтром{showAll}</p>
-        : <p className="ve-none"><Icon name="route" size={14} />Нажмите T и обведите объект — он поедет по ролику дорожкой здесь.</p>)}
+      {!scoutOpen && !tracks.length && filter.cut > 0 && (
+        <p className="ve-none"><Icon name="filter" size={14} />Треки скрыты фильтром{showAll}</p>
+      )}
       {scoutOpen && !scout.length && <p className="ve-none"><Icon name="filter" size={14} />Классы разведки скрыты фильтром{showAll}</p>}
       {zoomed && <Scrollbar view={view} last={lastFrame} onView={(v) => onView(clampView(v, lastFrame, width))} />}
     </div>
