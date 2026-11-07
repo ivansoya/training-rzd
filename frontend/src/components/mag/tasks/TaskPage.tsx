@@ -11,6 +11,7 @@ import type {
 } from "../../../auth/api";
 import { useAuth } from "../../auth/AuthGate";
 import { pollJob } from "../../../api/jobs";
+import type { Job } from "../../../api/jobs";
 import { setImageTags, setVideoTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
 import { runContext } from "../../../api/agents";
@@ -266,19 +267,21 @@ export default function TaskPage() {
   // Сдача идёт фоном: её работа — в карточке таски, видна всем. Пока идёт — только просмотр.
   // За работой следим до её конца, а не пока она в карточке: перечитка таски (опрос готовности
   // ролика) обнуляет поле раньше, чем опрос работы узнаёт итог, — и строка итога терялась.
-  const [handing, setHanding] = useState<number | null>(null);
+  const [handing, setHanding] = useState<Job<StatusResult> | null>(null);
   const [watched, setWatched] = useState<string | null>(null);
   const handJob = task?.handover ?? null;
   useEffect(() => { if (handJob) setWatched(handJob); }, [handJob]);
   useEffect(() => {
     if (!watched) return undefined;
     let alive = true;
-    setHanding(0);
-    pollJob<StatusResult>(watched, (j) => { if (alive) setHanding(j.total ? j.processed / j.total : 0); })
+    setHanding(null);
+    pollJob<StatusResult>(watched, (j) => { if (alive) setHanding(j); })
       .then((r) => { if (alive) setNotice(handoverText(r)); }, (e) => { if (alive) setError((e as Error).message); })
       .finally(() => { if (alive) { setHanding(null); setWatched(null); void load(); } });
     return () => { alive = false; };
   }, [watched, load]);
+  const handoverActive = !!handJob || !!watched;
+  const handoverShare = handing && handing.total > 0 ? Math.min(1, handing.processed / handing.total) : null;
 
   // Права считает сервер по состоянию таски: работа над кадрами — только «в работе», источники — и на очереди
   const editable = !!task && task.rights.edit && !handJob && !watched;
@@ -589,6 +592,19 @@ export default function TaskPage() {
         </div>
       </div>
 
+      {handoverActive && (
+        <div className="tp-upload tp-handover" role="status">
+          <div className="tp-handover-line">
+            <b className="t-sm">Сдача таски</b>
+            <span className="t-sm t-muted">{handoverShare === 1 ? "Завершаю сдачу" : handing?.message || "Подготавливаю сдачу"}</span>
+            <span className="t-sm ui-mono tp-handover-count">
+              {handing && handing.total > 0 && <>{ru(Math.min(handing.processed, handing.total))} из {ru(handing.total)}<Sep />{Math.round(handoverShare! * 100)} %</>}
+            </span>
+          </div>
+          {handoverShare !== null && <Progress value={handoverShare} label="Сдача таски" />}
+          <span className="t-xs t-faint">Кадры переходят в датасет. Можно уйти со страницы — сдача продолжится.</span>
+        </div>
+      )}
       {error && (
         <Notice tone="error" onClose={() => setError(null)}
           action={error === refused && <Button size="sm" variant="outline" icon="question" onClick={toQuestions}>К вопросам</Button>}>
@@ -619,7 +635,7 @@ export default function TaskPage() {
           {dragOn && (!empty || !fillable) && <DropVeil drag={dragOn} refusal={refusal} onAdd={onAdd} onDrop={drop} />}
         </div>
         <TaskPassport task={task} numbers={numbers} numbersLook={numbersLook} pendingFrames={pendingFrames} pendingLook={pendingLook}
-          events={events} workers={workers} busy={busy || !!handJob || !!watched} handing={handing} questions={qs.list}
+          events={events} workers={workers} busy={busy || handoverActive} handing={handoverActive} questions={qs.list}
           onQuestion={openQuestion} onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
           onAssign={(ids) => void reassign(ids)} onHistory={() => setHistory(true)} />
       </div>

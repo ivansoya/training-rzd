@@ -575,6 +575,9 @@ a.pcard:hover { border-color: var(--input); }
 /* Длинное имя файла режется многоточием, счёт и процент — нет */
 .tp-upload-l { display: flex; min-width: 0; white-space: pre; }
 .tp-upload-l > .t-ell { min-width: 0; }
+.tp-handover { margin-bottom: 16px; }
+.tp-handover-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+.tp-handover-count { margin-left: auto; white-space: nowrap; }
 .tp-ask { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .tp-link {
   border: 0; padding: 0; background: none; color: var(--fg); font: inherit; cursor: pointer;

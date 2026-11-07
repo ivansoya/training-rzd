@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Question } from "../../../api/questions";
 import type { ProjectMemberInfo, TaskDetail, TaskEventItem, TaskNumbers, TaskStatus } from "../../../auth/api";
-import { Avatar, Badge, Button, Check, Icon, Progress, Ring, Swatch, cx, useTween } from "../../../ui";
+import { Avatar, Badge, Button, Check, Icon, Ring, Swatch, cx, useTween } from "../../../ui";
 import { ago, count, plural, ru } from "../../ru";
 import Sep, { withSep } from "../../Sep";
 import { firstLine, heldPlaces, open } from "../questions/questions";
@@ -30,8 +30,7 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
   events: TaskEventItem[];
   workers: ProjectMemberInfo[];
   busy: boolean;
-  /** Доля хода идущей сдачи; null — не сдаётся. */
-  handing: number | null;
+  handing: boolean;
   /** Вопросы таски; null — ещё в пути. */
   questions: Question[] | null;
   onState: (s: FrameState) => void;
@@ -109,17 +108,14 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
         </section>
       )}
 
-      {(closed || next || handing !== null) && <section>
+      {(closed || next || handing) && <section>
         {closed ? (
           <>
             <span className="t-sm">Таска закрыта{c && inDataset(c) ? `: ${count(inDataset(c), "кадр", "кадра", "кадров")} в датасете` : ""}.</span>
             <Link to={`/projects/${task.project.code}/datasets`} className="t-sm">Смотреть датасеты</Link>
           </>
-        ) : handing !== null ? (
-          <>
-            <span className="t-sm">Сдаётся… {Math.round(handing * 100)} %</span>
-            <Progress value={handing} label="Сдача таски" />
-          </>
+        ) : handing ? (
+          <span className="t-sm t-muted">Таска сдаётся. Правки будут доступны после завершения.</span>
         ) : next?.to === "done" ? (
           <>
             <Button variant="primary" icon="tick" className="tp-wide" disabled={busy} onClick={() => onMove("done")}>Готово</Button>
