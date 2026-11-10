@@ -7,7 +7,7 @@ import {
   getTaskImages, getTaskNumbers, getVideoPending, setTaskStatus, uploadTaskImages, uploadTaskVideo,
 } from "../../../auth/api";
 import type {
-  AgentClearScope, ProjectMemberInfo, StatusResult, TaskDetail, TaskImage, TaskStatus, TaskVideoItem,
+  AgentClearScope, ProjectMemberInfo, StatusResult, TaskDetail, TaskImage, TaskImageQuery, TaskStatus, TaskVideoItem,
 } from "../../../auth/api";
 import { useAuth } from "../../auth/AuthGate";
 import { pollJob } from "../../../api/jobs";
@@ -20,6 +20,7 @@ import type { Question } from "../../../api/questions";
 import { Button, Notice, Progress, Sheet, cx, hasLayer } from "../../../ui";
 import { count, plural, ru } from "../../ru";
 import AgentRunDialog, { AgentRunBar } from "../../agents/AgentRunDialog";
+import { CutFramesCard } from "./CutFrames";
 import AgentSetupDialog from "../../agents/AgentSetupDialog";
 import CpuConfirm, { refusalOf, type CardRefusal } from "../../hardware/CpuConfirm";
 import { useAgentTool } from "../../editor/AgentTool";
@@ -54,7 +55,7 @@ const ACTIVE_RUN = ["queued", "waiting_gpu", "running"];
 
 
 /** Все кадры выборки: сервер отдаёт по 200, добираем до `matched`. */
-async function allImages(taskId: string, params: { status?: string; source?: string }): Promise<TaskImage[]> {
+async function allImages(taskId: string, params: TaskImageQuery): Promise<TaskImage[]> {
   const PAGE = 200;
   const first = await getTaskImages(taskId, { ...params, limit: PAGE });
   const out = [...first.images];
@@ -126,6 +127,12 @@ export default function TaskPage() {
   }, [navigate, setFrame]);
 
   const [cutting, setCutting] = useState<TaskVideoItem | null>(null);
+  const [cutFramesOpen, setCutFramesOpen] = useState(false);
+  const showCutFrames = useCallback(() => {
+    setCutFramesOpen(true);
+    requestAnimationFrame(() => document.getElementById("task-cut-frames")?.scrollIntoView({ block: "start", behavior: "smooth" }));
+  }, []);
+  useEffect(() => setCutFramesOpen(false), [taskId]);
   const [annotating, setAnnotating] = useState<TaskVideoItem | null>(null);
   // Ролик открыт ради проверки агента — редактор встаёт на первый непроверенный кадр
   const [reviewing, setReviewing] = useState(false);
@@ -313,17 +320,28 @@ export default function TaskPage() {
     openEditor(list, first >= 0 ? first : 0);
   });
   const openState = (s: FrameState) => openFiltered({ status: s });
+  const openCutFrame = (image: TaskImage, query: TaskImageQuery) => void guard(async () => {
+    if (!taskId) return;
+    const groups = query.review ? [await allImages(taskId, query)] : await Promise.all([
+      allImages(taskId, { ...query, review: "new" }), allImages(taskId, { ...query, review: "done" }),
+    ]);
+    const list = groups.flat(), index = list.findIndex((i) => i.id === image.id);
+    if (index >= 0) openEditor(list, index);
+    else { setNotice("Кадр изменил состояние. Список кадров обновлён."); await load(); }
+  });
 
   // Enter — размечать, G — агент; не мешаем полям, кнопкам и открытым окнам
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || editing || annotating || cutting || hasLayer() || isTyping(e.target)) return;
-      if (e.key === "Enter" && task && framesTotal(task) > 0) { e.preventDefault(); void annotateAll(); }
+      if (e.key === "Enter" && task && (framesTotal(task) > 0 || task.videos.some((v) => v.mode === "cut"))) {
+        e.preventDefault(); if (task.videos.some((v) => v.mode === "cut")) showCutFrames(); else void annotateAll();
+      }
       if ((e.key === "g" || e.key === "п") && editable) { e.preventDefault(); setSetupOpen(true); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editing, annotating, cutting, task, editable, agentBusy, annotateAll]);
+  }, [editing, annotating, cutting, task, editable, agentBusy, annotateAll, showCutFrames]);
 
   /** Смена состояния. Сдача с роликами идёт фоном: ответ — работа, её ход и итог ведёт эффект выше. */
   const send = (to: TaskStatus) => guard(async () => {
@@ -521,6 +539,7 @@ export default function TaskPage() {
   if (!task) return <div className="page"><span className="t-muted">Загружаем таску…</span></div>;
 
   const sources = buildSources(task, numbers?.by_source ?? null);
+  const cutBlock = sources.find((b) => b.kind === "cut");
   const annotateVideos = task.videos.filter((v) => v.mode === "annotate");
   const asked = openByVideo(qs.list ?? []);
   // Ход агента — в блоке, по которому он идёт
@@ -555,6 +574,7 @@ export default function TaskPage() {
   const cards = [
     ...sources.map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (
       <CutCard key={b.key} block={b} look={numbersLook} taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable}
+        byVideo={numbers?.by_source ?? null} onFrameOpen={openCutFrame}
         run={runOn(b.key, (b.videos || []).map((v) => v.id), ["frames", "scout"])} agent={agent} asked={asked}
         onAnnotate={() => openFiltered({ source: b.key })} onReview={() => review(b.key)}
         onCut={setCutting} onDelete={removeVideo} onVideoTags={saveVideoTags}
@@ -587,8 +607,8 @@ export default function TaskPage() {
               {agentTool.agent ? <>Агент: {agentTool.agent.name}{agentTool.version && <span className="ui-mono tp-agent-v">v{agentTool.version.version}</span>}</> : "Агент таски"}
             </Button>
           )}
-          <Button variant="primary" icon={editable ? "edit" : "eye"} kbd="Enter" disabled={busy || framesTotal(task) === 0}
-            onClick={() => void annotateAll()}>{editable ? "Размечать" : "Смотреть кадры"}</Button>
+          <Button variant="primary" icon={cutBlock || !editable ? "eye" : "edit"} kbd="Enter" disabled={busy || (!cutBlock && framesTotal(task) === 0)}
+            onClick={() => cutBlock ? showCutFrames() : void annotateAll()}>{cutBlock || !editable ? "Смотреть кадры" : "Размечать"}</Button>
         </div>
       </div>
 
@@ -630,6 +650,8 @@ export default function TaskPage() {
       <div className="tp-two">
         <div className={cx("tp-main", dragOn && "is-drop")}>
           {fillable && !empty && <div className="tp-add"><AddMenu onAdd={onAdd} /></div>}
+          {cutBlock && <CutFramesCard taskId={task.id} counts={cutBlock.counts} known={cutBlock.known} videos={cutBlock.videos || []}
+            tags={tags} revision={numbers?.by_source} open={cutFramesOpen} onExpand={setCutFramesOpen} onOpen={openCutFrame} />}
           {empty ? <TaskEmpty editable={fillable} dataset={task.target_dataset?.name ?? null} drag={dragOn} onAdd={onAdd} onDrop={drop} />
             : cards.map((c) => c.node)}
           {dragOn && (!empty || !fillable) && <DropVeil drag={dragOn} refusal={refusal} onAdd={onAdd} onDrop={drop} />}

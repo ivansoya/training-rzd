@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { TaskCounts, TaskDetail, TaskLight, TaskStats } from "../../../auth/api";
+import type { TaskCounts, TaskDetail, TaskLight, TaskStats, TaskVideoItem } from "../../../auth/api";
 import {
-  agentBadges, boardColumns, buildSources, busyText, cardLook, closePlan, closeText, dayOf, etaText, handoverText, leftText, percentOf, reelLine,
+  agentBadges, boardColumns, buildSources, busyText, cardLook, closePlan, closeText, cutCounts, dayOf, etaText, filterCutVideos, handoverText, leftText, percentOf, reelLine,
   reelStates, requestOrder, runPct, sourceLine, teamLine, waitingOf,
 } from "./tasks";
 
@@ -15,6 +15,25 @@ const card = (id: string, status: string, o: Partial<TaskLight> = {}) => ({
   id, name: id, status, assignees: [], status_at: "2026-10-01T00:00:00Z", last_at: "2026-10-01T00:00:00Z", ...o,
 }) as TaskLight;
 const stats = (c: Partial<TaskCounts>) => ({ counts: counts(c) }) as TaskStats;
+
+describe("фильтры роликов на нарезку", () => {
+  const videos = [
+    { id: "camera-close", file_name: "CAMERA-close.mp4", frames: 5, tag_ids: ["a"] },
+    { id: "camera-side", file_name: "camera-side.mp4", frames: 3, tag_ids: ["b"] },
+    { id: "empty", file_name: "empty.mp4", frames: 0, tag_ids: [] },
+  ] as TaskVideoItem[];
+  const by = { "camera-close": { annotated: 5, reviewed: 4, agent: 1 }, "camera-side": { empty: 3, reviewed: 3 } };
+  it("выбор по имени и любому тагу не меняет исходный список", () => {
+    expect(filterCutVideos(videos, { q: " CAMERA ", tags: ["a", "b"], review: "all" }, by)).toHaveLength(2);
+    expect(filterCutVideos(videos, { q: "side", tags: ["a"], review: "all" }, by)).toHaveLength(0);
+    expect(videos).toHaveLength(3);
+  });
+  it("подтверждённость учитывает модель, фон считается размеченным", () => {
+    expect(filterCutVideos(videos, { q: "", tags: [], review: "done" }, by).map((v) => v.id)).toEqual(["camera-side"]);
+    expect(filterCutVideos(videos, { q: "", tags: [], review: "new" }, by).map((v) => v.id)).toEqual(["camera-close"]);
+    expect(cutCounts(videos, by)).toMatchObject({ reviewed: 7, annotated: 5, empty: 3, agent: 1 });
+  });
+});
 
 describe("источники таски", () => {
   it("кадров размечаемого ролика блоком нет — в таске они правятся только в ролике", () => {

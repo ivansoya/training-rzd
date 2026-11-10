@@ -1008,7 +1008,7 @@ export interface TaskNumbers {
    *  Считается на сервере, потому что клиент видит лишь первую страницу. */
   by_source: Record<string, {
     new?: number; annotated?: number; empty?: number; skipped?: number;
-    deleted?: number; accepted?: number; agent?: number; first_at?: string;
+    deleted?: number; accepted?: number; agent?: number; reviewed?: number; first_at?: string;
   }>;
   classes: { class_index: number; name: string; color: string; annotations: number }[];
 }
@@ -1168,19 +1168,28 @@ export async function assignTask(id: string, assignees: string[]): Promise<TaskS
   );
 }
 
+export interface TaskImageQuery {
+  status?: string; limit?: number; offset?: number; source?: string; image?: string;
+  review?: "new" | "done";
+  tag_ids?: string[];
+}
+
 export async function getTaskImages(
   id: string,
-  params: { status?: string; limit?: number; offset?: number; source?: string; image?: string } = {}
+  params: TaskImageQuery = {},
+  signal?: AbortSignal
 ): Promise<{ matched: number; counts: TaskCounts; images: TaskImage[] }> {
   const q = new URLSearchParams();
   if (params.image) q.set("image", params.image);
   if (params.status) q.set("status", params.status);
+  if (params.review) q.set("review", params.review);
+  if (params.tag_ids?.length) q.set("tags", params.tag_ids.join(","));
   // «files» — загруженные файлами, иначе идентификатор ролика.
   if (params.source) q.set("source", params.source);
   if (params.limit) q.set("limit", String(params.limit));
   if (params.offset) q.set("offset", String(params.offset));
   const suffix = q.toString() ? `?${q}` : "";
-  return asJson(await fetch(`/api/tasks/${id}/images${suffix}`));
+  return asJson(await fetch(`/api/tasks/${id}/images${suffix}`, { signal }));
 }
 
 /** Загрузить кадры в таску.

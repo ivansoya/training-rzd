@@ -243,6 +243,7 @@ export function closeText(p: ReturnType<typeof closePlan>, dataset: string | nul
 // ---------------- источники кадров ----------------
 
 export interface SourceCounts extends Counts {
+  reviewed?: number;
   accepted?: number;
   first_at?: string;
 }
@@ -265,6 +266,25 @@ export interface SourceBlock {
 }
 
 const SUM_KEYS = ["new", "annotated", "empty", "skipped", "deleted", "accepted", "agent"] as const;
+
+export const reviewedCount = (c: SourceCounts) => c.reviewed ?? (c.annotated || 0) + (c.empty || 0);
+
+export function cutCounts(videos: TaskVideoItem[], by: TaskNumbers["by_source"] | null): SourceCounts {
+  const out: SourceCounts = {};
+  for (const v of videos) for (const key of SUM_KEYS) out[key] = (out[key] || 0) + (by?.[v.id]?.[key] || 0);
+  if (by && videos.every((v) => v.frames === 0 || by[v.id]?.reviewed != null)) out.reviewed = videos.reduce((n, v) => n + (by[v.id]?.reviewed || 0), 0);
+  return out;
+}
+
+export interface CutVideoFilters { q: string; tags: string[]; review: "all" | "new" | "done" }
+export function filterCutVideos(videos: TaskVideoItem[], filter: CutVideoFilters, by: TaskNumbers["by_source"] | null) {
+  const q = filter.q.trim().toLocaleLowerCase();
+  return videos.filter((v) => v.file_name.toLocaleLowerCase().includes(q)
+    && (!filter.tags.length || filter.tags.some((id) => v.tag_ids.includes(id)))
+    && (filter.review === "all" || (filter.review === "done"
+      ? v.frames > 0 && reviewedCount(by?.[v.id] || {}) === v.frames
+      : reviewedCount(by?.[v.id] || {}) < v.frames)));
+}
 
 /** Блоки источников: файлы и ролики на нарезку. Кадров размечаемых роликов тут нет: они рождаются
  *  сдачей и правятся только в ролике. Какие блоки есть, знает лёгкая часть таски (`sources`),
@@ -291,10 +311,7 @@ export function buildSources(task: TaskDetail, by: TaskNumbers["by_source"] | nu
   // Ролики на нарезку видны всегда: с этого блока в нарезку и заходят
   const videos = task.videos.filter((v) => v.mode === "cut");
   if (videos.length) {
-    const counts: SourceCounts = {};
-    for (const v of videos) {
-      for (const k of SUM_KEYS) counts[k] = (counts[k] || 0) + (of(v.id)[k] || 0);
-    }
+    const counts = cutCounts(videos, by);
     out.push({
       key: "videos", title: "Ролики на нарезку", kind: "cut", videos, counts, known,
       total: videos.reduce((s, v) => s + frames(v.id), 0),

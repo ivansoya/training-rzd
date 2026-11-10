@@ -624,6 +624,95 @@ a.pcard:hover { border-color: var(--input); }
 .tp-reel-c { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
 .tp-reel-c > b { font-weight: 500; }
 .tp-reel-a { display: flex; gap: 4px; justify-content: flex-end; }
+
+/* Нарезка: независимые блоки и ленивая галерея, состояние остаётся при сворачивании. */
+.tp-fold-source > .ui-card-b { padding: 0; gap: 0; }
+.tp-fold-source.is-closed .ui-card-h { border-bottom: 0; }
+.tp-source-fold { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows .24s var(--ease), opacity .17s ease, visibility .24s; }
+.tp-source-fold.open { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
+.tp-source-fold > div { min-height: 0; overflow: hidden; }
+.tp-source-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+.tp-cut-videos { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.tp-cut-videos > h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 15px; font-weight: 600; }
+.tp-cut-videos > h2 > svg { color: var(--muted-fg); }
+.tp-cut-dot { width: 7px; height: 7px; border-radius: var(--r-full); background: var(--faint); }
+.tp-cut-dot.done { background: var(--st-done); }
+.tp-cut-video-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tp-cut-video-filters > input { flex: 1 1 150px; width: 150px; min-width: 0; height: 30px; font-size: 12px; }
+.tp-cut-video-filters .ui-select { max-width: 180px; }
+.tp-cut-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.tp-cut-group .tp-reel { grid-template-columns: 100px minmax(0,1fr) 130px 142px; }
+.tp-cut-group .tp-poster { width: 100px; height: 52px; }
+.tp-filter-tags { display: flex; flex-direction: column; gap: 10px; }
+.tp-filter-tags > p { margin: 0; }
+.tp-filter-tags > div { display: flex; flex-direction: column; gap: 6px; max-height: 280px; overflow: auto; }
+.tp-filter-tags > footer { border-top: 1px solid var(--border); padding-top: 8px; display: flex; justify-content: space-between; }
+.tp-all-cut-frames { scroll-margin-top: 64px; }
+.tp-summary-done { color: var(--st-done); }
+.tp-cut-sep { color: var(--faint); margin: 0 8px; }
+.tp-cut-gallery { display: flex; flex-direction: column; gap: 16px; min-width: 0; min-height: 220px; }
+.tp-cut-gallery.is-empty { min-height: 120px; }
+.tp-cut-toolbar { display: flex; align-items: center; gap: 12px; overflow-x: auto; padding-bottom: 3px; }
+.tp-cut-toolbar > .ui-seg { flex: none; flex-wrap: nowrap; }
+.tp-cut-toolbar .ui-seg button { white-space: nowrap; }
+.tp-cut-filter-n { margin-left: 4px; color: var(--faint); font-size: 10px; }
+.tp-cut-filters { display: flex; align-items: center; gap: 7px; flex: none; margin-left: auto; }
+.tp-cut-filters > .ui-select { max-width: 160px; }
+.tp-cut-view { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--r); }
+.tp-cut-view > button { height: 24px; width: 26px; padding: 0; }
+.tp-cut-view > button[aria-pressed=true] { background: var(--hover); color: var(--fg); }
+.tp-cut-frame-group { min-width: 0; }
+.tp-cut-frame-group + .tp-cut-frame-group { border-top: 1px solid var(--border); padding-top: 14px; }
+.tp-cut-frame-group > h4 { display: flex; gap: 8px; align-items: center; margin: 0 0 10px; font-size: 12px; font-weight: 500; }
+.tp-cut-tiles { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.tp-cut-tile { min-width: 0; padding: 0; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; color: var(--fg); text-align: left; transition: border-color .15s ease; }
+.tp-cut-tile:hover { border-color: var(--input); }
+.tp-cut-picture { display: block; position: relative; aspect-ratio: 16 / 9; background: var(--stage); }
+.tp-cut-picture > img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.tp-cut-time, .tp-cut-model { position: absolute; border-radius: 3px; background: var(--on-frame-bg); padding: 1px 5px; font-size: 10px; color: var(--on-frame); }
+.tp-cut-time { bottom: 5px; left: 5px; font-variant-numeric: tabular-nums; }
+.tp-cut-model { top: 5px; right: 5px; color: var(--agent-fg); }
+.tp-cut-caption { display: flex; align-items: center; justify-content: space-between; gap: 6px; padding: 6px 7px; font-size: 10px; }
+.tp-cut-caption > .t-ell { color: var(--muted-fg); }
+.tp-cut-state { display: flex; align-items: center; gap: 3px; white-space: nowrap; color: var(--faint); }
+.tp-cut-state.done { color: var(--st-done); }
+.tp-cut-state.empty { color: var(--st-empty); }
+.tp-cut-state.agent { color: var(--agent-fg); }
+.tp-cut-state.skip { color: var(--st-skip); }
+.tp-cut-origin { display: block; padding: 0 7px 7px; font-size: 10px; color: var(--faint); }
+.tp-cut-tiles.as-list { display: flex; flex-direction: column; gap: 0; }
+.as-list .tp-cut-tile { display: grid; grid-template-columns: 96px minmax(0,1fr); align-items: center; border: 0; border-top: 1px solid var(--border); border-radius: 0; background: transparent; padding: 8px 0; }
+.as-list .tp-cut-tile:first-child { border-top: 0; }
+.as-list .tp-cut-picture { height: 54px; border-radius: var(--r-sm); overflow: hidden; }
+.as-list .tp-cut-caption { padding-left: 14px; font-size: 12px; }
+.as-list .tp-cut-origin { grid-column: 2; padding-left: 14px; margin-top: -10px; }
+.tp-reel-frames { grid-column: 1 / -1; }
+.tp-reel-frame-body { padding-top: 12px; border-top: 1px solid var(--border); margin-top: 8px; }
+@media (max-width: 1300px) {
+  .tp-cut-tiles { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .tp-cut-group .tp-reel { grid-template-columns: 90px minmax(0,1fr) 120px; }
+  .tp-cut-group .tp-poster { width: 90px; }
+  .tp-cut-group .tp-reel-a { grid-column: 2 / -1; }
+}
+@media (max-width: 1180px) {
+  .tp .tp-two { grid-template-columns: minmax(0,1fr); }
+}
+@media (max-width: 600px) {
+  .page.tp { padding: 18px 16px 28px; }
+  .tp-source-body { padding: 14px; }
+  .tp-cut-tiles { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 8px; }
+  .tp-cut-group .tp-reel { grid-template-columns: 70px minmax(0,1fr); }
+  .tp-cut-group .tp-poster { width: 70px; height: 44px; }
+  .tp-cut-group .tp-reel-c { grid-column: 2; }
+  .tp-cut-group .tp-reel-a { grid-column: 1 / -1; }
+  .tp-cut-toolbar { gap: 8px; }
+  .tp-cut-filter-n { display: none; }
+  .tp-cut-filters > .ui-select { max-width: 110px; }
+  .tp-cut-filters .ui-btn { white-space: nowrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tp-source-fold, .tp-cut-tile { transition: none; }
+}
 .tp-reel-t, .tp-fold { grid-column: 2 / -1; }
 /* Ролик в прогоне агента: в одну строку, текст с многоточием, значок и полоса не ужимаются (решения 29.10.2026) */
 .tp-reel-ag { grid-column: 2 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; height: 22px; font-size: 12px; color: var(--muted-fg); white-space: nowrap; }

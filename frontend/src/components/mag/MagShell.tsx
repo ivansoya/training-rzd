@@ -40,9 +40,9 @@ function useNarrow(px?: number): boolean {
 /** `railBelow` — окно уже стольких px: сайдбар полосой значков и без верхней полосы
  *  (редактору агента нужно место); шире — каркас как у всех. */
 export default function MagShell({ children, railBelow }: { children: ReactNode; railBelow?: number }) {
-  const rail = useNarrow(railBelow);
-  const { me, refresh } = useAuth();
   const { pathname, search } = useLocation();
+  const rail = useNarrow(railBelow ?? (/\/tasks\/[^/]+/.test(pathname) ? 760 : undefined));
+  const { me, refresh } = useAuth();
   const navigate = useNavigate();
   // Своих задач в очереди к картам — число на пункте «Оборудование»; сами карты — на его странице.
   const queued = useGpuState()?.queue.mine.length ?? 0;

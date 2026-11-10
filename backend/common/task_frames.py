@@ -103,6 +103,11 @@ def agent_pending():
     return and_(Image.task_status != "deleted", has_pending())
 
 
+def reviewed():
+    """Кадр подтверждён человеком, включая фон, и не ждёт проверки агента."""
+    return and_(Image.task_status.in_(("annotated", "empty")), ~has_pending())
+
+
 def video_payload(db, video, shapes=True):
     """Треки и одиночная разметка ролика — в том виде, в каком их ждёт
     `common.video_tracks`. Закрытие разметки и агент на ролике смотрят на

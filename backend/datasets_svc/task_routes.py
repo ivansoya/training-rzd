@@ -29,6 +29,7 @@ from common.models import (
     Annotation,
     Dataset,
     Image,
+    ImageTag,
     LabelClass,
     Project,
     ProjectMember,
@@ -700,7 +701,7 @@ def task_counts(task_id):
         buckets = {}
         for key, status, count in rows:
             bucket = buckets.setdefault(key, {
-                "new": 0, "annotated": 0, "empty": 0, "skipped": 0, "deleted": 0,
+                "new": 0, "annotated": 0, "empty": 0, "skipped": 0, "deleted": 0, "reviewed": 0,
             })
             bucket[status] = bucket.get(status, 0) + count
         accepted = db.execute(
@@ -718,6 +719,11 @@ def task_counts(task_id):
         for key, count in agent_rows:
             buckets.setdefault(key, {})["agent"] = count
         data["by_source"] = buckets
+        for key, count in db.execute(
+            select(src, func.count(Image.id)).where(Image.task_id == task.id, ~task_frames.video_frame(),
+                                                    task_frames.reviewed()).group_by(src)
+        ).all():
+            buckets.setdefault(key, {})["reviewed"] = count
 
         # Чем именно размечено: по одному числу «86 разметок» перекос не виден.
         rows = db.execute(
@@ -1770,8 +1776,11 @@ def task_images(task_id):
         return err
     try:
         status = request.args.get("status")
-        limit = min(int(request.args.get("limit", 60)), 200)
-        offset = int(request.args.get("offset", 0))
+        try:
+            limit = max(1, min(int(request.args.get("limit", 60)), 200))
+            offset = max(0, int(request.args.get("offset", 0)))
+        except (ValueError, TypeError):
+            return jsonify({"error": "Размер страницы и смещение — целые числа."}), 400
         q = select(Image).where(Image.task_id == task.id)
         # Один кадр — редактор перечитывает его, когда кадр поправил сосед
         if request.args.get("image"):
@@ -1780,9 +1789,20 @@ def task_images(task_id):
             q = q.where(task_frames.agent_pending())
         elif status:
             q = q.where(Image.task_status == status)
+        review = request.args.get("review")
+        if review not in (None, "new", "done"):
+            return jsonify({"error": "Неизвестное состояние разметки."}), 400
+        if review:
+            q = q.where(Image.task_status != "deleted", task_frames.reviewed() if review == "done" else ~task_frames.reviewed())
+        raw_tags = request.args.get("tags")
+        if raw_tags:
+            wanted = tags.valid_ids(db, project.id, raw_tags.split(","))
+            q = q.where(Image.id.in_(select(ImageTag.image_id).where(ImageTag.tag_id.in_(wanted))))
         source = request.args.get("source")
         if source and source not in task_frames.SOURCES:
             source = _uuid_or_none(source)
+            if source is None:
+                return jsonify({"error": "Неизвестный источник кадров."}), 400
         clause = task_frames.source_clause(task.id, source)
         if clause is not None:
             q = q.where(clause)
@@ -1790,7 +1810,7 @@ def task_images(task_id):
             select(func.count()).select_from(q.subquery())
         ).scalar_one()
         images = db.execute(
-            q.order_by(QUEUE_ORDER, Image.file_name).limit(limit).offset(offset)
+            q.order_by(QUEUE_ORDER, Image.file_name, Image.id).limit(limit).offset(offset)
         ).scalars().all()
 
         ids = [i.id for i in images]

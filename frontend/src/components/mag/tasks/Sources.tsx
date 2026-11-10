@@ -1,10 +1,10 @@
 // Источники кадров таски карточками: изображения, ролики на нарезку, ролики на разметку, кадры из разметки.
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type { AgentClearScope, PendingObject, PendingVideo, TaskNumbers, TaskPerson, TaskVideoItem, VideoPrepare } from "../../../auth/api";
 import type { Tag } from "../../../api/tags";
-import { Badge, Button, Card, Icon, Legend, LinkButton, MenuItem, Popover, StackBar, Swatch, cx } from "../../../ui";
+import { Badge, Button, Card, Empty, Icon, Input, Legend, LinkButton, MenuItem, Popover, Select, StackBar, Swatch, cx } from "../../../ui";
 import { count, plural, ru } from "../../ru";
 import type { RunMode, RunView } from "../../../api/agents";
 import type { AgentToolState } from "../../editor/AgentTool";
@@ -17,7 +17,9 @@ import { fmtBytes, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
 import { fits, zoneSay } from "./drop";
 import type { Dragged } from "./drop";
 import type { ReelState, SourceBlock, SourceCounts } from "./tasks";
-import { STATES, coverage, dayOf, etaText, leftText, reelLine, reelStates, runPct, runWord, stateParts } from "./tasks";
+import { STATES, coverage, cutCounts, dayOf, etaText, filterCutVideos, leftText, reelLine, reelStates, reviewedCount, runPct, runWord, stateParts } from "./tasks";
+import { CutFramesGallery, FilterTags, FoldSource } from "./CutFrames";
+import type { OpenCutFrame } from "./CutFrames";
 import { hereNames } from "../here";
 import { questionsWord } from "../questions/questions";
 import type { Here } from "../here";
@@ -196,10 +198,10 @@ function AgentButton({ agent, ask }: { agent: AgentHooks; ask: Parameters<AgentH
 /** Разметке нужны сопоставленные классы, разведке — нет. */
 const unmapped = (agent: AgentHooks) => agent.tool.agent && agent.tool.mapped === 0 && "классы не сопоставлены ⚙";
 
-const framesAction = (agent: AgentHooks, source: string, fresh: number, label = "Разметить новые кадры"): AgentAction => ({
+const framesAction = (agent: AgentHooks, source: string | string[], fresh: number, label = "Разметить новые кадры"): AgentAction => ({
   label, icon: "bot", hint: `${ru(fresh)} ${plural(fresh, "новый", "новых", "новых")}`,
   off: unmapped(agent) || (fresh === 0 && "новых кадров нет"),
-  run: (step) => agent.start({ mode: "frames", sources: [source], step }),
+  run: (step) => agent.start({ mode: "frames", sources: Array.isArray(source) ? source : [source], step }),
 });
 
 const scoutAction = (agent: AgentHooks, videos: TaskVideoItem[], label: string): AgentAction => ({
@@ -357,9 +359,24 @@ function Asked({ n }: { n?: number }) {
 }
 
 /** Ролики на нарезку: общий счёт кадров и строка на каждый ролик со своим планом. */
-export function CutCard({ block, look, taskId, code, tags, editable, fillable, run, agent, asked, onAnnotate, onReview,
-  onCut, onDelete, onVideoTags, onTagCreated }: {
+export function CutCard(props: Omit<Parameters<typeof CutGroup>[0], "cut">) {
+  const videos = props.block.videos || [];
+  return <div className="tp-cut-videos"><h2><Icon name="cut" />Ролики на нарезку<Badge variant="secondary">{videos.length}</Badge></h2>
+    {[true, false].map((cut) => {
+      const group = videos.filter((v) => (v.frames > 0) === cut);
+      if (!group.length) return null;
+      return <CutGroup {...props} key={cut ? "cut" : "uncut"} cut={cut} block={{ ...props.block, videos: group,
+        counts: cutCounts(group, props.byVideo), total: group.reduce((n, v) => n + v.frames, 0) }} />;
+    })}
+  </div>;
+}
+
+function CutGroup({ block, look, taskId, code, tags, editable, fillable, run, agent, asked, onAnnotate, onReview,
+  onCut, onDelete, onVideoTags, onTagCreated, byVideo, onFrameOpen, cut }: {
   block: SourceBlock;
+  cut: boolean;
+  byVideo: TaskNumbers["by_source"] | null;
+  onFrameOpen: OpenCutFrame;
   look: Look;
   taskId: string;
   code: string;
@@ -379,26 +396,41 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
   onVideoTags: (v: TaskVideoItem, ids: string[]) => void;
   onTagCreated: (t: Tag) => void;
 }) {
-  const videos = block.videos || [];
+  const [open, setOpen] = useState(true), [query, setQuery] = useState("");
+  const [tagIds, setTagIds] = useState<string[]>([]), [reviewState, setReviewState] = useState<"all" | "new" | "done">("all");
+  const all = block.videos || [];
+  const videos = filterCutVideos(all, { q: query, tags: tagIds, review: reviewState }, byVideo);
+  const visibleCounts = cutCounts(videos, byVideo);
+  const filtered = !!query || tagIds.length > 0 || reviewState !== "all";
+  const reset = () => { setQuery(""); setTagIds([]); setReviewState("all"); };
   const reels = useReelStates(run);
   return (
-    <Card className="tp-src"
-      title={<><Icon name="cut" />Ролики на нарезку<Badge variant="secondary">{videos.length}</Badge></>}
-      desc={block.total ? `${count(block.total, "кадр нарезан", "кадра нарезано", "кадров нарезано")}` : "ещё ничего не нарезано"}
-      actions={<>
+    <FoldSource className="tp-cut-group" open={open} onOpen={setOpen}
+      title={<><i className={cx("tp-cut-dot", cut && "done")} />{cut ? "Нарезанные" : "Ненарезанные"}<Badge variant="secondary">{all.length}</Badge></>}
+      desc={cut ? <>{count(block.total, "кадр извлечён", "кадра извлечено", "кадров извлечено")}
+        {block.known && <><Sep />{ru(Math.max(0, block.total - reviewedCount(block.counts)))} ещё не размечены</>}</> : "Кадров пока нет — выберите участки и шаг нарезки"}>
+      <div className="tp-cut-video-filters"><Input type="search" aria-label={cut ? "Поиск среди нарезанных" : "Поиск среди ненарезанных"}
+        value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Название ролика" />
+        <FilterTags tags={tags} value={tagIds} onChange={setTagIds} />
+        {cut && <Select size="sm" label="Состояние роликов" value={reviewState} onChange={setReviewState} disabled={!block.known} options={[
+          { value: "all", label: "Все состояния" }, { value: "new", label: "Есть неразмеченные" }, { value: "done", label: "Всё размечено" },
+        ]} />}
+        {filtered && <Button size="sm" variant="ghost" onClick={reset}>Сбросить</Button>}
+      </div>
+      <div className="tp-cut-actions">
         {editable && <ReviewAgent n={block.counts.agent} onReview={onReview} />}
-        {editable && <AgentButton agent={agent} ask={{ mode: block.total ? "frames" : "scout", sources: [block.key],
+        {editable && videos.length > 0 && <AgentButton agent={agent} ask={{ mode: block.total ? "frames" : "scout", sources: videos.map((v) => v.id),
           videos: videos.map((v) => v.id), within: videos.map((v) => v.id), modes: ["frames", "scout"] }} />}
         {block.total > 0 && (
           <Button size="sm" icon={editable ? "edit" : "eye"} onClick={onAnnotate}>{editable ? "Размечать нарезанное" : "Смотреть"}</Button>
         )}
-        {editable && (
+        {editable && videos.length > 0 && (
           <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label="Агент: ролики на нарезку" step
-            actions={[framesAction(agent, block.key, block.counts.new || 0, "Разметить нарезанные кадры"),
+            actions={[framesAction(agent, videos.map((v) => v.id), videos.reduce((n, v) => n + v.fresh, 0), "Разметить нарезанные кадры"),
               scoutAction(agent, videos, "Разведать все ролики")]}
-            clear={clearOf(agent, { sources: [block.key] }, block.counts.agent)} />
+            clear={clearOf(agent, { sources: videos.map((v) => v.id) }, visibleCounts.agent)} />
         )}
-      </>}>
+      </div>
       <AgentLine run={run} />
       {block.total > 0 && <Progress c={block.counts} known={block.known} look={look} />}
       {fillable && <TagAll videos={videos} code={code} tags={tags} onVideoTags={onVideoTags} onTagCreated={onTagCreated} />}
@@ -413,11 +445,15 @@ export function CutCard({ block, look, taskId, code, tags, editable, fillable, r
                 clear={editable ? clearOf(agent, { sources: [v.id] }) : undefined}
                 deleteLabel="Удалить ролик и его кадры" onDelete={fillable ? () => onDelete(v) : undefined} />
             )}
+            frames={(expanded) => <CutFramesGallery taskId={taskId} videos={all} tags={tags} videoId={v.id} total={v.frames}
+              revision={byVideo} onOpen={onFrameOpen} open={open && expanded} />}
             onCut={() => onCut(v)}
             onTags={(ids) => onVideoTags(v, ids)} onTagCreated={onTagCreated} />
         ))}
       </div>
-    </Card>
+      {videos.length === 0 && <Empty icon="filter" title="Роликов с такими фильтрами нет" action={<Button size="sm" onClick={reset}>Сбросить фильтры</Button>} />}
+      <span className="t-xs t-faint">Показано {videos.length} из {all.length}</span>
+    </FoldSource>
   );
 }
 
@@ -459,7 +495,7 @@ function TagAll({ videos, code, tags, onVideoTags, onTagCreated }: {
   );
 }
 
-function ReelRow({ v, taskId, code, tags, editable, asked, agentState, menu, onCut, onTags, onTagCreated }: {
+function ReelRow({ v, taskId, code, tags, editable, asked, agentState, menu, frames, onCut, onTags, onTagCreated }: {
   v: TaskVideoItem;
   asked?: number;
   /** Где ролик в прогоне агента — строкой под ним. */
@@ -471,11 +507,14 @@ function ReelRow({ v, taskId, code, tags, editable, asked, agentState, menu, onC
   editable: boolean;
   /** Меню «⋯»: агент на ролик и удаление. */
   menu: ReactNode;
+  frames?: (open: boolean) => ReactNode;
   onCut: () => void;
   onTags: (ids: string[]) => void;
   onTagCreated: (t: Tag) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [framesOpen, setFramesOpen] = useState(false);
+  const frameId = useId();
   const segs = v.segments.length;
   return (
     <div className="tp-reel">
@@ -487,7 +526,9 @@ function ReelRow({ v, taskId, code, tags, editable, asked, agentState, menu, onC
         <span className="tp-reel-s"><PrepareLine prepare={v.prepare} /><Asked n={asked} /></span>
       </div>
       <div className="tp-reel-c">
-        <b className="ui-mono">{v.frames ? ru(v.frames) : "—"}</b>
+        {frames && v.frames > 0 ? <Button size="sm" variant="ghost" icon="images" iconEnd={framesOpen ? "chevU" : "chevD"}
+          aria-expanded={framesOpen} aria-controls={frameId} onClick={() => setFramesOpen((v) => !v)}>{count(v.frames, "кадр", "кадра", "кадров")}</Button>
+          : <b className="ui-mono">{v.frames ? ru(v.frames) : "—"}</b>}
         {segs ? (
           <button type="button" className="tp-segs" aria-expanded={open} onClick={() => setOpen((x) => !x)}>
             {count(segs, "участок", "участка", "участков")}<Icon name="chevD" size={13} />
@@ -521,6 +562,8 @@ function ReelRow({ v, taskId, code, tags, editable, asked, agentState, menu, onC
           </table>
         </div>
       </div>
+      {frames && v.frames > 0 && <div id={frameId} className={cx("tp-source-fold tp-reel-frames", framesOpen && "open")}
+        {...(!framesOpen ? { inert: "" } : {})}><div><div className="tp-reel-frame-body">{frames(framesOpen)}</div></div></div>}
     </div>
   );
 }
