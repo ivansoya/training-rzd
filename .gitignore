@@ -9,6 +9,7 @@ backend/data/
 dataset_test/
 .claude
 CLAUDE.md
+/AGENTS.md
 tests/e2e/node_modules/
 tests/e2e/test-results/
 tests/e2e/playwright-report/
