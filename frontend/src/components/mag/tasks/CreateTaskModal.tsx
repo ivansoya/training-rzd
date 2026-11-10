@@ -33,6 +33,7 @@ export function CreateTaskModal({
   const [team, setTeam] = useState<string[]>([me.user.id]);
   // Radix не принимает пустое значение: «new» — новый датасет
   const [dataset, setDataset] = useState("new");
+  const [datasetName, setDatasetName] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<TakePreview | null>(null);
@@ -59,6 +60,7 @@ export function CreateTaskModal({
         name: name.trim(),
         assignees: team,
         target_dataset_id: dataset === "new" ? null : dataset,
+        target_dataset_name: dataset === "new" ? datasetName.trim() || null : null,
         ...(fromDataset ? { image_ids: fromDataset } : {}),
       });
       onCreated(task.id);
@@ -114,7 +116,7 @@ export function CreateTaskModal({
             )}
           </section>
         )}
-        <Field label="Название">
+        <Field label="Название таски">
           {(id) => <Input id={id} value={name} placeholder="Съёмка 12 августа" maxLength={255} data-autofocus
             onChange={(e) => setName(e.target.value)} />}
         </Field>
@@ -124,10 +126,16 @@ export function CreateTaskModal({
         <Field label={fromDataset ? "Новые кадры пойдут в датасет" : "Готовые кадры пойдут в датасет"}
           hint="Спрашиваем один раз: на «Готово» вопросов больше не будет.">
           {(id) => <Select id={id} full value={dataset} onChange={setDataset} label="Датасет для готовых кадров"
-            options={[{ value: "new", label: "Новый, с именем таски", hint: name.trim() ? `«${name.trim()}»` : "имя появится вместе с названием таски" },
+            options={[{ value: "new", label: "Новый датасет", hint: "Создадим при сдаче таски" },
               ...detail.datasets.map((d) => ({ value: d.id, label: d.name, hint: count(d.images_count, "кадр", "кадра", "кадров") }))]} />}
         </Field>
-        {/* Enter в названии создаёт таску */}
+        {dataset === "new" && (
+          <Field label="Название нового датасета" hint="Оставьте пустым, чтобы использовать название таски.">
+            {(id) => <Input id={id} value={datasetName} placeholder={name.trim() || "Как у таски"} maxLength={255}
+              onChange={(e) => setDatasetName(e.target.value)} />}
+          </Field>
+        )}
+        {/* Enter в поле названия создаёт таску */}
         <button type="submit" hidden />
       </form>
     </Dialog>

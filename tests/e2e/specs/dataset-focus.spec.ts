@@ -54,7 +54,7 @@ test("таска из датасета и «Фокус» датасета", asyn
   await page.getByRole("button", { name: /Новая таска/ }).click();
   const dialog = page.getByRole("dialog", { name: "Новая таска" });
   await expect(dialog.locator(".ct-from")).toContainText("Из датасета: 2 кадра");
-  await dialog.getByLabel("Название").fill("Проверка");
+  await dialog.getByLabel("Название таски", { exact: true }).fill("Проверка");
   await dialog.getByRole("button", { name: "Создать таску" }).click();
   await expect(page).toHaveURL(/\/tasks\//);
   await expect(page.locator(".tp-src").filter({ hasText: "Из датасета" })).toBeVisible();

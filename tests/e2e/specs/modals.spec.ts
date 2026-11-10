@@ -72,7 +72,7 @@ test("импорт архива окном, экспорт и новая тас�
   // --- новая таска: фокус в названии, а не на крестике ---
   await page.getByRole("button", { name: "Новая таска" }).click();
   const task = page.getByRole("dialog", { name: "Новая таска" });
-  await expect(task.getByLabel("Название")).toBeFocused();
+  await expect(task.getByLabel("Название таски", { exact: true })).toBeFocused();
   await expect(task.getByRole("button", { name: "Создать и загрузить кадры" })).toBeDisabled();
   await page.keyboard.press("Escape");
   await expect(task).toHaveCount(0);
