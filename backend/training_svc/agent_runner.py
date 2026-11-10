@@ -34,7 +34,7 @@ from sqlalchemy import or_, select, text, update
 from sqlalchemy.exc import OperationalError
 
 from common import (
-    agent_graph, agent_memory, config, gpu, gpu_peak, live, settings, shapes, task_frames, task_rights, video_frames,
+    agent_graph, agent_memory, agent_parallel, config, gpu, gpu_peak, live, settings, shapes, task_frames, task_rights, video_frames,
     video_tracks,
 )
 from common.db import SessionLocal
@@ -80,7 +80,7 @@ def candidates(db):
     пока те ждали карту, третий не пробовался и при свободной третьей карте."""
     with _taken_lock:
         taken = set(_taken)
-    ids = db.execute(select(AgentRun.id).where(AgentRun.status.in_(("queued", "waiting_gpu")))
+    ids = db.execute(select(AgentRun.id).where(AgentRun.status.in_(("queued", "waiting_gpu")), AgentRun.is_group.is_(False))
                      .order_by(AgentRun.created_at)).scalars().all()
     return [i for i in ids if i not in taken]
 
@@ -90,7 +90,7 @@ def claim(db, run_id, worker_id):
         if run_id in _taken:
             return None
         run = db.execute(select(AgentRun).where(
-            AgentRun.id == run_id, AgentRun.status.in_(("queued", "waiting_gpu")))
+            AgentRun.id == run_id, AgentRun.status.in_(("queued", "waiting_gpu")), AgentRun.is_group.is_(False))
             .with_for_update(skip_locked=True)).scalar_one_or_none()
         if run is None:
             db.rollback()
@@ -120,7 +120,7 @@ def reap_orphans(db, worker_id, fresh_start=False):
     Признак жизни — бронь карты: её продлевают и пульс загрузки моделей, и шаг
     хода. Истекла — ведущего нет. На старте свои прогоны закрываются сразу."""
     closed = 0
-    for run in db.execute(select(AgentRun).where(AgentRun.status == "running")).scalars().all():
+    for run in db.execute(select(AgentRun).where(AgentRun.status == "running", AgentRun.is_group.is_(False))).scalars().all():
         with _taken_lock:
             if run.id in _taken:
                 continue
@@ -133,6 +133,9 @@ def reap_orphans(db, worker_id, fresh_start=False):
             gpu.cancel(db, lease.id, ORPHAN_TEXT)
         _retry_or_fail(db, run, ORPHAN_TEXT)
         closed += 1
+    # Ребёнок мог записать итог и упасть до обновления группы.
+    for parent_id in db.execute(select(AgentRun.id).where(AgentRun.is_group.is_(True), AgentRun.status.in_(agent_parallel.ACTIVE))).scalars():
+        agent_parallel.sync(db, parent_id)
     return closed
 
 
@@ -149,6 +152,7 @@ def _retry_or_fail(db, run, text):
     stats["retries"] = stats.get("retries", 0) + 1
     run.stats, run.status, run.queue_reason = stats, "queued", None
     db.commit()
+    agent_parallel.sync(db, run.parent_id)
     live.notify(db, "agent", run.id, run.project_id, s="queued")
     log.warning("прогон %s: %s — повтор с места остановки (%s)", run.id, text, _where(db, run))
 
@@ -170,6 +174,11 @@ def _where(db, run):
 def frames(db, run):
     """Кадры прогона [(id, имя)]: новые, из выбранных блоков. Порядок — (имя, id) по всем блокам сразу:
     по нему курсор продолжения после сбоя, а склейка блоков по очереди его ломала."""
+    assignment = run.params.get("assignment")
+    if assignment is not None:
+        return db.execute(select(Image.id, Image.file_name).where(Image.task_id == run.task_id,
+            Image.id.in_([_uuid(i) for i in assignment.get("images", [])]))
+            .order_by(Image.file_name, Image.id)).all()
     found = {}
     for source in run.params.get("sources") or []:
         clause = task_frames.source_clause(run.task_id, source)
@@ -184,6 +193,8 @@ def frames(db, run):
 def _largest(db, run, mode):
     """(ширина, высота) самого крупного кадра этого прогона или None — по нему виды тайлов в подписи
     замера (решение 11.10.2026). Именно его кадров, а не всей таски: замер на мелких лёг бы под подпись крупных."""
+    if run.parent_id:
+        run = db.get(AgentRun, run.parent_id)
     if mode == "frames":
         clauses = [task_frames.source_clause(run.task_id, s) for s in run.params.get("sources") or []]
         q = select(Image.width, Image.height).where(Image.task_id == run.task_id, Image.task_status == "new",
@@ -202,6 +213,7 @@ def _finish(db, run, status, error=None):
     run.error = error
     run.finished_at = utcnow()
     db.commit()
+    agent_parallel.sync(db, run.parent_id)
     live.notify(db, "agent", run.id, run.project_id, s=status)
 
 
@@ -251,29 +263,19 @@ def prepare(db, run):
     # прогон ждёт место процессора, считает в fp32 и замера памяти не пишет.
     cpu = run.params.get("device") == "cpu"
     cards = [] if cpu else gpu.cards(db)
-    cpu_half = settings.get(db, settings.SAM3_CPU_HALF)
-    mem = agent_memory.plan(doc, max((c["cap_mb"] for c in cards), default=0) or None, scout,
-                            nets=agent_memory.net_info(weights), sam3_cpu_half=cpu_half)
+    size = _largest(db, run, mode) if any((n.get("params") or {}).get("tiles") for n in doc["nodes"]) else None
+    resource = agent_parallel.memory(db, doc, cards, scout, size)
+    mem = resource["mem"]
     if cpu:
         sig, total, sequential, split, parts = None, 0, False, False, [0]
     else:
-        size = _largest(db, run, mode) if any((n.get("params") or {}).get("tiles") for n in doc["nodes"]) else None
-        views = agent_memory.frame_views(doc, *size, agent_memory.net_info(weights)) if size else None
-        sig = agent_memory.signature(doc, mem["words"], scout=scout, sam3_cpu_half=cpu_half, views=views)
-        total, _ = gpu.estimate(db, "agent", sig, mem["total_mb"])
-        verdict = agent_memory.verdict(total, mem["heaviest"], cards, mem["units"], gpu.CONTEXT_MB)
+        sig, total, verdict = resource["sig"], resource["total"], resource["verdict"]
         if verdict["state"] == agent_memory.NEVER:
             if run.gpu_lease_id:
                 gpu.cancel(db, run.gpu_lease_id, verdict["reason"])
             _finish(db, run, "error", verdict["reason"])
             return None
-        sequential = verdict["state"] == agent_memory.SEQUENTIAL
-        split = verdict["state"] == agent_memory.SPLIT
-        parts = list(verdict["parts"]) if split else [total + gpu.CONTEXT_MB]
-        if sequential:
-            sig = agent_memory.signature(doc, mem["words"], sequential=True, scout=scout, sam3_cpu_half=cpu_half,
-                                         views=views)
-            parts = [gpu.estimate(db, "agent", sig, mem["heaviest"]["mb"])[0] + gpu.CONTEXT_MB]
+        sequential, split, parts = resource["sequential"], resource["split"], resource["parts"]
     agent_memory.fix_words(doc, mem["words"])
     # Бронь из очереди переиспользуем: новая на каждой попытке обнуляла бы место
     # в очереди и «сколько ждёт».
@@ -309,6 +311,7 @@ def prepare(db, run):
         run.queue_reason = lease.reason
         run.gpu_lease_id = lease.id
         db.commit()
+        agent_parallel.sync(db, run.parent_id)
         if changed:
             live.notify(db, "agent", run.id, run.project_id, s="waiting_gpu")
         return None
@@ -327,6 +330,7 @@ def prepare(db, run):
     # Курсор и счёт повтора — не затирать; `since` — точка отсчёта скорости этого (пере)запуска.
     run.stats = {**(run.stats or {}), "res": info, "since": [utcnow().isoformat(), run.processed or 0]}
     db.commit()
+    agent_parallel.sync(db, run.parent_id)
     live.notify(db, "agent", run.id, run.project_id, s="running")
     # Блок → карта: при дележе — карта его части, иначе все на одной.
     return {"doc": doc, "order": order, "units": mem["units"], "sig": sig, "want": sum(parts),
@@ -351,21 +355,34 @@ def run_held(db, run_id, ctx):
         cpu = ctx.get("cpu", False)
         devices = {key: _device(index, cpu) for key, index in ctx["unit_index"].items()}
         _device(ctx["first"], cpu)  # текущая карта нити — первая из брони
-        ids = frames(db, run) if mode == "frames" else None
-        plan = _video_plan(db, run, mode) if ids is None else None
-        run.total = len(ids) if ids is not None else sum(len(f) for _, f in plan)
-        if plan is not None:
-            # Кадров на ролик по порядку `params.videos` — ход каждого ролика на странице таски
-            have = {str(v.id): len(f) for v, f in plan}
-            run.stats = {**(run.stats or {}), "plan": [have.get(str(v), 0) for v in run.params.get("videos") or []]}
-        db.commit()
         tick = _ticker(db, run, ctx["lease_id"], [] if cpu else sorted(set(devices.values()), key=str), info)
         work = _Work(doc, ctx["order"], ctx["units"], weights, sets, devices, ctx["lease_id"], ctx["sequential"], tick)
         mapping = run.params.get("mapping") or {}
-        if ids is not None:
-            _frames(db, run, ids, work, mapping, tick)
-        else:
-            _videos(db, run, mode, plan, work, mapping, tick)
+        while True:
+            tick.check()
+            if run.parent_id and agent_parallel.take(db, run) is None:
+                tick.check()
+                break
+            if run.parent_id and mode == "scout" and not (run.stats or {}).get("cursor"):
+                # Разведка сохраняет находки целым роликом: после сбоя пересчитывает только его.
+                run.processed = run.stats.get("item_start", 0)
+                run.stats = {**run.stats, **run.stats.get("item_stats", {})}
+                db.commit()
+            ids = frames(db, run) if mode == "frames" else None
+            plan = _video_plan(db, run, mode) if ids is None else None
+            if not run.parent_id:
+                run.total = len(ids) if ids is not None else sum(len(f) for _, f in plan)
+            if plan is not None:
+                have = {str(v.id): len(f) for v, f in plan}
+                run.stats = {**(run.stats or {}), "plan": [have.get(str(v), 0) for v in run.params.get("videos") or []]}
+            db.commit()
+            if ids is not None:
+                _frames(db, run, ids, work, mapping, tick)
+            else:
+                _videos(db, run, mode, plan, work, mapping, tick)
+            if not run.parent_id:
+                break
+            agent_parallel.complete(db, run)
         peak, shared = tick.peak(), tick.shared()
         _finish(db, run, "done")
     except Stopped:
@@ -408,6 +425,8 @@ def after_child(db, run_id, lease_id, *, hung_s=None, exitcode=None, error=None)
     gpu.release(db, lease_id)  # убитый не отпустил; повторный release ничего не делает
     run = db.get(AgentRun, run_id)
     if run is None or run.status != "running":
+        if run is not None:
+            agent_parallel.sync(db, run.parent_id)
         return
     if run.cancel_requested:
         _finish(db, run, "stopped")
@@ -949,6 +968,7 @@ def _ticker(db, run, lease_id, devices=(), info=None):
         now = time.monotonic()
         if now - last[0] >= NOTIFY_EVERY:
             gpu.beat(db, lease_id)
+            agent_parallel.sync(db, run.parent_id)
             live.notify(db, "agent", run.id, run.project_id, n=run.processed)
             last[0] = now
 
@@ -993,7 +1013,8 @@ def _video_plan(db, run, mode):
         if video is None or video.task_id != run.task_id:
             continue
         last = _last_frame(video)
-        every = agent_graph.sampled(last, step)
+        assignment = run.params.get("assignment")
+        every = assignment["wanted"] if assignment and "wanted" in assignment else agent_graph.sampled(last, step)
         if mode == "annotate":
             tracks, singles = task_frames.video_payload(db, video)
             busy = video_tracks.human_frames(tracks, singles, video.empty_frames, every)

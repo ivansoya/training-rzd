@@ -1868,8 +1868,8 @@ class AgentRun(Base, AuditMixin):
 
     Версия и сопоставление классов снимаются в строку при запуске: правка
     агента или сопоставления посреди прогона не должна менять то, что
-    размечается. Один активный прогон на таску — два агента, идущие по тем же
-    кадрам, заменяли бы рамки друг друга.
+    размечается. На таску — один активный прогон или группа копий с общей
+    очередью. Дочерние прогоны группы получают непересекающиеся задания.
     """
 
     __tablename__ = "agent_runs"
@@ -1878,7 +1878,7 @@ class AgentRun(Base, AuditMixin):
             "uq_agent_run_active", "task_id",
             unique=True,
             postgresql_where=sa.text(
-                "status IN ('queued', 'waiting_gpu', 'running')"
+                "status IN ('queued', 'waiting_gpu', 'running') AND parent_id IS NULL"
             ),
         ),
         sa.Index(
@@ -1891,6 +1891,10 @@ class AgentRun(Base, AuditMixin):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    parent_id: Mapped[uuid.UUID | None] = mapped_column(
+        sa.Uuid, sa.ForeignKey("agent_runs.id", ondelete="CASCADE"), index=True
+    )
+    is_group: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False, server_default=sa.false())
     project_id: Mapped[uuid.UUID] = mapped_column(
         sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )

@@ -162,7 +162,7 @@ def _agent_use(db, graph):
     """Запуски агента в тасках всех проектов: сколько, сколько рамок, когда последний."""
     rows = db.execute(
         select(AgentRun.created_at, AgentRun.stats, AgentRun.params)
-        .where(AgentRun.graph_id == graph.id)
+        .where(AgentRun.graph_id == graph.id, AgentRun.parent_id.is_(None))
     ).all()
     # Разведка рамок не ставит — её находки в счёт не идут.
     boxes = sum(int((st or {}).get("boxes") or 0) for _, st, pr in rows if (pr or {}).get("mode") != "scout")

@@ -237,6 +237,22 @@ describe("ход агента (решения 29.10.2026)", () => {
     expect(reelStates(run({ mode: "frames" })).size).toBe(0);
   });
 
+  it("параллельный ход различает готовый ролик, две текущие копии, ошибку и очередь", () => {
+    const group = run({ stats: { completed_videos: ["a"] }, parallel: { count: 3, pending: 2, copies: [
+      { videos: ["b"], current: "b.mp4", status: "running", item_processed: 20, item_total: 100, rate: 2 },
+      { videos: ["c"], current: "c.mp4", status: "error", item_processed: 3, item_total: 50, rate: null },
+      { videos: ["d"], current: "d.mp4", status: "waiting_gpu", item_processed: 0, item_total: 100, rate: null },
+    ] } });
+    const states = reelStates(group);
+    expect(reelLine(group)).toBe("готово роликов 1 из 6");
+    expect(states.get("a")).toEqual({ kind: "done" });
+    expect(states.get("b")).toEqual({ kind: "cur", done: 20, plan: 100, secs: 40 });
+    expect(states.get("c")?.kind).toBe("error");
+    expect(states.get("d")).toEqual({ kind: "queue", done: 0, plan: 100, secs: null });
+    expect(states.get("e")).toEqual({ kind: "queue", place: 1 });
+    expect(states.get("f")).toEqual({ kind: "queue", place: 2 });
+  });
+
   it("погашенные пункты и значок доски говорят, что идёт и сколько ждать", () => {
     const going = run({ processed: 4832, rate: 1.8 });
     expect(busyText(going)).toBe("идёт разведка, осталось ≈ 4 ч 47 мин");

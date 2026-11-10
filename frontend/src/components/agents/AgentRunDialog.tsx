@@ -50,6 +50,11 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
   const [mapping, setMapping] = useState<Record<string, string | null>>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [parallel, setParallel] = useState(false);
+  const [copies, setCopies] = useState("auto");
+  const [custom, setCustom] = useState("");
+  const [capacity, setCapacity] = useState<{ key: string; plan: api.ParallelCapacity } | null>(null);
+  const [capacityError, setCapacityError] = useState<string | null>(null);
   // Агент больше карты или карты выключены — окно «на процессоре или отменить» (11.10.2026).
   const [refusal, setRefusal] = useState<CardRefusal | null>(null);
 
@@ -81,6 +86,27 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
   const eligible = (ctx?.videos ?? []).filter((v) => (!initial?.within || initial.within.includes(v.id))
     && (mode === "scout" || v.mode === "annotate"));
   const chosen = eligible.filter((v) => videos.has(v.id));
+  const capacityKey = JSON.stringify({ version_id: version?.id, mode, sources: [...sources].sort(),
+    videos: chosen.map((v) => v.id).sort(), step });
+  useEffect(() => {
+    if (!parallel || !version?.id) return;
+    let alive = true;
+    const refresh = () => {
+      api.parallelCapacity(taskId, JSON.parse(capacityKey)).then((plan) => {
+        if (alive) { setCapacity({ key: capacityKey, plan }); setCapacityError(null); }
+      }, (e: Error) => { if (alive) { setCapacity(null); setCapacityError(e.message); } });
+    };
+    setCapacityError(null);
+    const timer = window.setTimeout(refresh, 250);
+    const poll = window.setInterval(refresh, 10000);
+    return () => { alive = false; window.clearTimeout(timer); window.clearInterval(poll); };
+  }, [parallel, taskId, capacityKey, version?.id]);
+  const plan = capacity?.key === capacityKey ? capacity.plan : null;
+  const maxCopies = plan?.max_count ?? 0;
+  const requested = copies === "auto" ? maxCopies : Number(copies === "custom" ? custom : copies);
+  const countError = copies === "custom" && !/^[1-9]\d*$/.test(custom) ? "Введите целое число от 1."
+    : plan && requested > maxCopies ? `Сейчас доступно до ${maxCopies} агентов.` : null;
+  const parallelBlocked = parallel && (!plan || maxCopies === 0 || !!countError);
   const total = mode === "frames"
     ? ctx ? [...sources].reduce((sum, s) => sum + (ctx.sources[s]?.new ?? 0), 0) : 0
     : chosen.reduce((sum, v) => sum + sampledCount(v.frames ?? 0, step), 0);
@@ -130,10 +156,11 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
       onStarted(await api.startRun(taskId, {
         graph_id: agent.id, version_id: version.id, mode, sources: [...sources], videos: chosen.map((v) => v.id), step, gap, mapping,
         ...(device ? { device } : {}),
+        ...(parallel ? { parallel: true, copies: copies === "auto" ? "auto" : requested } : {}),
       }));
     } catch (e) {
       const why = refusalOf(e);
-      if (why) setRefusal(why);
+      if (why && !parallel) setRefusal(why);
       else setError((e as Error).message);
       setBusy(false);
     }
@@ -161,17 +188,17 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
     : `Разметить ${mode === "annotate" ? "до " : ""}${count(total, "кадр", "кадра", "кадров")}`;
 
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()} width={720} title="Разметить агентом"
+    <Dialog open onOpenChange={(v) => !busy && !v && onClose()} width={760} height={760} className="ar-dialog" closable={!busy} title="Разметить агентом"
       desc="Агент ставит рамки с пометкой «модель» — человек их проверяет. Разметку людей агент не трогает"
       footer={<>
         {ready && est && <VerdictChip est={est} source className="ar-vd" />}
         <span className="grow" />
-        <Button variant="ghost" onClick={onClose}>Отмена</Button>
+        <Button variant="ghost" disabled={busy} onClick={onClose}>Отмена</Button>
         {ready && (
           <Button variant="agent" icon="sparkle" onClick={() => void start()}
-            disabled={busy || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
+            disabled={busy || parallelBlocked || !ctx.can_run || total === 0 || (mode !== "scout" && mapped === 0)}
             title={mode !== "scout" && mapped === 0 ? "Сопоставьте хотя бы один класс" : undefined}>
-            {startText}{(verdict?.state === "wait" || (verdict?.state === "split" && !verdict.ready)) && <><Sep />в очередь</>}
+            {parallel ? parallelBlocked ? "Запустить агентов" : `Запустить ${count(requested, "агента", "агентов", "агентов")}` : startText}{!parallel && (verdict?.state === "wait" || (verdict?.state === "split" && !verdict.ready)) && <><Sep />в очередь</>}
           </Button>
         )}
       </>}>
@@ -240,6 +267,42 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
               </Radio>}
             </div>
 
+            <section className="ar-parallel" aria-label="Выполнение">
+              <div className="ar-parallel-head">
+                <b className="t-sm">Выполнение</b>
+                <div className="ui-seg ui-seg-sm" role="group" aria-label="Количество экземпляров">
+                  <button aria-pressed={!parallel} onClick={() => setParallel(false)}>Один агент</button>
+                  <button aria-pressed={parallel} onClick={() => { setParallel(true); setCopies("auto"); }}><Icon name="layers" size={14} />Несколько агентов</button>
+                </div>
+              </div>
+              <div className={cx("ar-expand", parallel && "open")} {...(!parallel ? { inert: "" } : {})}>
+                <div><div className="ar-parallel-options">
+                  <Field label="Количество агентов">
+                    {(id) => <Select id={id} full label="Количество агентов" value={copies} onChange={setCopies}
+                      options={[{ value: "auto", label: "Максимум по видеопамяти", hint: "Пересчитается перед запуском" },
+                        ...Array.from({ length: maxCopies }, (_, i) => ({ value: String(i + 1), label: count(i + 1, "агент", "агента", "агентов") })),
+                        { value: "custom", label: "Своё количество…" }]} />}
+                  </Field>
+                  <div className="ar-capacity t-xs t-muted" aria-live="polite">
+                    {capacityError || (!plan ? "Проверяю видеопамять…" : `Сейчас до ${maxCopies} агентов · ${gb(plan.per_copy_mb)} ГБ на копию`)}
+                  </div>
+                  <div className={cx("ar-expand", copies === "custom" && "open")} {...(copies !== "custom" ? { inert: "" } : {})}>
+                    <div><Field label="Своё количество">
+                      {(id) => <input id={id} className="ui-input ui-ctl ui-mono" type="text" inputMode="numeric" value={custom}
+                        maxLength={6} onChange={(e) => setCustom(e.target.value)} aria-invalid={!!countError}
+                        aria-describedby="ar-count-help" placeholder="Например, 3" />}
+                    </Field></div>
+                  </div>
+                  <p id="ar-count-help" className={cx("t-xs", countError ? "ge-warn" : "t-muted")}>
+                    {countError || (maxCopies === 0 && plan ? "Нет свободной видеопамяти или подходящей работы для запуска."
+                      : mode === "frames" ? "Копии одного агента делят кадры пачками по 60, без повторов."
+                      : "Свободная копия берёт следующий ролик целиком. Один ролик между копиями не делится.")}
+                  </p>
+                  <p className="t-xs t-faint">Количество фиксируется при запуске. Ошибка одной копии не останавливает остальные.</p>
+                </div></div>
+              </div>
+            </section>
+
             {mode !== "scout" && list.length > 0 && (
               <ClassMap list={list} classes={ctx.classes} mapping={mapping} auto={auto} onMapping={setMapping} />
             )}
@@ -307,6 +370,8 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
 }) {
   const active = run ? api.ACTIVE.includes(run.status) : false;
   const [statsOpen, setStatsOpen] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+  const [acting, setActing] = useState(false);
   const [stopError, setStopError] = useState<string | null>(null);
   const poll = useCallback(async () => {
     try {
@@ -326,42 +391,71 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
   }, [active, poll]);
 
   if (!run) return null;
+  const control = async (id: string, action: "stop" | "resume") => {
+    setStopError(null); setActing(true);
+    try {
+      const got = await (action === "stop" ? api.stopRun(id) : api.resumeRun(id));
+      if (id === run.id || got.parallel) onRun(got);
+      await poll();
+    } catch (e) { setStopError((e as Error).message); }
+    finally { setActing(false); }
+  };
   const frames = run.stats.frames ?? 0;
+  const failed = run.parallel?.copies.filter((c) => c.status === "error").length ?? 0;
   const result = run.status !== "done" ? null : run.mode === "scout"
     ? `разведано роликов: ${ru(run.stats.videos ?? 0)}, находки на ${ru(frames)} ${plural(frames, "кадре", "кадрах", "кадрах")}`
     : `${count(run.stats.boxes ?? 0, "рамка", "рамки", "рамок")} на ${ru(frames)} ${plural(frames, "кадре", "кадрах", "кадрах")}`;
   return (
-    <div className="ar-bar" role="status">
-      <Badge icon="sparkle" tone="var(--agent)">{run.agent ?? "агент"} v{run.version}</Badge>
+    <div className={cx("ar-bar", run.status === "done" && "done")} role="region" aria-label="Ход агента">
+      <Badge icon={run.status === "done" ? "tick" : "sparkle"} tone={run.status === "done" ? "var(--st-done)" : "var(--agent)"}>{run.agent ?? "агент"} v{run.version}</Badge>
+      {run.parallel && <Button size="sm" variant="ghost" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}
+        icon={expanded ? "chevU" : "chevD"}>{count(run.parallel.count, "агент", "агента", "агентов")}</Button>}
       <span className="ui-mono t-sm">{ru(run.processed)} / {run.total == null ? "—" : ru(run.total)}</span>
-      <span className="t-sm">{run.status === "running" && run.mode === "scout" ? "разведывает" : run.cpu && run.status === "waiting_gpu" ? "ждёт процессор" : STATUS[run.status]}</span>
+      <span className="t-sm" aria-live="polite">{run.stopping ? "останавливается" : run.status === "running" && run.mode === "scout" ? "разведывает" : run.cpu && run.status === "waiting_gpu" ? "ждёт процессор" : STATUS[run.status]}</span>
       {active && <span className="t-sm">{withSep([reelLine(run), `${runPct(run)} %`, leftText(run)])}</span>}
       {result && <span className="t-sm t-muted">{result}</span>}
       {run.error && <span className="t-sm ge-warn">{run.error}</span>}
+      {failed > 0 && active && <Badge tone="var(--st-skip)">{count(failed, "ошибка", "ошибки", "ошибок")}</Badge>}
       {stopError && <span className="t-sm ge-warn">{stopError}</span>}
       {run.queue_reason && (run.status === "waiting_gpu" || run.status === "queued") && <span className="t-xs t-muted">{run.queue_reason}</span>}
       {/* Пока агент идёт — перелив по всей дорожке: при 0 % заливки не видно, а движение видно; ждущий стоит */}
-      {active && <span className={cx("ar-prog", run.status === "running" && "ui-shim")}>
-        <Progress value={run.total ? run.processed / run.total : 0} label="Ход прогона" color="var(--agent)" /></span>}
+      {(active || run.status === "done") && <span className={cx("ar-prog", run.status === "running" && "ui-shim")}>
+        <Progress value={run.total ? run.processed / run.total : 0} label="Ход прогона" color={run.status === "done" ? "var(--st-done)" : "var(--agent)"} /></span>}
       <span className="grow" />
       {run.status === "done" && run.mode === "scout" && run.videos.length > 0 && (
         <Button size="sm" variant="ghost" icon="activity" onClick={() => setStatsOpen(true)}>Статистика</Button>
       )}
       {active ? (
         // Без catch отказ сервера уходил в pageerror, а кнопка «ничего не делала».
-        <Button size="sm" variant="ghost" icon="stop" onClick={() => {
-          setStopError(null);
-          api.stopRun(run.id).then(onRun, (e: Error) => setStopError(`Не остановился: ${e.message}`));
-        }}>Остановить</Button>
+        <Button size="sm" variant="ghost" icon="stop" disabled={acting || run.stopping} onClick={() => void control(run.id, "stop")}>Остановить{run.parallel ? " всех" : ""}</Button>
       ) : <>
         {(run.status === "stopped" || run.status === "error") && (
-          <Button size="sm" variant="ghost" icon="play" onClick={() => {
-            setStopError(null);
-            api.resumeRun(run.id).then(onRun, (e: Error) => setStopError(`Не продолжился: ${e.message}`));
-          }}>Продолжить</Button>
+          <Button size="sm" variant="ghost" icon="play" disabled={acting} onClick={() => void control(run.id, "resume")}>{run.status === "error" ? "Повторить ошибки" : "Продолжить"}</Button>
         )}
         <Button size="sm" variant="ghost" icon="x" onClick={() => onRun(null)}>Скрыть</Button>
       </>}
+      {run.parallel && <div className={cx("ar-expand ar-copies", expanded && "open")} {...(!expanded ? { inert: "" } : {})}>
+        <div><div className="ar-copy-list">
+          {run.parallel.copies.map((copy) => <div key={copy.id} className={cx("ar-copy", copy.status)}>
+            <span className="ar-copy-slot ui-mono">{String(copy.slot).padStart(2, "0")}</span>
+            <div className="ar-copy-main">
+              <div className="ar-copy-title"><b>Агент {copy.slot}</b><span className="t-xs t-muted">{copy.stopping ? "останавливается" : STATUS[copy.status]}</span></div>
+              <p className="t-xs t-muted t-ell" title={copy.current ?? undefined}>{copy.current ?? (copy.status === "done" ? "Работа завершена"
+                : copy.status === "error" ? "Не удалось подготовить копию" : copy.status === "stopped" ? "Ожидает продолжения" : "Подготовка к работе")}</p>
+              <Progress value={copy.item_total ? Math.min(1, (copy.item_processed ?? 0) / copy.item_total) : copy.status === "done" ? 1 : 0}
+                label={`Ход агента ${copy.slot}`} color={copy.status === "done" ? "var(--st-done)" : "var(--agent)"} />
+              {copy.error && <p className="t-xs ge-warn">{copy.error}</p>}
+            </div>
+            <span className="t-xs ui-mono t-muted">{copy.item_total ? `${ru(copy.item_processed ?? 0)} / ${ru(copy.item_total)}` : `${ru(copy.processed)} кадров`}</span>
+            {api.ACTIVE.includes(copy.status) ? <Button size="sm" variant="ghost" icon="stop" disabled={acting || copy.stopping}
+              aria-label={`Остановить агента ${copy.slot}`} onClick={() => void control(copy.id, "stop")} />
+              : (copy.status === "stopped" || copy.status === "error") && <Button size="sm" variant="ghost" icon="play" disabled={acting || run.stopping}
+                onClick={() => void control(copy.id, "resume")}>{copy.status === "error" ? "Повторить" : "Продолжить"}</Button>}
+          </div>)}
+          <p className="t-xs t-faint">{run.status === "done" ? run.mode === "scout" ? "Результаты разведки сохранены в роликах." : "Разметка агента готова к проверке."
+            : <>В очереди: {ru(run.parallel.pending)} {plural(run.parallel.pending, "задание", "задания", "заданий")}. Свободная копия берёт следующее.</>}</p>
+        </div></div>
+      </div>}
       {statsOpen && <ScoutOverview taskId={taskId} onClose={() => setStatsOpen(false)} />}
     </div>
   );

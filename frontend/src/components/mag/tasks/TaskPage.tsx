@@ -236,7 +236,7 @@ export default function TaskPage() {
     runContext(taskId).then((ctx) => {
       const last = ctx.runs[0];
       if (last && (ACTIVE_RUN.includes(last.status)
-        || ((last.status === "stopped" || last.status === "error") && hiddenRun(taskId) !== last.id))) setAgentRun(last);
+        || ((last.status === "stopped" || last.status === "error" || last.status === "done") && hiddenRun(taskId) !== last.id))) setAgentRun(last);
     }).catch(() => undefined);
   }, [taskId]);
   const onRun = useCallback((run: RunView | null) => {

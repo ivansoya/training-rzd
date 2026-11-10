@@ -22,7 +22,7 @@ from sqlalchemy import tuple_ as sa_tuple
 from sqlalchemy.exc import IntegrityError
 
 from common import (
-    agent_access, agent_graph, agent_memory, attribution, config, frame_sizes, gpu, live, settings, shapes,
+    agent_access, agent_graph, agent_memory, agent_parallel, attribution, config, frame_sizes, gpu, live, settings, shapes,
     task_frames, task_rights,
 )
 from common import scout as scout_lib
@@ -353,6 +353,7 @@ def _queue_reason(db, run):
     ahead = db.execute(
         select(AgentRun).where(
             AgentRun.status.in_(("queued", "waiting_gpu", "running")),
+            AgentRun.is_group.is_(False),
             AgentRun.created_at < run.created_at,
         ).order_by(AgentRun.created_at)
     ).scalars().all()
@@ -368,7 +369,7 @@ def _queue_reason(db, run):
 def _run_view(db, run):
     version = db.get(AugGraphVersion, run.version_id) if run.version_id else None
     graph = db.get(AugGraph, run.graph_id) if run.graph_id else None
-    return {
+    view = {
         "id": str(run.id),
         "status": run.status,
         "processed": run.processed,
@@ -387,6 +388,19 @@ def _run_view(db, run):
         "created_at": run.created_at.isoformat(),
         "finished_at": run.finished_at.isoformat() if run.finished_at else None,
     }
+    if run.parent_id:
+        item = run.params.get("assignment")
+        view.update(slot=run.params.get("slot"), current=item["title"] if item else None,
+                    item_processed=max(0, run.processed - (run.stats or {}).get("item_start", 0)) if item else 0,
+                    item_total=item["count"] if item else 0,
+                    stopping=run.cancel_requested and run.status in ACTIVE)
+    if run.is_group:
+        copies = [_run_view(db, r) for r in agent_parallel.children(db, run.id)]
+        copies.sort(key=lambda r: r["slot"])
+        view["parallel"] = {"count": run.params["copies"], "pending": len(run.params.get("pending") or []), "copies": copies}
+        view["rate"] = sum(r["rate"] or 0 for r in copies) or None
+        view["stopping"] = run.cancel_requested and run.status in ACTIVE
+    return view
 
 
 def _source_counts(db, task):
@@ -524,7 +538,7 @@ def _context(db, user, project, task=None):
             "resources": {"cards": cards, "queued": gpu.queued_count(db)},
         }
     runs = db.execute(
-        select(AgentRun).where(AgentRun.task_id == task.id)
+        select(AgentRun).where(AgentRun.task_id == task.id, AgentRun.parent_id.is_(None))
         .order_by(AgentRun.created_at.desc()).limit(5)
     ).scalars().all()
     videos = [
@@ -544,6 +558,51 @@ def _context(db, user, project, task=None):
         "can_run": _may_work(db, user, task, project),
         "resources": {"cards": cards, "queued": gpu.queued_count(db)},
     }
+
+
+def _parallel_plan(db, run, version):
+    work = agent_parallel.items(db, run)
+    cards = gpu.cards(db)
+    doc = agent_graph.prepare(version.doc)
+    resource = agent_parallel.memory(db, doc, cards, run.params["mode"] == "scout",
+                                     agent_runner._largest(db, run, run.params["mode"]))
+    maximum = 0 if resource["verdict"]["state"] == agent_memory.NEVER else agent_parallel.capacity(resource["parts"], cards, len(work))
+    return work, {"max_count": maximum, "work_count": len(work), "batch_size": agent_parallel.BATCH,
+                  "per_copy_mb": sum(resource["parts"]), "cards": cards, "limit": agent_parallel.MAX_COPIES}
+
+
+@bp.post("/api/agents/tasks/<task_id>/parallel-capacity")
+def parallel_capacity(task_id):
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        task, project, err = _task(db, user, task_id)
+        if err:
+            return err
+        data = request.get_json(silent=True) or {}
+        version = db.get(AugGraphVersion, _uuid(data.get("version_id")))
+        graph = db.get(AugGraph, version.graph_id) if version else None
+        if not agent_access.may_use(db, user, graph, project):
+            return jsonify({"error": "Агент не найден."}), 404
+        mode = data.get("mode") or "frames"
+        if mode not in ("frames", "annotate", "scout"):
+            return jsonify({"error": "Неизвестный режим прогона."}), 400
+        allowed = set(task_frames.SOURCES) | {str(v) for v in db.execute(select(TaskVideo.id).where(
+            TaskVideo.task_id == task.id, TaskVideo.mode == "cut")).scalars()}
+        try:
+            step = max(1, min(10000, int(data.get("step", 25))))
+            valid = {str(v) for v in db.execute(select(TaskVideo.id).where(TaskVideo.task_id == task.id,
+                      *([] if mode == "scout" else [TaskVideo.mode == "annotate"]))).scalars()}
+            vids = list(dict.fromkeys(v for v in data.get("videos") or [] if v in valid))
+            run = AgentRun(task_id=task.id, params={"mode": mode, "step": step,
+                "sources": [s for s in data.get("sources") or [] if s in allowed], "videos": vids})
+            _work, plan = _parallel_plan(db, run, version)
+        except (TypeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(plan)
+    finally:
+        db.close()
 
 
 @bp.post("/api/agents/tasks/<task_id>/runs")
@@ -586,6 +645,7 @@ def start_agent_run(task_id):
                 if mode == "annotate" and video.mode != "annotate":
                     continue
                 videos.append(str(video.id))
+            videos = list(dict.fromkeys(videos))
             if not videos:
                 return jsonify({"error": "Выберите ролики." if mode == "scout" else
                                 "Выберите размечаемые ролики."}), 400
@@ -667,6 +727,25 @@ def start_agent_run(task_id):
                     "gap": gap, "mapping": mapping, **({"device": "cpu"} if cpu else {})},
             total=total, created_by=user.id,
         )
+        if data.get("parallel"):
+            if cpu:
+                return jsonify({"error": "Параллельный режим требует видеокарту."}), 400
+            try:
+                work, plan = _parallel_plan(db, run, version)
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            requested = data.get("copies", "auto")
+            if requested != "auto" and (type(requested) is not int or requested < 1):
+                return jsonify({"error": "Количество агентов — целое число от 1."}), 400
+            copies = plan["max_count"] if requested == "auto" else requested
+            if copies < 1 or copies > plan["max_count"]:
+                return jsonify({"error": f"Сейчас можно запустить до {plan['max_count']} копий. Проверьте свободную видеопамять и выбранные материалы.",
+                                "code": "parallel_capacity", "capacity": plan}), 409
+            try:
+                agent_parallel.create(db, run, work, copies)
+            except IntegrityError:
+                db.rollback()
+                return jsonify({"error": "По этой таске агент уже идёт."}), 409
         db.add(run)
         try:
             db.commit()
@@ -691,15 +770,20 @@ def stop_agent_run(run_id):
             return jsonify({"error": "Прогон не найден."}), 404
         if run.created_by != user.id and role_in(db, user, project) != "admin":
             return jsonify({"error": "Остановить может тот, кто запустил."}), 403
+        db.execute(select(AgentRun.id).where(AgentRun.id == (run.parent_id or run.id)).with_for_update()).scalar_one()
+        db.refresh(run)
         if run.status in ACTIVE:
-            run.cancel_requested = True
-            if run.status == "queued":
-                # Воркер его ещё не брал — снимать некому, снимаем сами.
-                run.status = "stopped"
-                run.finished_at = utcnow()
+            if run.is_group:
+                run.cancel_requested = True
+                for child in agent_parallel.children(db, run.id):
+                    if child.status in ACTIVE:
+                        agent_parallel.stop(db, child)
+            else:
+                agent_parallel.stop(db, run)
             db.commit()
+            agent_parallel.sync(db, run.id if run.is_group else run.parent_id)
             live.notify(db, "agent", run.id, project.id, s=run.status)
-        return jsonify(_run_view(db, run))
+        return jsonify(_run_view(db, db.get(AgentRun, run.parent_id) if run.parent_id else run))
     finally:
         db.close()
 
@@ -718,20 +802,30 @@ def resume_agent_run(run_id):
             return jsonify({"error": "Прогон не найден."}), 404
         if run.created_by != user.id and role_in(db, user, project) != "admin":
             return jsonify({"error": "Продолжить может тот, кто запустил."}), 403
+        db.execute(select(AgentRun.id).where(AgentRun.id == (run.parent_id or run.id)).with_for_update()).scalar_one()
+        db.refresh(run)
         if task.status not in task_rights.WORK:
             return jsonify({"error": NOT_AT_WORK}), 409
         if run.status not in ("stopped", "error"):
-            return jsonify(_run_view(db, run))
-        # Свой повтор после сбоя у продолженного снова есть.
-        run.stats = {k: v for k, v in (run.stats or {}).items() if k != "retries"}
-        run.status, run.cancel_requested, run.error, run.finished_at, run.queue_reason = "queued", False, None, None, None
+            return jsonify(_run_view(db, db.get(AgentRun, run.parent_id) if run.parent_id else run))
+        if run.parent_id:
+            parent = db.get(AgentRun, run.parent_id)
+            if parent.cancel_requested and parent.status in ACTIVE:
+                return jsonify({"error": "Группа ещё останавливается. Дождитесь остановки."}), 409
+            agent_parallel.resume(parent)
+        if run.is_group:
+            for child in agent_parallel.children(db, run.id):
+                if child.status in ("stopped", "error"):
+                    agent_parallel.resume(child)
+        agent_parallel.resume(run)
         try:
             db.commit()
         except IntegrityError:
             db.rollback()
             return jsonify({"error": "По этой таске агент уже идёт."}), 409
         live.notify(db, "agent", run.id, project.id, s="queued")
-        return jsonify(_run_view(db, run)), 202
+        agent_parallel.sync(db, run.id if run.is_group else run.parent_id)
+        return jsonify(_run_view(db, db.get(AgentRun, run.parent_id) if run.parent_id else run)), 202
     finally:
         db.close()
 
@@ -1870,7 +1964,7 @@ def project_agents(code):
             head = db.get(AugGraphVersion, graph.head_version_id) if graph.head_version_id else None
             owner = db.get(User, graph.owner_id) if graph.owner_id else None
             runs = db.execute(select(AgentRun).where(
-                AgentRun.graph_id == graph.id, AgentRun.project_id == project.id)).scalars().all()
+                AgentRun.graph_id == graph.id, AgentRun.project_id == project.id, AgentRun.parent_id.is_(None))).scalars().all()
             done = [r for r in runs if r.status == "done"]
             accepted, boxes = _confirmed(db, graph.id, project.id)
             applies = db.execute(select(func.count(AgentApply.id)).where(
@@ -1975,7 +2069,7 @@ def agent_journal(code):
         project, _role, err = _project(db, user, code)
         if err:
             return err
-        q = select(AgentRun).where(AgentRun.project_id == project.id)
+        q = select(AgentRun).where(AgentRun.project_id == project.id, AgentRun.parent_id.is_(None))
         for arg, col in (("agent", AgentRun.graph_id), ("task", AgentRun.task_id), ("user", AgentRun.created_by)):
             if request.args.get(arg):
                 q = q.where(col == _uuid(request.args[arg]))

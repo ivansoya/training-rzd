@@ -202,6 +202,8 @@ def _describe(db, items):
             version = db.get(AugGraphVersion, run.version_id) if run.version_id else None
             task = db.get(Task, run.task_id) if run.task_id else None
             item["what"] = f"агент «{graph.name if graph else 'удалён'}»" + (f" v{version.version}" if version else "")
+            if run.parent_id:
+                item["what"] += f" · копия {run.params.get('slot', '?')}"
             item["detail"] = f"таска «{task.name}»" if task else None
         train = trains.get(item.get("ref_id"))
         if train is not None:

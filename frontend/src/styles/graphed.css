@@ -826,6 +826,41 @@ button.acl-sw:focus-visible { outline: 2px solid var(--ring); outline-offset: 2p
 }
 .ar-prog { flex: 0 1 220px; min-width: 120px; border-radius: var(--r-full); }
 
+.ar-dialog .ui-dialog-b { scrollbar-gutter: stable; }
+.ar-dialog .ui-dialog-h, .ar-dialog .ui-dialog-f { flex-shrink: 0; }
+.ar-dialog .ui-dialog-f { min-height: 65px; }
+.ar-parallel { padding: 14px 0; border-block: 1px solid var(--border); }
+.ar-parallel-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.ar-parallel-head .ui-seg button { display: flex; align-items: center; gap: 6px; }
+.ar-parallel-head .ui-seg button[aria-pressed="true"] { color: var(--agent-fg); background: color-mix(in srgb,var(--agent) 15%,var(--card)); box-shadow: none; }
+.ar-parallel-options { display: flex; flex-direction: column; gap: 10px; padding-top: 14px; }
+.ar-parallel-options > p { margin: 0; }
+.ar-parallel-options input { width: 140px; }
+.ar-capacity { min-height: 18px; }
+.ar-expand { display: grid; grid-template-rows: 0fr; opacity: 0; visibility: hidden; transition: grid-template-rows 200ms ease, opacity 160ms ease, visibility 200ms; }
+.ar-expand.open { grid-template-rows: 1fr; opacity: 1; visibility: visible; }
+.ar-expand > div { min-height: 0; overflow: hidden; }
+.ar-bar { transition: border-color 220ms ease, background-color 220ms ease; }
+.ar-bar.done { border-color: color-mix(in srgb,var(--st-done) 40%,var(--border)); background: color-mix(in srgb,var(--st-done) 7%,var(--card)); }
+.ar-copies { flex: 0 0 100%; }
+.ar-copy-list { display: flex; flex-direction: column; gap: 0; padding-top: 6px; }
+.ar-copy { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); min-width: 0; }
+.ar-copy-slot { color: var(--agent-fg); font-size: 12px; }
+.ar-copy.done .ar-copy-slot { color: var(--st-done); }
+.ar-copy.error .ar-copy-slot { color: var(--st-skip); }
+.ar-copy-main { min-width: 0; flex: 1; }
+.ar-copy-main > p { margin: 4px 0 8px; }
+.ar-copy-title { display: flex; align-items: baseline; gap: 10px; font-size: 12px; }
+@media (max-width: 600px) {
+  .ar-parallel-head { align-items: flex-start; flex-direction: column; }
+  .ar-copy { flex-wrap: wrap; gap: 8px; }
+  .ar-copy-main { flex-basis: calc(100% - 40px); }
+  .ar-dialog .ar-2 { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ar-expand, .ar-bar { transition: none; }
+}
+
 /* Влезет ли агент на карту: плашка вердикта и окно «Ресурсы» (GpuVerdict.tsx).
    Цвет — по вердикту: зелёный влезает, жёлтый ждать, сиреневый по картам, синий поочерёдно, красный не запустится. */
 .ae-vd {

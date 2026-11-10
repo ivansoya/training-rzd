@@ -240,7 +240,7 @@ function useReelStates(run?: RunView | null) {
   const held = useRef<{ key: string; secs: Map<string, number | null | undefined> } | null>(null);
   if (!run) return null;
   const states = reelStates(run);
-  const key = `${run.id}:${run.stats.cursor?.[0] ?? 0}:${run.status}:${!!run.rate}`;
+  const key = `${run.id}:${run.stats.cursor?.[0] ?? 0}:${run.status}:${!!run.rate}:${run.stats.completed_videos?.join()}:${run.parallel?.copies.map((c) => c.current).join()}`;
   if (held.current?.key !== key) held.current = { key, secs: new Map([...states].map(([id, s]) => [id, s.secs])) };
   for (const [id, s] of states) if (s.kind === "queue") s.secs = held.current.secs.get(id);
   return states;
@@ -252,10 +252,13 @@ function ReelAgent({ s, scout }: { s?: ReelState; scout: boolean }) {
   if (s.kind === "done") {
     return <div className="tp-reel-ag done"><Icon name="tick" size={13} /><span className="t-ell">{scout ? "разведан" : "размечен агентом"}</span></div>;
   }
+  if (s.kind === "error" || s.kind === "stopped") {
+    return <div className="tp-reel-ag"><Icon name="bot" size={13} /><span>{s.kind === "error" ? "Ошибка агента — можно повторить" : "Агент остановлен"}</span></div>;
+  }
   if (s.kind === "queue") {
     return (
       <div className="tp-reel-ag"><Icon name="bot" size={13} />
-        <span className="t-ell">в очереди агента<Sep />{s.place}-й{s.secs != null && <><Sep />начнётся {etaText(s.secs, "через ")}</>}</span></div>
+        <span className="t-ell">{s.place == null ? "агент ждёт видеокарту" : <>в очереди агента<Sep />{s.place}-й</>}{s.secs != null && <><Sep />начнётся {etaText(s.secs, "через ")}</>}</span></div>
     );
   }
   const pct = s.plan ? Math.min(100, Math.floor(((s.done ?? 0) / s.plan) * 100)) : null;

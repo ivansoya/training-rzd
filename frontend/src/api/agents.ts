@@ -68,7 +68,13 @@ export interface RunView {
   processed: number;
   total: number | null;
   /** cursor — где прогон: у роликов [номер в videos, кадр], у кадров [имя, id]; plan — кадров на ролик по порядку videos. */
-  stats: { boxes?: number; frames?: number; videos?: number; cursor?: [number | string, number | string]; plan?: number[] };
+  stats: { boxes?: number; frames?: number; videos?: number; cursor?: [number | string, number | string]; plan?: number[]; completed_videos?: string[]; item_start?: number };
+  parallel?: { count: number; pending: number; copies: RunView[] };
+  slot?: number;
+  current?: string | null;
+  item_processed?: number;
+  item_total?: number;
+  stopping?: boolean;
   /** Кадров в секунду с (пере)запуска прогона; null — не идёт или кадров с запуска меньше 30. */
   rate: number | null;
   error: string | null;
@@ -206,8 +212,23 @@ export const startRun = (
     mapping: Record<string, string | null>;
     /** Согласие из окна «на карте не запустится» (components/hardware/CpuConfirm). */
     device?: "cpu";
+    parallel?: boolean;
+    copies?: number | "auto";
   }
 ) => post<RunView>(`agents/tasks/${taskId}/runs`, body);
+
+export interface ParallelCapacity {
+  max_count: number;
+  work_count: number;
+  batch_size: number;
+  per_copy_mb: number;
+  cards: GpuCard[];
+  limit: number;
+}
+
+export const parallelCapacity = (taskId: string, body: {
+  version_id: string; mode: RunMode; sources: string[]; videos: string[]; step: number;
+}) => post<ParallelCapacity>(`agents/tasks/${taskId}/parallel-capacity`, body);
 
 /** Окно «Агент таски»: сопоставление классов без запуска — помнится на пару «агент + проект». */
 export const saveMapping = (scope: AgentScope, body: { graph_id: string; mapping: Record<string, string | null> }) =>

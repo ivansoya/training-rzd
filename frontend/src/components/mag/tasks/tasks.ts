@@ -318,7 +318,7 @@ export function coverage(v: TaskVideoItem, objects?: { start: number; end: numbe
 // Ход агента: время, ролики прогона, причина погашенных пунктов (решения 29.10.2026)
 // --------------------------------------------------------------------------- //
 type Pace = Pick<RunView, "status" | "processed" | "total" | "rate">;
-type ReelRun = Pace & Pick<RunView, "mode" | "videos" | "stats">;
+type ReelRun = Pace & Pick<RunView, "mode" | "videos" | "stats" | "parallel">;
 
 /** «≈ 4 ч 47 мин», «≈ через 5 мин» — с точностью до минуты; меньше минуты — минута. */
 export function etaText(sec: number, after = ""): string {
@@ -337,13 +337,14 @@ export function leftText(r: Pace, word = "осталось "): string | null {
 }
 
 /** «ролик 4 из 30» у прогона роликов; курсор — [номер в videos, кадр], пройденный ролик сдвигает его дальше. */
-export function reelLine(r: Pick<RunView, "mode" | "videos" | "stats">): string | null {
+export function reelLine(r: Pick<RunView, "mode" | "videos" | "stats" | "parallel">): string | null {
   if (r.mode === "frames" || !r.videos.length) return null;
+  if (r.parallel) return `готово роликов ${r.stats.completed_videos?.length ?? 0} из ${r.videos.length}`;
   return `ролик ${Math.min(Number(r.stats.cursor?.[0] ?? 0) + 1, r.videos.length)} из ${r.videos.length}`;
 }
 
 export interface ReelState {
-  kind: "done" | "cur" | "queue";
+  kind: "done" | "cur" | "queue" | "error" | "stopped";
   /** Идёт: пройдено кадров ролика и сколько в его плане; у прогона без плана — нет. */
   done?: number;
   plan?: number;
@@ -358,6 +359,22 @@ export interface ReelState {
 export function reelStates(r: ReelRun): Map<string, ReelState> {
   const out = new Map<string, ReelState>();
   if (r.mode === "frames") return out;
+  if (r.parallel) {
+    const completed = new Set(r.stats.completed_videos ?? []);
+    const assigned = new Set(r.parallel.copies.filter((c) => c.current).flatMap((c) => c.videos));
+    let place = 1;
+    r.videos.forEach((id) => {
+      if (completed.has(id)) out.set(id, { kind: "done" });
+      else if (!assigned.has(id)) out.set(id, { kind: "queue", place: place++ });
+    });
+    for (const copy of r.parallel.copies) {
+      if (!copy.current || !copy.videos[0]) continue;
+      const kind = copy.status === "error" || copy.status === "stopped" ? copy.status : copy.status === "running" ? "cur" : "queue";
+      out.set(copy.videos[0], { kind, done: copy.item_processed, plan: copy.item_total,
+        secs: copy.rate && copy.item_total ? Math.max(0, copy.item_total - (copy.item_processed ?? 0)) / copy.rate : null });
+    }
+    return out;
+  }
   const pos = Number(r.stats.cursor?.[0] ?? 0);
   const plan = r.stats.plan;
   const going = r.status === "running";

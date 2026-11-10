@@ -399,7 +399,7 @@ def _light_list(db, tasks, user, role):
         "status": r.status, "mode": (r.params or {}).get("mode") or "frames", "cpu": (r.params or {}).get("device") == "cpu",
         "processed": r.processed, "total": r.total, "rate": agent_graph.run_rate(r.status, r.stats, r.processed, now),
     } for r in db.execute(select(AgentRun).where(
-        AgentRun.task_id.in_(ids), AgentRun.status.in_(("queued", "waiting_gpu", "running")))).scalars()} if ids else {}
+        AgentRun.task_id.in_(ids), AgentRun.parent_id.is_(None), AgentRun.status.in_(("queued", "waiting_gpu", "running")))).scalars()} if ids else {}
     # Открытые вопросы — значком на доске; в подсказке, кто и когда писал последним (решение 29.10.2026)
     asked = {}
     if ids:
