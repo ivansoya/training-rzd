@@ -9,6 +9,7 @@ import { count, plural, ru } from "../../ru";
 import type { RunMode, RunView } from "../../../api/agents";
 import type { AgentToolState } from "../../editor/AgentTool";
 import Sep from "../../Sep";
+import Pager from "../../Pager";
 import AgentMenu from "./AgentMenu";
 import type { AgentAction, AgentClear } from "./AgentMenu";
 import TagPicker from "../TagPicker";
@@ -400,6 +401,11 @@ function CutGroup({ block, look, taskId, code, tags, editable, fillable, run, ag
   const [tagIds, setTagIds] = useState<string[]>([]), [reviewState, setReviewState] = useState<"all" | "new" | "done">("all");
   const all = block.videos || [];
   const videos = filterCutVideos(all, { q: query, tags: tagIds, review: reviewState }, byVideo);
+  const [page, setPage] = useState(0);
+  const pages = Math.ceil(videos.length / 50), index = Math.min(page, Math.max(0, pages - 1));
+  const visible = videos.slice(index * 50, (index + 1) * 50);
+  useEffect(() => { setPage(0); }, [query, tagIds, reviewState]);
+  useEffect(() => { setPage(index); }, [index]);
   const visibleCounts = cutCounts(videos, byVideo);
   const filtered = !!query || tagIds.length > 0 || reviewState !== "all";
   const reset = () => { setQuery(""); setTagIds([]); setReviewState("all"); };
@@ -435,7 +441,7 @@ function CutGroup({ block, look, taskId, code, tags, editable, fillable, run, ag
       {block.total > 0 && <Progress c={block.counts} known={block.known} look={look} />}
       {fillable && <TagAll videos={videos} code={code} tags={tags} onVideoTags={onVideoTags} onTagCreated={onTagCreated} />}
       <div className="tp-reels">
-        {videos.map((v) => (
+        {visible.map((v) => (
           <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={fillable} asked={asked.get(v.id)}
             agentState={<ReelAgent s={reels?.get(v.id)} scout={run?.mode === "scout"} />}
             menu={(editable || fillable) && (
@@ -452,7 +458,9 @@ function CutGroup({ block, look, taskId, code, tags, editable, fillable, run, ag
         ))}
       </div>
       {videos.length === 0 && <Empty icon="filter" title="Роликов с такими фильтрами нет" action={<Button size="sm" onClick={reset}>Сбросить фильтры</Button>} />}
-      <span className="t-xs t-faint">Показано {videos.length} из {all.length}</span>
+      <span className="t-xs t-faint">{videos.length ? `Ролики ${ru(index * 50 + 1)}–${ru(index * 50 + visible.length)} из ${ru(videos.length)}` : "Показано 0"}
+        {filtered && <> · всего {ru(all.length)}</>}</span>
+      <Pager page={index} pages={pages} onPage={setPage} />
     </FoldSource>
   );
 }

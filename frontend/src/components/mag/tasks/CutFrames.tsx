@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useState } from "react";
+import Pager from "../../Pager";
 import type { ReactNode } from "react";
 import { getTaskImages, imageThumbUrl } from "../../../auth/api";
 import type { TaskImage, TaskImageQuery, TaskVideoItem } from "../../../auth/api";
@@ -36,39 +37,34 @@ export function FilterTags({ tags, value, onChange }: { tags: Tag[]; value: stri
   </Popover>;
 }
 
-const PAGE = 24;
+const PAGE = 50;
 function useFrames(taskId: string, query: TaskImageQuery, enabled: boolean, revision: unknown) {
-  const key = JSON.stringify(query);
-  const [page, setPage] = useState<{ key: string; rows: TaskImage[]; total: number | null; busy: boolean; error: string | null }>(
-    { key, rows: [], total: null, busy: false, error: null });
-  const generation = useRef(0), controller = useRef<AbortController | null>(null);
+  const key = JSON.stringify({ taskId, ...query });
+  const [position, setPosition] = useState({ key, index: 0 });
+  const index = position.key === key ? position.index : 0;
+  const requestKey = `${key}:${index}`;
+  const blank = { rows: [] as TaskImage[], total: null as number | null,
+    counts: null as { new: number; done: number } | null, busy: true, error: null as string | null };
+  const [page, setPage] = useState({ key: requestKey, ...blank });
   const [retry, setRetry] = useState(0);
+  useEffect(() => { setPosition({ key, index: 0 }); }, [key]);
   useEffect(() => {
-    const token = ++generation.current;
     if (!enabled) return;
-    const abort = new AbortController(); controller.current = abort;
-    setPage({ key, rows: [], total: null, busy: true, error: null });
-    getTaskImages(taskId, { ...JSON.parse(key), limit: PAGE }, abort.signal).then((got) => {
-      if (generation.current === token) setPage({ key, rows: got.images, total: got.matched, busy: false, error: null });
+    const abort = new AbortController();
+    setPage({ key: requestKey, ...blank });
+    const { taskId: id, ...params } = JSON.parse(key);
+    getTaskImages(id, { ...params, limit: PAGE, offset: index * PAGE }, abort.signal).then((got) => {
+      if (abort.signal.aborted) return;
+      const last = Math.max(0, Math.ceil(got.matched / PAGE) - 1);
+      if (index > last) { setPosition({ key, index: last }); return; }
+      setPage({ key: requestKey, rows: got.images, total: got.matched, counts: got.review_counts ?? null, busy: false, error: null });
     }, (e: Error) => {
-      if (!abort.signal.aborted && generation.current === token) setPage({ key, rows: [], total: null, busy: false, error: e.message });
+      if (!abort.signal.aborted) setPage({ key: requestKey, ...blank, busy: false, error: e.message });
     });
-    return () => { ++generation.current; controller.current?.abort(); };
-  }, [taskId, key, enabled, revision, retry]);
-  const current = page.key === key ? page : { key, rows: [], total: null, busy: true, error: null };
-  const more = async () => {
-    if (current.busy || controller.current?.signal.aborted || !enabled) return;
-    const token = generation.current, abort = new AbortController(); controller.current = abort;
-    setPage((p) => ({ ...p, busy: true, error: null }));
-    try {
-      const got = await getTaskImages(taskId, { ...query, limit: PAGE, offset: current.rows.length }, abort.signal);
-      if (generation.current === token) setPage((p) => ({ ...p, rows: [...new Map([...p.rows, ...got.images].map((i) => [i.id, i])).values()],
-        total: got.matched, busy: false, error: null }));
-    } catch (e) {
-      if (!abort.signal.aborted && generation.current === token) setPage((p) => ({ ...p, busy: false, error: (e as Error).message }));
-    }
-  };
-  return { ...current, more, retry: () => setRetry((n) => n + 1) };
+    return () => abort.abort();
+  }, [key, index, requestKey, enabled, revision, retry]);
+  return { ...(page.key === requestKey ? page : blank), index,
+    onPage: (next: number) => setPosition({ key, index: next }), retry: () => setRetry((n) => n + 1) };
 }
 
 function statusOf(image: TaskImage) {
@@ -86,20 +82,20 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, open, total, r
   const [source, setSource] = useState("videos"), [selectedTags, setTags] = useState<string[]>([]);
   const [review, setReview] = useState<"all" | "new" | "done">("all"), [view, setView] = useState<"grid" | "list">("grid");
   const chosen = videoId ?? (videos.some((v) => v.id === source && v.frames > 0) ? source : "videos");
-  const query: TaskImageQuery = { source: chosen, tag_ids: [...selectedTags].sort() };
-  const fresh = useFrames(taskId, { ...query, review: "new" }, open && total > 0, revision);
-  const ready = useFrames(taskId, { ...query, review: "done" }, open && total > 0, revision);
+  const query: TaskImageQuery = { source: chosen, tag_ids: [...selectedTags].sort(), review };
+  const page = useFrames(taskId, query, open && total > 0, revision);
   const filtered = chosen !== (videoId ?? "videos") || selectedTags.length > 0 || review !== "all";
   const reset = () => { setSource("videos"); setTags([]); setReview("all"); };
-  const groups = [{ key: "new" as const, label: "Не размечены", page: fresh }, { key: "done" as const, label: "Размечены", page: ready }];
-  const bothEmpty = fresh.total === 0 && ready.total === 0;
+  const groups = [{ key: "new" as const, label: "Не размечены" }, { key: "done" as const, label: "Размечены" }]
+    .map((g) => ({ ...g, rows: page.rows.filter((image) =>
+      (statusOf(image).cls === "done" || statusOf(image).cls === "empty") === (g.key === "done")) }));
   const num = (n: number | null) => n == null ? "…" : ru(n);
   return <div className={cx("tp-cut-gallery", total === 0 && "is-empty")} aria-label={videoId ? "Кадры ролика" : "Все нарезанные кадры"}>
     {total > 0 && <div className="tp-cut-toolbar">
       <Seg label="Состояние кадров" value={review} onChange={setReview} size="sm" options={[
-        { value: "all", label: <>Все <span className="tp-cut-filter-n">{fresh.total == null || ready.total == null ? "…" : ru(fresh.total + ready.total)}</span></> },
-        { value: "new", label: <>Не размечены <span className="tp-cut-filter-n">{num(fresh.total)}</span></> },
-        { value: "done", label: <>Размечены <span className="tp-cut-filter-n">{num(ready.total)}</span></> },
+        { value: "all", label: <>Все <span className="tp-cut-filter-n">{page.counts ? ru(page.counts.new + page.counts.done) : "…"}</span></> },
+        { value: "new", label: <>Не размечены <span className="tp-cut-filter-n">{num(page.counts?.new ?? null)}</span></> },
+        { value: "done", label: <>Размечены <span className="tp-cut-filter-n">{num(page.counts?.done ?? null)}</span></> },
       ]} />
       <div className="tp-cut-filters">
         {!videoId && <Select size="sm" label="Фильтр по ролику" value={chosen} onChange={setSource} options={[
@@ -114,16 +110,15 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, open, total, r
       </div>
     </div>}
     {total === 0 ? <Empty icon="images" title="Кадры появятся после нарезки">Выберите ролик в блоке «Ненарезанные», чтобы нарезать кадры.</Empty>
-      : bothEmpty ? <Empty icon="filter" title="Кадров с такими фильтрами нет" action={<Button size="sm" onClick={reset}>Сбросить фильтры</Button>} />
-        : groups.filter((g) => review === "all" || review === g.key).map(({ key, label, page }) => (
-          page.total === 0 && !page.error ? review === "all" ? null : <Empty key={key} icon="images" title={`${label}: кадров нет`} />
-            : <section key={key} className="tp-cut-frame-group" aria-label={label}>
-              <h4>{label}<Badge variant="secondary">{num(page.total)}</Badge></h4>
-              {page.error && <Notice tone="error" action={<Button size="sm" onClick={page.retry}>Повторить</Button>}>{page.error}</Notice>}
+      : page.total === 0 ? <Empty icon="filter" title={review === "all" ? "Кадров с такими фильтрами нет" : `${review === "new" ? "Не размечены" : "Размечены"}: кадров нет`}
+        action={<Button size="sm" onClick={reset}>Сбросить фильтры</Button>} />
+        : groups.filter((g) => g.rows.length > 0).map(({ key, label, rows }) => (
+            <section key={key} className="tp-cut-frame-group" aria-label={label}>
+              <h4>{label}<Badge variant="secondary">{num(page.counts?.[key] ?? null)}</Badge></h4>
               <div className={cx("tp-cut-tiles", view === "list" && "as-list")}>
-                {page.rows.map((image) => {
+                {rows.map((image) => {
                   const state = statusOf(image), video = videos.find((v) => v.id === image.source_video_id);
-                  return <button key={image.id} className="tp-cut-tile" onClick={() => onOpen(image, { ...query, ...(review !== "all" ? { review } : {}) })}
+                  return <button key={image.id} className="tp-cut-tile" onClick={() => onOpen(image, query)}
                     aria-label={`${image.file_name}, ${state.text}`}>
                     <span className="tp-cut-picture"><img src={imageThumbUrl(image.id)} alt="" loading="lazy" />
                       <span className="tp-cut-time">{fmtTime(image.source_time_ms ?? 0)}</span>
@@ -134,11 +129,16 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, open, total, r
                   </button>;
                 })}
               </div>
-              {page.busy && <p className="t-xs t-muted" role="status">Загружаю кадры…</p>}
-              {page.total != null && page.rows.length < page.total && <Button size="sm" disabled={page.busy} onClick={() => void page.more()}>
-                Показать ещё<span className="t-faint">{ru(page.rows.length)} из {ru(page.total)}</span></Button>}
             </section>
         ))}
+    {total > 0 && <>
+      {page.error && <Notice tone="error" action={<Button size="sm" onClick={page.retry}>Повторить</Button>}>{page.error}</Notice>}
+      {page.busy && <p className="t-xs t-muted" role="status">Загружаю кадры…</p>}
+      {page.total != null && page.total > 0 && <>
+        <span className="t-xs t-faint">Кадры {ru(page.index * PAGE + 1)}–{ru(page.index * PAGE + page.rows.length)} из {ru(page.total)}</span>
+        <Pager page={page.index} pages={Math.ceil(page.total / PAGE)} onPage={page.onPage} disabled={page.busy} />
+      </>}
+    </>}
   </div>;
 }
 

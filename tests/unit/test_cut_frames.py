@@ -102,6 +102,22 @@ def test_страницы_с_одинаковыми_именами_не_дубл
     assert len(ids) == len(set(ids)) == 38
 
 
+def test_общая_галерея_возвращает_по_50_со_счётчиками_всей_выборки(scene):
+    db, _client, task, cut, _images, a, _b, _alien = scene
+    extra = [Image(project_id=task.project_id, task_id=task.id, source_video_id=cut.id,
+                   file_name=f"bulk-{i:03}.jpg", file_path="unused") for i in range(102)]
+    db.add_all(extra); db.flush()
+    db.add_all([ImageTag(image_id=image.id, tag_id=a.id) for image in extra]); db.commit()
+    pages = [get(scene, review="all", limit=50, offset=offset).get_json() for offset in (0, 50, 100)]
+    assert [len(p["images"]) for p in pages] == [50, 50, 7]
+    assert all(p["matched"] == 107 and p["review_counts"] == {"new": 105, "done": 2} for p in pages)
+    ids = [image["id"] for p in pages for image in p["images"]]
+    assert len(ids) == len(set(ids)) == 107
+    tagged = get(scene, review="done", tags=str(a.id), limit=50).get_json()
+    assert tagged["matched"] == 1 and tagged["review_counts"] == {"new": 104, "done": 1}
+    assert get(scene, review="all", offset=150, limit=50).get_json()["images"] == []
+
+
 @pytest.mark.parametrize("query", [{"review": "bad"}, {"limit": "bad"}, {"offset": "bad"}, {"source": "bad"}])
 def test_невалидные_фильтры_отклоняются(scene, query):
     assert get(scene, **query).status_code == 400

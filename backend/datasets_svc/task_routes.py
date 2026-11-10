@@ -1790,10 +1790,10 @@ def task_images(task_id):
         elif status:
             q = q.where(Image.task_status == status)
         review = request.args.get("review")
-        if review not in (None, "new", "done"):
+        if review not in (None, "all", "new", "done"):
             return jsonify({"error": "Неизвестное состояние разметки."}), 400
         if review:
-            q = q.where(Image.task_status != "deleted", task_frames.reviewed() if review == "done" else ~task_frames.reviewed())
+            q = q.where(Image.task_status != "deleted")
         raw_tags = request.args.get("tags")
         if raw_tags:
             wanted = tags.valid_ids(db, project.id, raw_tags.split(","))
@@ -1806,9 +1806,16 @@ def task_images(task_id):
         clause = task_frames.source_clause(task.id, source)
         if clause is not None:
             q = q.where(clause)
-        matched = db.execute(
-            select(func.count()).select_from(q.subquery())
-        ).scalar_one()
+        review_counts = None
+        if review:
+            pool = q.with_only_columns(Image.id, task_frames.reviewed().label("reviewed")).subquery()
+            total, done = db.execute(select(func.count(), func.count().filter(pool.c.reviewed)).select_from(pool)).one()
+            review_counts = {"new": total - done, "done": done}
+            matched = total if review == "all" else review_counts[review]
+            if review != "all":
+                q = q.where(task_frames.reviewed() if review == "done" else ~task_frames.reviewed())
+        else:
+            matched = db.execute(select(func.count()).select_from(q.subquery())).scalar_one()
         images = db.execute(
             q.order_by(QUEUE_ORDER, Image.file_name, Image.id).limit(limit).offset(offset)
         ).scalars().all()
@@ -1823,6 +1830,7 @@ def task_images(task_id):
         ).all()} if any(i.origin_image_id for i in images) else {}
         return jsonify({
             "matched": matched,
+            "review_counts": review_counts,
             "counts": _counts(db, task.id),
             "images": [
                 {

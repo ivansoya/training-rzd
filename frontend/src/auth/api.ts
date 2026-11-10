@@ -1170,7 +1170,7 @@ export async function assignTask(id: string, assignees: string[]): Promise<TaskS
 
 export interface TaskImageQuery {
   status?: string; limit?: number; offset?: number; source?: string; image?: string;
-  review?: "new" | "done";
+  review?: "all" | "new" | "done";
   tag_ids?: string[];
 }
 
@@ -1178,7 +1178,7 @@ export async function getTaskImages(
   id: string,
   params: TaskImageQuery = {},
   signal?: AbortSignal
-): Promise<{ matched: number; counts: TaskCounts; images: TaskImage[] }> {
+): Promise<{ matched: number; counts: TaskCounts; review_counts?: { new: number; done: number } | null; images: TaskImage[] }> {
   const q = new URLSearchParams();
   if (params.image) q.set("image", params.image);
   if (params.status) q.set("status", params.status);

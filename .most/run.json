@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "tasks": [
+    { "id": "frontend-build", "name": "Frontend · сборка", "lang": "js", "way": "npm", "target": "build", "cwd": "frontend" },
+    { "id": "task-logic-tests", "name": "Таски · тесты логики", "lang": "cmd", "target": "\"C:/Program Files/nodejs/node.exe\" node_modules/vitest/vitest.mjs run src/components/mag/tasks/tasks.test.ts", "cwd": "frontend", "tools": { "shell": "bash" } },
+    { "id": "cut-gallery-dev", "name": "Галерея нарезки · тестовый сервер", "lang": "cmd", "target": "\"C:/Program Files/nodejs/node.exe\" node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5181 --strictPort", "cwd": "frontend", "tools": { "shell": "bash" } },
+    { "id": "cut-gallery-e2e", "name": "Галерея нарезки · браузерные проверки", "lang": "cmd", "target": "\"C:/Program Files/nodejs/node.exe\" tests/e2e/cut-video-groups.mjs", "tools": { "shell": "bash" } }
+  ]
+}
