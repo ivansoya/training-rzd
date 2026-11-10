@@ -508,6 +508,9 @@ a.pcard:hover { border-color: var(--input); }
 .tb-line { display: block; min-width: 0; font-size: 12px; line-height: 17px; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .tb-line b { font-weight: 600; color: var(--fg); }
 .tb-line.quiet { color: var(--faint); }
+.tb-upload { display: grid; gap: 6px; min-width: 0; border-top: 1px solid var(--hair); padding-top: 10px; }
+.tb-upload .ui-progress { height: 6px; }
+.tb-upload-error { color: var(--destructive); }
 /* Узкая карточка (5 колонок на окне до ~1500 px): строке чисел — две строки, подвалу — два ряда */
 .tb-card { container-type: inline-size; }
 @container (max-width: 180px) {

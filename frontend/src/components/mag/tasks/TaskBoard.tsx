@@ -1,6 +1,6 @@
 // Таски: доска по состояниям; карточку тащат в соседнюю колонку — это смена состояния.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { DragEvent, ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getTaskStats, setTaskStatus } from "../../../auth/api";
@@ -8,7 +8,7 @@ import type { TaskLight, TaskStats, TaskStatus } from "../../../auth/api";
 import { cacheTime } from "../../../api/cache";
 import { pollJob } from "../../../api/jobs";
 import type { StatusResult } from "../../../auth/api";
-import { Avatars, Badge, Button, Dot, Empty, Icon, Input, Notice, PageHeader, Seg, StackBar, cx } from "../../../ui";
+import { Avatars, Badge, Button, Dot, Empty, Icon, Input, Notice, PageHeader, Progress, Seg, StackBar, cx } from "../../../ui";
 import { useAuth } from "../../auth/AuthGate";
 import Sep, { withSep } from "../../Sep";
 import { ago, count, ru } from "../../ru";
@@ -21,6 +21,7 @@ import {
 } from "./tasks";
 import { look, useTaskBoard } from "./useTaskBoard";
 import type { Fresh } from "./useTaskBoard";
+import { uploading, useUpload } from "./uploads";
 
 const CLOSED_SHOWN = 2;
 
@@ -164,6 +165,7 @@ export default function TaskBoard() {
                 {can && <div className="tb-drop"><Icon name="forward" size={14} />{DROP[s]}</div>}
                 {items.map((t) => (
                   <TaskCard key={t.id} t={t} s={stats[t.id]} fresh={fresh[t.id]} at={at} code={code}
+                    onUpload={board.refresh}
                     dragged={drag?.id === t.id} landed={landed === t.id}
                     onDragStart={() => requestAnimationFrame(() => setDrag({ id: t.id, from: t.status, moves: t.moves }))}
                     onDragEnd={endDrag} />
@@ -188,7 +190,7 @@ export default function TaskBoard() {
   );
 }
 
-function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragEnd }: {
+function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragEnd, onUpload }: {
   t: TaskLight;
   s: TaskStats | undefined;
   fresh: Fresh | undefined;
@@ -198,7 +200,16 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
   landed: boolean;
   onDragStart: () => void;
   onDragEnd: () => void;
+  onUpload: (ids: string[]) => Promise<void>;
 }) {
+  const upload = useUpload(t.id);
+  const uploaded = upload?.landed ?? 0;
+  const previous = useRef(uploaded);
+  useEffect(() => {
+    if (uploaded === previous.current) return;
+    previous.current = uploaded;
+    void onUpload([t.id]);
+  }, [uploaded, t.id, onUpload]);
   const to = `/projects/${code}/tasks/${t.id}`;
   const movable = t.moves.length > 0;
   const dragProps = {
@@ -262,6 +273,17 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
           </>
         )}
       </span>
+      {uploading(upload) && (
+        <span className="tb-upload" role="status" aria-label="Загрузка файлов">
+          <span className="tb-line">Загружено <b>{ru(upload.done)}</b> из <b>{ru(upload.total)}</b></span>
+          <Progress value={(upload.done + (upload.name ? upload.pct : 0)) / upload.total} label="Загрузка файлов" />
+          <span className="tb-line">
+            {!upload.name ? "В очереди" : upload.pct >= 0.999 ? "Обрабатываю на сервере" : `${Math.round(upload.pct * 100)} %`}
+          </span>
+          {upload.name && <span className="t-ell t-xs t-muted" title={upload.name}>{upload.name}</span>}
+        </span>
+      )}
+      {upload?.error && <span className="tb-line tb-upload-error" role="status" title={upload.error}>{upload.error}</span>}
       <span className="tb-foot t-xs t-faint">
         <span className="t-ell">{teamLine(t.assignees)}</span>
         <span className="tb-when">
