@@ -46,7 +46,7 @@ from common.models import (
 )
 from common.storage import translit_slug
 from common.web import InputError, json_body, public_error
-from datasets_svc import copies, materialize
+from datasets_svc import copies, materialize, task_progress
 from common import shapes
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
@@ -323,6 +323,7 @@ def _board_extra(db, task):
             "annotate": len(seen),
         },
         "videos": {"tracks": tracks, "boxes": boxes, "agent_done": done, "agent_left": left},
+        "progress": task_progress.summary(db, task),
         "handover": (video_busy.current(video_busy.task_key(task.id)) or {}).get("job_id"),
     }
 
@@ -893,6 +894,8 @@ def set_status(task_id):
             if task.status == "done":
                 # Обратно к разметке: черновые кадры роликов уходят, их рамки и так в ролике.
                 dropped = materialize.drop_drafts(db, task)
+            if target == "updating":
+                task_progress.remember(db, task, user)
             _log(db, task, user, "status", status=target)
 
         task.status = target
@@ -2244,7 +2247,7 @@ def task_events(task_id):
         return err
     try:
         rows = db.execute(
-            select(TaskEvent).where(TaskEvent.task_id == task.id)
+            select(TaskEvent).where(TaskEvent.task_id == task.id, TaskEvent.kind != task_progress.BASELINE)
             .order_by(TaskEvent.created_at.desc()).limit(200)
         ).scalars().all()
         return jsonify({"events": [

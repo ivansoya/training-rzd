@@ -249,12 +249,15 @@ function useReelStates(run?: RunView | null) {
   return states;
 }
 
-/** Ролик в прогоне агента: пройден, идёт — сколько из плана и сколько осталось, ждёт — место и когда начнётся. */
+function ReelDone({ s, scout }: { s?: ReelState; scout: boolean }) {
+  if (s?.kind !== "done") return null;
+  const label = scout ? "Разведан" : "Размечен агентом";
+  return <span className="tp-reel-status" role="img" aria-label={label} title={label}><Icon name={scout ? "scan" : "tick"} size={15} /></span>;
+}
+
+/** Ролик в прогоне агента: идёт — сколько из плана и сколько осталось, ждёт — место и когда начнётся. */
 function ReelAgent({ s, scout }: { s?: ReelState; scout: boolean }) {
-  if (!s) return null;
-  if (s.kind === "done") {
-    return <div className="tp-reel-ag done"><Icon name="tick" size={13} /><span className="t-ell">{scout ? "разведан" : "размечен агентом"}</span></div>;
-  }
+  if (!s || s.kind === "done") return null;
   if (s.kind === "error" || s.kind === "stopped") {
     return <div className="tp-reel-ag"><Icon name="bot" size={13} /><span>{s.kind === "error" ? "Ошибка агента — можно повторить" : "Агент остановлен"}</span></div>;
   }
@@ -443,6 +446,7 @@ function CutGroup({ block, look, taskId, code, tags, editable, fillable, run, ag
       <div className="tp-reels">
         {visible.map((v) => (
           <ReelRow key={v.id} v={v} taskId={taskId} code={code} tags={tags} editable={fillable} asked={asked.get(v.id)}
+            agentDone={<ReelDone s={reels?.get(v.id)} scout={run?.mode === "scout"} />}
             agentState={<ReelAgent s={reels?.get(v.id)} scout={run?.mode === "scout"} />}
             menu={(editable || fillable) && (
               <AgentMenu tool={agent.tool} busy={agent.busy} onSetup={agent.onSetup} label={`Ещё: ${v.file_name}`} step
@@ -503,11 +507,12 @@ function TagAll({ videos, code, tags, onVideoTags, onTagCreated }: {
   );
 }
 
-function ReelRow({ v, taskId, code, tags, editable, asked, agentState, menu, frames, onCut, onTags, onTagCreated }: {
+function ReelRow({ v, taskId, code, tags, editable, asked, agentState, agentDone, menu, frames, onCut, onTags, onTagCreated }: {
   v: TaskVideoItem;
   asked?: number;
   /** Где ролик в прогоне агента — строкой под ним. */
   agentState: ReactNode;
+  agentDone: ReactNode;
   taskId: string;
   code: string;
   tags: Tag[];
@@ -528,7 +533,7 @@ function ReelRow({ v, taskId, code, tags, editable, asked, agentState, menu, fra
     <div className="tp-reel">
       <VideoStrip className="tp-poster" taskId={taskId} videoId={v.id} />
       <div className="tp-reel-n">
-        <b className="t-ell" title={v.file_name}>{v.file_name}</b>
+        <div className="tp-reel-title"><b className="t-ell" title={v.file_name}>{v.file_name}</b>{agentDone}</div>
         <span className="t-xs t-muted">{fmtTime(v.duration_ms || 0)}<Sep />{v.width}×{v.height}<Sep />{fmtBytes(v.size_bytes)}</span>
         <Rail parts={coverage(v)} />
         <span className="tp-reel-s"><PrepareLine prepare={v.prepare} /><Asked n={asked} /></span>
@@ -650,7 +655,7 @@ export function AnnotateCard({ videos, working, handing, pending, fresh, at, cla
             <VideoStrip className="tp-poster big" taskId={taskId} videoId={v.id} />
             <div className="tp-vid-b">
               <div className="tp-vid-h">
-                <b className="t-ell" title={v.file_name}>{v.file_name}</b>
+                <div className="tp-reel-title"><b className="t-ell" title={v.file_name}>{v.file_name}</b><ReelDone s={reels?.get(v.id)} scout={run?.mode === "scout"} /></div>
                 {handing ? <Badge tone="var(--c1)" live>сдаётся</Badge>
                   : !working ? <Badge tone="var(--st-done)" icon="tick">сдан</Badge>
                   : names.length > 0 && <span className="tp-here"><Badge tone="var(--c1)" live title={who}><span className="t-ell">{who}</span></Badge></span>}

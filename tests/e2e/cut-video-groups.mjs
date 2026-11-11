@@ -91,6 +91,7 @@ try {
       data = { id: "test-run", status: "stopped", processed: 0, total: 0, stats: {}, agent: "Искра", version: 2,
         sources: [], videos: started.videos, mode: started.mode, rate: null, error: null, queue_reason: null, created_at: created, finished_at: created };
     }
+    else if (path === `/api/agents/tasks/${taskId}/runs`) data = { runs: [] };
     else if (path === `/api/agents/tasks/${taskId}/scouts`) data = { scouts: {} };
     else if (path === `/api/projects/${code}/tags`) data = { tags };
     else if (path === `/api/projects/${code}/classes`) data = { classes: [] };

@@ -200,6 +200,7 @@ const at = (s: AgentScope, tail: string) => (typeof s === "string"
   ? `agents/tasks/${s}${tail}` : `projects/${encodeURIComponent(s.code)}/agents${tail || "/context"}`);
 
 export const runContext = (scope: AgentScope) => get<RunContext>(at(scope, ""));
+export const taskRuns = (taskId: string) => get<{ runs: RunView[] }>(`agents/tasks/${taskId}/runs`);
 
 export const startRun = (
   taskId: string,

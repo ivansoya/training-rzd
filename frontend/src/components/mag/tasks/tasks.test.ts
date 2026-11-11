@@ -200,6 +200,31 @@ describe("карточка таски (решения 14.10.2026)", () => {
     expect(badges(l)).toEqual(["сдаётся", "2 ролика: осталось проверить 9"]);
   });
 
+  it("после проверки всех предложений ролика полоса проверки исчезает", () => {
+    const l = cardLook("updating", { counts: counts({}), sources: src({ annotate: 1 }), videos: vids({ boxes: 12, agent_done: 8 }) });
+    expect(l.parts).toEqual([]);
+    expect(text(l.line)).not.toContain("осталось 0");
+  });
+
+  it("изменение и обзор показывают текущие кадры и изменения, а не пустую вкладку кадров", () => {
+    const s = { counts: counts({}), sources: src({ annotate: 1 }), videos: vids({ boxes: 520, agent_done: 420 }),
+      progress: { annotated: 420, changed: 12 } };
+    const l = cardLook("updating", s);
+    expect(text(l.line)).toBe("размечено 420 | изменено 12");
+    expect(text(l.short ?? l.line)).toBe("размечено 420 | изменено 12");
+    expect(l.parts).toEqual([]);
+  });
+
+  it("обзор не подменяет текущую разметку нулём проверенных предложений агента", () => {
+    const l = cardLook("in_progress", { counts: counts({}), sources: src({ annotate: 1 }),
+      videos: vids({ boxes: 520, agent_done: 0, agent_left: 1349 }), progress: { annotated: 420, changed: null } });
+    expect(text(l.short ?? l.line)).toBe("размечено 420 | проверить 1349");
+    expect(l.parts.map((p) => p.value)).toEqual([420, 1349]);
+    const legacy = cardLook("updating", { counts: counts({}), sources: src({ annotate: 1 }),
+      videos: vids(), progress: { annotated: 420, changed: null } });
+    expect(text(legacy.line)).toBe("размечено 420 | изменено —");
+  });
+
   it("сданная — все изображения вместе с кадрами роликов", () => {
     const c = counts({ total: 4, annotated: 4, accepted: 4, video_accepted: 422, video: { total: 426, new: 4, skipped: 0, annotated: 422, empty: 0, deleted: 0, agent: 4 } });
     const l = cardLook("done", { counts: c, sources: src({ annotate: 1 }) });

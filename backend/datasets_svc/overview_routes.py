@@ -21,6 +21,7 @@ from common.models import (
     User,
 )
 from datasets_svc.project_routes import _resolve
+from datasets_svc.task_progress import BASELINE
 
 bp = Blueprint("overview", __name__)
 
@@ -172,7 +173,7 @@ def overview(code):
             select(TaskEvent, Task.name, Task.id, User.display_name)
             .join(Task, Task.id == TaskEvent.task_id)
             .outerjoin(User, User.id == TaskEvent.user_id)
-            .where(Task.project_id == project.id)
+            .where(Task.project_id == project.id, TaskEvent.kind != BASELINE)
             .order_by(TaskEvent.created_at.desc())
             .limit(ACTIVITY)
         ).all()

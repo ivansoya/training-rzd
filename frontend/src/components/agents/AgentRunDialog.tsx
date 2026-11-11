@@ -366,7 +366,7 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
   const [stopError, setStopError] = useState<string | null>(null);
   const poll = useCallback(async () => {
     try {
-      const got = await api.runContext(taskId);
+      const got = await api.taskRuns(taskId);
       const last = got.runs[0] ?? null;
       onRun(last);
       if (last && !api.ACTIVE.includes(last.status)) onFinished();
@@ -377,8 +377,14 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
 
   useEffect(() => {
     if (!active) return;
-    const timer = window.setInterval(poll, 2000);
-    return () => window.clearInterval(timer);
+    let alive = true;
+    let timer: number;
+    const next = async () => {
+      await poll();
+      if (alive) timer = window.setTimeout(next, 2000);
+    };
+    timer = window.setTimeout(next, 2000);
+    return () => { alive = false; window.clearTimeout(timer); };
   }, [active, poll]);
 
   if (!run) return null;
@@ -398,9 +404,12 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
     : `${count(run.stats.boxes ?? 0, "рамка", "рамки", "рамок")} на ${ru(frames)} ${plural(frames, "кадре", "кадрах", "кадрах")}`;
   return (
     <div className={cx("ar-bar", run.status === "done" && "done")} role="region" aria-label="Ход агента">
-      <Badge icon={run.status === "done" ? "tick" : "sparkle"} tone={run.status === "done" ? "var(--st-done)" : "var(--agent)"}>{run.agent ?? "агент"} v{run.version}</Badge>
-      {run.parallel && <Button size="sm" variant="ghost" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}
-        icon={expanded ? "chevU" : "chevD"}>{count(run.parallel.count, "агент", "агента", "агентов")}</Button>}
+      <div className="ar-identity">
+        <Badge icon={run.status === "done" ? "tick" : "sparkle"} tone={run.status === "done" ? "var(--st-done)" : "var(--agent)"}>{run.agent ?? "агент"} v{run.version}</Badge>
+        {run.parallel && <Button size="sm" variant="ghost" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}
+          icon={expanded ? "chevU" : "chevD"}>{count(run.parallel.count, "агент", "агента", "агентов")}</Button>}
+      </div>
+      <div className="ar-summary">
       <span className="ui-mono t-sm">{ru(run.processed)} / {run.total == null ? "—" : ru(run.total)}</span>
       <span className="t-sm" aria-live="polite">{run.stopping ? "останавливается" : run.status === "running" && run.mode === "scout" ? "разведывает" : run.cpu && run.status === "waiting_gpu" ? "ждёт процессор" : STATUS[run.status]}</span>
       {active && <span className="t-sm">{withSep([reelLine(run), `${runPct(run)} %`, leftText(run)])}</span>}
@@ -425,12 +434,13 @@ export function AgentRunBar({ taskId, run, onRun, onFinished }: {
         )}
         <Button size="sm" variant="ghost" icon="x" onClick={() => onRun(null)}>Скрыть</Button>
       </>}
+      </div>
       {run.parallel && <div className={cx("ar-expand ar-copies", expanded && "open")} {...(!expanded ? { inert: "" } : {})}>
         <div><div className="ar-copy-list">
           {run.parallel.copies.map((copy) => <div key={copy.id} className={cx("ar-copy", copy.status)}>
             <span className="ar-copy-slot ui-mono">{String(copy.slot).padStart(2, "0")}</span>
             <div className="ar-copy-main">
-              <div className="ar-copy-title"><b>Агент {copy.slot}</b><span className="t-xs t-muted">{copy.stopping ? "останавливается" : STATUS[copy.status]}</span></div>
+              <div className="ar-copy-title"><b>Агент {copy.slot}</b><span className="t-xs t-muted">{copy.stopping ? "останавливается" : copy.status === "running" && run.mode === "scout" ? "разведывает" : STATUS[copy.status]}</span></div>
               <p className="t-xs t-muted t-ell" title={copy.current ?? undefined}>{copy.current ?? (copy.status === "done" ? "Работа завершена"
                 : copy.status === "error" ? "Не удалось подготовить копию" : copy.status === "stopped" ? "Ожидает продолжения" : "Подготовка к работе")}</p>
               <Progress value={copy.item_total ? Math.min(1, (copy.item_processed ?? 0) / copy.item_total) : copy.status === "done" ? 1 : 0}

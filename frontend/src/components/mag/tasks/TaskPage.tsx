@@ -14,7 +14,7 @@ import { pollJob } from "../../../api/jobs";
 import type { Job } from "../../../api/jobs";
 import { setImageTags, setVideoTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
-import { runContext } from "../../../api/agents";
+import { taskRuns } from "../../../api/agents";
 import type { RunMode, RunView } from "../../../api/agents";
 import type { Question } from "../../../api/questions";
 import { Button, Notice, Progress, Sheet, cx, hasLayer } from "../../../ui";
@@ -144,6 +144,9 @@ export default function TaskPage() {
   const [setupOpen, setSetupOpen] = useState(false);
   const agentTool = useAgentTool(taskId || "");
   const [agentRun, setAgentRun] = useState<RunView | null>(null);
+  const [runLoading, setRunLoading] = useState(true);
+  const [runError, setRunError] = useState(false);
+  const [runRetry, setRunRetry] = useState(0);
   const here = useHere();
   // Быстрый запуск из меню блока упёрся в карту — окно «на процессоре или отменить».
   const [cpuAsk, setCpuAsk] = useState<{ refusal: CardRefusal; body: Parameters<AgentHooks["start"]>[0] } | null>(null);
@@ -240,12 +243,17 @@ export default function TaskPage() {
   // Идущий прогон агента видно и после перезагрузки; остановленный и упавший — тоже, ради «Продолжить», пока не скрыли
   useEffect(() => {
     if (!taskId) return;
-    runContext(taskId).then((ctx) => {
+    let alive = true;
+    setAgentRun(null); setRunLoading(true); setRunError(false);
+    taskRuns(taskId).then((ctx) => {
+      if (!alive) return;
       const last = ctx.runs[0];
       if (last && (ACTIVE_RUN.includes(last.status)
         || ((last.status === "stopped" || last.status === "error" || last.status === "done") && hiddenRun(taskId) !== last.id))) setAgentRun(last);
-    }).catch(() => undefined);
-  }, [taskId]);
+    }).catch(() => { if (alive) setRunError(true); })
+      .finally(() => { if (alive) setRunLoading(false); });
+    return () => { alive = false; };
+  }, [taskId, runRetry]);
   const onRun = useCallback((run: RunView | null) => {
     if (!run && agentRun && taskId) hideRun(taskId, agentRun.id);
     setAgentRun(run);
@@ -632,6 +640,10 @@ export default function TaskPage() {
         </Notice>
       )}
       {notice && <Notice tone="ok" onClose={() => setNotice(null)}>{notice}</Notice>}
+      {!agentRun && (runLoading || runError) && <div className={cx("ar-bar ar-loading", runLoading && "ui-shim")} role="status">
+        <span>{runLoading ? "Загружаем состояние работы агента…" : "Не удалось загрузить состояние агента"}</span>
+        {runError && <Button size="sm" variant="ghost" onClick={() => setRunRetry((n) => n + 1)}>Повторить</Button>}
+      </div>}
       {agentRun && <AgentRunBar taskId={task.id} run={agentRun} onRun={onRun} onFinished={load} />}
       {upload?.error && <Notice tone="error" onClose={() => dismissUploadError(task.id)}>{upload.error}</Notice>}
       {uploading(upload) && (

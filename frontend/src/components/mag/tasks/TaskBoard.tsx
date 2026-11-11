@@ -251,9 +251,8 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
         <Icon name={s && (s.sources.cut || s.sources.annotate) ? "film" : "images"} size={14} />
         {s ? <span className="t-ell">{withSep(sourceLine(s.sources))}</span> : <i className="ui-sk pill" style={{ width: 120 }} />}
       </span>
-      {/* Три строки всегда — полоса, числа, значки; числа в одну строку с многоточием.
-          Значки переносятся рядами: карточка растёт, только когда их больше ряда */}
-      <span className={zone}>
+      {/* Без текущей проверки полосу убираем; значки переносятся рядами. */}
+      <span className={cx(zone, face?.parts.length === 0 && "no-bar", s?.progress && !face?.short && (t.status === "updating" || s.sources.annotate > 0) && "details")}>
         {!face ? (
           <>
             <i className="ui-sk bar" />
@@ -262,7 +261,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
           </>
         ) : (
           <>
-            {face.parts.some((p) => p.value) ? <StackBar parts={face.parts} /> : <i className="ui-stack" />}
+            {face.parts.length > 0 && (face.parts.some((p) => p.value) ? <StackBar parts={face.parts} /> : <i className="ui-stack" />)}
             <span className={cx("tb-line", face.quiet && "quiet")} title={face.title}><CardLine line={face.line} /></span>
             <span className="tb-badges">
               {badges.map((b, i) => (
@@ -297,7 +296,7 @@ function TaskCard({ t, s, fresh, at, code, dragged, landed, onDragStart, onDragE
 
 /** Строка чисел карточки: куски через черту, числа выделены, слова тише. Общая у доски и обзора. */
 export function CardLine({ line }: { line: (string | number)[][] }) {
-  return <>{withSep(line.map((part) => part.map((x, i) => (typeof x === "number" ? <b key={i}>{ru(x)}</b> : x))))}</>;
+  return <>{withSep(line.map((part, index) => <span className="tb-part" key={index}>{part.map((x, i) => (typeof x === "number" ? <b key={i}>{ru(x)}</b> : x))}</span>))}</>;
 }
 
 /** «обновляется» со спиннером — пока идут запросы. */

@@ -455,6 +455,25 @@ def run_context(task_id):
         db.close()
 
 
+@bp.get("/api/agents/tasks/<task_id>/runs")
+def task_runs(task_id):
+    """Ход агентов без подготовки окна запуска и оценки памяти моделей."""
+    db, user, err = _me()
+    if err:
+        return err
+    try:
+        task, _project, err = _task(db, user, task_id)
+        if err:
+            return err
+        runs = db.execute(
+            select(AgentRun).where(AgentRun.task_id == task.id, AgentRun.parent_id.is_(None))
+            .order_by(AgentRun.created_at.desc()).limit(5)
+        ).scalars().all()
+        return jsonify({"runs": [_run_view(db, run) for run in runs]})
+    finally:
+        db.close()
+
+
 @bp.get("/api/projects/<code>/agents/context")
 def project_agent_context(code):
     """Агент на кадре датасета (G в «Фокусе» датасета): те же агенты, без таски."""

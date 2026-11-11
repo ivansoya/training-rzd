@@ -63,3 +63,33 @@ def test_context_includes_project_tags_and_video_links(scene):
 def test_foreign_context_is_not_accessible(scene):
     client, _, foreign, *_ = scene
     assert client.get(f"/api/agents/tasks/{foreign.id}").status_code == 403
+
+
+def test_task_runs_keeps_parallel_progress_without_preparing_context(scene, monkeypatch):
+    from common.models import AgentRun
+    from training_svc import agents
+
+    client, task, foreign, *_ = scene
+    def forbidden(*args, **kwargs):
+        raise AssertionError("Прогресс не должен подготавливать окно запуска")
+    for name in ("_context", "_source_counts", "_verdict"):
+        monkeypatch.setattr(agents, name, forbidden)
+    with SessionLocal() as db:
+        parent = AgentRun(task_id=task.id, project_id=task.project_id, is_group=True, status="running",
+                          params={"mode": "scout", "copies": 1, "pending": []}, processed=10, total=20)
+        db.add(parent); db.flush()
+        child = AgentRun(task_id=task.id, project_id=task.project_id, parent_id=parent.id, status="running",
+                         params={"mode": "scout", "slot": 1, "assignment": {"title": "cut.mp4", "count": 20}},
+                         processed=10, total=20)
+        db.add(child); db.commit()
+        parent_id, child_id = str(parent.id), str(child.id)
+    response = client.get(f"/api/agents/tasks/{task.id}/runs")
+    assert response.status_code == 200, response.text
+    assert set(response.json) == {"runs"}
+    assert [r["id"] for r in response.json["runs"]] == [parent_id]
+    copy = response.json["runs"][0]["parallel"]["copies"][0]
+    assert (copy["id"], copy["current"], copy["item_processed"], copy["item_total"]) == (child_id, "cut.mp4", 10, 20)
+    assert client.get(f"/api/agents/tasks/{foreign.id}/runs").status_code == 403
+    assert client.get(f"/api/agents/tasks/{uuid.uuid4()}/runs").status_code == 404
+    app = Flask(__name__); app.register_blueprint(bp)
+    assert app.test_client().get(f"/api/agents/tasks/{task.id}/runs").status_code == 401

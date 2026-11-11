@@ -104,7 +104,7 @@ const flat = (line: (string | number)[][]) => line.map((part) => part.map((x) =>
 
 /** Решения 14.10.2026: изображения — «сделано» и «осталось», отложенные — значком; ролик — треками и рамками,
  *  с агентом — проверкой по кадрам; сданная — все изображения таски вместе с кадрами роликов. */
-export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sources" | "handover"> & { videos?: TaskStats["videos"] }): CardLook {
+export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sources" | "handover" | "progress"> & { videos?: TaskStats["videos"] }): CardLook {
   const c = s.counts;
   const v = s.videos ?? NO_VIDEOS;
   const badges: CardBadge[] = [];
@@ -125,9 +125,30 @@ export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sour
   }
 
   const rolls = s.sources.annotate;
-  const checking = v.agent_done + v.agent_left > 0;
+  const checking = v.agent_left > 0;
   const made = `${count(v.tracks, "трек", "трека", "треков")}, ${count(v.boxes, "рамка", "рамки", "рамок")}`;
   const checkTitle = `Агент: проверено ${count(v.agent_done, "кадр", "кадра", "кадров")}, осталось проверить ${ru(v.agent_left)}`;
+  if (status === "updating" && s.progress) {
+    const { annotated, changed } = s.progress;
+    const pending = (c.agent || 0) + v.agent_left;
+    waiting(pending);
+    const line = [["размечено ", annotated], ["изменено ", changed ?? "—"]];
+    const title = `${count(annotated, "размеченный кадр", "размеченных кадра", "размеченных кадров")}, включая фон; `
+      + (changed === null ? "изменения этого цикла не отслеживались — отсчёт начнётся при следующем возврате к разметке"
+        : `${count(changed, "кадр изменён", "кадра изменены", "кадров изменено")} с возврата к разметке`);
+    return { parts: pending ? [{ value: annotated, color: color("annotated"), label: "Размечено" },
+      { value: pending, color: color("new"), label: "Ждёт проверки" }] : [], line, title, badges };
+  }
+  if (rolls && s.progress) {
+    const pending = (c.agent || 0) + v.agent_left;
+    waiting(pending);
+    badges.push({ text: made, title: made, icon: "film" });
+    const line: (string | number)[][] = [["размечено ", s.progress.annotated]];
+    if (pending) line.push(["проверить ", pending]);
+    return { parts: pending ? [{ value: s.progress.annotated, color: color("annotated"), label: "Размечено" },
+      { value: pending, color: color("new"), label: "Ждёт проверки" }] : [], line,
+      title: `${count(s.progress.annotated, "размеченный кадр", "размеченных кадра", "размеченных кадров")}, включая фон; ${made}`, badges };
+  }
   if (framesOf(c) + (c.deleted || 0) > 0) {
     waiting(c.agent || 0);
     if (c.skipped) badges.push({ text: `${ru(c.skipped)} отложено`, title: count(c.skipped, "кадр отложен", "кадра отложены", "кадров отложено"), tone: "var(--st-skip)" });
@@ -140,7 +161,7 @@ export function cardLook(status: TaskStatus, s: Pick<TaskStats, "counts" | "sour
     const line = [["сделано ", doneOf(c)], ["осталось ", c.new || 0]];
     const title = `Сделано ${ru(doneOf(c))}: размечено ${ru(c.annotated)}, фон ${ru(c.empty)}, брак ${ru(c.deleted || 0)}`
       + `${c.skipped ? `; отложено ${ru(c.skipped)}` : ""}; осталось ${ru(c.new)}${c.agent ? `, из них ${ru(c.agent)} ждут проверки агента` : ""}`;
-    return { parts: boardParts(c), line, title, badges, short: [[doneOf(c), " / ", framesOf(c) + (c.deleted || 0)]] };
+    return { parts: status === "updating" && !c.agent && !checking ? [] : boardParts(c), line, title, badges, short: [[doneOf(c), " / ", framesOf(c) + (c.deleted || 0)]] };
   }
   if (rolls && checking) {
     badges.push({ text: made, title: made, icon: "film" });

@@ -837,7 +837,14 @@ button.acl-sw:focus-visible { outline: 2px solid var(--ring); outline-offset: 2p
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; border-radius: var(--r-md);
   border: 1px solid color-mix(in srgb, var(--agent) 35%, var(--border)); background: color-mix(in srgb, var(--agent) 6%, var(--card));
 }
-.ar-prog { flex: 0 1 220px; min-width: 120px; border-radius: var(--r-full); }
+.ar-prog { flex: 1 1 160px; min-width: 120px; border-radius: var(--r-full); }
+.ar-identity, .ar-summary { flex: 0 0 100%; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.ar-identity .ui-badge { min-width: 0; max-width: 100%; white-space: normal; }
+.ar-summary { padding-top: 6px; border-top: 1px solid var(--hair); }
+.ar-summary > .ui-btn { margin-left: auto; }
+.ar-summary > .grow { display: none; }
+.ar-loading { min-height: 44px; color: var(--agent-fg); font-size: 13px; }
+@media (max-width: 760px) { .ar-summary > .ar-prog { flex-basis: 100%; } }
 
 .ar-dialog .ui-dialog-b { scrollbar-gutter: stable; }
 .ar-dialog .ui-dialog-h, .ar-dialog .ui-dialog-f { flex-shrink: 0; }

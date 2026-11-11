@@ -4,7 +4,7 @@
 // - кнопка «Разведка» у ролика открывает окно только этого ролика; между
 //   роликами переключаются в общей статистике таски (ScoutOverview);
 // - шкала приближается: над полосами весь ролик тонкой полосой с рамкой
-//   окна, колесо — масштаб у указателя, протяжка — сдвиг, рамку можно
+//   окна, Ctrl + колесо — масштаб у указателя, протяжка — сдвиг, рамку можно
 //   тащить; на часовом ролике иначе отметки сливались в штрихи;
 // - кадр — в карточке при наведении, ленты кадров нет.
 // Числа считает сервер (agent_graph.scout_stats): у часового ролика тысячи
@@ -13,7 +13,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import * as api from "../../api/agents";
+import { Button, Icon, Progress } from "../../ui";
 import { plural } from "../ru";
+
+export function ScoutLoading({ done = 0, total = 0 }: { done?: number; total?: number }) {
+  return <div className="ag-scout-loading" role="status" aria-live="polite">
+    <span className="ag-scout-loading-icon"><Icon name="scan" size={40} /></span>
+    <h2>Загружаем разведку</h2>
+    <p>{total ? `Получено ${done} из ${total} роликов` : "Получаем список роликов и находки агента"}</p>
+    <div className="ag-scout-loading-progress ui-shim"><Progress value={total ? done / total : 0} color="var(--scout)" label="Загрузка разведки" /></div>
+  </div>;
+}
 import Sep from "../Sep";
 import { useEscape } from "../mag/useEscape";
 import { useBackdrop } from "../useBackdrop";
@@ -71,6 +81,24 @@ export function Bars({ stats, counts, max, color, view, hover }: {
   );
 }
 
+/** Общая высота — все находки кадра; цветные части — вклад каждого класса. */
+export function ScoutStack({ stats, colors, view, hover = null }: {
+  stats: api.ScoutStats; colors: Map<string, string>; view: View; hover?: number | null;
+}) {
+  return <svg viewBox={`${view.a} 0 ${Math.max(1, view.b - view.a)} 100`} preserveAspectRatio="none" aria-hidden="true">
+    {stats.checked.map((f, i) => {
+      if (f < view.a - stats.step || f > view.b || !stats.per_frame[i]) return null;
+      let y = 100;
+      return stats.classes.map((c) => {
+        const h = (c.counts[i] / Math.max(1, stats.max)) * 100;
+        y -= h;
+        return h > 0 ? <rect key={`${c.name}:${f}`} x={f} y={y} width={Math.max(1, stats.step * 0.8)} height={h}
+          style={{ fill: colors.get(c.name) ?? "var(--dim)" }} fillOpacity={hover === null || hover === i ? 1 : 0.4} /> : null;
+      });
+    })}
+  </svg>;
+}
+
 /** Шкала «по времени» с приближением и карточкой кадра при наведении. */
 function Timeline({ taskId, videoId, stats, colors }: {
   taskId: string; videoId: string; stats: api.ScoutStats; colors: Map<string, string>;
@@ -81,6 +109,7 @@ function Timeline({ taskId, videoId, stats, colors }: {
   const minSpan = stats.step * 8;
   const [view, setView] = useState<View>({ a: 0, b: last });
   const [hover, setHover] = useState<Hover | null>(null);
+  const [showClasses, setShowClasses] = useState(true);
   const lanes = useRef<HTMLDivElement>(null);
   const drag = useRef<{ x: number; a: number; span: number; width: number; scale: number } | null>(null);
   const span = view.b - view.a;
@@ -88,14 +117,14 @@ function Timeline({ taskId, videoId, stats, colors }: {
 
   useEffect(() => setView({ a: 0, b: last }), [videoId, last]);
 
-  // Колесо — нативно и не пассивно: у React onWheel нет права на
-  // preventDefault, и вместо масштаба уезжало бы окно.
+  // Обычное колесо листает окно; Ctrl + колесо масштабирует график.
+  // Нативный непассивный обработчик может отменить прокрутку при масштабе.
   useEffect(() => {
     const el = lanes.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       const strip = (e.target as Element).closest(".ag-stats-strip");
-      if (!strip) return;
+      if (!strip || (!e.ctrlKey && !e.metaKey)) return;
       e.preventDefault();
       const r = strip.getBoundingClientRect();
       const ratio = Math.min(1, Math.max(0, (e.clientX - r.left) / r.width));
@@ -109,10 +138,7 @@ function Timeline({ taskId, videoId, stats, colors }: {
     return () => el.removeEventListener("wheel", onWheel);
   }, [last, minSpan]);
 
-  const rows = [
-    { name: "Все классы", color: "var(--dim)", counts: stats.per_frame, max: stats.max },
-    ...stats.classes.map((c) => ({ name: c.name, counts: c.counts, max: c.max, color: colors.get(c.name) ?? "var(--dim)" })),
-  ];
+  const rows = stats.classes.map((c) => ({ name: c.name, counts: c.counts, max: c.max, color: colors.get(c.name) ?? "var(--dim)" }));
 
   function frameAt(el: HTMLElement, clientX: number) {
     const r = el.getBoundingClientRect();
@@ -141,16 +167,21 @@ function Timeline({ taskId, videoId, stats, colors }: {
   const at = hover === null ? null : stats.checked[hover.i];
   const marks = [
     [view.a, clock(view.a / fps), "first"] as const,
-    ...timeTicks(view.a, view.b, fps).map((s) => [s * fps, clock(s), ""] as const),
+    ...timeTicks(view.a, view.b, fps).filter((s) => s * fps > view.a + span * 0.08 && s * fps < view.b - span * 0.08)
+      .map((s) => [s * fps, clock(s), ""] as const),
     [view.b, clock(view.b / fps), "last"] as const,
   ];
 
   return (
-    <div className="ag-tl">
+    <div className="ag-tl" ref={lanes}>
       <div className="ag-tl-h">
-        <h4>По времени</h4>
+        <h4>Обзор всех классов</h4>
         <span className="ag-tl-win">{label}</span>
-        <span className="ag-tl-hint">колесо — масштаб, протяжка — сдвиг</span>
+        <span className="ag-tl-hint">Ctrl + колесо — масштаб, протяжка — сдвиг</span>
+        <Button size="sm" variant="ghost" icon="minus" aria-label="Отдалить таймлайн" disabled={full}
+          onClick={() => setView(clampView(view.a - span * 0.125, span * 1.25, last, minSpan))} />
+        <Button size="sm" variant="ghost" icon="plus" aria-label="Приблизить таймлайн" disabled={span <= Math.min(last, minSpan)}
+          onClick={() => setView(clampView(view.a + span * 0.1, span * 0.8, last, minSpan))} />
         {/* Кнопка стоит всегда, на полном ролике — погашенная: появляясь,
             она сдвигала бы полосы под указателем посреди прокрутки. */}
         <button type="button" className="mag-ghost mag-ghost-inline" disabled={full}
@@ -159,8 +190,24 @@ function Timeline({ taskId, videoId, stats, colors }: {
         </button>
       </div>
 
-      <div className="ag-stats-row ag-tl-over">
-        <span className="ag-stats-cls ag-muted">обзор</span>
+      <div className="ag-stats-row ag-tl-main">
+        <span className="ag-stats-cls">Все классы</span>
+        <span className="ag-stats-strip"
+          onPointerDown={(e) => grab(e, view.a, span)}
+          onPointerMove={(e) => {
+            move(e, -1);
+            setHover({ i: nearest(stats.checked, frameAt(e.currentTarget, e.clientX)), row: "Все классы", x: e.clientX, y: e.clientY });
+          }} onPointerUp={drop} onPointerCancel={drop} onPointerLeave={() => setHover(null)}>
+          <ScoutStack stats={stats} colors={colors} view={view} hover={hover?.i ?? null} />
+        </span>
+        <span className="ag-stats-max">до {stats.max}</span>
+      </div>
+      <div className="ag-stats-axis"><i /><div>
+        {marks.map(([f, text, klass], i) => <span key={i} className={klass || undefined}
+          style={{ left: `${((f - view.a) / Math.max(1, span)) * 100}%` }}>{text}</span>)}
+      </div></div>
+      {!full && <div className="ag-stats-row ag-tl-over">
+        <span className="ag-stats-cls ag-muted">Весь ролик</span>
         {/* Весь ролик с рамкой окна: щелчок мимо рамки ставит туда окно,
             протяжка везёт рамку. */}
         <span className="ag-stats-strip"
@@ -179,10 +226,13 @@ function Timeline({ taskId, videoId, stats, colors }: {
           <i className="ag-tl-box" style={{ left: `${(view.a / last) * 100}%`, width: `${Math.max(0.5, (span / last) * 100)}%` }} />
         </span>
         <span />
+      </div>}
+      <div className="ag-scout-fold-h"><h4>Дорожки классов</h4>
+        <Button size="sm" variant="ghost" icon={showClasses ? "chevU" : "chevD"} aria-expanded={showClasses}
+          onClick={() => { setShowClasses((v) => !v); setHover(null); }}>{showClasses ? "Скрыть дорожки классов" : "Показать дорожки классов"}</Button>
       </div>
-
-      <div className="ag-stats-strips" ref={lanes}>
-        {rows.map((r) => (
+      <div className="ag-stats-strips">
+        {showClasses && <div className="ag-tl-lanes ag-stats-strips">{rows.map((r) => (
           <div className="ag-stats-row" key={r.name}>
             <span className="ag-stats-cls"><i style={{ background: r.color }} /><span title={r.name}>{r.name}</span></span>
             <span className="ag-stats-strip"
@@ -200,15 +250,7 @@ function Timeline({ taskId, videoId, stats, colors }: {
             </span>
             <span className="ag-stats-max">до {r.max}</span>
           </div>
-        ))}
-        <div className="ag-stats-axis">
-          <i />
-          <div>
-            {marks.map(([f, text, klass], i) => (
-              <span key={i} className={klass || undefined} style={{ left: `${((f - view.a) / Math.max(1, span)) * 100}%` }}>{text}</span>
-            ))}
-          </div>
-        </div>
+        ))}</div>}
       </div>
 
       {hover && at !== null && (
@@ -227,6 +269,7 @@ export function ScoutBody({ taskId, videoId, stats, colors }: {
 }) {
   const fps = stats.fps || 25;
   const checked = stats.checked.length;
+  const [showTable, setShowTable] = useState(true);
   const seconds = (name: string) =>
     (stats.segments[name] ?? []).reduce((s, [a, b]) => s + (b - a + 1), 0) / fps;
   return (
@@ -252,7 +295,12 @@ export function ScoutBody({ taskId, videoId, stats, colors }: {
         <p className="ag-muted">Агент на проверенных кадрах ничего не нашёл.</p>
       ) : (
         <>
-          <div className="ag-stats-table">
+          <Timeline taskId={taskId} videoId={videoId} stats={stats} colors={colors} />
+          <div className="ag-scout-fold-h"><h4>Статистика по классам</h4>
+            <Button size="sm" variant="ghost" icon={showTable ? "chevU" : "chevD"} aria-expanded={showTable}
+              onClick={() => setShowTable((v) => !v)}>{showTable ? "Скрыть таблицу" : "Показать таблицу"}</Button>
+          </div>
+          {showTable && <div className="ag-stats-table">
             <table>
               <thead>
                 <tr>
@@ -289,8 +337,7 @@ export function ScoutBody({ taskId, videoId, stats, colors }: {
                 })}
               </tbody>
             </table>
-          </div>
-          <Timeline taskId={taskId} videoId={videoId} stats={stats} colors={colors} />
+          </div>}
         </>
       )}
     </>
@@ -328,7 +375,7 @@ export default function ScoutStats({ taskId, videoId, onClose }: {
           <button className="ag-stats-x" type="button" aria-label="Закрыть" onClick={onClose}>✕</button>
         </div>
         {error && <div className="mag-error">{error}</div>}
-        {!stats && !error && <p className="ag-muted">Считаю…</p>}
+        {!stats && !error && <ScoutLoading />}
         {stats && <ScoutBody taskId={taskId} videoId={videoId} stats={stats} colors={taskColors(scouts)} />}
       </div>
     </div>

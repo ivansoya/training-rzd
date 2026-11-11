@@ -893,6 +893,9 @@ export interface TaskStats {
   sources: { files: number; dataset?: number; cut: number; uncut: number; annotate: number };
   /** Ролики на разметку: треки, проверенные рамки и проверка агента по кадрам. */
   videos: { tracks: number; boxes: number; agent_done: number; agent_left: number };
+  /** Подтверждённые кадры, включая фон и видео; изменения от начала текущего цикла.
+   * null — исходный снимок ещё не записывался (старый цикл изменения). */
+  progress?: { annotated: number; changed: number | null };
   /** Работа идущей сдачи; null — не сдаётся. */
   handover?: string | null;
 }

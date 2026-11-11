@@ -162,6 +162,8 @@
 .ov-task-p { grid-column: 3; display: flex; justify-content: flex-end; align-items: center; gap: 8px; min-width: 0; white-space: nowrap; }
 .ov-task-p .ui-stack { width: 72px; flex: none; }
 .ov-task-p .tb-line { flex: 1; text-align: right; }
+.ov-task-p.changes { grid-column: 2 / -1; justify-content: flex-start; white-space: normal; }
+.ov-task-p.changes .tb-line { text-align: left; white-space: normal; display: block; }
 .ov-task-m, .ov-task-p { transition: opacity .3s var(--ease); }
 .ov-task-m.stale, .ov-task-p.stale { opacity: .55; }
 .ov-sep { height: 1px; border: 0; margin: 4px 0; background: var(--border); }
@@ -470,9 +472,9 @@ a.pcard:hover { border-color: var(--input); }
 
 /* ---------- таски: доска ---------- */
 .tb-q { width: 220px; max-width: 100%; }
-.tb { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: start; }
+.tb { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 12px; align-items: stretch; }
 .tb-col {
-  display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 10px; border-radius: var(--r-lg);
+  display: flex; flex-direction: column; gap: 10px; min-width: 0; min-height: max(280px, calc(100dvh - 220px)); padding: 10px; border-radius: var(--r-lg);
   background: color-mix(in srgb, var(--hover) 30%, transparent); animation: tp-rise .45s var(--ease) both;
 }
 .tb-col:nth-child(2) { animation-delay: .05s; }
@@ -507,6 +509,7 @@ a.pcard:hover { border-color: var(--input); }
 /* Строка чисел — всегда одна: перенос ложился на значки (строки зоны фиксированной высоты) */
 .tb-line { display: block; min-width: 0; font-size: 12px; line-height: 17px; color: var(--muted-fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .tb-line b { font-weight: 600; color: var(--fg); }
+.tb-zone.details .tb-part, .ov-task-p.changes .tb-part { white-space: nowrap; }
 .tb-line.quiet { color: var(--faint); }
 .tb-upload { display: grid; gap: 6px; min-width: 0; border-top: 1px solid var(--hair); padding-top: 10px; }
 .tb-upload .ui-progress { height: 6px; }
@@ -520,6 +523,10 @@ a.pcard:hover { border-color: var(--input); }
   .tb-when { align-self: flex-start; max-width: 100%; flex-shrink: 1; }
   /* Закрытая — нарочно в одну строку: многоточие и подсказка */
   .tb-card.closed .tb-line { display: block; white-space: nowrap; }
+}
+.tb-zone.no-bar { grid-template-rows: 17px auto; }
+@container (max-width: 180px) {
+  .tb-zone.no-bar { grid-template-rows: 34px auto; }
 }
 .tb-zone.one { grid-template-rows: 17px; }
 .tb-zone > .ui-stack, .tb-zone > .ui-sk.bar { height: 6px; }
@@ -618,7 +625,7 @@ a.pcard:hover { border-color: var(--input); }
 .tp-poster { width: 120px; height: 42px; border-radius: var(--r-sm); object-fit: cover; background: var(--stage); display: block; }
 .tp-poster.big { width: 200px; height: 72px; }
 .tp-reel-n { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.tp-reel-n > b { font-size: 13px; font-weight: 500; }
+.tp-reel-n .tp-reel-title > b { font-size: 13px; font-weight: 500; }
 .tp-reel-s { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .tp-reel-s:empty { display: none; }
 .tp-reel-c { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
@@ -717,7 +724,10 @@ a.pcard:hover { border-color: var(--input); }
 /* Ролик в прогоне агента: в одну строку, текст с многоточием, значок и полоса не ужимаются (решения 29.10.2026) */
 .tp-reel-ag { grid-column: 2 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; height: 22px; font-size: 12px; color: var(--muted-fg); white-space: nowrap; }
 .tp-reel-ag > :not(.t-ell) { flex: none; }
-.tp-reel-ag.done { color: var(--agent-fg); }
+.tp-reel-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tp-reel-title > b { min-width: 0; }
+.tp-reel-status { display: inline-flex; align-items: center; flex: none; color: var(--agent-fg); }
+.tp-reel-s:empty { display: none; }
 .tp-reel-ag .tp-agent-bar { flex: 0 0 120px; }
 .tp-segs {
   display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 4px; margin-left: -4px; border: 0;
@@ -756,8 +766,9 @@ a.pcard:hover { border-color: var(--input); }
 .tp-vid-b { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .tp-vid-b p { margin: 0; }
 .tp-vid-h { display: flex; align-items: center; gap: 8px; }
-.tp-vid-h > :not(b):not(.grow) { flex: none; }
-.tp-vid-h > b { font-size: 14px; font-weight: 600; min-width: 0; flex: 0 1 auto; }
+.tp-vid-h > :not(.tp-reel-title):not(.grow) { flex: none; }
+.tp-vid-h > .tp-reel-title { min-width: 0; flex: 0 1 auto; }
+.tp-vid-h .tp-reel-title > b { font-size: 14px; font-weight: 600; }
 /* Имена в ролике — многоточием, кнопки строки важнее */
 .tp-vid-h > span.tp-here { flex: 0 1 auto; min-width: 0; display: flex; }
 .tp-here > .ui-badge, .tp-here .t-ell { min-width: 0; }

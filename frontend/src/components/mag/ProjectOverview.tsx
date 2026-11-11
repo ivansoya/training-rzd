@@ -278,7 +278,7 @@ function TasksCard({ board, code }: { board: ReturnType<typeof useTaskBoard>; co
                       {s ? withSep(sourceLine(s.sources)) : <i className="ui-sk pill" style={{ width: 110 }} />}<Sep />{teamLine(t.assignees)}
                     </span>
                   </span>
-                  <span className={cx("ov-task-p t-xs", v.stale && "stale", v.loading && "ui-shim")}>
+                  <span className={cx("ov-task-p t-xs", s?.progress && !f?.short && (t.status === "updating" || s.sources.annotate > 0) && "changes", v.stale && "stale", v.loading && "ui-shim")}>
                     {!f ? <i className="ui-sk pill" style={{ width: 120 }} /> : <>
                       {f.parts.some((p) => p.value) && <StackBar parts={f.parts} />}
                       <span className={cx("tb-line", f.quiet && "quiet")} title={f.title}><CardLine line={f.short ?? f.line} /></span>
