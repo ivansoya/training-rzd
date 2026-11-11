@@ -1,6 +1,6 @@
 # Память проекта «Магистраль ML» / training-rzd
 
-Обновлено: 2026-11-10. Основной checkout: `C:/Users/1/Documents/WebStorm/training-rzd`. Это отдельный проект от `RJD` и «Мост».
+Обновлено: 2026-11-11. Основной checkout: `C:/Users/1/Documents/WebStorm/training-rzd`. Это отдельный проект от `RJD` и «Мост».
 
 ## Как пользоваться
 
@@ -12,16 +12,21 @@
 
 ## Текущее состояние
 
+- Agent launch dialog: compact scout/annotate video picker, preview5/expanded pages20, filename/tag filters and explicit bulk/hidden selection. Feature commit `2b480a8` deployed on VORAN-01 on2026-11-11 (training/training-worker/frontend); other services remain on `03d2a17`. Live context575videos/9tags, production-static1001-video browser fixture and health checks passed. Static-permissions403 caught, rolled back and fixed before successful activation (`REL-001`). No GitHub push. [Implementation](tasks/2026-11-10-agent-video-picker.md), [deployment/current operations](tasks/2026-11-11-agent-picker-release.md).
+
 - Галерея/группы роликов закоммичены как `3fe6913`, пагинация по 50 — `03d2a17`; приложение успешно выложено на VORAN-01 из коммита `03d2a17`. Сборка, 26 frontend-тестов, 10 PostgreSQL-тестов и браузерная проверка 1000 роликов прошли; после выкладки проверены health API, HTTPS и новый frontend. [Пагинация](tasks/2026-11-10-cut-pagination.md), [выкладка и обслуживание](tasks/2026-11-10-release-voran.md). Push в GitHub не выполнялся.
 
 - Общая серверная память проекта заполнена: структура, стек, стиль, решения, баги и отложенное. Подробная память репозитория остаётся основным источником; [синхронизация памяти](tasks/2026-11-10-memory-sync.md).
 
-- Текущий серверный каталог — `/home/voran/releases/training-rzd-cut-pages-20261110-03d2a17/`; контейнеры управляются его `compose.runtime.json`. Прежний `/home/voran/training-rzd` и его локальные правки сохранены; не использовать старый compose для следующего обновления без сверки labels контейнеров.
+- Latest release: `/home/voran/releases/training-rzd-agent-picker-20261111-2b480a8/compose.runtime.json` controls updated training/training-worker/frontend; unchanged services retain prior release labels/images (`training-rzd-cut-pages-20261110-03d2a17`). Check actual container labels before future updates. Original `/home/voran/training-rzd` and its local edits remain preserved; do not run its old compose blindly.
 - Локальная ветка `video-ranges`. В опубликованный код вошли также ранее созданные `97fa405` (прогресс загрузки видео), `8c19deb` (имя датасета) и `11c147f` (параллельные агенты). Для последнего применена миграция `f0a1b2c3d4e5`; перед переключением создана резервная копия БД. Подробная история галереи — в [записи задачи](tasks/2026-11-10-cut-video-groups.md).
 - Открыта проблема `BUG-004`: во время браузерной проверки наблюдалось повреждение кеша таски при прерывании загрузки. Причина предполагаемая, исправления нет. См. [реестр](findings.md).
 - Память проекта создана по прямому поручению пользователя; обязательное применение скилла закреплено в локальном `AGENTS.md`, который исключён из Git правилом `/AGENTS.md`.
 
 ## Записи задач
+
+- [2026-11-11 — agent picker commit and successful VORAN-01 deployment](tasks/2026-11-11-agent-picker-release.md).
+- [2026-11-10 — compact scout/annotate video picker and tag filters](tasks/2026-11-10-agent-video-picker.md).
 
 - [2026-11-10 — коммиты по задачам и выкладка на Ворана](tasks/2026-11-10-release-voran.md).
 - [2026-11-10 — пагинация роликов и кадров по 50](tasks/2026-11-10-cut-pagination.md).

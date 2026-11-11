@@ -24,7 +24,7 @@ Request: limit the long video list in the scouting/annotation launch dialog, all
 
 ## Source/publication status and limitations
 
-Local source changes only; no commit, push, deployment or production restart. Existing unrelated memory/experiment changes were preserved. Own Vite test server stopped after verification.
+Implementation status on 2026-11-10: local changes only; own Vite stopped after verification and unrelated memory/experiment changes preserved. Follow-up 2026-11-11: committed as `2b480a8` and successfully deployed to VORAN-01 (training/training-worker/frontend), with live context and production-static browser checks; no GitHub push. See [deployment evidence and current operational reference](2026-11-11-agent-picker-release.md).
 
 Metadata for all videos still comes in context JSON; mounted rows are bounded. Tag filtering on deployment needs the updated backend context together with the frontend. Actual production dialog/data were not exercised. No model runs or annotation writes were performed.
 

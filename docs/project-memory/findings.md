@@ -41,6 +41,21 @@
 - Файлы: `frontend/src/components/mag/tasks/Sources.tsx`, `CutFrames.tsx`, `frontend/src/auth/api.ts`, `backend/datasets_svc/task_routes.py`.
 - Проверки: браузерная выборка 1000 нарезанных + 51 ненарезанный ролик и 1106 кадров, фильтры/переходы/уменьшение выборки, PostgreSQL-тест страниц 50/50/7, сборка. Подробности: [задача](tasks/2026-11-10-cut-pagination.md).
 
+## BUG-006 — unbounded video rows in agent launch dialog
+
+- Date: 2026-11-10. Status: committed `2b480a8`, deployed VORAN-01 on2026-11-11. Live context575videos/9tags, production-static1001-video browser fixture and health checks passed; [deployment evidence](tasks/2026-11-11-agent-picker-release.md).
+- Evidence: `AgentRunDialog` mapped all eligible video rows without a limit; real-dialog browser regression reproduced1001 checkboxes (`Expected5, Received1001`). Scout/annotate video selection pushed subsequent settings below a very long list. Separate path from gallery BUG-005.
+- Fix: shared `RunVideoPicker` preview5/expanded pages20, bounded scroll height, filename/tag filters, explicit full-filter bulk selection and hidden-selected count. Parent retains full eligible selection and existing scope constraints. Backend context includes authorized project tags and batched video tag links.
+- Files: `frontend/src/components/agents/{AgentRunDialog,RunVideoPicker}.tsx`, `frontend/src/api/agents.ts`, `frontend/src/styles/graphed.css`, `backend/training_svc/agents.py`.
+- Verification: build;1001-video actual-dialog regression including exact launch payload and preselected group scope;909/390px screenshot review;2 isolated PostgreSQL route tests for tags/links/foreign access. [Task and limitations](tasks/2026-11-10-agent-video-picker.md).
+
+## REL-001 — restrictive static-file modes caused403 during deployment
+
+- Date:2026-11-11. Status: fixed and successfully deployed; packaging issue, not application-source defect.
+- Evidence: first agent-picker activation failed root HTTP403; new image index mode600/assets700 prevented nginx worker access. Automatic rollback restored previous image IDs; unrelated containers/data stayed unchanged.
+- Fix: frontend overlay explicitly grants public-static read/directory search via `chmod -R a+rX /usr/share/nginx/html`; verified as user nginx before retry. Second activation exit0, HTTPS/root/health and production-static browser fixture passed.
+- Prevention: preserve restrictive permissions for release configuration/backups, normalize permissions only for public web files when packaging static assets. [Full deployment evidence](tasks/2026-11-11-agent-picker-release.md).
+
 ## Уязвимости
 
 Подтверждённых новых уязвимостей приложения не установлено; отдельный аудит безопасности не проводился. Проверки авторизации и ограничения тагов проектом для запроса кадров прошли.
