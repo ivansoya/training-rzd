@@ -142,7 +142,9 @@ def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None, alive
     first = pts[0] if pts else None
     with open_video(path) as container:
         stream = container.streams.video[0]
-        stream.thread_type = "AUTO"
+        # avcodec_close держит GIL; уже вошедший в журнал поток HEVC ждёт тот же GIL.
+        # Модель может включить журнал посреди ролика, поэтому декодируем без фоновых потоков.
+        stream.codec_context.thread_count = 1
         time_base = float(stream.time_base) if stream.time_base else 0.0
         if not time_base:
             raise VideoError("В видео нет шкалы времени — покадровый доступ невозможен.")
