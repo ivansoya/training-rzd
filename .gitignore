@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 design-mockups/
+/design/
 backend/data/
 dataset_test/
 .claude
@@ -15,3 +16,5 @@ tests/e2e/test-results/
 tests/e2e/playwright-report/
 graphify-out/
 generated/
+/.most/attachments/
+/docs/project-memory/
