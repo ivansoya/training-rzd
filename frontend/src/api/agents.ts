@@ -98,6 +98,7 @@ export interface TaskVideoRow {
   file_name: string;
   mode: "cut" | "annotate";
   frames: number | null;
+  tag_ids?: string[];
 }
 
 // --- влезет ли агент на карту (решения 09.10.2026) --------------------------
@@ -183,6 +184,7 @@ export interface RunContext {
   agents: RunAgent[];
   resources: { cards: GpuCard[]; queued: number };
   videos: TaskVideoRow[];
+  tags?: { id: string; name: string }[];
   classes: { id: string; class_index: number; name: string; color: string }[];
   /** Сопоставление, запомненное на пару «агент + проект». */
   mappings: Record<string, Record<string, string | null>>;

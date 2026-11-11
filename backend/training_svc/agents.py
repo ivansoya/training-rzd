@@ -23,7 +23,7 @@ from sqlalchemy.exc import IntegrityError
 
 from common import (
     agent_access, agent_graph, agent_memory, agent_parallel, attribution, config, frame_sizes, gpu, live, settings, shapes,
-    task_frames, task_rights,
+    tags, task_frames, task_rights,
 )
 from common import scout as scout_lib
 from common.auth import current_user, has_role, project_by_code, role_in
@@ -541,16 +541,20 @@ def _context(db, user, project, task=None):
         select(AgentRun).where(AgentRun.task_id == task.id, AgentRun.parent_id.is_(None))
         .order_by(AgentRun.created_at.desc()).limit(5)
     ).scalars().all()
+    video_rows = db.execute(
+        select(TaskVideo).where(TaskVideo.task_id == task.id).order_by(TaskVideo.created_at, TaskVideo.id)
+    ).scalars().all()
+    video_tags = tags.of(db, "video", [v.id for v in video_rows])
     videos = [
         {"id": str(v.id), "file_name": v.file_name, "mode": v.mode,
+         "tag_ids": [str(t) for t in video_tags.get(v.id, [])],
          "frames": v.frame_count or (round(v.duration_ms / 1000 * v.fps) if v.duration_ms and v.fps else None)}
-        for v in db.execute(
-            select(TaskVideo).where(TaskVideo.task_id == task.id).order_by(TaskVideo.created_at)
-        ).scalars()
+        for v in video_rows
     ]
     return {
         "agents": agents,
         "videos": videos,
+        "tags": [tags.view(t) for t in tags.project_tags(db, project.id)],
         "classes": classes,
         "mappings": maps,
         "sources": _source_counts(db, task),

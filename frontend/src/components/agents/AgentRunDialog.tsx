@@ -19,6 +19,7 @@ import ClassMap, { guess, useAutoMapped } from "./ClassMap";
 import CpuConfirm, { refusalOf, type CardRefusal } from "../hardware/CpuConfirm";
 import { VerdictChip, gb, short, verdictLook } from "./GpuVerdict";
 import ScoutOverview from "./ScoutOverview";
+import RunVideoPicker from "./RunVideoPicker";
 import { sampledCount } from "./scoutMath";
 import { leftText, reelLine, runPct } from "../mag/tasks/tasks";
 
@@ -166,17 +167,7 @@ export default function AgentRunDialog({ taskId, initial, onClose, onStarted }: 
     }
   };
 
-  const videoList = (
-    <div className="ar-list">
-      {eligible.length === 0 && <p className="t-xs t-faint">Подходящих роликов нет.</p>}
-      {eligible.map((v) => (
-        <Check key={v.id} checked={videos.has(v.id)} onChange={(on) => setVideos((old) => toggled(old, v.id, on))}>
-          <span className="ui-mono t-ell" title={v.file_name}>{v.file_name}</span>
-          <span className="t-xs t-faint">{v.frames == null ? "—" : count(v.frames, "кадр", "кадра", "кадров")}<Sep />{v.mode === "cut" ? "нарезка" : "разметка"}</span>
-        </Check>
-      ))}
-    </div>
-  );
+  const videoList = <RunVideoPicker key={mode} rows={eligible} tags={ctx?.tags ?? []} value={videos} onChange={setVideos} />;
   const numField = (label: string, value: number, set: (v: number) => void, props: { min: number; max: number; step?: number; integer?: boolean }) => (
     <Field label={label}>
       {(id) => <NumInput id={id} className="ui-input ui-ctl ui-mono" value={value} {...props} onValue={(v) => v !== undefined && set(v)} />}

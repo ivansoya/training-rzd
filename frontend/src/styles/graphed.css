@@ -772,6 +772,19 @@ button.ep-bx:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px
 .ar-modes { display: flex; flex-direction: column; gap: 8px; }
 .ar-list { display: flex; flex-direction: column; gap: 6px; }
 .ar-list .ui-check-l > span { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.ar-videos { display: grid; gap: 8px; min-width: 0; }
+.ar-video-tools, .ar-video-summary { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 10px; min-width: 0; }
+.ar-video-tools > .ui-inp { flex: 1 1 190px; min-width: 0; }
+.ar-video-summary { justify-content: space-between; }
+.ar-video-list { max-height: 240px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.ar-video-list > .ui-check-l { min-width: 0; flex-shrink: 0; }
+.ar-video-list .ui-check-l > span { flex: 1; }
+.ar-video-meta { flex-shrink: 0; white-space: nowrap; }
+.ar-videos .mag-pager { margin: 0; }
+@media (max-width: 600px) {
+  .ar-video-list .ui-check-l > span { flex-direction: column; align-items: stretch; gap: 2px; }
+  .ar-video-list > .ui-check-l { align-items: flex-start; }
+}
 .ar-map { display: flex; flex-direction: column; gap: 6px; }
 .ar-map-h { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 13px; }
 .ar-map .ui-table td { height: 40px; }

@@ -27,7 +27,11 @@ const seedImages = () => [
     source_time_ms: i * 5000, task_status: i === 3 ? "empty" : "annotated", tag_ids: ["station"], boxes: [],
     width: 1920, height: 1080, size_bytes: 100000, annotations: 0, accepted: false, rev: 0 })),
 ];
-let images = seedImages();
+let images = seedImages(), runVideos = null, started = null;
+const runClasses = [{ id: "cls", class_index: 0, name: "Человек", color: "#e5484d" }];
+const runAgents = [{ id: "agent", name: "Искра · проверка списка", head: "version", group: "project", mine: true, owner: "Соя Иван",
+  verdict: { state: "fits", want_mb: 1024, card: "test", reason: "Влезает" },
+  versions: [{ id: "version", version: 2, created_at: created, classes: [{ id: "cls", name: "Человек", lock: "cls" }] }] }];
 const reviewed = (i) => ["annotated", "empty"].includes(i.task_status) && !i.boxes.some((b) => b.pending);
 const countOf = (list) => ({ total: list.length, new: list.filter((i) => i.task_status === "new").length,
   annotated: list.filter((i) => i.task_status === "annotated").length, empty: list.filter((i) => i.task_status === "empty").length,
@@ -81,7 +85,12 @@ try {
     }
     else if (path === `/api/tasks/${taskId}/events`) data = { events: [] };
     else if (path === `/api/tasks/${taskId}/questions`) data = { questions: [], can_ask: !readOnly };
-    else if (path === `/api/agents/tasks/${taskId}`) data = { agents: [], classes: [], mappings: {}, sources: {}, runs: [], videos: [], can_run: !readOnly, resources: { cards: [], queued: 0 } };
+    else if (path === `/api/agents/tasks/${taskId}`) data = { agents: runVideos ? runAgents : [], classes: runClasses, mappings: {}, sources: {}, runs: [], videos: runVideos ?? [], tags, can_run: !readOnly, resources: { cards: [], queued: 0 } };
+    else if (path === `/api/agents/tasks/${taskId}/runs` && request.method() === "POST") {
+      started = request.postDataJSON();
+      data = { id: "test-run", status: "stopped", processed: 0, total: 0, stats: {}, agent: "Искра", version: 2,
+        sources: [], videos: started.videos, mode: started.mode, rate: null, error: null, queue_reason: null, created_at: created, finished_at: created };
+    }
     else if (path === `/api/agents/tasks/${taskId}/scouts`) data = { scouts: {} };
     else if (path === `/api/projects/${code}/tags`) data = { tags };
     else if (path === `/api/projects/${code}/classes`) data = { classes: [] };
@@ -231,6 +240,80 @@ try {
   await page.screenshot({ path: fileURLToPath(new URL("app-pagination-390.png", out)) });
   await page.setViewportSize({ width: 1440, height: 960 });
 
+  // Окно запуска: тысяча роликов не закрывает параметры прогона длинным списком.
+  runVideos = Array.from({ length: 1001 }, (_, i) => ({ id: `run-${i}`, file_name: `camera_${String(i).padStart(4, "0")}.mp4`,
+    mode: i < 1000 ? "cut" : "annotate", frames: 15000, tag_ids: [i % 2 ? "station" : "near"] }));
+  runVideos[0].file_name = "camera_close_2026-10-24_18-10-15_recovered.mp4";
+  await page.reload();
+  await expect(cut.locator(".tp-reel")).toHaveCount(50);
+  await page.keyboard.press("g");
+  await page.getByRole("dialog", { name: "Агент таски", exact: true }).getByRole("button", { name: "Разметить агентом…", exact: true }).click();
+  const runDialog = page.getByRole("dialog", { name: "Разметить агентом", exact: true });
+  await runDialog.getByRole("radio", { name: /^Разведка/ }).check();
+  const picker = runDialog.getByRole("region", { name: "Выбор роликов" });
+  const runRows = picker.getByRole("group", { name: "Ролики", exact: true }).locator(".ui-check-l");
+  await expect(runRows).toHaveCount(5);
+  const search = picker.getByRole("searchbox", { name: "Поиск роликов" });
+  await search.fill("CAMERA_0999");
+  await expect(runRows).toHaveCount(1);
+  await runRows.getByRole("checkbox").check();
+  await search.fill("");
+  await picker.getByRole("button", { name: "Фильтр по тагам" }).click();
+  await page.getByRole("checkbox", { name: "Станция", exact: true }).check();
+  await page.getByRole("button", { name: "Готово", exact: true }).click();
+  await picker.getByRole("checkbox", { name: /Выбрать найденные/ }).check();
+  await expect(picker.getByRole("status")).toContainText("Выбрано 500 из 1 001");
+  await picker.getByRole("button", { name: "Раскрыть список", exact: true }).click();
+  await expect(runRows).toHaveCount(20);
+  expect(await picker.locator(".ar-video-list").evaluate((n) => n.clientHeight)).toBeLessThanOrEqual(240);
+  await settle();
+  await page.screenshot({ path: fileURLToPath(new URL("agent-picker-expanded.png", out)) });
+  await picker.getByRole("button", { name: "25", exact: true }).click();
+  await expect(runRows.last()).toContainText("camera_0999.mp4");
+  await search.fill("camera_0999");
+  await expect(runRows).toHaveCount(1);
+  await search.fill("не существует");
+  await expect(runRows).toHaveCount(0);
+  await expect(picker).toContainText("Ролики не найдены");
+  await expect(picker.getByRole("status")).toContainText("вне фильтра: 500");
+  await picker.getByRole("button", { name: "Сбросить", exact: true }).click();
+  await expect(runRows.first()).toContainText(runVideos[0].file_name);
+  await expect(runRows).toHaveCount(20);
+  await picker.getByRole("button", { name: "Свернуть список", exact: true }).click();
+  await expect(runRows).toHaveCount(5);
+  for (const width of [909, 390]) {
+    await page.setViewportSize({ width, height: width === 909 ? 718 : 844 });
+    await settle();
+    expect(await runDialog.evaluate((n) => n.scrollWidth <= n.clientWidth)).toBe(true);
+    await page.screenshot({ path: fileURLToPath(new URL(`agent-picker-${width}.png`, out)) });
+  }
+  await page.setViewportSize({ width: 1440, height: 960 });
+  // Фильтр скрывает выбранное, но запуск получает весь явно выбранный набор.
+  await search.fill("camera_1000");
+  await expect(picker.getByRole("status")).toContainText("вне фильтра: 500");
+  await runDialog.getByRole("button", { name: "Разведать 500 роликов", exact: true }).click();
+  await expect(runDialog).toHaveCount(0);
+  expect(started.mode).toBe("scout");
+  expect(started.videos).toEqual(runVideos.filter((v) => v.tag_ids.includes("station")).map((v) => v.id));
+  await page.keyboard.press("g");
+  await page.getByRole("dialog", { name: "Агент таски", exact: true }).getByRole("button", { name: "Разметить агентом…", exact: true }).click();
+  await runDialog.getByRole("radio", { name: /^Разметка ролика/ }).check();
+  await expect(runRows).toHaveCount(1);
+  await expect(runRows.first()).toContainText("camera_1000.mp4");
+  await picker.getByRole("checkbox", { name: /Выбрать все/ }).check();
+  await expect(picker.getByRole("status")).toContainText("Выбрано 1 из 1");
+  await picker.getByRole("button", { name: "Снять выбор", exact: true }).click();
+  await expect(runDialog.getByRole("button", { name: "Разметить до 0 кадров", exact: true })).toBeDisabled();
+  await runDialog.getByRole("button", { name: "Отмена", exact: true }).click();
+  // Запуск из группы сохраняет исходные 1000 выбранных, но не берёт 51 ролик другой группы.
+  runVideos = videos.map((v) => ({ ...v, frames: 15000 }));
+  await cut.getByRole("button", { name: "Агент", exact: true }).click();
+  await runDialog.getByRole("radio", { name: /^Разведка/ }).check();
+  await expect(runRows).toHaveCount(5);
+  await expect(picker.getByRole("status")).toContainText("Выбрано 1 000 из 1 000");
+  await runDialog.getByRole("button", { name: "Отмена", exact: true }).click();
+  runVideos = null;
+
   empty = true; videos = seedVideos().map((v) => ({ ...v, frames: 0, segments: [] }));
   await page.reload();
   await expect(gallery).toContainText("Нарезанных кадров пока нет");
@@ -254,7 +337,7 @@ try {
     await page.goto(base + "/projects");
   }
   expect(errors).toEqual([]);
-  console.log("PASS: actual TaskPage, lazy pagination, status/tag/video filters, independent folds, model review, editor/navigation, retry, empty/no-cut-video states, read-only responsive layout");
+  console.log("PASS: TaskPage/gallery, agent picker 1001 videos, collapse/paging/search/tags, bulk/hidden selection and launch payload, annotate mode, initial group scope, responsive layout, editor/navigation, retry and empty/read-only states");
   if (unknown.size) console.log("Other stubbed endpoints:", [...unknown]);
 } catch (e) {
   console.error("Page errors:", errors, "Other endpoints:", [...unknown]);
