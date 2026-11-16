@@ -389,17 +389,10 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   // Призрак под курсором — одно состояние на рамку и ярлык, они подсвечиваются вместе
   const [ghostHot, setGhostHot] = useState<number | null>(null);
   useEffect(() => { setGhostHot(null); }, [ghosts]);
-  // Alt держат — значит целятся вставить вершину. Показываем, куда она встанет:
-  // не в курсор, а на грань, которую разделит. Иначе рука, промахнувшаяся мимо
-  // контура, вывернула бы его и не поняла почему.
+  // Под Alt показываем ближайшее ребро и точку на нём до нажатия.
   const [alt, setAlt] = useState(false);
-  const [insertAt, setInsertAt] = useState<
-    // `at` — куда встанет точка (курсор), `a`/`b` — концы грани, которую она
-    // разделит. Грань нужна не для того, чтобы посадить на неё точку, а чтобы
-    // показать, какое ребро сейчас разойдётся: место человек выбирает сам, а
-    // вот в какой промежуток кольца оно попадёт — решает геометрия.
-    { part: number; edge: number; at: Point; a: Point; b: Point } | null
-  >(null);
+  const [pointer, setPointer] = useState<{ clientX: number; clientY: number } | null>(null);
+  const pointerRef = useRef(pointer);
   // Контур, который рисуют прямо сейчас: точки уже поставлены, но кольцом он
   // ещё не стал. Живёт в холсте, а не у редактора: это состояние жеста.
   const [draft, setDraft] = useState<Ring>([]);
@@ -581,6 +574,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     const d = dragRef.current;
     dragRef.current = null;
     setDragKind(null);
+    setPointer(pointerRef.current);
     if (d?.kind === "maybe") {
       // Мышь не сдвинулась — это был клик по кадру, а не панорама.
       onAutoPoint?.({ x: d.ix, y: d.iy }, { shift: d.shift, negative: false, onBox: null });
@@ -609,16 +603,27 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   // окна, Alt+Tab), объект иначе продолжает ехать за курсором.
   useEffect(() => {
     function stop() { if (dragRef.current) finish(); }
-    function onShift(e: KeyboardEvent) { setShift(e.shiftKey); setAlt(e.altKey); }
+    function onShift(e: KeyboardEvent) {
+      setShift(e.shiftKey);
+      setAlt(e.altKey);
+      if (e.altKey) setPointer(pointerRef.current);
+    }
+    function blur() {
+      stop();
+      setShift(false);
+      setAlt(false);
+      pointerRef.current = null;
+      setPointer(null);
+    }
     window.addEventListener("pointerup", stop);
     window.addEventListener("pointercancel", stop);
-    window.addEventListener("blur", stop);
+    window.addEventListener("blur", blur);
     window.addEventListener("keydown", onShift);
     window.addEventListener("keyup", onShift);
     return () => {
       window.removeEventListener("pointerup", stop);
       window.removeEventListener("pointercancel", stop);
-      window.removeEventListener("blur", stop);
+      window.removeEventListener("blur", blur);
       window.removeEventListener("keydown", onShift);
       window.removeEventListener("keyup", onShift);
     };
@@ -653,7 +658,9 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     return () => window.removeEventListener("keydown", onKey, true);
   }, [draft.length, closeDraft]);
 
-  useEffect(() => { if (!alt) setInsertAt(null); }, [alt]);
+  function inFrame(p: { x: number; y: number }): Point {
+    return [Math.max(0, Math.min(p.x, width)), Math.max(0, Math.min(p.y, height))];
+  }
 
   function toImage(e: { clientX: number; clientY: number }) {
     const box = frameRef.current!.getBoundingClientRect();
@@ -686,27 +693,48 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     setDraft((d) => [...d, p]);
   }
 
-  /** Поставить вершину туда, где её показывает подсказка. Возвращает `true`,
-   *  если вставка случилась — тогда нажатие больше ни во что не превращается. */
-  function insertHere(): boolean {
-    if (!insertAt || selected === null) return false;
+  function insertionAt(e: { clientX: number; clientY: number }) {
+    if (!editable || !onBoxes || auto || draftRef.current.length || selected === null || (multiSelected?.size ?? 0) > 1) return null;
     const s0 = boxesRef.current[selected];
-    if (!s0?.parts?.length) return false;
-    // Точка встаёт туда, куда показали, а в кольцо ложится между концами
-    // ближайшей грани: место — за человеком, порядок — за геометрией.
-    const parts = poly.insertVertex(s0.parts, insertAt.part, insertAt.edge, insertAt.at);
+    if (!s0?.parts?.length || hidden?.has(s0.class_index) || hiddenItems?.has(selected)) return null;
+    const p = toImage(e);
+    const near = poly.nearestEdge(s0.parts, [p.x, p.y], splitParts ? selectedPart : null);
+    if (!near) return null;
+    const ring = s0.parts[near.part];
+    const a = ring[near.edge], b = ring[(near.edge + 1) % ring.length];
+    // Зона вставки постоянна на экране; у готовой вершины дубликат не нужен.
+    const distance = (a: Point, b: Point) => Math.hypot(
+      (a[0] - b[0]) * rect.w / width, (a[1] - b[1]) * rect.h / height
+    );
+    if (distance([p.x, p.y], near.at) > VERTEX_HIT ||
+        distance(near.at, a) <= VERTEX_R || distance(near.at, b) <= VERTEX_R) return null;
+    return { ...near, at: inFrame({ x: near.at[0], y: near.at[1] }), a, b };
+  }
+
+  const insertAt = alt && !dragKind && pointer ? insertionAt(pointer) : null;
+
+  /** Клик пересчитывает попадание: подсказка могла смениться без pointermove. */
+  function insertHere(e: ReactPointerEvent): void {
+    const hit = insertionAt(e);
+    if (!hit || selected === null) return;
+    const s0 = boxesRef.current[selected];
+    const parts = poly.insertVertex(s0.parts!, hit.part, hit.edge, hit.at);
     const next = [...boxesRef.current];
     next[selected] = { ...s0, parts, ...(poly.bounds(parts) || {}) };
+    boxesRef.current = next;
     onBoxes?.(next);
-    setInsertAt(null);
-    return true;
+    onSelect?.(selected, hit.part);
+    const p = toImage(e);
+    begin(e, { kind: "vertex", i: selected, part: hit.part, vertex: hit.edge + 1,
+      dx: p.x - hit.at[0], dy: p.y - hit.at[1] });
   }
 
   function onStageDown(e: ReactPointerEvent<HTMLDivElement>) {
     // Alt — «вставить вершину». Проверяем раньше всего: под ним нажатие не
     // рисует, не выделяет и не панорамит.
-    if (e.button === 0 && e.altKey && editable && insertHere()) {
+    if (e.button === 0 && e.altKey && editable && !auto) {
       e.preventDefault();
+      insertHere(e);
       return;
     }
     // Shift плюс правая кнопка — «этого участка в объекте нет». Только в
@@ -744,7 +772,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     }
     if (tool === "polygon" && activeClass !== null) {
       const p = toImage(e);
-      addPoint([p.x, p.y]);
+      addPoint(inFrame(p));
       return;
     }
     if (tool === "box" && activeClass !== null) {
@@ -759,39 +787,13 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   }
 
   function onStageMove(e: ReactPointerEvent<HTMLDivElement>) {
-    // Резинка до курсора: без неё не видно, каким получится следующее ребро.
+    pointerRef.current = { clientX: e.clientX, clientY: e.clientY };
+    if (e.altKey && !dragRef.current) setPointer(pointerRef.current);
+    setAlt(e.altKey);
+    setShift(e.shiftKey);
+    // Превью и клик используют тот же упор в кадр, что и перенос вершины.
     if (draftRef.current.length && !dragRef.current) {
-      const p = toImage(e);
-      setGhost([p.x, p.y]);
-    }
-    // Где встанет вершина по Alt. Ищем только в выбранном объекте — и, когда
-    // части выделяются по отдельности, только в выбранной его части: чужая
-    // грань не должна перехватывать вставку, даже если она ближе.
-    if (alt && !dragRef.current && editable && selected !== null) {
-      const s0 = boxesRef.current[selected];
-      const p = toImage(e);
-      const near = s0?.parts?.length
-        ? poly.nearestEdge(s0.parts, [p.x, p.y], splitParts ? selectedPart : null)
-        : null;
-      const ring = near ? s0!.parts![near.part] : null;
-      setInsertAt(
-        near && ring
-          ? {
-              part: near.part,
-              edge: near.edge,
-              // Точка встаёт туда, куда показывают, а не на грань: контур
-              // правят, чтобы он повторил край объекта, и проекция на прямую
-              // между старыми вершинами возвращала бы его ровно туда, откуда
-              // его тянут.
-              at: [
-                Math.max(0, Math.min(p.x, width)),
-                Math.max(0, Math.min(p.y, height)),
-              ],
-              a: ring[near.edge],
-              b: ring[(near.edge + 1) % ring.length],
-            }
-          : null
-      );
+      setGhost(inFrame(toImage(e)));
     }
     const d = dragRef.current;
     if (!d) return;
@@ -824,10 +826,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     if (!b) return;
 
     if (d.kind === "vertex") {
-      const parts = poly.moveVertex(b.parts || [], d.part, d.vertex, [
-        Math.max(0, Math.min(p.x - d.dx, width)),
-        Math.max(0, Math.min(p.y - d.dy, height)),
-      ]);
+      const parts = poly.moveVertex(b.parts || [], d.part, d.vertex,
+        inFrame({ x: p.x - d.dx, y: p.y - d.dy }));
       next[d.i] = { ...b, parts, ...(poly.bounds(parts) || {}) };
       onBoxes?.(next);
       return;
@@ -919,6 +919,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       ref={stageRef}
       onPointerDown={onStageDown}
       onPointerMove={onStageMove}
+      onPointerLeave={() => { pointerRef.current = null; setPointer(null); setGhost(null); }}
       onPointerUp={finish}
       onContextMenu={(e) => e.preventDefault()}
     >
@@ -1133,10 +1134,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                 })
               )}
 
-              {/* Куда встанет вершина под Alt — прямо под курсором. Усы к
-                  концам грани показывают, какое ребро при этом разойдётся:
-                  место выбирает человек, промежуток кольца — геометрия.
-                  Подсказка событий не ловит, нажатие обрабатывает сцена. */}
+              {/* Alt подсвечивает ребро и точное место вставки на нём.
+                  Нажатие начинает перенос новой вершины тем же жестом. */}
               {on && alt && insertAt && editable && (() => {
                 const [cx, cy] = sx(insertAt.at[0], insertAt.at[1]);
                 const [ax, ay] = sx(insertAt.a[0], insertAt.a[1]);
@@ -1246,6 +1245,9 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   каждом промежутке, и линия читается как чередование цвета
                   класса с чёрным — то есть как два цвета вместо одного. */}
               <path className="mag-cv-line" d={path} />
+              {ghost && !closing && (
+                <path className="mag-cv-new" d={diamond(...sx(ghost[0], ghost[1]), VERTEX_R)} />
+              )}
               {draft.map((p, k) => {
                 const [cx, cy] = sx(p[0], p[1]);
                 const first = k === 0;
