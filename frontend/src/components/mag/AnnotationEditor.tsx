@@ -813,10 +813,10 @@ export default function AnnotationEditor({
   // Сколько кадров списка ещё на проверке — для сжатой плашки на кадре без непроверенного
   const reviewLeft = flagged().filter(Boolean).length;
 
-  /** Кадры с любыми рамками — на проверке, принятыми, своими; ход [ и ] (отзыв 20.10.2026: принятые не пропускать). */
+  /** Кадры с разметкой или явной пометкой «Пусто»; ход [ и ]. */
   const annotatedFlags = useCallback(
-    () => images.map((im, i) => (i === index ? boxesRef.current.length > 0
-      : im.task_status !== "deleted" && passes(i) && (im.boxes || []).length > 0)),
+    () => images.map((im, i) => (i === index ? boxesRef.current.length > 0 || im.task_status === "empty"
+      : im.task_status !== "deleted" && passes(i) && ((im.boxes || []).length > 0 || im.task_status === "empty"))),
     [images, index, passes]
   );
 

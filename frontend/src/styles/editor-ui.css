@@ -300,7 +300,9 @@
   background: var(--primary); clip-path: polygon(0 0, 100% 0, 50% 100%);
 }
 .ve-cov { position: absolute; top: 11px; height: 8px; border-radius: 2px; background: var(--st-done); pointer-events: none; }
-.ve-empty { position: absolute; top: 6px; width: 3px; height: 18px; margin-left: -1.5px; border-radius: 1px; background: var(--st-empty); }
+.ve-empty { position: absolute; top: 6px; width: 13px; height: 18px; margin-left: -6.5px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.ve-empty::after { content: ""; position: absolute; inset: 0 5px; border-radius: 1px; background: var(--st-empty); }
+.ve-empty:hover::after, .ve-empty:focus-visible::after { inset: -3px 3px; }
 .ve-empty.off { opacity: .4; }
 .ve-heat { position: absolute; top: 9px; height: 12px; border-radius: 2px; background: var(--scout); pointer-events: none; }
 /* Риски дорожек: ближайшая к курсору растёт — в неё попадают, не целясь в 3 px */

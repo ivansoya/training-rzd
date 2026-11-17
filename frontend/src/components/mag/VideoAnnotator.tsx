@@ -1111,7 +1111,7 @@ export default function VideoAnnotator({
 
   /** Кадры с одиночной разметкой и ключами треков — ход [ и ]. */
   const annotated = useMemo(
-    () => annotatedFrames(skel?.marks || [], data?.singles || [], (f) => loaded.has(chunkAt(chunks ?? [], f)), fltOff, data?.tracks),
+    () => annotatedFrames(skel?.marks || [], data?.singles || [], (f) => loaded.has(chunkAt(chunks ?? [], f)), fltOff, data?.tracks, data?.empty_frames),
     [skel, data, loaded, chunks, fltOff]);
 
   /** [ ] — к соседнему кадру с разметкой; с Shift — только на проверке. */

@@ -75,8 +75,8 @@ export function askedHere(list: Question[], videoId: string, frame: number, item
   return new Set(items.flatMap((it, i) => (ids.has(it.kind === "track" ? it.track.id : it.box.id) ? [i] : [])));
 }
 
-/** Кадры с одиночной разметкой и ключами треков; ход [ и ] (отзыв 20.10.2026:
- *  принятые не пропускать). Пришедший кусок судим по его рамкам с фильтром классов, не пришедший — по
+/** Кадры с одиночной разметкой, ключами треков и пометкой «Пусто»; ход [ и ]
+ *  (отзыв 20.10.2026: принятые не пропускать). Пришедший кусок судим по его рамкам с фильтром классов, не пришедший — по
  *  сводке каркаса: там классы есть только у непроверенных, и принятые неизвестного класса не прячем. */
 export function annotatedFrames(
   marks: readonly [number, number, number, number[]?][],
@@ -84,8 +84,9 @@ export function annotatedFrames(
   loaded: (frame: number) => boolean,
   off: Set<string>,
   tracks: readonly VideoTrack[] = [],
+  emptyFrames: readonly number[] = [],
 ): number[] {
-  const out = new Set<number>();
+  const out = new Set<number>(emptyFrames);
   for (const t of tracks) {
     if (off.has(classKey(t.class_index))) continue;
     const end = trackEnd(t);

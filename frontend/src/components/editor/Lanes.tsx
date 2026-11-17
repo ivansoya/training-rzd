@@ -266,8 +266,12 @@ export function Lanes({ tracks, numbers, frame, lastFrame, fps, labelOf, selecte
             {hatch}
             {covered.map(([a, b]) => <i key={a} className="ve-cov" style={span(a, b + 1)} />)}
             {marks.map((m) => (
-              <i key={m.frame} className={cx("ve-empty", !m.on && "off")} style={{ left: pct(m.frame) }}
-                title={m.on ? `Кадр ${m.frame}: фоновый` : `Кадр ${m.frame}: помечен фоновым, но на нём есть объект`} />
+              <button key={m.frame} type="button" className={cx("ve-empty", !m.on && "off")} style={{ left: pct(m.frame) }}
+                title={m.on ? `Кадр ${m.frame}: фоновый` : `Кадр ${m.frame}: помечен фоновым, но на нём есть объект`}
+                aria-label={`Перейти к кадру ${m.frame}, помеченному пустым`}
+                onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") e.stopPropagation(); }}
+                onClick={(e) => { e.stopPropagation(); onSeek(m.frame); }} />
             ))}
             {head}
           </div>

@@ -156,6 +156,13 @@ describe("[ и ] — кадры с любыми одиночными", () => {
     expect(nextFrame(frames, 5, -1)).toBe(170);
   });
 
+  it("пустые кадры входят в переходы независимо от классов и без повторов", () => {
+    const frames = annotatedFrames([], [single(20, 2)], loaded, new Set(["c:2"]), [], [40, 5, 40]);
+    expect(frames).toEqual([5, 40]);
+    expect(nextFrame(frames, 5, 1)).toBe(40);
+    expect(nextFrame(frames, 5, -1)).toBe(40);
+  });
+
   it("ключи вне жизни трека и ключи выключенного класса пропускает", () => {
     const cut = track({ start_frame: 11, end_frame: 19 });
     expect(annotatedFrames([], [], loaded, new Set(), [cut])).toEqual([]);
