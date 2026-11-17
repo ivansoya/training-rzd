@@ -15,6 +15,7 @@
 /* Скрытый плеер под превью отдельных кадров — во весь размер, но невидимый: сжатый в 1 px
    браузер не разжимает, и снимок кадра выходил пустым. */
 .vc-stage > video.vc-hidden { opacity: 0; pointer-events: none; }
+.vc-frame-wait { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; background: rgb(0 0 0 / .55); color: var(--on-frame); font-size: 13px; pointer-events: none; }
 .vc-ghosts .mk-ghost .mag-cv-line { stroke: var(--bc); stroke-width: 1.75; stroke-dasharray: 6 4; }
 .vc-ghosts .mk-ghost .mag-cv-hull { stroke-dasharray: 6 4; }
 .vc-ghosts .mk-labels .mag-cv-lb.ghost { opacity: 1; transform: translate(2px, 2px); border-style: solid; background: color-mix(in srgb, var(--bc) 22%, var(--stage)); color: var(--on-frame); }

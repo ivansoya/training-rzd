@@ -294,6 +294,12 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   const [unplayable, setUnplayable] = useState(false);
   const [at, setAt] = useState(startAtMs || 0);
   const [playing, setPlaying] = useState(false);
+  const [frameWaiting, setFrameWaiting] = useState(true);
+  const [slowFrame, setSlowFrame] = useState(false);
+  const frameWaitingRef = useRef(true);
+  const seekTarget = useRef<number | null>(startAtMs ?? null);
+  const seekBusy = useRef(false);
+  const position = useRef(startAtMs || 0);
   const [rate, setRate] = useState(1);
   const [trackW, setTrackW] = useState(0);
   const [full, setFull] = useState(false);
@@ -352,8 +358,15 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   };
 
   useEffect(() => {
-    if (startAtMs && videoRef.current) videoRef.current.currentTime = startAtMs / 1000;
+    if (startAtMs !== undefined) seek(startAtMs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [startAtMs]);
+
+  useEffect(() => {
+    if (!frameWaiting || unplayable) { setSlowFrame(false); return; }
+    const timer = window.setTimeout(() => setSlowFrame(true), 1000);
+    return () => window.clearTimeout(timer);
+  }, [frameWaiting, unplayable]);
 
   // Лента появляется вместе с окном, а не при монтировании: Radix вставляет его в портал позже.
   const trackBox = useCallback((el: HTMLDivElement | null) => {
@@ -379,7 +392,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     if (!playing) return;
     let id = 0;
     const tick = () => {
-      if (videoRef.current) setAt(videoRef.current.currentTime * 1000);
+      updatePosition();
       id = requestAnimationFrame(tick);
     };
     id = requestAnimationFrame(tick);
@@ -420,10 +433,45 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     return Math.round(view.start + ratio * view.span);
   }
 
+  function waitForFrame() {
+    frameWaitingRef.current = true;
+    setFrameWaiting(true);
+  }
+
+  function updatePosition() {
+    const v = videoRef.current;
+    if (!v || frameWaitingRef.current) return;
+    position.current = v.currentTime * 1000;
+    setAt(position.current);
+  }
+
   function seek(ms: number) {
-    const t = Math.min(Math.max(0, ms), duration);
+    const v = videoRef.current;
+    const t = Math.min(Math.max(0, ms), Math.max(0, duration - 1));
+    position.current = t;
     setAt(t);
-    if (videoRef.current) videoRef.current.currentTime = t / 1000;
+    seekTarget.current = t;
+    waitForFrame();
+    if (!v || !v.readyState || seekBusy.current || v.seeking) return;
+    // Частые стрелки меняют цель, но не прерывают уже начатое разжатие.
+    seekBusy.current = true;
+    v.currentTime = t / 1000;
+  }
+
+  function frameReady() {
+    const v = videoRef.current;
+    if (!v || v.seeking || v.readyState < 2) return;
+    seekBusy.current = false;
+    const target = seekTarget.current;
+    if (target !== null && Math.abs(v.currentTime * 1000 - target) > 1) {
+      seek(target);
+      return;
+    }
+    seekTarget.current = null;
+    frameWaitingRef.current = false;
+    setFrameWaiting(false);
+    setSlowFrame(false);
+    updatePosition();
   }
 
   function pickScoutFrame(frame: number) {
@@ -436,7 +484,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
   }
 
   function navigateScout(dir: 1 | -1) {
-    const frame = Math.floor((videoRef.current?.currentTime ?? at / 1000) * scoutFps + 1e-6);
+    const frame = Math.floor(position.current * scoutFps / 1000 + 1e-6);
     const target = nextFrame(scoutFrames, frame, dir);
     if (target !== null) pickScoutFrame(target);
   }
@@ -445,7 +493,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     const v = videoRef.current;
     if (!v) return;
     v.pause();
-    seek(v.currentTime * 1000 + dir * frameMs);
+    seek(position.current + dir * frameMs);
   }
 
   function togglePlay() {
@@ -462,6 +510,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
 
   function addSingle() {
     const v = videoRef.current;
+    if (frameWaitingRef.current || v?.seeking) return;
     const now = v ? v.currentTime * 1000 : at;
     // На последней миллисекунде участок t…t+1 схлопнулся бы и кадр пропал молча.
     const ms = Math.min(Math.max(0, Math.round(now)), Math.max(0, duration - 1));
@@ -490,7 +539,7 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
     ? scoutFrameAt(found.checked, scoutCurrentFrame, true,
       Math.min(Math.ceil((found.step || 1) / 2), Math.round(scoutFps)))
     : null;
-  const ghostHits = scoutHere === null ? [] : scoutHits(found, scoutHere, colors, scoutOff);
+  const ghostHits = frameWaiting || scoutHere === null ? [] : scoutHits(found, scoutHere, colors, scoutOff);
   useEffect(() => setHighlightedHit(null), [scoutHere, scoutOff]);
   const navigateScoutRef = useRef(navigateScout);
   navigateScoutRef.current = navigateScout;
@@ -519,8 +568,10 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
       } else if (e.code === "ArrowLeft" || e.code === "ArrowRight") {
         e.preventDefault();
         const dir = e.code === "ArrowLeft" ? -1 : 1;
-        if (e.shiftKey) seek((videoRef.current?.currentTime ?? 0) * 1000 + dir * 1000);
-        else stepFrame(dir);
+        if (e.shiftKey) {
+          videoRef.current?.pause();
+          seek(position.current + dir * 1000);
+        } else stepFrame(dir);
       } else if (editable && e.code === "KeyF") {
         e.preventDefault();
         addSingle();
@@ -757,11 +808,15 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
       </>}>
       <div className="vc-body">
         <div className={cx("vc-left", full && "full")} ref={leftRef}>
-          <div className="vc-stage">
-            <video ref={videoRef} src={src} preload="metadata" muted onClick={togglePlay}
+          <div className="vc-stage" aria-busy={frameWaiting && !unplayable}>
+            <video ref={videoRef} src={src} preload="auto" muted onClick={togglePlay}
               onPlay={() => setPlaying(true)} onPause={() => setPlaying(false)}
-              onTimeUpdate={(e) => setAt((e.target as HTMLVideoElement).currentTime * 1000)}
-              onError={() => setUnplayable(true)} />
+              onTimeUpdate={updatePosition} onSeeking={waitForFrame} onWaiting={waitForFrame}
+              onSeeked={frameReady} onLoadedData={frameReady} onCanPlay={frameReady} onPlaying={frameReady}
+              onError={() => { setUnplayable(true); setFrameWaiting(false); setSlowFrame(false); }} />
+            {slowFrame && frameWaiting && !unplayable && <div className="vc-frame-wait" role="status">
+              <span className="vc-spin" aria-hidden="true" /><span>Загружаем кадр…</span>
+            </div>}
             {unplayable && (
               <div className="vc-unplayable" role="alert">
                 Браузер не воспроизводит этот формат — плеер останется чёрным. Участки можно отметить по киноленте ниже: кадры нарежет сервер.
@@ -818,7 +873,8 @@ export default function VideoCutModal({ taskId, video, editable, startAtMs, onCl
                     <Icon name="hand" size={14} />Рука
                   </button>
                 </div>
-                <Button size="sm" icon="image" kbd="F" onClick={addSingle} title="Снять кадр на позиции головки">Кадр</Button>
+                <Button size="sm" icon="image" kbd="F" onClick={addSingle} disabled={frameWaiting}
+                  title={frameWaiting ? "Дождитесь загрузки кадра" : "Снять кадр на позиции головки"}>Кадр</Button>
               </>
             )}
             <span className="grow" />
