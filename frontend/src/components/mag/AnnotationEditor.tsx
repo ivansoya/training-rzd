@@ -37,7 +37,7 @@ import { SPLIT_LABEL } from "./frames/FrameFilters";
 import type { AutoRefine } from "../../auth/api";
 import type { TaskBox, TaskPerson } from "../../auth/api";
 import { Link } from "react-router-dom";
-import { AnchorButton, Button, LinkButton, Notice, StackBar, Switch, cx } from "../../ui";
+import { AnchorButton, Badge, Button, LinkButton, Notice, StackBar, Switch, cx } from "../../ui";
 import { plural, ru } from "../ru";
 import AutoSettings from "../editor/AutoSettings";
 import ClassPicker from "../editor/ClassPicker";
@@ -53,7 +53,7 @@ import AgentSetupDialog from "../agents/AgentSetupDialog";
 import {
   agentGroups, confirmAll, confirmWhere, nextFlagged, pendingCount, rejectAll, rejectWhere, settlePending,
 } from "../editor/review";
-import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad } from "../editor/look";
+import { STATUS_LOOK, digitClass, isTyping, ownsArrows, progressOf, stagePad, statusLook } from "../editor/look";
 import { detachContour, mergeContours, togglePolygonSelection } from "../editor/shapes";
 import type { KeyGroup } from "../editor/look";
 import type { QuestionsApi } from "./questions/useQuestions";
@@ -1459,6 +1459,7 @@ export default function AnnotationEditor({
   const title = ds ? ds.title : scope.kind === "task" ? scope.taskName : "";
   // У кадра архива состояния нет — с объектами он «размечен»
   const shownStatus = ds && image.task_status === "new" && boxes.length ? "annotated" : image.task_status;
+  const frameNotice = shownStatus === "deleted" || shownStatus === "skipped" ? statusLook(shownStatus) : null;
   const autoTitle = auto.state === "ready" ? undefined
     : auto.state === "error" ? `Модель недоступна: ${auto.error || "неизвестная ошибка"}` : "Модель готовится…";
   // Обсуждения кадра: развёрнуто выбранное, его нет здесь — первое открытое
@@ -1533,6 +1534,9 @@ export default function AnnotationEditor({
           imageId={image.id}
           viewKey="frames"
           fileName={image.file_name}
+          frameNotice={frameNotice && (
+            <Badge tone={frameNotice.color} icon={shownStatus === "deleted" ? "trash" : "clock"}>{frameNotice.label}</Badge>
+          )}
           width={iw}
           height={ih}
           boxes={boxes}

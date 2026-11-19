@@ -62,6 +62,20 @@
 .mag-cv.cur-grabbing { cursor: grabbing; }
 .mag-cv.cur-auto { cursor: crosshair; }
 
+.mag-cv-frame-notice {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  background: rgb(0 0 0 / 38%);
+}
+.mag-cv-frame-notice .ui-badge {
+  padding: 6px 12px;
+  background: var(--card);
+  box-shadow: var(--shadow-float);
+}
+
 /* ===== Слой разметки =====
    Один SVG поверх сцены и вне трансформа: объекты, якоря, вершины, подсказки
    модели. Слой событий не ловит — их ловят только нарисованные фигуры, иначе

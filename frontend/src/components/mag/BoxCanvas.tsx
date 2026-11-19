@@ -246,6 +246,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
    *  здесь, в памяти. Владеет им хозяин: холст только рисует. */
   bitmap?: ImageBitmap | null;
   fileName?: string;
+  frameNotice?: ReactNode;
   width: number;
   height: number;
   boxes: CanvasShape[];
@@ -331,7 +332,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, viewKey, src, bitmap, fileName, width, height, boxes, labelOf, captionOf, agentOf, asked, dashed, hidden, hiddenItems,
+    imageId, viewKey, src, bitmap, fileName, frameNotice, width, height, boxes, labelOf, captionOf, agentOf, asked, dashed, hidden, hiddenItems,
     labels = true, editable: canEdit = false, waiting = false, tool = "select", auto = false,
     autoMode = "points", autoPoints, autoPreview = null, activeClass = null,
     selected = null, multiSelected, selectedPart = null, splitParts = false, canMovePoly = false,
@@ -952,6 +953,12 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           )}
         </div>
       </div>
+
+      {frameReady && frameNotice && (
+        <div className="mag-cv-frame-notice" style={{ left: rect.l, top: rect.t, width: rect.w, height: rect.h }}>
+          {frameNotice}
+        </div>
+      )}
 
       {/* Разметка целиком: объекты, якоря, вершины, подсказки модели. Слой не
           ловит события сам — их ловят только нарисованные в нём фигуры, иначе
