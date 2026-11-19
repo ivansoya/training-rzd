@@ -12,21 +12,22 @@ export function EditorHead({ onBack, backLabel, title, sub, extra, children }: {
   backLabel: string;
   title: ReactNode;
   sub?: ReactNode;
-  /** Сразу за заголовком: прогресс таски. */
+  /** В центре шапки: прогресс таски. */
   extra?: ReactNode;
   /** Справа: запись, кнопки. */
   children?: ReactNode;
 }) {
   return (
-    <header className="ed-h">
-      <Button variant="ghost" size="sm" icon="chevL" aria-label={backLabel} onClick={onBack} />
-      <div className="ed-title">
-        <b className="t-ell">{title}</b>
-        {sub && <span className="t-ell">{sub}</span>}
+    <header className={cx("ed-h", !!extra && "ed-h-centered")}>
+      <div className="ed-h-start">
+        <Button variant="ghost" size="sm" icon="chevL" aria-label={backLabel} onClick={onBack} />
+        <div className="ed-title">
+          <b className="t-ell">{title}</b>
+          {sub && <span className="t-ell">{sub}</span>}
+        </div>
       </div>
-      {extra}
-      <span className="grow" />
-      {children}
+      {extra && <div className="ed-h-center">{extra}</div>}
+      <div className="ed-h-actions">{children}</div>
     </header>
   );
 }
