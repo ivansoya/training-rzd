@@ -9,6 +9,7 @@ import { useState, type ReactNode } from "react";
 import * as api from "../../api/agents";
 import { Badge, Button, Empty, Field, Icon, Popover, Seg, Select, Switch } from "../../ui";
 import { NumInput } from "../NumInput";
+import { SamContourDetail, samContourLabel } from "../editor/AutoSettings";
 import Sep, { withSep } from "../Sep";
 import {
   LIMITS, MAX_PASSES, SAM_DEFAULTS, SAM_MODELS, TEXT_IMGSZ, TEXT_MODELS, TILE_OVERLAP, TITLES, frameCalls, inputSide, mergeInputs,
@@ -132,7 +133,8 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
     const lim = LIMITS[d.kind]?.[key];
     const bad = offLimits(lim, p[key]);
     return (
-      <Field key={key} label={label} aside={aside} error={bad && lim ? `от ${decimal(lim.lo)} до ${decimal(lim.hi)}` : undefined}>
+      <Field key={key} label={label} aside={aside}
+        error={bad && lim ? `от ${decimal(lim.lo)} до ${decimal(lim.hi)}` : undefined}>
         {(id) => (
           <NumInput id={id} className="ui-input ui-ctl ui-mono" value={value} min={lim?.lo} max={lim?.hi} step={step} integer={lim?.int}
             allowEmpty={empty} placeholder={empty ? "без предела" : undefined} disabled={readOnly} aria-invalid={bad || undefined}
@@ -216,7 +218,8 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
       {tiling && fineFields}
     </div>
   );
-  const contour = [`до ${num(p.polygon_points, SAM_DEFAULTS.polygon_points)} точек`, `куски от ${num(p.min_area, SAM_DEFAULTS.min_area)} px²`,
+  const points = num(p.polygon_points, SAM_DEFAULTS.polygon_points);
+  const contour = [d.kind === "sam" ? `контур ${samContourLabel(points)}` : `до ${points} точек`, `куски от ${num(p.min_area, SAM_DEFAULTS.min_area)} px²`,
     ...(p.fill_holes !== false ? ["дыры залиты"] : [])];
 
   return (
@@ -415,7 +418,7 @@ export default function AgentInspector({ node, readOnly, weights, sam3Ready, set
               </Field>
               {number("score_min", "Порог маски", num(p.score_min, SAM_DEFAULTS.score_min), 0.05)}
               {number("min_area", "Кусок от, px²", num(p.min_area, SAM_DEFAULTS.min_area), 16)}
-              {number("polygon_points", "Точек контура до", num(p.polygon_points, SAM_DEFAULTS.polygon_points), 8)}
+              <SamContourDetail points={points} disabled={readOnly} onPoints={(polygon_points) => onChange({ polygon_points })} />
               {flag("fill_holes", "Заливать дыры", p.fill_holes !== false)}
             </>
           )}

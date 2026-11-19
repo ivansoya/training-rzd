@@ -1866,7 +1866,7 @@ export default function VideoAnnotator({
               disabled={frozen || auto.state !== "ready"} warming={auto.state === "starting"}
               title={autoTitle} onClick={pickAuto} />
             <ToolMenu label="Настройки полуавтомата" width={300}>
-              <AutoSettings refine={refine} onRefine={setRefine} polygon={tool === "polygon"} error={auto.error} />
+              <AutoSettings refine={refine} onRefine={setRefine} error={auto.error} />
             </ToolMenu>
             <AgentTool tool={agentTool} disabled={frozen || shown.lagging} onRun={() => void runAgent()}
               onMap={() => setSetupOpen(true)} />

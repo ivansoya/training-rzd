@@ -79,11 +79,55 @@ def mask_bounds(mask):
     return x0, y0, x1 - x0 + 1, y1 - y0 + 1
 
 
-def polygons_from_mask(mask, max_points=0):
+SAM_POLYGON_POINTS = 64
+
+
+def _limit_sam_contour(contour, budget):
+    import cv2
+    import numpy as np
+
+    # Убираем ступени растровой границы даже при запасе по числу точек.
+    smooth = cv2.approxPolyDP(contour, 1.0, True)
+    if cv2.contourArea(smooth) > 0:
+        if len(smooth) <= budget:
+            return smooth
+        low = 1.0
+    else:
+        if len(contour) <= budget:
+            return contour
+        low = 0.0
+    _, _, width, height = cv2.boundingRect(contour)
+    high = float(np.hypot(width, height))
+    best = None
+    for _ in range(16):
+        eps = (low + high) / 2
+        approx = cv2.approxPolyDP(contour, eps, True)
+        if len(approx) > budget:
+            low = eps
+        else:
+            high = eps
+            if cv2.contourArea(approx) > 0:
+                best = approx
+    if best is not None:
+        return best
+
+    # Если очередной допуск сразу сплющил кольцо в линию, сохраняем
+    # треугольник из исходных точек с максимальной высотой от выбранной базы.
+    points = contour.reshape(-1, 2).astype(np.int64)
+    axis = 0 if width >= height else 1
+    a, b = points[points[:, axis].argmin()], points[points[:, axis].argmax()]
+    along = b - a
+    offset = points - a
+    heights = np.abs(along[0] * offset[:, 1] - along[1] * offset[:, 0])
+    return np.array([a, b, points[heights.argmax()]], dtype=np.int32).reshape(-1, 1, 2)
+
+
+def polygons_from_mask(mask, max_points=0, *, adaptive=False):
     """Все куски маски кольцами точек.
 
     Бокс охватывает их все, и контур обязан показывать то же самое, иначе
-    рамка и обводка противоречат друг другу на одном экране.
+    рамка и обводка противоречат друг другу на одном экране. ``adaptive``
+    включает для SAM2 жёсткий лимит на часть с поправкой на её размер.
     """
     import cv2
 
@@ -94,11 +138,21 @@ def polygons_from_mask(mask, max_points=0):
         return []
     contours = sorted(contours, key=cv2.contourArea, reverse=True)[:MAX_PARTS]
     biggest = cv2.contourArea(contours[0]) or 1.0
+    if adaptive:
+        max_points = min(200, max(8, max_points or SAM_POLYGON_POINTS))
+        frame_h, frame_w = mask.shape
     out = []
     for contour in contours:
         if cv2.contourArea(contour) < biggest * PART_MIN_SHARE:
             continue
-        if max_points and len(contour) > max_points:
+        if adaptive:
+            _, _, width, height = cv2.boundingRect(contour)
+            # С половины кадра по любой стороне действует полный лимит.
+            # Длинный тонкий объект при этом не приравниваем к мелкой точке.
+            share = min(1.0, 2 * max(width / frame_w, height / frame_h))
+            budget = max(4, round(max_points * share))
+            contour = _limit_sam_contour(contour, budget)
+        elif max_points and len(contour) > max_points:
             # Подбираем допуск, пока точек не станет достаточно мало.
             perimeter = cv2.arcLength(contour, True)
             eps = 0.001

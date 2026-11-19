@@ -756,7 +756,7 @@ def outline(det, masks, scores, params, whole=False):
     clipped = contours.clean_mask(clipped, int(p["min_area"]), bool(p["fill_holes"]))
     if clipped.sum() < MASK_MIN_SHARE * w * h:
         return det
-    parts = contours.polygons_from_mask(clipped, int(p["polygon_points"]))
+    parts = contours.polygons_from_mask(clipped, int(p["polygon_points"]), adaptive=not whole)
     if not parts:
         return det
     return {**det, "box": contours.mask_bounds(clipped), "parts": parts, "sam": round(score, 3)}

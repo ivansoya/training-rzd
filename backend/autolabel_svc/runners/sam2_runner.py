@@ -179,4 +179,4 @@ class Sam2Runner:
         обучающего набора и агент разметки, и один и тот же вагон обязан
         выглядеть одинаково везде.
         """
-        return contours.polygons_from_mask(mask, max_points)
+        return contours.polygons_from_mask(mask, max_points, adaptive=True)

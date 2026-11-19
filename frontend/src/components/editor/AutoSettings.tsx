@@ -10,14 +10,29 @@ const DETAIL = [
   { value: "subpart", label: "Подчасть" },
 ] as const;
 
-export default function AutoSettings({ refine, onRefine, mode, onMode, polygon, afterSelect, onAfterSelect, error }: {
+const CONTOUR_BASE = 64;
+const factorFormat = new Intl.NumberFormat("ru-RU", { maximumFractionDigits: 4 });
+export const samContourLabel = (points: number) => `${factorFormat.format(points / CONTOUR_BASE)}×`;
+
+export function SamContourDetail({ points = CONTOUR_BASE, onPoints, disabled }: {
+  points?: number;
+  onPoints: (points: number) => void;
+  disabled?: boolean;
+}) {
+  return <Field label="Коэффициент детализации контура" hint="1× — стандартная детализация. Чем ниже коэффициент, тем проще контур."
+    aside={<span className="ui-mono">{samContourLabel(points)}</span>}>
+    {(id) => <Range id={id} min={8 / CONTOUR_BASE} max={200 / CONTOUR_BASE} step={1 / CONTOUR_BASE}
+      value={points / CONTOUR_BASE} aria-valuetext={samContourLabel(points)} disabled={disabled}
+      onChange={(e) => onPoints(Math.round(Number(e.target.value) * CONTOUR_BASE))} />}
+  </Field>;
+}
+
+export default function AutoSettings({ refine, onRefine, mode, onMode, afterSelect, onAfterSelect, error }: {
   refine: AutoRefine;
   onRefine: (next: AutoRefine) => void;
   /** Вид ввода; без него — только точки. */
   mode?: "points" | "box";
   onMode?: (m: "points" | "box") => void;
-  /** Контурный инструмент: число точек влияет только на контур. */
-  polygon: boolean;
   afterSelect?: boolean;
   onAfterSelect?: (v: boolean) => void;
   error?: string | null;
@@ -49,14 +64,7 @@ export default function AutoSettings({ refine, onRefine, mode, onMode, polygon, 
             onChange={(e) => set({ min_area: Number(e.target.value) })} />
         )}
       </Field>
-      {polygon && (
-        <Field label="Точек в контуре" aside={<span className="ui-mono">{refine.polygon_points ?? 64}</span>}>
-          {(id) => (
-            <Range id={id} min={8} max={200} step={4} value={refine.polygon_points ?? 64}
-              onChange={(e) => set({ polygon_points: Number(e.target.value) })} />
-          )}
-        </Field>
-      )}
+      <SamContourDetail points={refine.polygon_points} onPoints={(polygon_points) => set({ polygon_points })} />
       <label className="ed-set-row">
         <span>Закрывать дыры в объекте</span>
         <Switch label="Закрывать дыры в объекте" checked={!!refine.fill_holes} onChange={(v) => set({ fill_holes: v })} />

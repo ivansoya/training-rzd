@@ -1597,7 +1597,7 @@ export default function AnnotationEditor({
               title={autoTitle} onClick={pickAuto} />
             <ToolMenu label="Настройки полуавтомата" width={300}>
               <AutoSettings refine={refine} onRefine={setRefine} mode={autoMode}
-                onMode={(m) => { setAutoMode(m); clearAuto(); }} polygon={tool === "polygon"}
+                onMode={(m) => { setAutoMode(m); clearAuto(); }}
                 afterSelect={afterCommit === "select"} onAfterSelect={(v) => setAfterCommit(v ? "select" : "new")}
                 error={auto.error} />
             </ToolMenu>
