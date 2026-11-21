@@ -72,7 +72,8 @@ export function parts(files: { size: number }[], maxFiles = PART_FILES, maxBytes
 export async function droppedFiles(dt: DataTransfer): Promise<File[]> {
   const entries = Array.from(dt.items).filter((i) => i.kind === "file").map((i) => i.webkitGetAsEntry?.() ?? null);
   const loose = Array.from(dt.files);
-  if (!entries.length || entries.some((e) => !e)) return loose;
+  if (!entries.length || entries.some((e) => !e) ||
+    (entries.length === loose.length && entries.every((e) => e?.isFile))) return loose;
   const out: File[] = [];
   for (const e of entries) await walk(e!, out);
   return out;
@@ -96,30 +97,40 @@ async function walk(e: FileSystemEntry, out: File[]): Promise<void> {
 export function useFileDrag(): Dragged | null {
   const [drag, setDrag] = useState<Dragged | null>(null);
   useEffect(() => {
-    let quiet = 0;
+    let active = false;
+    const clear = () => {
+      active = false;
+      setDrag(null);
+    };
+    const leave = (e: DragEvent) => {
+      if (!e.relatedTarget) clear();
+    };
     const files = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
     const over = (e: DragEvent) => {
       if (!files(e)) return;
       // Мимо зон файл не открывается во вкладке вместо страницы; зона, принявшая его, своё уже сказала
       if (!e.defaultPrevented) { e.preventDefault(); e.dataTransfer!.dropEffect = "none"; }
       // Читаем в самом событии: после него браузер список закрывает
-      const now = draggedOf(e.dataTransfer!.items);
-      setDrag((prev) => prev ?? now);
-      window.clearTimeout(quiet);
-      quiet = window.setTimeout(() => setDrag(null), 400);
+      if (active) return;
+      active = true;
+      setDrag(draggedOf(e.dataTransfer!.items));
     };
     const drop = (e: DragEvent) => {
       if (!files(e)) return;
       e.preventDefault();
-      window.clearTimeout(quiet);
-      setDrag(null);
+      clear();
     };
     window.addEventListener("dragover", over);
+    window.addEventListener("dragleave", leave);
+    window.addEventListener("dragend", clear);
+    window.addEventListener("blur", clear);
     window.addEventListener("drop", drop);
     return () => {
       window.removeEventListener("dragover", over);
+      window.removeEventListener("dragleave", leave);
+      window.removeEventListener("dragend", clear);
+      window.removeEventListener("blur", clear);
       window.removeEventListener("drop", drop);
-      window.clearTimeout(quiet);
     };
   }, []);
   return drag;

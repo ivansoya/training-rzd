@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import Pager from "../Pager";
+
+const PAGE_SIZE = 50;
 import TagPicker from "./TagPicker";
 import type { Tag } from "../../api/tags";
 import { count } from "../ru";
@@ -49,7 +52,9 @@ export default function UploadImagesModal({
 
   useEscape(onCancel);
 
-  const bytes = files.reduce((sum, f) => sum + f.size, 0);
+  const [page, setPage] = useState(0);
+  const start = page * PAGE_SIZE;
+  const bytes = useMemo(() => files.reduce((sum, f) => sum + f.size, 0), [files]);
   const personal = Object.values(own).filter((v) => v !== undefined).length;
 
   function send() {
@@ -89,7 +94,9 @@ export default function UploadImagesModal({
 
         {expanded && (
           <div className="up-list">
-            {files.map((file, i) => (
+            {files.slice(start, start + PAGE_SIZE).map((file, offset) => {
+              const i = start + offset;
+              return (
               <div className="up-row" key={`${file.name}-${i}`}>
                 <b title={file.name}>{file.name}</b>
                 <span>{fmtBytes(file.size)}</span>
@@ -103,9 +110,11 @@ export default function UploadImagesModal({
                   onCreated={onTagCreated}
                 />
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
+        {expanded && <Pager page={page} pages={Math.ceil(files.length / PAGE_SIZE)} onPage={setPage} />}
 
         <div className="mag-modal-foot">
           <button className="mag-ghost" type="button" onClick={onCancel}>
