@@ -281,7 +281,11 @@ function ReelAgent({ s, scout }: { s?: ReelState; scout: boolean }) {
 }
 
 /** Изображения, загруженные файлами, и копии кадров датасета (решения 14.10.2026). */
-export function FramesCard({ block, look, editable, run, agent, onAnnotate, onReview, code, fillable }: {
+export function FramesCard({ block, look, editable, run, agent, onAnnotate, onReview, code, fillable, taskId, tags, onFrameOpen, revision }: {
+  taskId: string;
+  tags: Tag[];
+  onFrameOpen: OpenCutFrame;
+  revision: unknown;
   block: SourceBlock;
   /** Как рисовать числа блока: заготовка, бледное из кеша, переливание в пути. */
   look: Look;
@@ -294,6 +298,7 @@ export function FramesCard({ block, look, editable, run, agent, onAnnotate, onRe
   /** У копий датасета: ссылки на датасеты и «Добрать из датасета». */
   code?: string;
   fillable?: boolean;
+  const [showFrames, setShowFrames] = useState(false);
 }) {
   const files = block.kind !== "cut";
   const copies = block.kind === "dataset";
@@ -329,6 +334,12 @@ export function FramesCard({ block, look, editable, run, agent, onAnnotate, onRe
           ))}
         </div>
       )}
+      {block.key === "files" && block.total > 0 && <>
+        <Button size="sm" variant="ghost" icon="images" aria-expanded={showFrames}
+          onClick={() => setShowFrames(!showFrames)}>{showFrames ? "Скрыть кадры" : "Показать кадры"}</Button>
+        {showFrames && <CutFramesGallery taskId={taskId} videos={[]} uploaded tags={tags} open total={block.total}
+          revision={revision} onOpen={onFrameOpen} />}
+      </>}
       <Progress c={block.counts} known={block.known} look={look} />
       {copies && block.known && (
         <span className="t-xs t-muted">

@@ -588,7 +588,7 @@ export default function TaskPage() {
         onCut={setCutting} onDelete={removeVideo} onVideoTags={saveVideoTags}
         onTagCreated={(t) => setTags((p) => [...p, t])} />
     ) : (
-      <FramesCard key={b.key} block={b} look={numbersLook} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
+      <FramesCard key={b.key} taskId={task.id} tags={tags} revision={numbers?.by_source} onFrameOpen={openCutFrame} block={b} look={numbersLook} editable={editable} onAnnotate={() => openFiltered({ source: b.key })}
         run={runOn(b.key, [], ["frames"])} agent={agent} onReview={() => review(b.key)}
         code={task.project.code} fillable={fillable} />
     ) })),

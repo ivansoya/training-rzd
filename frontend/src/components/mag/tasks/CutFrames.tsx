@@ -75,22 +75,23 @@ function statusOf(image: TaskImage) {
   return { text: "Не размечен", cls: "new", icon: null };
 }
 
-export function CutFramesGallery({ taskId, videos, tags, videoId, open, total, revision, onOpen }: {
-  taskId: string; videos: TaskVideoItem[]; tags: Tag[]; videoId?: string; open: boolean; total: number;
+export function CutFramesGallery({ taskId, videos, tags, videoId, uploaded = false, open, total, revision, onOpen }: {
+  taskId: string; videos: TaskVideoItem[]; tags: Tag[]; videoId?: string; uploaded?: boolean; open: boolean; total: number;
   revision: unknown; onOpen: OpenCutFrame;
 }) {
   const [source, setSource] = useState("videos"), [selectedTags, setTags] = useState<string[]>([]);
   const [review, setReview] = useState<"all" | "new" | "done">("all"), [view, setView] = useState<"grid" | "list">("grid");
-  const chosen = videoId ?? (videos.some((v) => v.id === source && v.frames > 0) ? source : "videos");
+  const fixedSource = uploaded ? "files" : videoId;
+  const chosen = fixedSource ?? (videos.some((v) => v.id === source && v.frames > 0) ? source : "videos");
   const query: TaskImageQuery = { source: chosen, tag_ids: [...selectedTags].sort(), review };
   const page = useFrames(taskId, query, open && total > 0, revision);
-  const filtered = chosen !== (videoId ?? "videos") || selectedTags.length > 0 || review !== "all";
+  const filtered = chosen !== (fixedSource ?? "videos") || selectedTags.length > 0 || review !== "all";
   const reset = () => { setSource("videos"); setTags([]); setReview("all"); };
   const groups = [{ key: "new" as const, label: "Не размечены" }, { key: "done" as const, label: "Размечены" }]
     .map((g) => ({ ...g, rows: page.rows.filter((image) =>
       (statusOf(image).cls === "done" || statusOf(image).cls === "empty") === (g.key === "done")) }));
   const num = (n: number | null) => n == null ? "…" : ru(n);
-  return <div className={cx("tp-cut-gallery", total === 0 && "is-empty")} aria-label={videoId ? "Кадры ролика" : "Все нарезанные кадры"}>
+  return <div className={cx("tp-cut-gallery", total === 0 && "is-empty")} aria-label={uploaded ? "Загруженные изображения" : videoId ? "Кадры ролика" : "Все нарезанные кадры"}>
     {total > 0 && <div className="tp-cut-toolbar">
       <Seg label="Состояние кадров" value={review} onChange={setReview} size="sm" options={[
         { value: "all", label: <>Все <span className="tp-cut-filter-n">{page.counts ? ru(page.counts.new + page.counts.done) : "…"}</span></> },
@@ -98,7 +99,7 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, open, total, r
         { value: "done", label: <>Размечены <span className="tp-cut-filter-n">{num(page.counts?.done ?? null)}</span></> },
       ]} />
       <div className="tp-cut-filters">
-        {!videoId && <Select size="sm" label="Фильтр по ролику" value={chosen} onChange={setSource} options={[
+        {!fixedSource && <Select size="sm" label="Фильтр по ролику" value={chosen} onChange={setSource} options={[
           { value: "videos", label: "Все ролики" }, ...videos.filter((v) => v.frames > 0).map((v) => ({ value: v.id, label: v.file_name })),
         ]} />}
         <FilterTags tags={tags} value={selectedTags} onChange={setTags} />
@@ -121,11 +122,11 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, open, total, r
                   return <button key={image.id} className="tp-cut-tile" onClick={() => onOpen(image, query)}
                     aria-label={`${image.file_name}, ${state.text}`}>
                     <span className="tp-cut-picture"><img src={imageThumbUrl(image.id)} alt="" loading="lazy" />
-                      <span className="tp-cut-time">{fmtTime(image.source_time_ms ?? 0)}</span>
+                      {image.source_time_ms != null && <span className="tp-cut-time">{fmtTime(image.source_time_ms)}</span>}
                       {state.cls === "agent" && <span className="tp-cut-model">Модель</span>}</span>
                     <span className="tp-cut-caption"><span className="t-ell" title={image.file_name}>{image.file_name}</span>
                       <span className={cx("tp-cut-state", state.cls)}>{state.icon && <Icon name={state.icon} size={12} />}{state.text}</span></span>
-                    {!videoId && <span className="tp-cut-origin t-ell" title={video?.file_name}>{video?.file_name ?? "Ролик удалён"}</span>}
+                    {!fixedSource && <span className="tp-cut-origin t-ell" title={video?.file_name}>{video?.file_name ?? "Ролик удалён"}</span>}
                   </button>;
                 })}
               </div>
