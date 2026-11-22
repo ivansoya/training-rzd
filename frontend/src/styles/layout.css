@@ -668,7 +668,7 @@ a.pcard:hover { border-color: var(--input); }
 .tp-cut-gallery.is-empty { min-height: 120px; }
 .tp-cut-toolbar { display: flex; align-items: center; gap: 8px 12px; flex-wrap: wrap; justify-content: space-between; }
 .tp-cut-toolbar .ui-seg button { white-space: nowrap; }
-.tp-cut-filter-n { margin-left: 4px; color: var(--faint); font-size: 10px; }
+.tp-cut-filter-n { display: inline-block; margin-left: 4px; color: var(--faint); font-size: 10px; font-variant-numeric: tabular-nums; text-align: right; }
 .tp-cut-filters { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0; }
 .tp-cut-filters > .ui-select { max-width: 160px; }
 .tp-cut-view { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--border); border-radius: var(--r); }

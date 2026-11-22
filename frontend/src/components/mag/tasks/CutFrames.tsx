@@ -44,26 +44,30 @@ function useFrames(taskId: string, query: TaskImageQuery, enabled: boolean, revi
   const index = position.key === key ? position.index : 0;
   const requestKey = `${key}:${index}`;
   const blank = { rows: [] as TaskImage[], total: null as number | null,
-    counts: null as { new: number; done: number } | null, busy: true, error: null as string | null };
+    busy: true, error: null as string | null };
+  // Счётчики общие для всех страниц и состояний одного источника с теми же тагами.
+  const countsKey = JSON.stringify([taskId, query.source, query.tag_ids]);
   const [page, setPage] = useState({ key: requestKey, ...blank });
+  const [summary, setSummary] = useState({ key: countsKey, counts: null as { new: number; done: number } | null });
   const [retry, setRetry] = useState(0);
   useEffect(() => { setPosition({ key, index: 0 }); }, [key]);
   useEffect(() => {
     if (!enabled) return;
     const abort = new AbortController();
-    setPage({ key: requestKey, ...blank });
+    setPage((prev) => prev.key === requestKey ? { ...prev, busy: true, error: null } : { key: requestKey, ...blank });
     const { taskId: id, ...params } = JSON.parse(key);
     getTaskImages(id, { ...params, limit: PAGE, offset: index * PAGE }, abort.signal).then((got) => {
       if (abort.signal.aborted) return;
       const last = Math.max(0, Math.ceil(got.matched / PAGE) - 1);
       if (index > last) { setPosition({ key, index: last }); return; }
-      setPage({ key: requestKey, rows: got.images, total: got.matched, counts: got.review_counts ?? null, busy: false, error: null });
+      setSummary({ key: countsKey, counts: got.review_counts ?? null });
+      setPage({ key: requestKey, rows: got.images, total: got.matched, busy: false, error: null });
     }, (e: Error) => {
-      if (!abort.signal.aborted) setPage({ key: requestKey, ...blank, busy: false, error: e.message });
+      if (!abort.signal.aborted) setPage((prev) => ({ ...prev, busy: false, error: e.message }));
     });
     return () => abort.abort();
-  }, [key, index, requestKey, enabled, revision, retry]);
-  return { ...(page.key === requestKey ? page : blank), index,
+  }, [key, countsKey, index, requestKey, enabled, revision, retry]);
+  return { ...(page.key === requestKey ? page : blank), counts: summary.key === countsKey ? summary.counts : null, index,
     onPage: (next: number) => setPosition({ key, index: next }), retry: () => setRetry((n) => n + 1) };
 }
 
@@ -96,13 +100,14 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, uploaded = fal
   const reset = () => { setSource("videos"); setTags([]); setReview("all"); };
   const agentOff = actions?.agentBusy || (selectedTags.length > 0 && "Сбросьте фильтр по тагам для запуска агента")
     || (!videos.some((v) => (chosen === "videos" || v.id === chosen) && v.fresh > 0) && "Новых кадров нет");
-  const num = (n: number | null) => n == null ? "…" : ru(n);
+  const num = (n: number | null) => <span className="tp-cut-filter-n" style={{ minWidth: `${ru(total).length}ch` }}>
+    {n == null ? "…" : ru(n)}</span>;
   return <div className={cx("tp-cut-gallery", total === 0 && "is-empty")} aria-label={uploaded ? "Загруженные изображения" : videoId ? "Кадры ролика" : "Все нарезанные кадры"}>
     {total > 0 && <div className="tp-cut-toolbar">
       <Seg label="Состояние кадров" value={review} onChange={setReview} size="sm" options={[
-        { value: "all", label: <>Все <span className="tp-cut-filter-n">{page.counts ? ru(page.counts.new + page.counts.done) : "…"}</span></> },
-        { value: "new", label: <>Не размечены <span className="tp-cut-filter-n">{num(page.counts?.new ?? null)}</span></> },
-        { value: "done", label: <>Размечены <span className="tp-cut-filter-n">{num(page.counts?.done ?? null)}</span></> },
+        { value: "all", label: <>Все {num(page.counts ? page.counts.new + page.counts.done : null)}</> },
+        { value: "new", label: <>Не размечены {num(page.counts?.new ?? null)}</> },
+        { value: "done", label: <>Размечены {num(page.counts?.done ?? null)}</> },
       ]} />
       <div className="tp-cut-filters">
         {!fixedSource && <Select size="sm" label="Фильтр по ролику" value={chosen} onChange={setSource} options={[
@@ -140,7 +145,7 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, uploaded = fal
       </div>}
     {total > 0 && <>
       {page.error && <Notice tone="error" action={<Button size="sm" onClick={page.retry}>Повторить</Button>}>{page.error}</Notice>}
-      {page.busy && <p className="t-xs t-muted" role="status">Загружаю кадры…</p>}
+      {page.busy && page.total == null && <p className="t-xs t-muted" role="status">Загружаю кадры…</p>}
       {page.total != null && page.total > 0 && <>
         <span className="t-xs t-faint">Кадры {ru(page.index * PAGE + 1)}–{ru(page.index * PAGE + page.rows.length)} из {ru(page.total)}</span>
         <Pager page={page.index} pages={Math.ceil(page.total / PAGE)} onPage={page.onPage} disabled={page.busy} />
