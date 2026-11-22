@@ -16,5 +16,5 @@ tests/e2e/test-results/
 tests/e2e/playwright-report/
 graphify-out/
 generated/
-/.most/attachments/
+/.most/
 /docs/project-memory/
