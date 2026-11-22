@@ -70,8 +70,10 @@ export function parts(files: { size: number }[], maxFiles = PART_FILES, maxBytes
 
 /** Брошенное: файлы и папки со всем вложенным. Записи берутся до первого await — после события браузер список очищает. */
 export async function droppedFiles(dt: DataTransfer): Promise<File[]> {
-  const entries = Array.from(dt.items).filter((i) => i.kind === "file").map((i) => i.webkitGetAsEntry?.() ?? null);
   const loose = Array.from(dt.files);
+  // У папок MIME пустой. Для пачки обычных медиафайлов достаточно FileList.
+  if (loose.length && loose.length === dt.items.length && loose.every((f) => /^(image|video)\//.test(f.type))) return loose;
+  const entries = Array.from(dt.items).filter((i) => i.kind === "file").map((i) => i.webkitGetAsEntry?.() ?? null);
   if (!entries.length || entries.some((e) => !e) ||
     (entries.length === loose.length && entries.every((e) => e?.isFile))) return loose;
   const out: File[] = [];
@@ -89,7 +91,18 @@ async function walk(e: FileSystemEntry, out: File[]): Promise<void> {
   for (;;) {
     const batch = await new Promise<FileSystemEntry[]>((ok, bad) => reader.readEntries(ok, bad));
     if (!batch.length) return;
-    for (const c of batch) await walk(c, out);
+    for (let i = 0; i < batch.length;) {
+      if (!batch[i].isFile) {
+        await walk(batch[i++], out);
+        continue;
+      }
+      const pending: Promise<File>[] = [];
+      while (batch[i]?.isFile && pending.length < 32) {
+        const entry = batch[i++] as FileSystemFileEntry;
+        pending.push(new Promise((ok, bad) => entry.file(ok, bad)));
+      }
+      out.push(...await Promise.all(pending));
+    }
   }
 }
 
@@ -98,6 +111,7 @@ export function useFileDrag(): Dragged | null {
   const [drag, setDrag] = useState<Dragged | null>(null);
   useEffect(() => {
     let active = false;
+    let afterDrop = 0;
     const clear = () => {
       active = false;
       setDrag(null);
@@ -105,32 +119,37 @@ export function useFileDrag(): Dragged | null {
     const leave = (e: DragEvent) => {
       if (!e.relatedTarget) clear();
     };
-    const files = (e: DragEvent) => !!e.dataTransfer?.types.includes("Files");
     const over = (e: DragEvent) => {
-      if (!files(e)) return;
-      // Мимо зон файл не открывается во вкладке вместо страницы; зона, принявшая его, своё уже сказала
-      if (!e.defaultPrevented) { e.preventDefault(); e.dataTransfer!.dropEffect = "none"; }
-      // Читаем в самом событии: после него браузер список закрывает
+      const dt = e.dataTransfer;
+      if (!dt || (!active && !dt.types.includes("Files"))) return;
+      e.preventDefault();
+      dt.dropEffect = "none"; // Принимающая зона ниже по дереву выставит copy.
       if (active) return;
       active = true;
-      setDrag(draggedOf(e.dataTransfer!.items));
+      // Для большой пачки проверяем типы при фактическом броске в выбранную зону.
+      setDrag(dt.items.length > PART_FILES ? { images: 0, videos: 0, other: 0, unknown: true } : draggedOf(dt.items));
     };
     const drop = (e: DragEvent) => {
-      if (!files(e)) return;
+      if (!e.dataTransfer?.types.includes("Files") && !e.dataTransfer?.files.length) return;
       e.preventDefault();
-      clear();
+      // React ещё должен получить drop на кнопке до снятия наложения.
+      window.clearTimeout(afterDrop);
+      afterDrop = window.setTimeout(clear, 0);
     };
-    window.addEventListener("dragover", over);
+    window.addEventListener("dragenter", over, true);
+    window.addEventListener("dragover", over, true);
     window.addEventListener("dragleave", leave);
     window.addEventListener("dragend", clear);
     window.addEventListener("blur", clear);
-    window.addEventListener("drop", drop);
+    window.addEventListener("drop", drop, true);
     return () => {
-      window.removeEventListener("dragover", over);
+      window.clearTimeout(afterDrop);
+      window.removeEventListener("dragenter", over, true);
+      window.removeEventListener("dragover", over, true);
       window.removeEventListener("dragleave", leave);
       window.removeEventListener("dragend", clear);
       window.removeEventListener("blur", clear);
-      window.removeEventListener("drop", drop);
+      window.removeEventListener("drop", drop, true);
     };
   }, []);
   return drag;

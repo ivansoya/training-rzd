@@ -1,6 +1,6 @@
 // Страница таски: источники слева, паспорт справа; «Запустить агента» и «Размечать» в шапке.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   assignTask, clearAgentUnchecked, deleteTaskVideo, getProject,
@@ -74,7 +74,18 @@ async function allImages(taskId: string, params: TaskImageQuery): Promise<TaskIm
 }
 
 /** К счётчику вопросов, если место вопроса больше недоступно. */
+const FileDrag = createContext<ReturnType<typeof useFileDrag>>(null);
+
+function FileDragProvider({ children }: { children: ReactNode }) {
+  const drag = useFileDrag();
+  return <FileDrag.Provider value={drag}>{children}</FileDrag.Provider>;
+}
+
 const toQuestions = () => document.getElementById("task-questions")?.scrollIntoView({ behavior: "smooth", block: "center" });
+  return <FileDragProvider><TaskPageBody /></FileDragProvider>;
+}
+
+function TaskPageBody() {
 
 const isTyping = (t: EventTarget | null) =>
   t instanceof HTMLElement && !!t.closest("input, textarea, select, button, a, [contenteditable='true'], [role='option']");
@@ -92,7 +103,6 @@ export default function TaskPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const upload = useUpload(taskId || "");
-  const drag = useFileDrag();
   const [tags, setTags] = useState<Tag[]>([]);
   const [picked, setPicked] = useState<File[] | null>(null);
   const [history, setHistory] = useState(false);
@@ -228,6 +238,7 @@ export default function TaskPage() {
   // Редактор закрылся — перечитываем таску: он уже отправил последнюю правку
   const wasEditing = useRef(false);
   useEffect(() => {
+  const folderRef = useRef<HTMLInputElement>(null);
     if (wasEditing.current && !editing) void load();
     wasEditing.current = !!editing;
   }, [editing, load]);
@@ -521,6 +532,10 @@ export default function TaskPage() {
   }
 
   const onAdd = (w: "images" | "cut" | "annotate") =>
+    acceptFiles(w, all);
+  }
+
+  function acceptFiles(w: Zone, all: File[]) {
     (w === "images" ? fileRef : w === "cut" ? cutRef : annotateRef).current?.click();
 
   if ((error || page.error) && !task) {
@@ -545,7 +560,7 @@ export default function TaskPage() {
       ? live : null;
   const empty = sources.length === 0 && annotateVideos.length === 0;
   // Поверх открытого окна (таги, нарезка, редактор) бросок в таску путает — зон нет
-  const dragOn = drag && !(editing || annotating || cutting || picked || hasLayer()) ? drag : null;
+  const dropBlocked = editing || annotating || cutting || picked;
   const refusal = fillable ? null : handJob || watched
     ? "Таска сдаётся в датасет — добавить можно будет после."
     : "Добавлять файлы в эту таску вам сейчас нельзя.";
@@ -650,14 +665,20 @@ export default function TaskPage() {
       )}
 
       <div className="tp-two">
-        <div className={cx("tp-main", dragOn && "is-drop")}>
-          {fillable && !empty && <div className="tp-add"><AddMenu onAdd={onAdd} /></div>}
+        <FileDrag.Consumer>{(drag) => {
+          const dragOn = drag && !dropBlocked && !hasLayer() ? drag : null;
+          return <div className={cx("tp-main", dragOn && "is-drop")}>
+          {fillable && <div className="tp-add">
+            <Button variant="ghost" onClick={() => folderRef.current?.click()}>Загрузить папку изображений</Button>
+            {!empty && <AddMenu onAdd={onAdd} />}
+          </div>}
           {cutBlock && <CutFramesCard taskId={task.id} counts={cutBlock.counts} known={cutBlock.known} videos={cutBlock.videos || []}
             tags={tags} revision={numbers?.by_source} open={cutFramesOpen} onExpand={setCutFramesOpen} onOpen={openCutFrame} actions={frameActions} />}
           {empty ? <TaskEmpty editable={fillable} dataset={task.target_dataset?.name ?? null} drag={dragOn} onAdd={onAdd} onDrop={drop} />
             : cards.map((c) => c.node)}
           {dragOn && (!empty || !fillable) && <DropVeil drag={dragOn} refusal={refusal} onAdd={onAdd} onDrop={drop} />}
-        </div>
+          </div>;
+        }}</FileDrag.Consumer>
         <TaskPassport task={task} numbers={numbers} numbersLook={numbersLook} pendingFrames={pendingFrames} pendingLook={pendingLook}
           events={events} workers={workers} busy={busy || handoverActive} handing={handoverActive} questions={qs.list}
           onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
@@ -730,3 +751,5 @@ function hiddenRun(taskId: string): string | null {
 function hideRun(taskId: string, runId: string) {
   try { localStorage.setItem(HIDDEN_RUN + taskId, runId); } catch { /* без памяти — всплывёт при следующем заходе */ }
 }
+      <input ref={folderRef} type="file" {...{ webkitdirectory: "" }} multiple hidden
+        onChange={(e) => { if (e.target.files?.length) acceptFiles("images", Array.from(e.target.files)); e.target.value = ""; }} />
