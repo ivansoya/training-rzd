@@ -8,7 +8,7 @@ import {
   saveAnnotations,
   setImageTaskStatus,
 } from "../../auth/api";
-import type { ImageTaskStatus, LabelClass, TaskImage } from "../../auth/api";
+import type { ImageTaskStatus, LabelClass, TaskEditorImage, TaskImage } from "../../auth/api";
 import BoxCanvas from "./BoxCanvas";
 import Sep from "../Sep";
 import type {
@@ -47,7 +47,7 @@ import { AutoBar, FrameBar, FrameInfo, FrameSide, Who, agentKeyOf } from "../edi
 import type { FrameAction } from "./frameActions";
 import { ReviewBar } from "../editor/ReviewBars";
 import { ClassFilter, shownOf, useClassFilter } from "../editor/ClassFilter";
-import { classKey, countClasses, frameShown } from "../editor/filter";
+import { classKey, countClasses } from "../editor/filter";
 import { AgentTool, useAgentTool } from "../editor/AgentTool";
 import AgentSetupDialog from "../agents/AgentSetupDialog";
 import {
@@ -167,11 +167,21 @@ export type EditorScope =
       onRemoved: (imageId: string) => void;
     };
 
+type EditorFrame = TaskImage | TaskEditorImage;
+
+const frameClasses = (frame: EditorFrame) => "class_indices" in frame
+  ? frame.class_indices : [...new Set(frame.boxes.map((box) => box.class_index))];
+const hasPending = (frame: EditorFrame) => "has_pending" in frame
+  ? frame.has_pending : frame.boxes.some((box) => box.pending);
+
 export default function AnnotationEditor({
   code,
   scope,
   images,
   index,
+  activeImage,
+  frameDetails,
+  loadFilm,
   readOnly,
   tags,
   onIndex,
@@ -186,8 +196,11 @@ export default function AnnotationEditor({
 }: {
   code: string;
   scope: EditorScope;
-  images: TaskImage[];
+  images: EditorFrame[];
   index: number;
+  activeImage?: TaskImage;
+  frameDetails?: (id: string) => TaskImage | undefined;
+  loadFilm?: (ids: string[], scroll: boolean) => Promise<void>;
   readOnly: boolean;
   /** Можно ли править таги. Не то же, что `readOnly`: в «Готово» и закрытой
    *  таске админ правит таги (`rights.tag_frames`, см. set_image_tags) — таг
@@ -195,7 +208,7 @@ export default function AnnotationEditor({
   canTag: boolean;
   /** Справочник тагов проекта. */
   tags: Tag[];
-  onIndex: (i: number) => void;
+  onIndex: (i: number) => void | Promise<boolean>;
   onClose: () => void;
   /** Что поменялось у кадра. Заплатка, а не кадр целиком: целый кадр из
    *  замыкания затирал бы свежую разметку, записанную мгновением раньше
@@ -212,7 +225,8 @@ export default function AnnotationEditor({
   /** Обсуждение, ради которого открыли кадр, — развёрнуто в панели. */
   question?: string | null;
 }) {
-  const image = images[index];
+  const loaded = images[index];
+  const image = activeImage ?? (loaded && "boxes" in loaded ? loaded : undefined);
   const taskId = scope.kind === "task" ? scope.taskId : null;
   const ds = scope.kind === "dataset" ? scope : null;
   // Исходник с живой копией в таске — только чтение, правят там (решение 14.10.2026)
@@ -397,7 +411,7 @@ export default function AnnotationEditor({
   // Фильтр классов (решения 14.10.2026): лента и все переходы — только по кадрам с отмеченными классами.
   const [fltOff, setFltOff] = useClassFilter(`mag.filter.frames.${taskId ?? `ds.${code}`}`);
   const fltEntries = useMemo(() => {
-    const n = countClasses(images.flatMap((im) => [...new Set((im.boxes || []).map((b) => b.class_index))]));
+    const n = countClasses(images.flatMap(frameClasses));
     return classes.filter((c) => n.has(c.class_index))
       .map((c) => ({ key: classKey(c.class_index), name: c.name, color: c.color, n: n.get(c.class_index) ?? 0 }));
   }, [images, classes]);
@@ -418,19 +432,29 @@ export default function AnnotationEditor({
 
   const fits = useCallback((i: number) => {
     const frame = images[i];
-    if (!frame || !frameShown(frame.boxes, off)) return false;
+    if (!frame || (off.size > 0 && !frameClasses(frame).some((cls) => !off.has(classKey(cls))))) return false;
     if (filterTags.length && !frame.tag_ids?.some((id) => filterTags.includes(id))) return false;
     if (!filterStates.length) return true;
-    const agent = frame.agent_empty || frame.boxes?.some((b) => b.pending) || (qList ? agentAsked.has(frame.id) : frame.agent_question);
+    const agent = frame.agent_empty || hasPending(frame) || (qList ? agentAsked.has(frame.id) : frame.agent_question);
     const status = frame.task_status !== "deleted" && agent ? "agent" : frame.task_status;
     return filterStates.includes(status);
   }, [images, off, filterStates, filterTags, qList, agentAsked]);
   /** Кадр в работе: подходит отбору; текущий — всегда, выпадает при уходе с него. */
   const passes = useCallback((i: number) => i === index || fits(i), [index, fits]);
-  const shown = useMemo(() => images.map((_, i) => i).filter(passes), [images, passes]);
   const narrowed = fltOn || extraActive;
+  const allPositions = useMemo(() => Array.from({ length: images.length }, (_, i) => i), [images.length]);
+  const shown = useMemo(() => narrowed ? allPositions.filter(passes) : allPositions, [allPositions, narrowed, passes]);
   const none = narrowed && !shown.some(fits);
-  const pos = none ? -1 : shown.indexOf(index);
+  const pos = none ? -1 : narrowed ? shown.indexOf(index) : index;
+  const requestVisibleFilm = useCallback((start: number, end: number) => {
+    if (!loadFilm) return;
+    const size = 100;
+    const aligned = Math.floor(start / size) * size;
+    const first = Math.max(aligned, end - size);
+    void loadFilm(shown.slice(first, first + size).map((i) => images[i].id), true).catch(() => {
+      // Миниатюры уже видны. Клик повторит запрос и покажет ошибку, если кадр не откроется.
+    });
+  }, [images, shown, loadFilm]);
 
   // Всё, что нужно записи, — через ref: запись стоит в очереди и может
   // выполниться после следующей отрисовки, а брать ей надо свежее.
@@ -583,7 +607,15 @@ export default function AnnotationEditor({
       const saved = await flush();
       if (ticket !== navSeq.current) return;
       if (!saved) { navAt.current = index; return; }
-      onIndex(target);
+      try {
+        const opened = await onIndex(target);
+        if (opened === false && ticket === navSeq.current) navAt.current = index;
+      } catch (e) {
+        if (ticket === navSeq.current) {
+          navAt.current = index;
+          setError((e as Error).message);
+        }
+      }
     },
     [flush, images.length, onIndex, index]
   );
@@ -825,17 +857,22 @@ export default function AnnotationEditor({
   /** Кадры на проверке в открытом списке — у текущего по живой разметке. */
   const flagged = useCallback(
     () => images.map((im, i) => im.task_status !== "deleted" && passes(i) && (!!im.agent_empty ||
-      (i === index ? pendingCount(boxesRef.current) > 0 : im.boxes?.some((b) => b.pending) === true))),
+      (i === index ? pendingCount(boxesRef.current) > 0 : hasPending(im)))),
     [images, index, passes]
   );
 
-  // Сколько кадров списка ещё на проверке — для сжатой плашки на кадре без непроверенного
-  const reviewLeft = flagged().filter(Boolean).length;
+  // Для плашки считаем по индексу, заменяя результат текущего кадра живой разметкой.
+  const reviewTotal = useMemo(() => images.reduce((n, im, i) => n + Number(im.task_status !== "deleted"
+    && (im.agent_empty || hasPending(im)) && fits(i)), 0), [images, fits]);
+  const currentSummary = images[index];
+  const wasFlagged = currentSummary && currentSummary.task_status !== "deleted" && fits(index)
+    && (currentSummary.agent_empty || hasPending(currentSummary));
+  const reviewLeft = reviewTotal - Number(!!wasFlagged) + Number(!!image && image.task_status !== "deleted" && (emptyProposal || unchecked > 0));
 
   /** Кадры с разметкой или явной пометкой «Пусто»; ход [ и ]. */
   const annotatedFlags = useCallback(
     () => images.map((im, i) => (i === index ? boxesRef.current.length > 0 || im.task_status === "empty"
-      : im.task_status !== "deleted" && passes(i) && ((im.boxes || []).length > 0 || im.task_status === "empty"))),
+      : im.task_status !== "deleted" && passes(i) && (im.annotations > 0 || im.task_status === "empty"))),
     [images, index, passes]
   );
 
@@ -1704,24 +1741,28 @@ export default function AnnotationEditor({
             ) : (
               <FilmStrip
                 vertical
-                items={shown.map((i) => {
+                total={shown.length}
+                onRange={loadFilm ? requestVisibleFilm : undefined}
+                getItem={(position) => {
+                  const i = shown[position];
                   const im = images[i];
+                  const detail = i === index ? image : "boxes" in im ? im : frameDetails?.(im.id);
                   const out = i === index && !fits(i);
-                  const agent = im.task_status !== "deleted" && (im.agent_empty || (i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending))
+                  const agent = im.task_status !== "deleted" && (im.agent_empty || (i === index ? unchecked > 0 : hasPending(im))
                     || (qList ? agentAsked.has(im.id) : im.agent_question));
-                  const edited = !ds && (im.human_edited || im.task_status === "empty" || im.boxes?.some((b) => !b.pending));
+                  const edited = !ds && (im.human_edited || im.task_status === "empty" || detail?.boxes.some((b) => !b.pending));
                   return {
                     id: im.id,
-                    width: im.width,
-                    height: im.height,
-                    boxes: im.boxes,
+                    width: detail?.width ?? null,
+                    height: detail?.height ?? null,
+                    boxes: detail?.boxes,
                     n: (ds ? ds.base : 0) + i + 1,
                     ring: (agent ? "agent" : im.task_status) + (out ? " out" : ""),
                     title: `${im.file_name} — ${im.annotations} разметок${ds ? "" : edited ? "; проверен или размечен человеком" : "; без правок человека"}${out ? "; не по фильтру, уйдёт из ленты" : ""}`,
                     asked: askedImgs.has(im.id),
                     edited,
                   };
-                })}
+                }}
                 index={pos}
                 onPick={(k) => void jump(shown[k])}
                 onSize={setFilmW}

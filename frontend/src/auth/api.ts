@@ -1182,11 +1182,7 @@ export interface TaskImageQuery {
   tag_ids?: string[];
 }
 
-export async function getTaskImages(
-  id: string,
-  params: TaskImageQuery = {},
-  signal?: AbortSignal
-): Promise<{ matched: number; counts: TaskCounts; review_counts?: { new: number; done: number } | null; images: TaskImage[] }> {
+function taskImageParams(params: TaskImageQuery) {
   const q = new URLSearchParams();
   if (params.image) q.set("image", params.image);
   if (params.status) q.set("status", params.status);
@@ -1197,8 +1193,43 @@ export async function getTaskImages(
   if (params.source) q.set("source", params.source);
   if (params.limit) q.set("limit", String(params.limit));
   if (params.offset) q.set("offset", String(params.offset));
-  const suffix = q.toString() ? `?${q}` : "";
-  return asJson(await fetch(`/api/tasks/${id}/images${suffix}`, { signal }));
+  return q;
+}
+
+export async function getTaskImages(
+  id: string,
+  params: TaskImageQuery = {},
+  signal?: AbortSignal
+): Promise<{ matched: number; counts: TaskCounts; review_counts?: { new: number; done: number } | null; images: TaskImage[] }> {
+  const q = taskImageParams(params);
+  return asJson(await fetch(`/api/tasks/${id}/images?${q}`, { signal }));
+}
+
+export type TaskEditorImage = Pick<TaskImage, "id" | "file_name" | "task_status" | "agent_empty" |
+  "agent_question" | "human_edited" | "my_edited_at" | "annotations" | "tag_ids"> & {
+  class_indices: number[];
+  has_pending: boolean;
+};
+
+type TaskEditorIndexRow = [id: string, name: string, status: TaskImage["task_status"], empty: boolean,
+  pending: boolean, asked: boolean, edited: boolean, myEdit: string | null, annotations: number,
+  classes: number[], tags: string[]];
+
+export async function getTaskEditorIndex(id: string, params: TaskImageQuery, signal: AbortSignal): Promise<TaskEditorImage[]> {
+  const q = taskImageParams(params);
+  q.set("editor_index", "1");
+  const { index } = await asJson<{ index: TaskEditorIndexRow[] }>(await fetch(`/api/tasks/${id}/images?${q}`, { signal }));
+  return index.map(([id, file_name, task_status, agent_empty, has_pending, agent_question, human_edited,
+    my_edited_at, annotations, class_indices, tag_ids]) => ({
+    id, file_name, task_status, agent_empty, has_pending, agent_question, human_edited, my_edited_at,
+    annotations, class_indices, tag_ids,
+  }));
+}
+
+export async function getTaskEditorWindow(id: string, ids: string[], signal: AbortSignal): Promise<TaskImage[]> {
+  const q = new URLSearchParams({ editor_ids: ids.join(","), limit: "100" });
+  const { images } = await asJson<{ images: TaskImage[] }>(await fetch(`/api/tasks/${id}/images?${q}`, { signal }));
+  return images;
 }
 
 /** Загрузить кадры в таску.

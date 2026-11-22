@@ -1,6 +1,6 @@
 // Логика экранов тасок без React: состояния, доли кадров, доска, источники, план закрытия.
 
-import type { StatusResult, TaskCounts, TaskDetail, TaskImage, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
+import type { StatusResult, TaskCounts, TaskDetail, TaskEditorImage, TaskImage, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
 import type { IconName, StackPart } from "../../../ui";
 import type { RunView } from "../../../api/agents";
 import { ago, count, plural, ru } from "../../ru";
@@ -303,10 +303,11 @@ export function lastPersonalEditIndex(images: Pick<TaskImage, "task_status" | "m
   return index;
 }
 
-export function lastReviewedIndex(images: Pick<TaskImage, "task_status" | "boxes" | "agent_empty">[]) {
+export function lastReviewedIndex(images: (Pick<TaskImage, "task_status" | "boxes" | "agent_empty"> | TaskEditorImage)[]) {
   for (let i = images.length - 1; i >= 0; i--) {
     const image = images[i];
-    if ((image.task_status === "annotated" || image.task_status === "empty") && !image.agent_empty && !image.boxes.some((b) => b.pending)) return i;
+    const pending = "has_pending" in image ? image.has_pending : image.boxes.some((box) => box.pending);
+    if ((image.task_status === "annotated" || image.task_status === "empty") && !image.agent_empty && !pending) return i;
   }
   return -1;
 }

@@ -4,10 +4,10 @@ import { createContext, useCallback, useEffect, useRef, useState, type ReactNode
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   assignTask, clearAgentUnchecked, deleteTaskVideo, getProject,
-  getTaskImages, getTaskNumbers, getVideoPending, setTaskStatus, uploadTaskImages, uploadTaskVideo,
+  getTaskEditorIndex, getTaskEditorWindow, getTaskImages, getTaskNumbers, getVideoPending, setTaskStatus, uploadTaskImages, uploadTaskVideo,
 } from "../../../auth/api";
 import type {
-  AgentClearScope, ProjectMemberInfo, StatusResult, TaskDetail, TaskImage, TaskImageQuery, TaskStatus, TaskVideoItem,
+  AgentClearScope, ProjectMemberInfo, StatusResult, TaskDetail, TaskEditorImage, TaskImage, TaskImageQuery, TaskStatus, TaskVideoItem,
 } from "../../../auth/api";
 import { useAuth } from "../../auth/AuthGate";
 import { pollJob } from "../../../api/jobs";
@@ -45,6 +45,7 @@ import { look } from "./useTaskBoard";
 import { openVideos, useTaskPage } from "./useTaskPage";
 import { dismissUploadError, enqueueUpload, uploading, useUpload } from "./uploads";
 import { useHere } from "../here";
+import { EDITOR_PAGE, frameWindows, summarizeFrame } from "./editorImages";
 
 /** Кадров в таске без брака — из лёгкой части, известно сразу. */
 const framesTotal = (t: TaskDetail) => Object.values(t.sources || {}).reduce((s, x) => s + (x.frames || 0), 0);
@@ -53,27 +54,26 @@ const ACTIVE_RUN = ["queued", "waiting_gpu", "running"];
 
 const imageNames = new Intl.Collator("ru", { numeric: true });
 
-function firstWorkIndex(images: TaskImage[]) {
+function firstWorkIndex(images: TaskEditorImage[]) {
   const first = images.findIndex((i) => i.task_status === "new");
   return first >= 0 ? first : images.findIndex((i) => i.task_status === "skipped");
 }
 
-/** Все кадры выборки: сервер отдаёт по 200, добираем до `matched`. */
-async function allImages(taskId: string, params: TaskImageQuery): Promise<TaskImage[]> {
-  const PAGE = 200;
+function editorQuery(params: TaskImageQuery): TaskImageQuery {
   // В редакторе «Все» включает выброшенные кадры на их прежних местах.
-  const query: TaskImageQuery = { ...params, review: params.review === "all" ? undefined : params.review, order: "name" };
-  const first = await getTaskImages(taskId, { ...query, limit: PAGE });
-  const out = [...first.images];
-  while (out.length < first.matched) {
-    const next = await getTaskImages(taskId, { ...query, limit: PAGE, offset: out.length });
-    if (!next.images.length) break;
-    out.push(...next.images);
-  }
-  return out.sort((a, b) => imageNames.compare(a.file_name, b.file_name));
+  return { ...params, review: params.review === "all" ? undefined : params.review };
+}
+
+function byImageName(a: Pick<TaskImage, "file_name">, b: Pick<TaskImage, "file_name">) {
+  return imageNames.compare(a.file_name, b.file_name);
 }
 
 /** К счётчику вопросов, если место вопроса больше недоступно. */
+const toQuestions = () => document.getElementById("task-questions")?.scrollIntoView({ behavior: "smooth", block: "center" });
+
+const isTyping = (t: EventTarget | null) =>
+  t instanceof HTMLElement && !!t.closest("input, textarea, select, button, a, [contenteditable='true'], [role='option']");
+
 const FileDrag = createContext<ReturnType<typeof useFileDrag>>(null);
 
 function FileDragProvider({ children }: { children: ReactNode }) {
@@ -81,16 +81,11 @@ function FileDragProvider({ children }: { children: ReactNode }) {
   return <FileDrag.Provider value={drag}>{children}</FileDrag.Provider>;
 }
 
-const toQuestions = () => document.getElementById("task-questions")?.scrollIntoView({ behavior: "smooth", block: "center" });
+export default function TaskPage() {
   return <FileDragProvider><TaskPageBody /></FileDragProvider>;
 }
 
 function TaskPageBody() {
-
-const isTyping = (t: EventTarget | null) =>
-  t instanceof HTMLElement && !!t.closest("input, textarea, select, button, a, [contenteditable='true'], [role='option']");
-
-export default function TaskPage() {
   const { code, taskId } = useParams<{ code: string; taskId: string }>();
   const navigate = useNavigate();
   const { me } = useAuth();
@@ -111,7 +106,7 @@ export default function TaskPage() {
   const qs = useQuestions(taskId, me.user.id);
 
   // Открытый кадр живёт в адресе (?frame=<id>): «Назад» закрывает редактор
-  const [editing, setEditing] = useState<{ list: TaskImage[]; index: number } | null>(null);
+  const [editing, setEditing] = useState<{ list: TaskEditorImage[]; index: number; image: TaskImage; windows: ReturnType<typeof frameWindows> } | null>(null);
   const [search, setSearch] = useSearchParams();
   const frameParam = search.get("frame");
   // Вопрос из уведомления (?q=<id>) открывает обсуждение в редакторе
@@ -130,15 +125,91 @@ export default function TaskPage() {
     next.delete("q");
     return next;
   }, { replace: true }), [setSearch]);
-  const openEditor = useCallback((list: TaskImage[], index: number) => {
-    setEditing({ list, index });
-    setFrame(list[index].id, false);
+  const editorLoad = useRef<AbortController | null>(null);
+  const windowsRef = useRef<ReturnType<typeof frameWindows> | null>(null);
+  const editorJump = useRef(0);
+  const [, refreshFilm] = useState(0);
+  const releaseEditor = useCallback(() => {
+    editorLoad.current?.abort();
+    windowsRef.current?.close();
+    windowsRef.current = null;
+  }, []);
+  useEffect(() => releaseEditor, [taskId, releaseEditor]);
+
+  const prepareEditor = useCallback((frames: TaskImage[], image: TaskImage, query: TaskImageQuery, indexed?: TaskEditorImage[]) => {
+    if (!taskId) return;
+    releaseEditor();
+    const windows = frameWindows(taskId, frames, () => refreshFilm((revision) => revision + 1));
+    windowsRef.current = windows;
+    const initial = indexed ?? frames.map(summarizeFrame);
+    const index = initial.findIndex((row) => row.id === image.id);
+    setEditing({ list: initial, index, image, windows });
+    if (indexed) return;
+    void getTaskEditorIndex(taskId, query, windows.signal).then((rows) => {
+      if (windows.signal.aborted) return;
+      const list = rows.sort(byImageName);
+      const positions = new Map(list.map((row, i) => [row.id, i]));
+      setEditing((current) => {
+        if (!current || current.windows !== windows) return current;
+        const at = positions.get(current.image.id);
+        const next = [...list];
+        if (at === undefined) {
+          next.push(summarizeFrame(current.image));
+          next.sort(byImageName);
+        } else next[at] = summarizeFrame(current.image);
+        return { ...current, list: next, index: at ?? next.findIndex((row) => row.id === current.image.id) };
+      });
+    }).catch((e: Error) => { if (!windows.signal.aborted) setError(e.message); });
+  }, [taskId, releaseEditor]);
+
+  const openEditor = useCallback((frames: TaskImage[], image: TaskImage, query: TaskImageQuery, indexed?: TaskEditorImage[]) => {
+    prepareEditor(frames, image, query, indexed);
+    setFrame(image.id, false);
     pushed.current = true;
-  }, [setFrame]);
+  }, [prepareEditor, setFrame]);
   const closeEditor = useCallback(() => {
+    releaseEditor();
     setEditing(null);
     if (pushed.current) { pushed.current = false; navigate(-1); } else setFrame(null, true);
-  }, [navigate, setFrame]);
+  }, [navigate, releaseEditor, setFrame]);
+
+  const openEditorFrame = async (position: number) => {
+    if (!editing) return false;
+    const { list, windows } = editing;
+    const id = list[position]?.id;
+    if (!id) return false;
+    const ticket = ++editorJump.current;
+    const first = Math.floor(position / EDITOR_PAGE) * EDITOR_PAGE;
+    try {
+      if (!windows.get(id)) await windows.load(list.slice(first, first + EDITOR_PAGE).map((row) => row.id));
+      const frame = windows.get(id);
+      if (windows.signal.aborted || ticket !== editorJump.current) return false;
+      if (!frame) throw new Error("Кадр больше недоступен.");
+      setEditing((current) => {
+        if (!current || current.windows !== windows) return current;
+        const at = current.list[position]?.id === id ? position : current.list.findIndex((row) => row.id === id);
+        return at < 0 ? current : { ...current, image: frame, index: at };
+      });
+      setFrame(id, true);
+      return true;
+    } catch (e) {
+      if (!windows.signal.aborted && ticket === editorJump.current) throw e;
+      return false;
+    }
+  };
+
+  const patchEditorFrame = (id: string, patch: Partial<TaskImage>) => {
+    const windows = windowsRef.current;
+    const known = windows?.get(id);
+    if (known) windows?.store({ ...known, ...patch });
+    setEditing((current) => {
+      if (!current) return current;
+      const frame = current.image.id === id ? { ...current.image, ...patch } : known && { ...known, ...patch };
+      if (!frame) return current;
+      return { ...current, list: current.list.map((row) => row.id === id ? summarizeFrame(frame) : row),
+        image: current.image.id === id ? frame : current.image };
+    });
+  };
 
   const [cutting, setCutting] = useState<TaskVideoItem | null>(null);
   const [cutFramesOpen, setCutFramesOpen] = useState(false);
@@ -167,6 +238,7 @@ export default function TaskPage() {
   const [overviewOpen, setOverviewOpen] = useState(false);
 
   const fileRef = useRef<HTMLInputElement>(null);
+  const folderRef = useRef<HTMLInputElement>(null);
   const cutRef = useRef<HTMLInputElement>(null);
   const annotateRef = useRef<HTMLInputElement>(null);
 
@@ -199,21 +271,24 @@ export default function TaskPage() {
   useEffect(() => {
     if (!taskId) return;
     if (!frameParam) {
-      if (editing) { pushed.current = false; setEditing(null); }
+      if (editing) { releaseEditor(); pushed.current = false; setEditing(null); }
       return;
     }
     if (editing) return;
-    let alive = true;
-    allImages(taskId, {}).then((list) => {
-      if (!alive) return;
-      const at = list.findIndex((i) => i.id === frameParam);
-      if (at >= 0) { setEditing({ list, index: at }); return; }
+    const controller = new AbortController();
+    const { signal } = controller;
+    getTaskImages(taskId, { image: frameParam, limit: 1 }, signal).then(({ images }) => {
+      if (signal.aborted) return;
+      if (images.length) {
+        prepareEditor(images, images[0], editorQuery({}));
+        return;
+      }
       pushed.current = false;
       setFrame(null, true);
       // Кадр вопроса сдан или убран — возвращаемся к счётчику в паспорте
       if (qParam) { qs.read(qParam); toQuestions(); }
-    }).catch((e) => setError((e as Error).message));
-    return () => { alive = false; };
+    }).catch((e: Error) => { if (!signal.aborted) setError(e.message); });
+    return () => controller.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [frameParam, taskId]);
 
@@ -238,7 +313,6 @@ export default function TaskPage() {
   // Редактор закрылся — перечитываем таску: он уже отправил последнюю правку
   const wasEditing = useRef(false);
   useEffect(() => {
-  const folderRef = useRef<HTMLInputElement>(null);
     if (wasEditing.current && !editing) void load();
     wasEditing.current = !!editing;
   }, [editing, load]);
@@ -311,32 +385,44 @@ export default function TaskPage() {
     page.at);
   const numbersLook = look(numbers ?? undefined, page.fresh.numbers, page.at);
 
-  const openTaskFrames = useCallback(() => guard(async () => {
-    if (!taskId || !task) return;
+  const openFromIndex = useCallback((params: TaskImageQuery, pick: (list: TaskEditorImage[]) => number) => guard(async () => {
+    if (!taskId) return;
+    editorLoad.current?.abort();
+    const controller = new AbortController();
+    editorLoad.current = controller;
+    const query = editorQuery(params);
+    try {
+      const list = (await getTaskEditorIndex(taskId, query, controller.signal)).sort(byImageName);
+      if (controller.signal.aborted) return;
+      if (!list.length) { setNotice("В этой выборке нет кадров."); return; }
+      const index = Math.max(0, pick(list));
+      const start = Math.floor(index / EDITOR_PAGE) * EDITOR_PAGE;
+      const window = await getTaskEditorWindow(taskId, list.slice(start, start + EDITOR_PAGE).map((row) => row.id), controller.signal);
+      if (controller.signal.aborted) return;
+      const image = window.find((row) => row.id === list[index].id);
+      if (!image) { setNotice("Кадр больше недоступен. Откройте выборку ещё раз."); return; }
+      openEditor(window, image, query, list);
+    } catch (e) {
+      if (!controller.signal.aborted) throw e;
+    }
+  }), [guard, taskId, openEditor]);
+
+  const openTaskFrames = useCallback(() => {
+    if (!task) return;
     const cut = task.videos.filter((v) => v.mode === "cut");
     if (cut.length > 0 && !cut.some((v) => v.frames > 0)) { showCutFrames(); return; }
-    const list = await allImages(taskId, cut.length ? { source: "videos", review: "all" } : {});
-    if (!list.length) { setNotice("В таске пока нет кадров — добавьте изображения или ролик."); return; }
-    const personal = lastPersonalEditIndex(list);
-    const start = personal >= 0 ? personal : cut.length || editable ? firstWorkIndex(list) : lastReviewedIndex(list);
-    openEditor(list, Math.max(0, start));
-  }), [guard, taskId, task, openEditor, editable, showCutFrames]);
+    return openFromIndex(cut.length ? { source: "videos", review: "all" } : {}, (list) => {
+      const personal = lastPersonalEditIndex(list);
+      return personal >= 0 ? personal : cut.length || editable ? firstWorkIndex(list) : lastReviewedIndex(list);
+    });
+  }, [task, openFromIndex, editable, showCutFrames]);
 
-  const openFiltered = (params: TaskImageQuery) => guard(async () => {
-    if (!taskId) return;
-    const list = await allImages(taskId, params);
-    if (!list.length) return;
-    const first = params.review ? 0 : firstWorkIndex(list);
-    openEditor(list, Math.max(0, first));
-  });
+  const openFiltered = (params: TaskImageQuery) => openFromIndex(params, params.review ? () => 0 : firstWorkIndex);
   const openState = (s: FrameState) => openFiltered({ status: s });
-  const openCutFrame = (image: TaskImage, query: TaskImageQuery) => void guard(async () => {
-    if (!taskId) return;
-    const list = await allImages(taskId, query);
-    const index = list.findIndex((i) => i.id === image.id);
-    if (index >= 0) openEditor(list, index);
-    else { setNotice("Кадр изменил состояние. Список кадров обновлён."); await load(); }
-  });
+  const openCutFrame = (image: TaskImage, query: TaskImageQuery, rows: TaskImage[]) => {
+    const list = [...rows].sort(byImageName);
+    openEditor(list, image, editorQuery(query));
+  };
 
   // Enter — размечать, G — агент; не мешаем полям, кнопкам и открытым окнам
   useEffect(() => {
@@ -446,6 +532,10 @@ export default function TaskPage() {
       setError(`Не прочитать брошенное: ${(e as Error).message}`);
       return;
     }
+    acceptFiles(w, all);
+  }
+
+  function acceptFiles(w: Zone, all: File[]) {
     const kind = zoneKind(w);
     const take = all.filter((f) => kindOf(f) === kind);
     const skipped = `${count(all.length - take.length, "файл", "файла", "файлов")} — ${kind === "images" ? "не изображения" : "не видео"}`;
@@ -479,7 +569,7 @@ export default function TaskPage() {
   }
 
   async function saveImageTags(imageId: string, tagIds: string[]) {
-    setEditing((prev) => prev && { ...prev, list: prev.list.map((i) => (i.id === imageId ? { ...i, tag_ids: tagIds } : i)) });
+    patchEditorFrame(imageId, { tag_ids: tagIds });
     try { await setImageTags(imageId, tagIds); } catch (e) { await load(); setError((e as Error).message); }
   }
 
@@ -532,10 +622,6 @@ export default function TaskPage() {
   }
 
   const onAdd = (w: "images" | "cut" | "annotate") =>
-    acceptFiles(w, all);
-  }
-
-  function acceptFiles(w: Zone, all: File[]) {
     (w === "images" ? fileRef : w === "cut" ? cutRef : annotateRef).current?.click();
 
   if ((error || page.error) && !task) {
@@ -685,6 +771,8 @@ export default function TaskPage() {
           onAssign={(ids) => void reassign(ids)} onHistory={() => setHistory(true)} />
       </div>
 
+      <input ref={folderRef} type="file" {...{ webkitdirectory: "" }} multiple hidden
+        onChange={(e) => { if (e.target.files?.length) acceptFiles("images", Array.from(e.target.files)); e.target.value = ""; }} />
       <input ref={fileRef} type="file" accept="image/*" multiple hidden
         onChange={(e) => { if (e.target.files?.length) setPicked([...e.target.files]); e.target.value = ""; }} />
       <input ref={cutRef} type="file" accept="video/*" multiple hidden
@@ -731,13 +819,8 @@ export default function TaskPage() {
           questions={qs} question={qParam}
           onTags={(imageId, ids) => void saveImageTags(imageId, ids)}
           onTagCreated={(tag) => setTags((prev) => [...prev, tag])}
-          onIndex={(i) => {
-            setEditing((prev) => (prev ? { ...prev, index: i } : prev));
-            setFrame(editing.list[i]?.id ?? null, true);
-          }}
-          onClose={closeEditor}
-          onChanged={(id, patch) => setEditing((prev) => prev
-            ? { ...prev, list: prev.list.map((x) => (x.id === id ? { ...x, ...patch } : x)) } : prev)} />
+          activeImage={editing.image} frameDetails={editing.windows.get} loadFilm={editing.windows.load}
+          onIndex={openEditorFrame} onClose={closeEditor} onChanged={patchEditorFrame} />
       )}
     </div>
   );
@@ -751,5 +834,3 @@ function hiddenRun(taskId: string): string | null {
 function hideRun(taskId: string, runId: string) {
   try { localStorage.setItem(HIDDEN_RUN + taskId, runId); } catch { /* без памяти — всплывёт при следующем заходе */ }
 }
-      <input ref={folderRef} type="file" {...{ webkitdirectory: "" }} multiple hidden
-        onChange={(e) => { if (e.target.files?.length) acceptFiles("images", Array.from(e.target.files)); e.target.value = ""; }} />

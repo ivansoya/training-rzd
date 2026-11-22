@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
 import { imageThumbUrl } from "../../auth/api";
 import { Icon } from "../../ui";
@@ -37,6 +37,12 @@ const SIZE = {
 // Отступы ленты, отступ до полосы прокрутки и сама полоса.
 const PAD = 38;
 const PAD_V = 30;
+const VERTICAL_GAP = 8;
+
+export function visibleFilmRange(top: number, height: number, stride: number) {
+  return { start: Math.max(0, Math.floor(top / stride) - 3),
+    end: Math.ceil((top + height) / stride) + 3 };
+}
 
 function stored(key: string, s: { min: number; max: number; def: number }): number {
   try {
@@ -48,7 +54,10 @@ function stored(key: string, s: { min: number; max: number; def: number }): numb
 }
 
 export default function FilmStrip({
-  items,
+  items = [],
+  total = items.length,
+  getItem,
+  onRange,
   index,
   onPick,
   vertical = false,
@@ -56,7 +65,10 @@ export default function FilmStrip({
   onHeight,
   onSize,
 }: {
-  items: FilmItem[];
+  items?: FilmItem[];
+  total?: number;
+  getItem?: (i: number) => FilmItem;
+  onRange?: (start: number, end: number) => void;
   index: number;
   onPick: (i: number) => void;
   vertical?: boolean;
@@ -73,11 +85,45 @@ export default function FilmStrip({
 
   useEffect(() => { onHeight?.(size); onSize?.(size); }, [size, onHeight, onSize]);
 
-  useEffect(() => {
+  const cellW = vertical ? size - PAD_V : (size - PAD) * (4 / 3);
+  const cellH = vertical ? (size - PAD_V) * (3 / 4) : size - PAD;
+  const stride = cellH + VERTICAL_GAP;
+  const [range, setRange] = useState({ start: 0, end: 16 });
+  const measure = useCallback(() => {
     const el = railRef.current;
-    const active = el?.children[index] as HTMLElement | undefined;
-    active?.scrollIntoView({ block: vertical ? "center" : "nearest", inline: "center", behavior: "smooth" });
+    if (!vertical || !el) return;
+    const { start, end } = visibleFilmRange(el.scrollTop, el.clientHeight, stride);
+    setRange((prev) => prev.start === start && prev.end === end ? prev : { start, end });
+  }, [vertical, stride]);
+  const move = useRef({ index, vertical, stride });
+  move.current = { index, vertical, stride };
+  useLayoutEffect(() => {
+    const el = railRef.current;
+    if (!el) return;
+    if (move.current.vertical) {
+      if (move.current.index >= 0) {
+        el.scrollTop = (move.current.index + 0.5) * move.current.stride - el.clientHeight / 2;
+      }
+    } else {
+      (el.children[index] as HTMLElement | undefined)?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+    }
   }, [index, vertical]);
+  useLayoutEffect(() => {
+    const el = railRef.current;
+    if (!vertical || !el) return;
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    el.addEventListener("scroll", measure, { passive: true });
+    return () => { observer.disconnect(); el.removeEventListener("scroll", measure); };
+  }, [vertical, measure]);
+  const end = vertical ? Math.min(range.end, total) : total;
+  const start = vertical ? Math.min(range.start, Math.max(0, end - 1)) : 0;
+  useEffect(() => {
+    if (!onRange || end <= start) return;
+    const timer = window.setTimeout(() => onRange(start, end), 70);
+    return () => window.clearTimeout(timer);
+  }, [start, end, onRange]);
 
   // Колесо над горизонтальной лентой катит её вдоль: вертикальной прокрутки у неё нет.
   useEffect(() => {
@@ -113,8 +159,22 @@ export default function FilmStrip({
     try { window.localStorage.setItem(key, String(size)); } catch { /* не запомнится */ }
   }
 
-  const cellW = vertical ? size - PAD_V : (size - PAD) * (4 / 3);
-  const cellH = vertical ? (size - PAD_V) * (3 / 4) : size - PAD;
+  const cells = Array.from({ length: end - start }, (_, j) => {
+    const i = start + j;
+    const im = getItem ? getItem(i) : items[i];
+    return (
+      <button key={im.id} type="button"
+        className={`mag-fs-cell ${im.ring || ""}${i === index ? " cur" : ""}`}
+        style={{ width: cellW, height: cellH, ...(vertical ? { position: "absolute", top: i * stride } : {}) }}
+        onMouseDown={(e) => e.preventDefault()} onClick={() => onPick(i)} title={im.title}>
+        <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
+        <ShapeMini boxes={im.boxes || []} width={im.width} height={im.height} />
+        <span className="mag-fs-n">{im.n ?? i + 1}</span>
+        {im.edited && <span className="mag-fs-edited" title="Кадр размечен или проверен человеком"><Icon name="tick" size={12} /></span>}
+        {im.asked && <span className="q-pin mag-fs-q"><Icon name="question" size={10} /></span>}
+      </button>
+    );
+  });
 
   return (
     <div className={vertical ? "mag-fs v" : "mag-fs"} style={vertical ? { width: size } : { height: size }}>
@@ -132,24 +192,11 @@ export default function FilmStrip({
         title={vertical ? "Потяните — ширина ленты; двойной щелчок — как было" : "Потяните — высота ленты"}
       />
       <div className="mag-fs-rail" ref={railRef}>
-        {items.map((im, i) => (
-          <button
-            key={im.id}
-            type="button"
-            className={`mag-fs-cell ${im.ring || ""}${i === index ? " cur" : ""}`}
-            style={{ width: cellW, height: cellH }}
-            // Щелчок мышью фокус не забирает: иначе Пробел редактора «нажимал» бы эту миниатюру
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => onPick(i)}
-            title={im.title}
-          >
-            <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
-            <ShapeMini boxes={im.boxes || []} width={im.width} height={im.height} />
-            <span className="mag-fs-n">{im.n ?? i + 1}</span>
-            {im.edited && <span className="mag-fs-edited" title="Кадр размечен или проверен человеком"><Icon name="tick" size={12} /></span>}
-            {im.asked && <span className="q-pin mag-fs-q"><Icon name="question" size={10} /></span>}
-          </button>
-        ))}
+        {vertical ? (
+          <div style={{ position: "relative", flex: "none", width: cellW, height: Math.max(0, total * stride - VERTICAL_GAP) }}>
+            {cells}
+          </div>
+        ) : cells}
       </div>
     </div>
   );

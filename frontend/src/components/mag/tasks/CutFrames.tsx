@@ -9,7 +9,7 @@ import { count, ru } from "../../ru";
 import { fmtPrecise } from "../VideoCutModal";
 import type { SourceCounts } from "./tasks";
 
-export type OpenCutFrame = (image: TaskImage, query: TaskImageQuery) => void;
+export type OpenCutFrame = (image: TaskImage, query: TaskImageQuery, rows: TaskImage[]) => void;
 
 export function FoldSource({ title, desc, open, onOpen, children, className, id }: {
   title: ReactNode; desc?: ReactNode; open: boolean; onOpen: (open: boolean) => void;
@@ -132,7 +132,7 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, uploaded = fal
       : page.rows.length > 0 && <div className={cx("tp-cut-tiles", view === "list" && "as-list")}>
         {page.rows.map((image) => {
           const state = statusOf(image), video = videos.find((v) => v.id === image.source_video_id);
-          return <button key={image.id} className="tp-cut-tile" onClick={() => onOpen(image, query)}
+          return <button key={image.id} className="tp-cut-tile" onClick={() => onOpen(image, query, page.rows)}
             aria-label={`${image.file_name}, ${state.text}`}>
             <span className="tp-cut-picture"><img src={imageThumbUrl(image.id)} alt="" loading="lazy" />
               {image.source_time_ms != null && <span className="tp-cut-time">{fmtPrecise(image.source_time_ms)}</span>}
