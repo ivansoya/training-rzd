@@ -16,6 +16,7 @@ export interface QuestionMessage {
 export type ObjectKind = "ann" | "track" | "box";
 
 export interface Question {
+  by_agent?: boolean;
   id: string;
   status: "open" | "resolved";
   /** Место текстом: имя изображения или «ролик.mp4, 0:23» — помнится и после удаления ролика. */
@@ -43,7 +44,7 @@ export interface QuestionList { questions: Question[]; can_ask: boolean }
 
 /** Куда вопрос: изображение или кадр ролика; объект — по желанию. */
 export type QuestionPlace =
-  | { image_id: string; object_id?: string; object_kind?: "ann" }
+  | { image_id: string; object_id?: string; object_kind?: "ann"; by_agent?: boolean }
   | { video_id: string; frame_no: number; object_id?: string; object_kind?: "track" | "box" };
 
 export interface InboxItem {

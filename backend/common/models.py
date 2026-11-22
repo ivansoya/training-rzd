@@ -291,6 +291,7 @@ class Image(Base, AuditMixin):
     task_status: Mapped[str] = mapped_column(
         IMAGE_TASK_STATUS_ENUM, nullable=False, default="new", server_default="new"
     )
+    agent_empty: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False, server_default=sa.false())
     # Версия разметки кадра: растёт с каждой записью. Клиент присылает ту, что
     # видел, и запись поверх чужой правки получает 409, а не стирает её молча.
     annotations_rev: Mapped[int] = mapped_column(
@@ -348,6 +349,14 @@ class Tag(Base, AuditMixin):
         sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
     )
     name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+
+
+class ImageHumanEdit(Base):
+    __tablename__ = "image_human_edits"
+
+    image_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("images.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[uuid.UUID] = mapped_column(sa.ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    edited_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
 
 
 class ImageTag(Base):
@@ -826,6 +835,7 @@ class TaskQuestion(Base, AuditMixin):
     """
 
     __tablename__ = "task_questions"
+    by_agent: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, default=False, server_default=sa.false())
     __table_args__ = (sa.Index("ix_task_questions_task", "task_id", "status"),)
 
     id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)

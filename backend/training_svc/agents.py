@@ -1210,6 +1210,7 @@ def _apply(db, user, project, task=None):
                           inputs={str(w.id): w.imgsz for w in shelf})
     except agent_graph.AgentGraphError as exc:
         return jsonify({"error": str(exc)}), 400
+    expected_rev = image.annotations_rev if image is not None else None
     row = _ask_worker(db, user, image, {**doc, "apply": target, "owner": _owner_of(graph)})
     bad = _not_done(row)
     if bad:
@@ -1220,13 +1221,17 @@ def _apply(db, user, project, task=None):
     # Автор рамок агента — его владелец, как у прогона
     owner = SimpleNamespace(version_id=version.id, created_by=graph.owner_id)
     if image is not None:
-        put = agent_runner._write(db, owner, image, found, mapping)
+        image = db.get(Image, _uuid(target["image"]), with_for_update=True, populate_existing=True)
+        if image is None or image.task_status == "deleted" or image.annotations_rev != expected_rev:
+            return jsonify({"error": "Кадр изменился во время разметки агента."}), 409
+        put = agent_runner._write(db, owner, image, found, mapping, propose_empty=task is not None)
         db.refresh(image)
         if task is None:
             # Соседний «Фокус» датасета на этом кадре перечитает его
             live.notify(db, "frame", image.id, project.id, u=str(user.id))
         return jsonify({"put": put, "found": len(found), "boxes": _image_boxes(db, image),
                         "rev": image.annotations_rev, "task_status": image.task_status,
+                        "agent_empty": image.agent_empty,
                         "ms": row.result.get("ms"), "device": row.result.get("device")})
     try:
         put = agent_runner._write_video(db, owner, video, target["frame"], found, mapping)

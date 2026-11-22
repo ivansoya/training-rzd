@@ -76,6 +76,7 @@ def _view(db, task, user, role, items):
             "time_ms": q.time_ms,
             "object_id": str(q.object_id) if q.object_id else None,
             "object_kind": q.object_kind,
+            "by_agent": q.by_agent,
             "object_gone": bool(q.object_id) and q.object_id not in alive,
             "class": {"id": str(c.id), "name": c.name, "color": c.color} if c else None,
             "author": names.get(q.created_by),
@@ -154,6 +155,7 @@ def ask(task_id):
             if image is None or image.task_id != task.id:
                 return jsonify({"error": "Изображение не из этой таски."}), 400
             q.image_id, q.place = image.id, qlib.place(image.file_name)
+            q.by_agent = data.get("by_agent") is True
             if oid:
                 ann = db.get(Annotation, oid)
                 if kind != "ann" or ann is None or ann.image_id != image.id:

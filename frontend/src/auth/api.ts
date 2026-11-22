@@ -1052,6 +1052,10 @@ export interface TaskImage {
   height: number | null;
   size_bytes: number | null;
   task_status: ImageTaskStatus;
+  my_edited_at?: string | null;
+  human_edited?: boolean;
+  agent_empty?: boolean;
+  agent_question?: boolean;
   accepted: boolean;
   source_video_id: string | null;
   source_time_ms: number | null;
@@ -1174,6 +1178,7 @@ export async function assignTask(id: string, assignees: string[]): Promise<TaskS
 export interface TaskImageQuery {
   status?: string; limit?: number; offset?: number; source?: string; image?: string;
   review?: "all" | "new" | "done";
+  order?: "name";
   tag_ids?: string[];
 }
 
@@ -1186,6 +1191,7 @@ export async function getTaskImages(
   if (params.image) q.set("image", params.image);
   if (params.status) q.set("status", params.status);
   if (params.review) q.set("review", params.review);
+  if (params.order) q.set("order", params.order);
   if (params.tag_ids?.length) q.set("tags", params.tag_ids.join(","));
   // «files» — загруженные файлами, иначе идентификатор ролика.
   if (params.source) q.set("source", params.source);
@@ -1795,6 +1801,7 @@ export async function saveAnnotations(
   undo?: boolean
 ): Promise<{
   saved: number; clamped: number; task_status: string; rev: number;
+  agent_empty?: boolean; my_edited_at?: string | null;
   /** id и автор каждой присланной фигуры по порядку, null — отброшена. */
   shapes?: SavedShape[];
 }> {
@@ -1809,13 +1816,14 @@ export async function saveAnnotations(
 
 export async function setImageTaskStatus(
   imageId: string,
-  status: ImageTaskStatus
-): Promise<{ task_status: ImageTaskStatus; counts: TaskCounts }> {
+  status: ImageTaskStatus,
+  reviewEmpty = false
+): Promise<{ task_status: ImageTaskStatus; counts: TaskCounts; rev?: number; agent_empty?: boolean; my_edited_at?: string | null }> {
   return asJson(
     await fetch(`/api/images/${imageId}/task-status`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify({ status, ...(reviewEmpty ? { review_empty: true } : {}) }),
     })
   );
 }

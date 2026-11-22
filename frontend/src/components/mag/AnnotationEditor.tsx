@@ -37,7 +37,7 @@ import { SPLIT_LABEL } from "./frames/FrameFilters";
 import type { AutoRefine } from "../../auth/api";
 import type { TaskBox, TaskPerson } from "../../auth/api";
 import { Link } from "react-router-dom";
-import { AnchorButton, Badge, Button, LinkButton, Notice, StackBar, Switch, cx } from "../../ui";
+import { AnchorButton, Badge, Button, Check, LinkButton, Notice, StackBar, Switch, cx } from "../../ui";
 import { plural, ru } from "../ru";
 import AutoSettings from "../editor/AutoSettings";
 import ClassPicker from "../editor/ClassPicker";
@@ -120,6 +120,11 @@ const ASK_KEYS: KeyGroup = { title: "Вопросы", keys: [
 const GREY = { name: "", color: "#9aa4ae" };
 const SIDE_W = 280;
 const NO_OFF = new Set<string>();
+const FRAME_FILTER_STATES = [
+  ["annotated", "Размеченные"], ["agent", "На проверку"], ["new", "Нетронутые"],
+  ["empty", "Фоновые"], ["skipped", "Отложенные"], ["deleted", "Выброшенные"],
+] as const;
+type FrameFilterState = (typeof FRAME_FILTER_STATES)[number][0];
 
 // Последняя запись разметки, в том числе ушедшая при закрытии редактора.
 // Страница таски ждёт её перед тем, как перечитать кадры: иначе чтение,
@@ -382,6 +387,7 @@ export default function AnnotationEditor({
     : ds ? (ro ? ["next"] : ["empty", "trash", "next"])
       : frameActions({ status: image.task_status, objects: boxes.length, readOnly: ro });
   const unchecked = pendingCount(boxes);
+  const emptyProposal = !!image?.agent_empty && image.task_status !== "deleted";
   // Агенты кадра — для групп на проверке и подписи агента у класса при двух и больше.
   const agentsHere = useMemo(() => agentGroups(boxes, (b) => agentKeyOf(meta.get(b.id ?? ""))), [boxes, meta]);
   const canEmpty = actions.includes("empty");
@@ -399,23 +405,30 @@ export default function AnnotationEditor({
   const off = useMemo(() => (fltEntries.some((e) => fltOff.has(e.key)) ? fltOff : NO_OFF), [fltEntries, fltOff]);
   const fltOn = off.size > 0;
 
-  // Вопросы в разметке (решения 29.10.2026): пузырьки, раздел справа, отбор ленты «С вопросами»
+  // Вопросы в разметке: отметки в ленте и раздел справа.
   const qList = questions?.list;
   const askedIds = useMemo(() => askedObjects(qList ?? []), [qList]);
   const askedImgs = useMemo(() => new Set(openOf(qList ?? []).flatMap((q) => (q.image_id ? [q.image_id] : []))), [qList]);
-  const askedN = useMemo(() => images.filter((im) => askedImgs.has(im.id)).length, [images, askedImgs]);
+  const agentAsked = useMemo(() => new Set(openOf(qList ?? []).flatMap((q) => q.by_agent && q.image_id ? [q.image_id] : [])), [qList]);
   const askedIdx = useMemo(() => new Set(boxes.flatMap((b, i) => (b.id && askedIds.has(b.id) ? [i] : []))), [boxes, askedIds]);
-  const [onlyAsked, setOnlyAsked] = useState(false);
-  // Последний вопрос решили — отбор гаснет, а не оставляет ленту пустой
-  const askOnly = onlyAsked && askedN > 0;
+  const [filterStates, setFilterStates] = useState<FrameFilterState[]>([]);
+  const [filterTags, setFilterTags] = useState<string[]>([]);
+  const extraActive = filterStates.length > 0 || filterTags.length > 0;
+  const resetExtra = () => { setFilterStates([]); setFilterTags([]); };
 
-  /** Подходит отбору: классам и, если включено, открытому вопросу. */
-  const fits = useCallback((i: number) => frameShown(images[i]?.boxes, off) && (!askOnly || askedImgs.has(images[i]?.id ?? "")),
-    [images, off, askOnly, askedImgs]);
+  const fits = useCallback((i: number) => {
+    const frame = images[i];
+    if (!frame || !frameShown(frame.boxes, off)) return false;
+    if (filterTags.length && !frame.tag_ids?.some((id) => filterTags.includes(id))) return false;
+    if (!filterStates.length) return true;
+    const agent = frame.agent_empty || frame.boxes?.some((b) => b.pending) || (qList ? agentAsked.has(frame.id) : frame.agent_question);
+    const status = frame.task_status !== "deleted" && agent ? "agent" : frame.task_status;
+    return filterStates.includes(status);
+  }, [images, off, filterStates, filterTags, qList, agentAsked]);
   /** Кадр в работе: подходит отбору; текущий — всегда, выпадает при уходе с него. */
   const passes = useCallback((i: number) => i === index || fits(i), [index, fits]);
   const shown = useMemo(() => images.map((_, i) => i).filter(passes), [images, passes]);
-  const narrowed = fltOn || askOnly;
+  const narrowed = fltOn || extraActive;
   const none = narrowed && !shown.some(fits);
   const pos = none ? -1 : shown.indexOf(index);
 
@@ -451,6 +464,8 @@ export default function AnnotationEditor({
       annotations: res.saved,
       task_status: res.task_status as ImageTaskStatus,
       rev: res.rev,
+      agent_empty: res.agent_empty,
+      ...(res.my_edited_at ? { human_edited: true, my_edited_at: res.my_edited_at } : {}),
       // Номер рамки — настоящий, если он был: по нему сервер узнаёт
       // нетронутую рамку агента при следующем сохранении этого кадра.
       boxes: sent.map((b, i) => ({
@@ -654,6 +669,7 @@ export default function AnnotationEditor({
         rev: fresh.rev,
         annotations: fresh.boxes.length,
         ...(fresh.task_status ? { task_status: fresh.task_status as ImageTaskStatus } : {}),
+        agent_empty: fresh.agent_empty,
       });
     }
     settle(fresh?.rev ?? img?.rev);
@@ -698,11 +714,11 @@ export default function AnnotationEditor({
       .then((r) => (r.images[0] ? asFrame(r.images[0]) : undefined)));
   });
 
-  // Забракованные кадры перешагиваем: из работы они выпали, но из ленты нет. Не прошедшие фильтр — тоже.
+  // Листаем в порядке ленты, пропуская только кадры вне фильтра.
   const go = useCallback(
     (delta: number) => {
       let i = navAt.current + delta;
-      while (i >= 0 && i < images.length && (images[i].task_status === "deleted" || !passes(i))) {
+      while (i >= 0 && i < images.length && !passes(i)) {
         i += delta;
       }
       return jump(i);
@@ -711,19 +727,23 @@ export default function AnnotationEditor({
   );
 
   const verdict = useCallback(
-    async (status: ImageTaskStatus, advance: boolean) => {
+    async (status: ImageTaskStatus, advance: boolean, reviewEmpty = false) => {
       if (!image || ro) return;
       if (!(await flush())) return;
       try {
-        const res = await setImageTaskStatus(image.id, status);
-        onChanged(image.id, { task_status: res.task_status });
+        const res = await setImageTaskStatus(image.id, status, reviewEmpty);
+        if (res.rev !== undefined) settle(res.rev);
+        onChanged(image.id, { task_status: res.task_status, agent_empty: res.agent_empty,
+          ...(res.rev === undefined ? {} : { rev: res.rev }),
+          ...(res.my_edited_at ? { human_edited: true, my_edited_at: res.my_edited_at } : {}),
+        });
         setError(null);
         if (advance) go(1);
       } catch (e) {
         setError((e as Error).message);
       }
     },
-    [image, ro, flush, onChanged, go]
+    [image, ro, flush, onChanged, go, settle]
   );
 
   // «Пусто» и «Отложить» — переключатели: нажал случайно, нажми ещё раз.
@@ -805,8 +825,8 @@ export default function AnnotationEditor({
 
   /** Кадры на проверке в открытом списке — у текущего по живой разметке. */
   const flagged = useCallback(
-    () => images.map((im, i) => (i === index ? pendingCount(boxesRef.current) > 0
-      : im.task_status !== "deleted" && passes(i) && (im.boxes || []).some((b) => b.pending))),
+    () => images.map((im, i) => im.task_status !== "deleted" && passes(i) && (!!im.agent_empty ||
+      (i === index ? pendingCount(boxesRef.current) > 0 : im.boxes?.some((b) => b.pending) === true))),
     [images, index, passes]
   );
 
@@ -837,10 +857,12 @@ export default function AnnotationEditor({
 
   /** «Подтвердить кадр»: оставшееся агента верно. */
   const confirmFrame = useCallback(async () => {
-    if (frozen || !pendingCount(boxesRef.current)) return;
+    if (frozen) return;
+    if (emptyProposal) { await verdict("empty", true, true); return; }
+    if (!pendingCount(boxesRef.current)) return;
     edit(confirmAll(boxesRef.current));
     await onward();
-  }, [frozen, edit, onward]);
+  }, [frozen, emptyProposal, verdict, edit, onward]);
 
   /** Рамки одного агента: «Принять всё от …» и «Отклонить всё от …», когда агентов на кадре несколько. */
   const ofAgent = useCallback((key: string) => (s: CanvasShape) => agentKeyOf(meta.get(s.id ?? ""))?.key === key, [meta]);
@@ -856,11 +878,13 @@ export default function AnnotationEditor({
 
   /** «Отклонить все»: непроверенное агента уходит с кадра — и дальше, как после «Принять» (отзыв 20.10.2026). */
   const rejectFrame = useCallback(() => {
-    if (frozen || !pendingCount(boxesRef.current)) return;
+    if (frozen) return;
+    if (emptyProposal) { void verdict("new", false, true); return; }
+    if (!pendingCount(boxesRef.current)) return;
     edit(rejectAll(boxesRef.current));
     pick(null);
     void onward();
-  }, [frozen, edit, pick, onward]);
+  }, [frozen, emptyProposal, verdict, edit, pick, onward]);
 
   /** Агент на этом кадре: правки сначала записываются, ответ — разметка кадра с новыми рамками на проверке. */
   const runAgent = useCallback(async () => {
@@ -872,7 +896,7 @@ export default function AnnotationEditor({
       const res = await agentTool.apply({ image_id: img.id });
       if (res.boxes && res.rev !== undefined) {
         live.current.onChanged(img.id, {
-          boxes: res.boxes, rev: res.rev, annotations: res.boxes.length,
+          boxes: res.boxes, rev: res.rev, annotations: res.boxes.length, agent_empty: res.agent_empty,
           ...(res.task_status ? { task_status: res.task_status as ImageTaskStatus } : {}),
         });
         settle(res.rev);
@@ -880,6 +904,7 @@ export default function AnnotationEditor({
       }
       setAgentNote(res.put
         ? `Агент: ${res.put} ${plural(res.put, "рамка", "рамки", "рамок")} на проверке`
+        : res.agent_empty ? "Агент предложил пустой кадр — подтвердите или разметьте вручную"
         : res.found ? "Агент нашёл только то, что на кадре уже есть" : "Агент ничего не нашёл на этом кадре");
     } catch (e) {
       setError((e as Error).message);
@@ -1642,26 +1667,40 @@ export default function AnnotationEditor({
         {panels && (
           <Float className="fe-film" label={ds ? "Кадры группы" : "Кадры таски"}>
             <div className="fe-film-h">
-              <ClassFilter side="right" title="Кадры с классами" classes={fltEntries} unit="кадров с этим классом"
-                off={fltOff} onChange={setFltOff}
+              <ClassFilter side="right" title={ds ? "Кадры с классами" : "Фильтр кадров"}
+                classes={fltEntries} unit="кадров с этим классом" off={fltOff} onChange={setFltOff}
+                extra={ds ? undefined : { active: extraActive, reset: resetExtra, content: <>
+                  <div className="ui-pop-h">Статус</div>
+                  <div className="flt-opts fe-filter-states" role="group" aria-label="Статус кадра">
+                    {FRAME_FILTER_STATES.map(([status, label]) => <div className="flt-row" key={status}>
+                      <Check checked={filterStates.includes(status)} onChange={(on) => setFilterStates((prev) =>
+                        on ? [...prev, status] : prev.filter((s) => s !== status))}><span>{label}</span></Check>
+                    </div>)}
+                  </div>
+                  {tags.length > 0 && <>
+                    <div className="ui-pop-sep" />
+                    <div className="ui-pop-h">Теги кадров</div>
+                    <div className="flt-opts" role="group" aria-label="Теги кадров">
+                      {tags.map((tag) => <div className="flt-row" key={tag.id}>
+                        <Check checked={filterTags.includes(tag.id)} onChange={(on) => setFilterTags((prev) =>
+                          on ? [...prev, tag.id] : prev.filter((id) => id !== tag.id))}><span className="t-ell" title={tag.name}>{tag.name}</span></Check>
+                      </div>)}
+                    </div>
+                  </>}
+                </> }}
                 trigger={
-                  <Button variant="outline" size="sm" icon="filter" iconEnd="chevD" className={cx("fe-flt", fltOn && "on")}
-                    title={fltOn ? `Классы: ${shownOf(fltEntries, fltOff).shown} из ${fltEntries.length}` : "Отобрать кадры по классам"}>
-                    Классы{fltOn && <span className="fr-fcount">{shownOf(fltEntries, fltOff).shown}</span>}
+                  <Button variant="outline" size="sm" icon="filter" iconEnd="chevD" className={cx("fe-flt", (fltOn || extraActive) && "on")}
+                    aria-label={ds ? undefined : "Фильтр"}
+                    title={ds ? "Отобрать кадры по классам" : "Отобрать кадры по статусам, тегам и классам"}>
+                    {ds ? "Классы" : "Фильтр"}
+                    {narrowed && <span className="fr-fcount">{ds ? shownOf(fltEntries, fltOff).shown : shown.filter(fits).length}</span>}
                   </Button>
                 } />
-              {questions && (
-                <Button variant="outline" size="sm" className={cx("fe-flt fe-qflt", askOnly && "on")}
-                  aria-pressed={askOnly} disabled={!askedN} title="Только кадры с открытым вопросом"
-                  onClick={() => setOnlyAsked(!askOnly)}>
-                  <span className="t-ell">С вопросами</span><span className="ui-mono fe-qflt-n">{ru(askedN)}</span>
-                </Button>
-              )}
             </div>
             {none ? (
               <div className="fe-film-none" style={{ width: filmW }}>
-                Нет кадров с выбранными классами
-                <Button variant="outline" size="sm" onClick={() => setFltOff(new Set())}>Сбросить</Button>
+                Нет кадров по выбранным фильтрам
+                <Button variant="outline" size="sm" onClick={() => { setFltOff(new Set()); resetExtra(); }}>Сбросить</Button>
               </div>
             ) : (
               <FilmStrip
@@ -1669,16 +1708,19 @@ export default function AnnotationEditor({
                 items={shown.map((i) => {
                   const im = images[i];
                   const out = i === index && !fits(i);
+                  const agent = im.task_status !== "deleted" && (im.agent_empty || (i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending))
+                    || (qList ? agentAsked.has(im.id) : im.agent_question));
+                  const edited = !ds && (im.human_edited || im.task_status === "empty" || im.boxes?.some((b) => !b.pending));
                   return {
                     id: im.id,
                     width: im.width,
                     height: im.height,
                     boxes: im.boxes,
                     n: (ds ? ds.base : 0) + i + 1,
-                    ring: im.task_status + ((i === index ? unchecked > 0 : im.boxes?.some((b) => b.pending)) ? " agent" : "")
-                      + (out ? " out" : ""),
-                    title: `${im.file_name} — ${im.annotations} разметок${out ? "; не по фильтру, уйдёт из ленты" : ""}`,
+                    ring: (agent ? "agent" : im.task_status) + (out ? " out" : ""),
+                    title: `${im.file_name} — ${im.annotations} разметок${ds ? "" : edited ? "; проверен или размечен человеком" : "; без правок человека"}${out ? "; не по фильтру, уйдёт из ленты" : ""}`,
                     asked: askedImgs.has(im.id),
+                    edited,
                   };
                 })}
                 index={pos}
@@ -1780,7 +1822,7 @@ export default function AnnotationEditor({
 
         {/* Плашка видна, пока на проверке есть хоть один кадр списка: на кадре без него — «ещё N» и стрелки */}
         {panels && reviewLeft > 0 && !frozen && !autoPrev && (
-          <ReviewBar count={unchecked} left={reviewLeft} onPrev={() => goReview(-1)} onNext={() => goReview(1)}
+          <ReviewBar count={unchecked} emptyProposal={emptyProposal} left={reviewLeft} onPrev={() => goReview(-1)} onNext={() => goReview(1)}
             onConfirm={() => void confirmFrame()} onReject={rejectFrame}
             agents={agentsHere.map((g) => ({ agent: g.agent, count: g.idx.length }))}
             onConfirmAgent={confirmAgent} onRejectAgent={rejectAgent} />

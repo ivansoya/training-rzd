@@ -6,7 +6,7 @@
 """
 import uuid
 
-from sqlalchemy import String, and_, case, cast, exists, literal, select
+from sqlalchemy import String, and_, case, cast, exists, literal, or_, select
 from sqlalchemy.orm import aliased
 
 from common.models import Annotation, Image, Task, TaskVideo, VideoAnnotation, VideoTrack
@@ -91,7 +91,7 @@ def source_clause(task_id, source):
 
 def has_pending():
     """На кадре есть рамка агента, которую ещё не проверили."""
-    return exists().where(Annotation.image_id == Image.id, Annotation.pending.is_(True))
+    return or_(Image.agent_empty.is_(True), exists().where(Annotation.image_id == Image.id, Annotation.pending.is_(True)))
 
 
 def agent_pending():

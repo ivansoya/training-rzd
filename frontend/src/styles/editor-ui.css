@@ -418,6 +418,7 @@
 .ed-review.scout .ed-review-t > i { color: var(--muted-fg); font-style: normal; }
 
 /* Лента: кадр на проверке обведён цветом агента — он поверх состояния, потому что ждёт действия */
+.mag-fs-edited { position: absolute; left: 4px; top: 4px; display: grid; place-items: center; width: 18px; height: 18px; border-radius: var(--r-full); background: var(--card); color: var(--st-done); }
 .mag-fs-cell.agent { border-color: var(--agent-hi); }
 .mag-fs-cell.agent .mag-fs-n { color: var(--agent-fg); }
 
@@ -449,6 +450,24 @@
 .ve .ed-review { bottom: 14px; }
 
 /* ---------- фильтр классов: шапка дорожек видео и лента «Фокуса» (14.10.2026) ---------- */
+.flt-pop-extended {
+  max-width: calc(100vw - 16px);
+  max-height: min(70dvh, var(--radix-popover-content-available-height));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.flt-pop-extended > .ui-pop-h:first-child {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--card);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg);
+  font-weight: 600;
+}
+.flt-pop-extended .fe-filter-states { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 4px; }
+.fe-filter-states .flt-row { border: 1px solid var(--border); }
+.flt-pop-extended .flt-row:has(input:checked) { background: var(--hover); }
 .flt-opts { display: flex; flex-direction: column; }
 .flt-row { display: flex; align-items: center; border-radius: var(--r); transition: box-shadow .12s; }
 .flt-row:is(:hover, :has(:focus-visible)) { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ring) 55%, transparent); }

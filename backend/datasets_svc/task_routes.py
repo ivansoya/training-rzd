@@ -16,6 +16,8 @@ import tempfile
 import threading
 import uuid
 
+from datetime import datetime, timezone
+
 from flask import Blueprint, jsonify, request, send_file
 from sqlalchemy import case, func, select
 from sqlalchemy.exc import OperationalError
@@ -30,6 +32,7 @@ from common.models import (
     Dataset,
     Image,
     ImageTag,
+    ImageHumanEdit,
     LabelClass,
     Project,
     ProjectMember,
@@ -1094,10 +1097,10 @@ def _prepare_state(db, video):
         "error": None,
     }
     if video.mode != "annotate":
+        state["ready"] = stage != queue.KIND_INDEX
         return state
 
     src = video_index.table(queue.asset(db, video.id, chunklib.SOURCE))
-        state["ready"] = stage != queue.KIND_INDEX
     default = chunklib.default_for(src) if src else None
     asset = queue.asset(db, video.id, default) if default else None
     state["ready"] = bool(
@@ -1820,12 +1823,20 @@ def task_images(task_id):
                 q = q.where(task_frames.reviewed() if review == "done" else ~task_frames.reviewed())
         else:
             matched = db.execute(select(func.count()).select_from(q.subquery())).scalar_one()
-        images = db.execute(
-            q.order_by(QUEUE_ORDER, Image.file_name, Image.id).limit(limit).offset(offset)
-        ).scalars().all()
+        # Галерея идёт по именам кадров независимо от состояния разметки.
+        by_name = review or request.args.get("order") == "name"
+        order = (Image.file_name, Image.id) if by_name else (QUEUE_ORDER, Image.file_name, Image.id)
+        images = db.execute(q.order_by(*order).limit(limit).offset(offset)).scalars().all()
 
         ids = [i.id for i in images]
         by_image = _task_boxes(db, ids)
+        edits = dict(db.execute(
+            select(ImageHumanEdit.image_id, func.max(ImageHumanEdit.edited_at).filter(ImageHumanEdit.user_id == user.id))
+            .where(ImageHumanEdit.image_id.in_(ids)).group_by(ImageHumanEdit.image_id)
+        ).all()) if ids else {}
+        agent_questions = set(db.scalars(select(TaskQuestion.image_id).where(
+            TaskQuestion.image_id.in_(ids), TaskQuestion.by_agent.is_(True), TaskQuestion.status == "open"
+        ))) if ids else set()
         img_tags = tags.of(db, "image", ids)
         # Копия кадра датасета: откуда она — «Исходник» в редакторе
         origins = {oid: (ds_id, name) for oid, ds_id, name in db.execute(
@@ -1844,6 +1855,10 @@ def task_images(task_id):
                     "height": img.height,
                     "size_bytes": img.size_bytes,
                     "task_status": img.task_status,
+                    "agent_empty": img.agent_empty,
+                    "agent_question": img.id in agent_questions,
+                    "human_edited": img.id in edits or img.task_status == "empty" or any(not b["pending"] for b in by_image[img.id]),
+                    "my_edited_at": edits[img.id].isoformat() if edits.get(img.id) else None,
                     "rev": img.annotations_rev,
                     "accepted": img.dataset_id is not None,
                     "source_video_id": (
@@ -1930,6 +1945,7 @@ def _save_annotations(db, image_id):
         return jsonify({
             "error": "Кадр уже изменили — перечитайте его, правка поверх чужой стёрла бы её.",
             "code": "stale",
+            "agent_empty": image.agent_empty,
             "rev": image.annotations_rev,
             "task_status": image.task_status,
             "boxes": _task_boxes(db, [image.id])[image.id],
@@ -2026,6 +2042,7 @@ def _save_annotations(db, image_id):
     # проверенная агентова — размечен; стёрли всё — снова нетронутый, если его
     # не откладывали осознанно. Одно непроверенное агента кадр не размечает:
     # «размечен» — это решение человека. У забракованного статус не трогаем.
+    was = image.task_status
     checked = any(not ann.pending for _, ann in written)
     if (image.task_id or image.dataset_id) and image.task_status != "deleted":
         if checked:
@@ -2036,6 +2053,12 @@ def _save_annotations(db, image_id):
         elif image.task_status == "annotated" or image.dataset_id:
             # Кадр в датасете без объектов остаётся данными — фоновым примером («Пусто» в датасете).
             image.task_status = "empty" if image.dataset_id else "new"
+    new_geometry = {str(ann.id): (ann.class_id, ann.ann_type, ann.geometry, ann.pending) for _, ann in written if ann.id}
+    old_geometry = {key: (a["class_id"], a["ann_type"], a["geometry"], a["pending"]) for key, a in existing.items()}
+    changed = len(written) != len(existing) or new_geometry != old_geometry or image.task_status != was
+    edited_at = _remember_edit(db, image, user) if changed else None
+    if checked:
+        image.agent_empty = False
     image.annotations_rev += 1
     db.commit()
     _ping_frame(db, image, user)
@@ -2045,7 +2068,8 @@ def _save_annotations(db, image_id):
     for pos, ann in written:
         saved[pos] = {"id": str(ann.id), "source": ann.source, "pending": ann.pending}
     return jsonify({"saved": len(written), "clamped": clamped, "shapes": saved,
-                    "task_status": image.task_status, "rev": image.annotations_rev})
+                    "task_status": image.task_status, "rev": image.annotations_rev,
+                    "agent_empty": image.agent_empty, "my_edited_at": edited_at})
 
 
 def _authorship(db, anns):
@@ -2058,6 +2082,18 @@ def _authorship(db, anns):
     } if user_ids else {}
     agents = attribution.agent_names(db, version_ids)
     return authors, agents
+
+
+def _remember_edit(db, image, user):
+    if image.task_id is None:
+        return None
+    edited_at = datetime.now(timezone.utc)
+    mark = db.get(ImageHumanEdit, (image.id, user.id))
+    if mark is None:
+        db.add(ImageHumanEdit(image_id=image.id, user_id=user.id, edited_at=edited_at))
+    else:
+        mark.edited_at = edited_at
+    return edited_at.isoformat()
 
 
 @bp.patch("/api/images/<image_id>/task-status")
@@ -2075,7 +2111,7 @@ def set_image_status(image_id):
         if user is None:
             return jsonify({"error": "Не выполнен вход."}), 401
         iid = _uuid_or_none(image_id)
-        image = db.get(Image, iid) if iid else None
+        image = db.get(Image, iid, with_for_update=True) if iid else None
         if image is None or image.task_id is None:
             return jsonify({"error": "Кадр не найден в таске."}), 404
         project = db.get(Project, image.project_id)
@@ -2084,11 +2120,26 @@ def set_image_status(image_id):
         denied = _refusal(task, user, role) or (_held(db, image) if image.dataset_id is not None else None)
         if denied:
             return denied
-        status = json_body().get("status")
+        data = json_body()
+        status = data.get("status")
         if status not in ("new", "skipped", "annotated", "empty", "deleted"):
             return jsonify({"error": "Неизвестное состояние кадра."}), 400
 
+        if data.get("propose_empty") is True:
+            if status != "empty" or image.task_status != "new" or db.scalar(
+                    select(Annotation.id).where(Annotation.image_id == image.id).limit(1)) is not None:
+                return jsonify({"error": "Предложить пустоту можно только на нетронутом кадре без объектов."}), 409
+            if not image.agent_empty:
+                image.agent_empty = True
+                image.annotations_rev += 1
+                db.commit()
+                _ping(db, task.id, task.project_id, user, i=str(image.id))
+            return jsonify({"task_status": image.task_status, "agent_empty": True, "rev": image.annotations_rev,
+                            "counts": _counts(db, task.id)})
+        if data.get("review_empty") is True and (not image.agent_empty or status not in ("new", "empty")):
+            return jsonify({"error": "Предложение агента изменилось — перечитайте кадр."}), 409
         was = image.task_status
+        pending_empty = image.agent_empty
         if status == "deleted":
             _soft_delete(db, task, user, image)
         elif was == "deleted":
@@ -2096,9 +2147,16 @@ def set_image_status(image_id):
             _log(db, task, user, "image_restored", file=image.file_name)
         else:
             image.task_status = status
+            if status in ("empty", "annotated") or data.get("review_empty") is True:
+                image.agent_empty = False
+        edited_at = (_remember_edit(db, image, user) if image.task_status in ("empty", "annotated") and was != "deleted"
+                     and (was != image.task_status or pending_empty != image.agent_empty) else None)
+        if pending_empty != image.agent_empty:
+            image.annotations_rev += 1
         db.commit()
         _ping(db, task.id, task.project_id, user, i=str(image.id))
-        return jsonify({"task_status": image.task_status, "counts": _counts(db, task.id)})
+        return jsonify({"task_status": image.task_status, "counts": _counts(db, task.id),
+                        "agent_empty": image.agent_empty, "my_edited_at": edited_at, "rev": image.annotations_rev})
     finally:
         db.close()
 

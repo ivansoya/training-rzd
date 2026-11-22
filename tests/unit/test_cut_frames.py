@@ -15,6 +15,7 @@ from common.auth import hash_token
 from common.db import Base, SessionLocal, engine
 from common.models import Annotation, AuthSession, Image, ImageTag, LabelClass, Project, ProjectMember, Tag, Task, TaskVideo, User
 from datasets_svc.task_routes import bp
+from datasets_svc.question_routes import bp as questions_bp
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -53,7 +54,7 @@ def scene():
         db.add(image); db.flush(); images[name] = image
         db.add(ImageTag(image_id=image.id, tag_id=a.id))
     db.commit()
-    app = Flask(__name__); app.register_blueprint(bp)
+    app = Flask(__name__); app.register_blueprint(bp); app.register_blueprint(questions_bp)
     client = app.test_client(); client.set_cookie("session", key)
     yield db, client, task, cut, images, a, b, alien
     db.delete(project); db.delete(foreign); db.commit(); db.delete(user); db.commit(); db.close()
@@ -71,6 +72,55 @@ def test_review_не_считает_модель_подтверждённой_и
     assert {r["file_name"] for r in ready["images"]} == {"done.jpg", "empty.jpg"}
     assert fresh["matched"] == 3 and ready["matched"] == 2
     assert next(r for r in fresh["images"] if r["file_name"] == "pending.jpg")["boxes"][0]["pending"]
+    all_frames = get(scene, review="all").get_json()["images"]
+    assert [r["file_name"] for r in all_frames] == ["done.jpg", "empty.jpg", "new.jpg", "pending.jpg", "skipped.jpg"]
+
+
+def test_agent_empty_is_pending_and_human_edit_is_personal(scene):
+    db, client, task, _cut, images, *_ = scene
+    image = images["new"]
+    path = f"/api/images/{image.id}/task-status"
+    question = client.post(f"/api/tasks/{task.id}/questions", json={
+        "image_id": str(image.id), "text": "Проверьте, есть ли объект на кадре.", "by_agent": True,
+    })
+    assert question.status_code == 201, question.text
+    row = get(scene, image=str(image.id)).json["images"][0]
+    assert row["agent_question"] and row["task_status"] == "new"
+    assert client.patch(path, json={"status": "empty", "propose_empty": True}).status_code == 200
+    pending = get(scene, status="agent").get_json()["images"]
+    row = next(r for r in pending if r["id"] == str(image.id))
+    assert row["agent_empty"] and row["task_status"] == "new"
+    assert not row["human_edited"] and row["my_edited_at"] is None
+    confirmed = client.patch(path, json={"status": "empty", "review_empty": True})
+    assert confirmed.status_code == 200, confirmed.text
+    assert confirmed.json["my_edited_at"] and not confirmed.json["agent_empty"]
+    assert client.patch(path, json={"status": "empty", "review_empty": True}).status_code == 409
+    unchanged = client.put(f"/api/images/{image.id}/annotations", json={"boxes": [], "rev": confirmed.json["rev"]})
+    assert unchanged.status_code == 200 and unchanged.json["my_edited_at"] is None
+
+    key = uuid.uuid4().hex
+    peer = User(email=f"{key}@test.invalid", login=key, display_name="Коллега", password_hash="test")
+    db.add(peer); db.flush()
+    db.add_all([ProjectMember(project_id=task.project_id, user_id=peer.id, role="admin"),
+                AuthSession(user_id=peer.id, token_hash=hash_token(key), expires_at=datetime.now(timezone.utc) + timedelta(days=1))])
+    db.commit()
+    second = client.application.test_client()
+    second.set_cookie("session", key)
+    result = second.get(f"/api/tasks/{task.id}/images", query_string={"image": str(image.id)}).json["images"][0]
+    assert result["human_edited"] and result["my_edited_at"] is None
+    mine = get(scene, image=str(image.id)).json["images"][0]
+    assert mine["my_edited_at"] == confirmed.json["my_edited_at"]
+    db.delete(peer); db.commit()
+
+
+def test_editor_name_order_keeps_discarded_frames_in_place(scene):
+    db, _client, _task, _cut, images, *_ = scene
+    before = [r["id"] for r in get(scene, order="name").get_json()["images"]]
+    assert len(before) == 6
+    images["empty"].task_status = "deleted"
+    db.commit()
+    after = [r["id"] for r in get(scene, order="name").get_json()["images"]]
+    assert after == before
 
 
 def test_таги_объединяются_по_или_и_пересекаются_с_состоянием(scene):

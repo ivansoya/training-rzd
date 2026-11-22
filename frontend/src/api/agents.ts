@@ -248,6 +248,7 @@ export const applyAgent = (
   boxes?: import("../auth/api").TaskBox[];
   rev?: number;
   task_status?: string;
+  agent_empty?: boolean;
   ms?: number;
 }>(at(scope, "/apply"), body);
 

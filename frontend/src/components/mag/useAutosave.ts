@@ -25,6 +25,7 @@ export interface StaleFrame<B> {
   boxes: B[];
   rev: number;
   task_status?: string;
+  agent_empty?: boolean;
 }
 
 /** Автосохранение кадра, общее у редактора таски и просмотра датасета.

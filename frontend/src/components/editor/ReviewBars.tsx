@@ -9,8 +9,9 @@ import type { AgentKey } from "./review";
  *  несколько — ещё «Принять всё от …» и «Отклонить всё от …» по одному агенту.
  *  Стрелки ‹ › — к соседнему кадру с разметкой ([ и ]; только на проверке — с Shift). Плашка видна, пока непроверенное есть
  *  хоть где-то: на кадре без него действия остаются на месте, но недоступны. */
-export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, onNext, agents, onConfirmAgent, onRejectAgent, onRejectRange, rangeSelecting }: {
+export function ReviewBar({ count, emptyProposal, left, disabled, onConfirm, onReject, onPrev, onNext, agents, onConfirmAgent, onRejectAgent, onRejectRange, rangeSelecting }: {
   count: number;
+  emptyProposal?: boolean;
   /** Кадров на проверке во всём ролике или списке — для сжатого вида. */
   left?: number;
   disabled?: boolean;
@@ -33,7 +34,7 @@ export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, 
     <Button variant="ghost" size="sm" icon="chevR" className="is-agent ed-review-go" aria-label="Следующий кадр с разметкой (])"
       title={"Следующий кадр с разметкой (])\nтолько на проверке — Shift+]"} onClick={onNext} />
   );
-  const calm = count === 0;
+  const calm = count === 0 && !emptyProposal;
   const unavailable = disabled || calm;
   const many = (agents?.length ?? 0) > 1;
   const pickAgent = (label: string, act?: (key: string) => void, variant?: "agent") => (
@@ -52,7 +53,7 @@ export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, 
       <div className="ed-review-nav">{prev}
       <span className="ed-review-t">
         <Icon name="bot" size={14} />
-        {calm ? <>Агент: ещё <b>{left ?? 0}</b> {plural(left ?? 0, "кадр", "кадра", "кадров")} на проверке</>
+        {emptyProposal ? "Агент: пустой кадр на проверке" : calm ? <>Агент: ещё <b>{left ?? 0}</b> {plural(left ?? 0, "кадр", "кадра", "кадров")} на проверке</>
           : <>{many ? "Агенты" : "Агент"}: <b>{count}</b> {plural(count, "рамка", "рамки", "рамок")} на проверке</>}
       </span>
       {next}</div>
@@ -63,11 +64,11 @@ export function ReviewBar({ count, left, disabled, onConfirm, onReject, onPrev, 
           title="Выделить участок на дорожке агента" />}
         {many ? pickAgent("Отклонить всё от…", onRejectAgent) : (
           <Button variant="ghost" size="sm" disabled={unavailable} onClick={onReject}
-            title="Убрать с кадра всё непроверенное агента (Shift+Enter)">Отклонить все</Button>
+            title="Убрать с кадра всё непроверенное агента (Shift+Enter)">{emptyProposal ? "Отклонить пустой кадр" : "Отклонить все"}</Button>
         )}
         {many && pickAgent("Принять всё от…", onConfirmAgent)}
         <Button variant="agent" size="sm" kbd="⏎" disabled={unavailable} onClick={onConfirm}
-          title="Оставшиеся рамки агентов верны">Принять все</Button>
+          title={emptyProposal ? "Подтвердить отсутствие объектов" : "Оставшиеся рамки агентов верны"}>{emptyProposal ? "Подтвердить пустой кадр" : "Принять все"}</Button>
       </div>
     </Float>
   );

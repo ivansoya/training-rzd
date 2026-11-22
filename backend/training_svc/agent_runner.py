@@ -557,14 +557,16 @@ def _frames(db, run, ids, work, mapping, tick):
     stats = {"boxes": 0, "frames": 0, **prev}
 
     def handle(image_id, found):
+        proposed_empty = False
         image = db.execute(select(Image).where(Image.id == image_id).with_for_update()).scalar_one_or_none()
         if image is None or image.task_status != "new" or image.annotations_rev != seen[image_id][0]:
             db.rollback()
             put = 0
         else:
-            put = _write(db, run, image, found, mapping)
+            put = _write(db, run, image, found, mapping, propose_empty=True)
+            proposed_empty = image.agent_empty
         stats["boxes"] += put
-        stats["frames"] += bool(put)
+        stats["frames"] += bool(put or proposed_empty)
         # Только здесь: поочерёдно кадры ждут пачку, и курсор не должен обогнать непосчитанные.
         stats["cursor"] = [seen[image_id][1], str(image_id)]
         tick(dict(stats))
@@ -897,7 +899,8 @@ def _settle(db, model, rows, found, mapping):
     return found
 
 
-def _write(db, run, image, found, mapping):
+def _write(db, run, image, found, mapping, *, propose_empty=False):
+    empty_result = not found
     db.execute(
         Annotation.__table__.delete().where(
             Annotation.image_id == image.id, Annotation.pending.is_(True),
@@ -927,6 +930,10 @@ def _write(db, run, image, found, mapping):
             agent_version_id=run.version_id, created_by=run.created_by,
         ))
         put += 1
+    if put:
+        image.agent_empty = False
+    elif propose_empty and image.task_status == "new" and empty_result and not rows:
+        image.agent_empty = True
     # Открытый у человека редактор увидит 409, а не перезапишет рамки агента молча.
     image.annotations_rev += 1
     db.commit()

@@ -1,7 +1,7 @@
 // Список «какие классы показывать» — у дорожек видео и над лентой «Фокуса» (решения 14.10.2026).
 
 import { useCallback, useEffect, useState } from "react";
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { Button, Check, Icon, Popover, Swatch } from "../../ui";
 import { ru } from "../ru";
 
@@ -31,7 +31,7 @@ export function useClassFilter(storeKey: string) {
 export const shownOf = (entries: FilterEntry[], off: Set<string>) =>
   ({ shown: entries.filter((e) => !off.has(e.key)).length, total: entries.length });
 
-export function ClassFilter({ trigger, title, classes, agent = [], unit, agentUnit, off, onChange, side }: {
+export function ClassFilter({ trigger, title, classes, agent = [], unit, agentUnit, off, onChange, side, extra }: {
   trigger: ReactElement;
   title: string;
   classes: FilterEntry[];
@@ -43,6 +43,7 @@ export function ClassFilter({ trigger, title, classes, agent = [], unit, agentUn
   off: Set<string>;
   onChange: (next: Set<string>) => void;
   side?: "top" | "right" | "bottom" | "left";
+  extra?: { content: ReactNode; active: boolean; reset: () => void };
 }) {
   const all = [...classes, ...agent];
   const toggle = (key: string, on: boolean) => {
@@ -63,11 +64,14 @@ export function ClassFilter({ trigger, title, classes, agent = [], unit, agentUn
     </div>
   );
   return (
-    <Popover width={290} side={side} className="flt-pop" trigger={trigger}>
+    <Popover width={290} side={side} className={extra ? "flt-pop flt-pop-extended" : "flt-pop"} trigger={trigger}>
       <div className="ui-pop-h">
         <span>{title}</span>
-        <Button variant="ghost" size="sm" disabled={all.every((e) => !off.has(e.key))} onClick={() => onChange(new Set())}>Все</Button>
+        <Button variant="ghost" size="sm" disabled={!extra?.active && all.every((e) => !off.has(e.key))}
+          onClick={() => { onChange(new Set()); extra?.reset(); }}>{extra ? "Сбросить" : "Все"}</Button>
       </div>
+      {extra?.content}
+      {extra && classes.length > 0 && <><div className="ui-pop-sep" /><div className="ui-pop-h">Классы</div></>}
       <div className="flt-opts">{classes.map((e) => row(e, unit))}</div>
       {agent.length > 0 && (
         <>

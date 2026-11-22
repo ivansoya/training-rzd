@@ -27,6 +27,7 @@ export interface FilmItem {
   title?: string;
   /** Открытый вопрос на кадре — пузырёк в углу. */
   asked?: boolean;
+  edited?: boolean;
 }
 
 const SIZE = {
@@ -145,6 +146,7 @@ export default function FilmStrip({
             <img src={imageThumbUrl(im.id)} alt="" loading="lazy" decoding="async" />
             <ShapeMini boxes={im.boxes || []} width={im.width} height={im.height} />
             <span className="mag-fs-n">{im.n ?? i + 1}</span>
+            {im.edited && <span className="mag-fs-edited" title="Кадр размечен или проверен человеком"><Icon name="tick" size={12} /></span>}
             {im.asked && <span className="q-pin mag-fs-q"><Icon name="question" size={10} /></span>}
           </button>
         ))}
