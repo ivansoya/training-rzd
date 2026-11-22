@@ -733,8 +733,39 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       dx: p.x - hit.at[0], dy: p.y - hit.at[1] });
   }
 
+  function openContext(e: React.MouseEvent, i: number, at?: { part?: number; vertex?: number }) {
+    if (!editable || !onContext || (auto && e.shiftKey)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!multiSelected?.has(i)) onSelect?.(i, at?.part ?? null);
+    onContext(i, e.clientX, e.clientY, at);
+  }
+
+  function openBodyContext(e: React.MouseEvent<SVGGeometryElement>) {
+    if (!editable || !onContext || (auto && e.shiftKey)) return;
+    // Браузер проверяет форму каждой части. Из перекрывающихся берём ту,
+    // у которой меньше габариты, сохраняя порядок слоёв при равенстве.
+    let hit = e.currentTarget;
+    const area = (el: SVGGeometryElement) => {
+      const { width, height } = el.getBBox();
+      return width * height;
+    };
+    let smallest = area(hit);
+    for (const el of document.elementsFromPoint(e.clientX, e.clientY)) {
+      if (!(el instanceof SVGGeometryElement) || el.dataset.shape === undefined ||
+          el.ownerSVGElement !== hit.ownerSVGElement || el === hit) continue;
+      const size = area(el);
+      if (size >= smallest) continue;
+      smallest = size;
+      hit = el;
+    }
+    openContext(e, Number(hit.dataset.shape),
+      hit.dataset.part === undefined ? undefined : { part: Number(hit.dataset.part) });
+  }
+
   function onStageDownCapture(e: ReactPointerEvent<HTMLDivElement>) {
     if (e.button !== 0 || !editable) return;
+    if (!e.altKey && e.target instanceof Element && e.target.closest(".mag-cv-lb:not(.ghost)")) return;
     // Ловим точки до ручек объектов, разведки и полуавтомата.
     if (drawingPolygon && (e.altKey || !e.shiftKey)) {
       e.preventDefault();
@@ -1015,33 +1046,9 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           const vertices =
             contour && on && editable && !drawingPolygon && (multiSelected?.size ?? 0) < 2 && showVertices(s.parts!, width, height, rect);
 
-          function menu(
-            e: ReactPointerEvent | React.MouseEvent,
-            at?: { part?: number; vertex?: number }
-          ) {
-            if (!editable || !onContext) return;
-            e.preventDefault();
-            e.stopPropagation();
-            // Shift+правая в полуавтомате — «убрать этот участок», точку уже
-            // поставил обработчик холста; меню тут лишнее.
-            if (auto && (e as React.MouseEvent).shiftKey) return;
-            if (!multiSelected?.has(i)) onSelect?.(i, at?.part ?? null);
-            onContext(
-              i,
-              (e as React.MouseEvent).clientX,
-              (e as React.MouseEvent).clientY,
-              at
-            );
-          }
-
           function down(e: ReactPointerEvent, part: number) {
             if (e.button !== 0) return;
-            // Под Alt объект не подхватывают: нажатие уходит на сцену и
-            // становится новой вершиной.
-            // В режиме контура готовые объекты кликов не перехватывают вовсе:
-            // точку ставят и поверх них, в том числе первую. Событие уходит на
-            // сцену нетронутым — иначе объект начал бы переезжать вместо того,
-            // чтобы под ним появилась вершина.
+            // При ручном рисовании Shift панорамирует и поверх объектов.
             if (tool === "polygon" && editable && !auto) return;
             if (editable && !auto && tool === "select" && (e.ctrlKey || e.metaKey) && contour && onMultiSelect) {
               e.preventDefault();
@@ -1097,6 +1104,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                       key={corner}
                       className={`mag-cv-h ${corner}`}
                       x={hx - HIT / 2} y={hy - HIT / 2} width={HIT} height={HIT}
+                      onContextMenu={(e) => openContext(e, i)}
                       onPointerDown={(e) => {
                         if (e.button !== 0 || e.shiftKey) return;
                         e.preventDefault();
@@ -1132,7 +1140,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                       }}
                       onContextMenu={(e) => {
                         // Правая по вершине — сразу убрать её; меню — только когда убрать нельзя (осталось минимум)
-                        if (!editable || !onBoxes || ring.length <= poly.MIN_POINTS) { menu(e, { part, vertex }); return; }
+                        if (auto && e.shiftKey) return;
+                        if (!editable || !onBoxes || ring.length <= poly.MIN_POINTS) { openContext(e, i, { part, vertex }); return; }
                         e.preventDefault();
                         e.stopPropagation();
                         const parts = poly.removeVertex(s.parts!, part, vertex);
@@ -1180,16 +1189,19 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                       (on && splitParts && part === selectedPart ? " part-on" : "")
                     }
                     d={ringsPath([s.parts![part]])}
+                    data-shape={i}
+                    data-part={part}
                     onPointerDown={(e) => down(e, part)}
-                    onContextMenu={(e) => menu(e, { part })}
+                    onContextMenu={openBodyContext}
                   />
                 ))
               ) : (
                 <rect
                   className="mag-cv-hit"
                   x={px} y={py} width={Math.max(sw, 0)} height={Math.max(sh, 0)}
+                  data-shape={i}
                   onPointerDown={(e) => down(e, 0)}
-                  onContextMenu={(e) => menu(e)}
+                  onContextMenu={openBodyContext}
                 />
               )}
               {/* Габарит контура: пунктирная рамка по самым крайним точкам
@@ -1231,6 +1243,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
               x={gx} y={gy} width={Math.max(gx2 - gx, 0)} height={Math.max(gy2 - gy, 0)} />
           );
         });
+        if (selected !== null && shapes[selected]) shapes.push(...shapes.splice(selected, 1));
         return <>{shapes}{ghostFrames}{top}</>;
         })()}
 
@@ -1345,6 +1358,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                 style={{ left: lx, top: py, ["--bc" as string]: meta.color }}
                 onPointerEnter={() => setHot(i)}
                 onPointerLeave={() => setHot((h) => (h === i ? null : h))}
+                onContextMenu={(e) => openContext(e, i)}
                 // Щелчок по подписи выбирает её рамку и не начинает рисование под ней
                 onPointerDown={(e) => {
                   if (e.button !== 0) return;

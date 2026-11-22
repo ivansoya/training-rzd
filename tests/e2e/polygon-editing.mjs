@@ -13,7 +13,7 @@ const out = new URL("./test-results/polygon-editing/", import.meta.url);
 try {
   await mkdir(out, { recursive: true });
   await page.route("**/polygon-editing-test", (route) => route.fulfill({ contentType: "text/html", body: `
-    <html lang="ru"><div id="root"></div><script type="module">
+    <html lang="ru"><meta charset="utf-8"><div id="root"></div><script type="module">
     import RefreshRuntime from '/@react-refresh';
     RefreshRuntime.injectIntoGlobalHook(window);
     window.$RefreshReg$ = () => {}; window.$RefreshSig$ = () => (type) => type;
@@ -28,14 +28,19 @@ try {
       const [boxes, setBoxes] = React.useState([]), [tool, setTool] = React.useState('polygon');
       const [selected, setSelected] = React.useState(null), [selectedPart, setPart] = React.useState(null);
       const [splitParts, setSplit] = React.useState(false);
+      const [auto, setAuto] = React.useState(false);
+      const [labels, setLabels] = React.useState(false);
+      const [ghostOn, setGhostOn] = React.useState(null);
       const ref = React.useRef(null);
-      window.fixture = { boxes, selected, setBoxes, setTool, setSelected, setPart, setSplit, ref };
+      window.fixture = { boxes, selected, setBoxes, setTool, setSelected, setPart, setSplit, setAuto, setLabels, ghostOn, ref };
       return h('div', { style: { display: 'flex', height: 800 } }, h(BoxCanvas, {
         ref, imageId: 'test', src: 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="800" height="500"><path fill="#5a6b7a" d="M0 0H800V500H0Z"/></svg>'),
         width: 800, height: 500, boxes, tool, selected, selectedPart, splitParts,
-        editable: true, activeClass: 0, labels: false,
-        labelOf: () => ({ name: 'Вагон', color: '#f0bd58' }),
+        editable: true, activeClass: 0, labels, auto,
+        ghosts: [{ class_index: 0, x: 200, y: 80, w: 130, h: 20, name: 'Разведка', color: '#abc', conf: 0.9 }], ghostOn, onGhost: setGhostOn,
+        labelOf: (ci) => ({ name: ci === 1 ? 'Малый объект' : 'Вагон', color: '#f0bd58' }),
         onSelect: (i, part) => { setSelected(i); setPart(part ?? null); }, onBoxes: setBoxes,
+        onContext: (i, x, y, at) => { window.lastContext = { i, part: at?.part ?? null }; },
         onPolygon: (ring) => setBoxes((b) => [...b, { class_index: 0, kind: 'polygon', x: 0, y: 0, w: 800, h: 500, parts: [ring] }]),
       }));
     }
@@ -135,6 +140,66 @@ try {
     await page.keyboard.up('Alt');
     expect(errors).toEqual([]);
     console.log('PASS: explicit edge insertion, immediate drag, stale preview, far click, vertex deduplication, zoom, selected part, pointer leave');
+
+    await reset();
+    await page.keyboard.down('Alt'); await click(270, 94); await page.keyboard.up('Alt');
+    await expect.poll(parts).toEqual([[[100, 100], [270, 100], [600, 100], [600, 400], [100, 400]]]);
+    expect(await page.evaluate(() => window.fixture.ghostOn)).toBeNull();
+
+    await reset();
+    await page.evaluate(() => { window.fixture.setTool('box'); window.fixture.setAuto(true); });
+    await page.keyboard.down('Alt'); await click(270, 108); await page.keyboard.up('Alt');
+    await expect.poll(parts).toEqual([[[100, 100], [270, 100], [600, 100], [600, 400], [100, 400]]]);
+    await page.evaluate(() => window.fixture.setAuto(false));
+
+    await reset();
+    await page.evaluate(() => window.fixture.setTool('polygon'));
+    await click(100, 100);
+    expect(await page.evaluate(() => window.fixture.selected)).toBeNull();
+    await expect(page.locator('.mag-cv-vhit')).toHaveCount(0);
+    await page.keyboard.down('Shift');
+    await page.keyboard.down('Alt'); await click(600, 100); await page.keyboard.up('Alt');
+    await page.keyboard.up('Shift');
+    await click(600, 400);
+    await page.keyboard.press('Enter');
+    await expect.poll(() => page.evaluate(() => window.fixture.boxes[1]?.parts)).toEqual([[[100, 100], [600, 100], [600, 400]]]);
+    expect(await parts()).toEqual([[[100, 100], [600, 100], [600, 400], [100, 400]]]);
+    expect(errors).toEqual([]);
+    console.log('PASS: Alt takes priority over scout and auto, and a new contour clears selection and accepts Alt points');
+
+    await page.evaluate(() => {
+      const f = window.fixture;
+      f.setLabels(true); f.setSelected(null); f.setTool('polygon');
+      f.setBoxes([
+        { class_index: 1, x: 200, y: 180, w: 120, h: 100, parts: [
+          [[200, 180], [260, 180], [200, 240]], [[270, 230], [320, 230], [320, 280], [270, 280]],
+        ] },
+        { class_index: 0, x: 100, y: 100, w: 400, h: 300 },
+      ]);
+    });
+    const layers = () => page.locator('.mag-cv-layer > .mag-cv-sh:not(.mag-cv-ov)').evaluateAll(
+      (shapes) => shapes.map((shape) => Number(shape.querySelector('.mag-cv-hit').dataset.shape))
+    );
+    await expect.poll(layers).toEqual([0, 1]);
+    await page.locator('.mag-cv-lb', { hasText: 'Малый объект' }).click();
+    await expect.poll(layers).toEqual([1, 0]);
+    await expect(page.locator('.mag-cv-draft')).toHaveCount(0);
+    await page.evaluate(() => window.fixture.setTool('select'));
+    await click(550, 430);
+    await expect.poll(layers).toEqual([0, 1]);
+
+    const right = async (x, y) => { const p = await at(x, y); await page.mouse.click(p.x, p.y, { button: 'right' }); };
+    const context = () => page.evaluate(() => window.lastContext);
+    await right(250, 225); // В габарите треугольника, но за его ребром.
+    await expect.poll(context).toEqual({ i: 1, part: null });
+    await right(295, 250); // Вторая часть полностью под выделенным прямоугольником.
+    await expect.poll(context).toEqual({ i: 0, part: 1 });
+    await expect.poll(layers).toEqual([1, 0]);
+    await page.locator('.mag-cv-lb', { hasText: 'Вагон' }).click({ button: 'right' });
+    await expect.poll(context).toEqual({ i: 1, part: null });
+    await expect.poll(layers).toEqual([0, 1]);
+    expect(errors).toEqual([]);
+    console.log('PASS: covered polygon hit, exact part, label selection in polygon mode, and restored layer order');
   }
 } catch (e) { console.error({ errors, state: await page.evaluate(() => ({ selected: window.fixture?.selected, boxes: window.fixture?.boxes, frame: document.querySelector('.mag-cv-frame')?.getBoundingClientRect().toJSON(), stage: document.querySelector('.mag-cv')?.getBoundingClientRect().toJSON() })) }); throw e; }
 finally { await browser.close(); }

@@ -1441,11 +1441,11 @@ export default function VideoAnnotator({
   }, [items, frozen, patchTrack, editSingle]);
 
   const pickClass = useCallback(
-    (ci: number, target: number | null = tool === "select" ? selected : null) => {
+    (ci: number, target: number | null = selected) => {
       setActive(ci);
       if (target !== null) recolor(target, ci);
     },
-    [tool, selected, recolor]
+    [selected, recolor]
   );
 
   /** «Подтвердить» одну рамку агента: остальные на кадре ждут своей очереди. */
