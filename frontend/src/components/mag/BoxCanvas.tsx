@@ -683,7 +683,10 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     [width, height, rect]
   );
 
+  const drawingPolygon = editable && !auto && tool === "polygon" && activeClass !== null;
+
   function addPoint(p: Point) {
+    if (!draftRef.current.length) onSelect?.(null);
     // Клик по начальной точке — просьба замкнуть. Пока точек меньше трёх,
     // замыкать нечего, и клик просто не считается новой точкой: ставить
     // вторую поверх первой человек не хотел.
@@ -695,7 +698,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   }
 
   function insertionAt(e: { clientX: number; clientY: number }) {
-    if (!editable || !onBoxes || auto || draftRef.current.length || selected === null || (multiSelected?.size ?? 0) > 1) return null;
+    if (!editable || !onBoxes || drawingPolygon || draftRef.current.length || selected === null || (multiSelected?.size ?? 0) > 1) return null;
     const s0 = boxesRef.current[selected];
     if (!s0?.parts?.length || hidden?.has(s0.class_index) || hiddenItems?.has(selected)) return null;
     const p = toImage(e);
@@ -730,14 +733,21 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       dx: p.x - hit.at[0], dy: p.y - hit.at[1] });
   }
 
-  function onStageDown(e: ReactPointerEvent<HTMLDivElement>) {
-    // Alt — «вставить вершину». Проверяем раньше всего: под ним нажатие не
-    // рисует, не выделяет и не панорамит.
-    if (e.button === 0 && e.altKey && editable && !auto) {
+  function onStageDownCapture(e: ReactPointerEvent<HTMLDivElement>) {
+    if (e.button !== 0 || !editable) return;
+    // Ловим точки до ручек объектов, разведки и полуавтомата.
+    if (drawingPolygon && (e.altKey || !e.shiftKey)) {
       e.preventDefault();
+      e.stopPropagation();
+      addPoint(inFrame(toImage(e)));
+    } else if (e.altKey) {
+      e.preventDefault();
+      e.stopPropagation();
       insertHere(e);
-      return;
     }
+  }
+
+  function onStageDown(e: ReactPointerEvent<HTMLDivElement>) {
     // Shift плюс правая кнопка — «этого участка в объекте нет». Только в
     // режиме точек: в режиме области уточнять нечем, там работает рамка.
     if (e.button === 2 && auto && autoMode === "points" && editable && e.shiftKey) {
@@ -769,11 +779,6 @@ const BoxCanvas = forwardRef<CanvasHandle, {
     }
     if (e.shiftKey || !editable) {
       begin(e, { kind: "pan", px: e.clientX, py: e.clientY, ox: view.x, oy: view.y });
-      return;
-    }
-    if (tool === "polygon" && activeClass !== null) {
-      const p = toImage(e);
-      addPoint(inFrame(p));
       return;
     }
     if (tool === "box" && activeClass !== null) {
@@ -918,6 +923,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       className={`mag-cv ${grid ? "grid" : ""} cur-${cursor}`}
       aria-busy={!frameReady}
       ref={stageRef}
+      onPointerDownCapture={onStageDownCapture}
       onPointerDown={onStageDown}
       onPointerMove={onStageMove}
       onPointerLeave={() => { pointerRef.current = null; setPointer(null); setGhost(null); }}
@@ -1007,7 +1013,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             : `M${px} ${py}H${px2}V${py2}H${px}Z`;
           const { corners, mids } = affordance(sw, sh);
           const vertices =
-            contour && on && editable && (multiSelected?.size ?? 0) < 2 && showVertices(s.parts!, width, height, rect);
+            contour && on && editable && !drawingPolygon && (multiSelected?.size ?? 0) < 2 && showVertices(s.parts!, width, height, rect);
 
           function menu(
             e: ReactPointerEvent | React.MouseEvent,
@@ -1032,7 +1038,6 @@ const BoxCanvas = forwardRef<CanvasHandle, {
             if (e.button !== 0) return;
             // Под Alt объект не подхватывают: нажатие уходит на сцену и
             // становится новой вершиной.
-            if (e.altKey && editable) return;
             // В режиме контура готовые объекты кликов не перехватывают вовсе:
             // точку ставят и поверх них, в том числе первую. Событие уходит на
             // сцену нетронутым — иначе объект начал бы переезжать вместо того,
@@ -1083,7 +1088,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
           const tools = (
             <>
               {/* Якоря выбранного бокса: четыре угла всегда, середины — у крупного. */}
-              {on && editable && !contour &&
+              {on && editable && !drawingPolygon && !contour &&
                 HANDLES.filter((c) => (mids && corners) || CORNERS.has(c)).map((corner) => {
                   const hx = corner.includes("l") ? px : corner.includes("r") ? px2 : (px + px2) / 2;
                   const hy = corner.includes("t") ? py : corner.includes("b") ? py2 : (py + py2) / 2;
