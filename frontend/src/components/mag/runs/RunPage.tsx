@@ -13,6 +13,7 @@ import Sep, { withSep } from "../../Sep";
 import { useProject } from "../ProjectShell";
 import { useConfirm } from "../tasks/Confirm";
 import { ClassesCard, ConfusionCard, CurvesCard, LossCard, MetricsCard } from "./RunCharts";
+import RknnExport from "./RknnExport";
 import RunDialog, { seedOf } from "./RunDialog";
 import type { RunSeed } from "./RunDialog";
 import { isFinalCheck, left, progress, stageText, trainedEpochs } from "./runMath";
@@ -134,6 +135,7 @@ export default function RunPage() {
             <Button icon="play" disabled={acting} onClick={() => act(() => runsApi.resumeRun(code, run.id))}>Продолжить</Button>
           )}
           {run.has_weights && <AnchorButton icon="download" href={runsApi.weightsUrl(code, run.id)}>Веса</AnchorButton>}
+          {run.has_weights && <RknnExport key={run.id} code={code} run={run} />}
           <Popover align="end" width={260} trigger={<Button variant="ghost" icon="more" aria-label="Ещё" />}>
             {(close) => (<>
               {manage && <MenuItem icon="copy" onSelect={() => { close(); setSeed(seedOf(run)); }}>Повторить с этими параметрами</MenuItem>}

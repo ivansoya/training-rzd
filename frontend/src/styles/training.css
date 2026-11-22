@@ -237,3 +237,15 @@
 
 /* Подсказка над строками сборки: откуда берутся графы. */
 
+
+.rn-export-fields { display: grid; gap: 14px; }
+.rn-export-summary { display: grid; gap: 4px; }
+.rn-export-footer-hint { flex: 1 1 220px; align-self: center; }
+.rn-export-wait > i { width: 35%; animation: rn-export-wait 1.2s ease-in-out infinite alternate; }
+@keyframes rn-export-wait { to { transform: translateX(185%); } }
+@media (prefers-reduced-motion: reduce) { .rn-export-wait > i { animation: none; } }
+.rn-export-error { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; margin: 0; }
+.rn-export-inline { display: grid; gap: 4px; min-width: 68px; color: var(--muted-fg); font-size: 11px; line-height: 1.1; white-space: nowrap; }
+.rn-export-inline .ui-progress { height: 3px; }
+.rn-export-pair { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 14px; }
+.rn-export-model { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; border: 1px solid var(--border); background: var(--bg); border-radius: var(--r); padding: 10px 12px; overflow-wrap: anywhere; }

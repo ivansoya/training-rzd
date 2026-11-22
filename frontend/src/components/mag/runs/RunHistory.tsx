@@ -130,7 +130,7 @@ export default function RunHistory() {
               <div className="rn-hist-g">{g.label}</div>
               {g.runs.map((r) => (
                 <HistoryRow key={r.id} run={r} canEdit={canEdit} onOpen={() => open(r)}
-                  weights={runsApi.weightsUrl(code, r.id)} onResume={() => resume(r)}
+                  onExport={() => navigate(`/projects/${code}/runs/${r.number}?export=1`)} weights={runsApi.weightsUrl(code, r.id)} onResume={() => resume(r)}
                   onRepeat={() => setSeed(seedOf(r))} onDelete={() => remove(r)} />
               ))}
             </section>
@@ -179,8 +179,8 @@ function NowCard({ run, first, canEdit, onOpen, onStop }: {
   );
 }
 
-function HistoryRow({ run, canEdit, weights, onOpen, onResume, onRepeat, onDelete }: {
-  run: Run; canEdit: boolean; weights: string;
+function HistoryRow({ run, canEdit, weights, onExport, onOpen, onResume, onRepeat, onDelete }: {
+  run: Run; canEdit: boolean; weights: string; onExport: () => void;
   onOpen: () => void; onResume: () => void; onRepeat: () => void; onDelete: () => void;
 }) {
   const st = runStatus(run);
@@ -220,6 +220,7 @@ function HistoryRow({ run, canEdit, weights, onOpen, onResume, onRepeat, onDelet
       <span className="row rn-row-a" style={{ gap: 2 }} onClick={stopClick} onKeyDown={stopClick}>
         {canEdit && run.resumable ? <Button size="sm" icon="play" onClick={onResume}>Продолжить</Button>
           : run.has_weights && <AnchorButton size="sm" variant="ghost" icon="download" href={weights} aria-label="Скачать веса" title="Скачать веса" />}
+        {run.has_weights && <Button size="sm" variant="ghost" onClick={onExport}>Экспорт</Button>}
         {canEdit && (
           <Popover align="end" width={220} trigger={<Button size="sm" variant="ghost" icon="more" aria-label="Действия" />}>
             {(close) => (<>

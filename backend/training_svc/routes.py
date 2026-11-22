@@ -748,6 +748,22 @@ def delete_run(code, run_id):
         db.close()
 
 
+@bp.route("/api/projects/<code>/runs/<run_id>/rknn", methods=["GET", "POST"])
+@bp.get("/api/projects/<code>/runs/<run_id>/rknn/<artifact>/download")
+def export_rknn(code, run_id, artifact=None):
+    from training_svc.rknn_exports import handle
+    db, project, user, err = _resolve(code)
+    if err:
+        return err
+    try:
+        run = _find(db, project, run_id)
+        if run is None:
+            return jsonify(error="Обучение не найдено."), 404
+        return handle(db, run, user, artifact)
+    finally:
+        db.close()
+
+
 @bp.get("/api/projects/<code>/runs/<run_id>/weights")
 def run_weights(code, run_id):
     db, project, user, err = _resolve(code)

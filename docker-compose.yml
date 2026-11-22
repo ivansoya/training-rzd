@@ -314,6 +314,16 @@ services:
               count: all
               capabilities: [gpu]
 
+  rknn-export:
+    platform: linux/amd64
+    build:
+      context: ./backend
+      dockerfile: rknn_svc/Dockerfile
+    restart: unless-stopped
+    init: true
+    volumes:
+      - yolo-data:/app/data
+
   frontend:
     build: ./frontend
     container_name: yolo-frontend
