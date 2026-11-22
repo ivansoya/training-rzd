@@ -50,7 +50,7 @@ from datasets_svc import copies, materialize, task_progress
 from common import shapes
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
-from datasets_svc import upload, video_busy, video_index
+from datasets_svc import upload, video_browser, video_busy, video_index
 from common.video_frames import FrameClock
 from common import video_tracks as tracklib
 from datasets_svc import video_queue as queue
@@ -1065,7 +1065,7 @@ def _drop_files(base, image_id):
 # Как называются работы на человеческом языке. Разметчику нечего делать со
 # словом «chunkset», ему нужно знать, что происходит.
 STAGE_TEXT = {
-    "index": "разбираю на кадры",
+    "index": "готовлю ролик",
     "strip": "клею киноленту",
     "variant": "готовлю ступень качества",
 }
@@ -1074,8 +1074,8 @@ STAGE_TEXT = {
 def _prepare_state(db, video):
     """Готов ли ролик к работе и что с ним делают прямо сейчас.
 
-    У нарезки требований нет: участки выбирают по самому файлу, а кинолента —
-    удобство. У разметки требования жёсткие: без таблиц кадров и пакетов ролик
+    Нарезка ждёт быструю индексацию и копию просмотра; кинолента — удобство.
+    У разметки требования жёсткие: без таблиц кадров и пакетов ролик
     не открыть, а без качества по умолчанию нечего показывать. Пока их нет,
     пускать в редактор нельзя — он честно скажет «готовится», но человек уже
     решит, что сломалось.
@@ -1097,6 +1097,7 @@ def _prepare_state(db, video):
         return state
 
     src = video_index.table(queue.asset(db, video.id, chunklib.SOURCE))
+        state["ready"] = stage != queue.KIND_INDEX
     default = chunklib.default_for(src) if src else None
     asset = queue.asset(db, video.id, default) if default else None
     state["ready"] = bool(
@@ -1265,7 +1266,7 @@ def video_file(task_id, video_id):
         path = os.path.join(config.DATA_DIR, row.file_path)
         if not os.path.exists(path):
             return jsonify({"error": "Файл не найден."}), 404
-        resp = send_file(path, conditional=True)
+        resp = send_file(video_browser.playback_path(path), conditional=True)
         # Ролик неизменен, пока существует: он загружен один раз и не
         # перезаписывается. Без этого браузер переспрашивал сервер на каждой
         # перемотке — а перемотка в нарезке это основное действие.
@@ -1658,7 +1659,7 @@ def _run_cut_job(job_id, task_id, video_id, segments, user_id):
                 db.commit()
                 pending.clear()
 
-        videolib.extract_frames(path, frames, on_frame, pts=index["pts"],
+        videolib.extract_frames(path, frames, on_frame, pts=index["pts"], keys=index["keys"],
                                 progress=lambda d, t: jobs.update(job_id, processed=d))
 
         # План, а не история: он и есть то, что должно быть нарезано, поэтому

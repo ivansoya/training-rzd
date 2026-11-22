@@ -29,7 +29,7 @@ from common.db import SessionLocal
 from common.models import Task, TaskVideo
 from datasets_svc import video as videolib
 from datasets_svc import video_chunks as chunklib
-from datasets_svc import video_index
+from datasets_svc import video_browser, video_index
 from datasets_svc import video_queue as queue
 
 log = logging.getLogger("video-worker")
@@ -122,9 +122,17 @@ def _do_index(db, job, video, path):
         # Номера кадров этого ролика уже в разметке — подменять таблицу нельзя.
         raise chunklib.UnrecoverableVideoError("Таблица кадров разошлась с файлом ролика.")
 
+    beat = _Beat(db, job, index["count"])
+    try:
+        video_browser.prepare(path, heartbeat=lambda: beat(0))
+    except videolib.VideoError:
+        if video.mode != "annotate":
+            raise
+        # Редактор разметки читает свои ступени; неподдерживаемый MP4 кодек не должен их блокировать.
+        log.warning("копия HTML video недоступна для %s; готовлю ступени разметки", video.id)
     queue.enqueue(db, video.id, queue.KIND_STRIP)
     if video.mode != "annotate":
-        # Окно нарезки играет сам файл — ступени ему ни к чему.
+        # Окно нарезки использует индексированную копию без перекодирования.
         return {"frames": index["count"]}
 
     # «Исходное» — сам оригинал по Range; почему нельзя (если нельзя) — в error.

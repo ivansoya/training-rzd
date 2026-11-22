@@ -431,6 +431,8 @@ def leftovers(video_path):
         f"{base}_strip.jpg",
         # Индекс лежал файлом до переезда в базу; у старых роликов он ещё тут.
         base + "_index.json",
+        base + "_browser.mp4",
+        base + "_browser.json",
     ]
     files += glob.glob(glob.escape(base + VARIANT_PREFIX) + "*.mp4")
     return dirs, sorted(set(files))

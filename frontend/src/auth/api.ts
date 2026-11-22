@@ -1033,7 +1033,7 @@ export async function deleteTaskVideo(
 }
 
 export function videoFileUrl(taskId: string, videoId: string): string {
-  return `/api/tasks/${taskId}/videos/${videoId}/file`;
+  return `/api/tasks/${taskId}/videos/${videoId}/file?browser=1`;
 }
 
 // «empty» — фоновый кадр, объектов нет осознанно; «deleted» — забракован, но

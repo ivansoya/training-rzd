@@ -1582,10 +1582,13 @@ def clear_agents(task_id):
                             "code": "agent_running"}), 409
 
         dry = bool(data.get("dry"))
-        images, singles = [], []  # кадр каждой рамки: id изображения или (ролик, номер кадра)
+        images, singles, empty = [], [], []  # рамки и отдельные предложения пустого изображения
         if sources:
-            on = (Annotation.pending.is_(True), Annotation.image_id.in_(select(Image.id).where(
-                Image.task_id == task.id, or_(*(task_frames.source_clause(task.id, s) for s in sources)))))
+            scope = (Image.task_id == task.id, or_(*(task_frames.source_clause(task.id, s) for s in sources)))
+            proposals = (*scope, Image.agent_empty.is_(True))
+            empty = db.execute(select(Image.id).where(*proposals) if dry else update(Image).where(*proposals)
+                               .values(agent_empty=False, annotations_rev=Image.annotations_rev + 1).returning(Image.id)).scalars().all()
+            on = (Annotation.pending.is_(True), Annotation.image_id.in_(select(Image.id).where(*scope)))
             images = db.execute(
                 select(Annotation.image_id).where(*on) if dry
                 else Annotation.__table__.delete().where(*on).returning(Annotation.image_id)
@@ -1598,8 +1601,8 @@ def clear_agents(task_id):
                 select(*cols).where(*on) if dry
                 else VideoAnnotation.__table__.delete().where(*on).returning(*cols)
             )]
-        got = {"boxes": len(images) + len(singles), "frames": len(set(images)) + len(set(singles))}
-        if dry or not got["boxes"]:
+        got = {"boxes": len(images) + len(singles), "frames": len(set(images + empty)) + len(set(singles))}
+        if dry or not got["frames"]:
             db.rollback()
             return jsonify(got)
         touched = list(set(images))

@@ -116,8 +116,47 @@ class FrameClock:
         return None
 
 
-def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None, alive=None):
-    """Достаёт кадры по номерам за один проход контейнера.
+def _indexed_frames(container, stream, targets, pts, keys, alive):
+    """Близкие цели читаем подряд; далёкие — от ключа. Промах seek перечитываем с начала."""
+    decoder = None
+    last = -1
+    decoded = 0
+    by_pts = {p: i for i, p in enumerate(pts)}
+
+    def scan(target):
+        nonlocal last, decoded
+        for frame in decoder:
+            decoded += 1
+            if alive and decoded % 100 == 0:
+                alive()
+            if frame.pts is None:
+                continue
+            last = by_pts.get(frame.pts, last)
+            if frame.pts == pts[target]:
+                return frame
+            if frame.pts > pts[target]:
+                break
+        return None
+
+    for target in sorted(targets):
+        at = bisect_right(keys, target) - 1
+        key = keys[at] if at >= 0 else 0
+        if decoder is None or key > last + 1:
+            container.seek(pts[key], stream=stream, backward=True, any_frame=False)
+            decoder = iter(container.decode(stream))
+        frame = scan(target)
+        if frame is None:
+            # Индекс контейнера мог посадить после нужного PTS: соседний кадр отдавать нельзя.
+            container.seek(pts[0], stream=stream, backward=True, any_frame=False)
+            decoder = iter(container.decode(stream))
+            frame = scan(target)
+        if frame is None:
+            raise VideoError(f"Кадр {target} из таблицы не найден в видео.")
+        yield target, frame
+
+
+def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None, alive=None, keys=None):
+    """Кадры по номерам: с pts/keys — адресно, без keys — последовательным проходом.
 
     ``pts`` — таблица кадров ролика: номер кадра берётся по ней. Без таблицы
     номер — порядок кадра в декодере (тот же, если в файле нет битых пакетов).
@@ -136,6 +175,12 @@ def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None, alive
         return 0
     last = max(targets)
     by_pts = {p: i for i, p in enumerate(pts)} if pts else None
+    indexed = bool(pts and keys)
+    if indexed and (min(targets) < 0 or last >= len(pts)):
+        raise VideoError("Запрошенный кадр за пределами таблицы видео.")
+    if indexed and (any(a >= b for a, b in zip(pts, pts[1:]))
+                    or list(keys) != sorted(set(keys)) or keys[0] < 0 or keys[-1] >= len(pts)):
+        raise VideoError("Некорректная таблица кадров видео.")
 
     saved = 0
     ordinal = -1
@@ -148,6 +193,17 @@ def extract_frames(path, frame_numbers, on_frame, progress=None, pts=None, alive
         time_base = float(stream.time_base) if stream.time_base else 0.0
         if not time_base:
             raise VideoError("В видео нет шкалы времени — покадровый доступ невозможен.")
+
+        if indexed:
+            for number, frame in _indexed_frames(container, stream, targets, pts, keys, alive):
+                time_ms = int(round((frame.pts - pts[0]) * time_base * 1000))
+                on_frame(number, time_ms, frame.to_image())
+                saved += 1
+                if progress and saved % 10 == 0:
+                    progress(saved, len(targets))
+            if progress:
+                progress(saved, len(targets))
+            return saved
 
         for frame in container.decode(stream):
             if frame.pts is None:
