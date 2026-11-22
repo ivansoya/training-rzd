@@ -113,6 +113,28 @@ def test_agent_empty_is_pending_and_human_edit_is_personal(scene):
     db.delete(peer); db.commit()
 
 
+def test_editor_index_agrees_with_filtered_details(scene):
+    _db, _client, _task, _cut, images, tag, *_ = scene
+    params = {"review": "new", "tags": str(tag.id)}
+    response = get(scene, editor_index=1, **params)
+    assert response.status_code == 200
+    rows = response.json["index"]
+    detailed = get(scene, **params).json["images"]
+    assert [row[0] for row in rows] == [frame["id"] for frame in detailed]
+    pending = next(row for row in rows if row[0] == str(images["pending"].id))
+    assert pending[1:11] == ["pending.jpg", "annotated", False, True, False, False, None, 1, [0], [str(tag.id)]]
+
+
+def test_editor_window_is_capped_and_scoped_to_task(scene):
+    _db, _client, _task, _cut, images, *_ = scene
+    ids = [str(images[name].id) for name in ("pending", "file", "other-task")]
+    result = get(scene, source="", editor_ids=",".join(ids), limit=100).json
+    assert {row["id"] for row in result["images"]} == set(ids[:2])
+    assert "counts" not in result
+    assert next(row for row in result["images"] if row["id"] == ids[0])["boxes"][0]["pending"]
+    assert get(scene, editor_ids=",".join([ids[0]] * 101)).status_code == 400
+
+
 def test_editor_name_order_keeps_discarded_frames_in_place(scene):
     db, _client, _task, _cut, images, *_ = scene
     before = [r["id"] for r in get(scene, order="name").get_json()["images"]]

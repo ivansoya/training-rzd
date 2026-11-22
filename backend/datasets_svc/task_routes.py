@@ -1776,6 +1776,44 @@ def _task_boxes(db, ids):
     return by_image
 
 
+def _editor_image_index(db, query, user_id):
+    """Метаданные навигации и фильтров. Геометрия приходит только с окном кадров."""
+    frames = query.with_only_columns(Image.id, Image.file_name, Image.task_status,
+                                    Image.agent_empty).cte("editor_frames")
+    marks = (select(Annotation.image_id, func.count().label("annotations"),
+                    func.array_agg(func.distinct(LabelClass.class_index)).label("classes"),
+                    func.bool_or(Annotation.pending).label("pending"),
+                    func.bool_or(~Annotation.pending).label("reviewed"))
+             .join(frames, frames.c.id == Annotation.image_id)
+             .join(LabelClass, LabelClass.id == Annotation.class_id)
+             .group_by(Annotation.image_id).subquery())
+    edits = (select(ImageHumanEdit.image_id,
+                    func.max(ImageHumanEdit.edited_at).filter(ImageHumanEdit.user_id == user_id).label("mine"))
+             .join(frames, frames.c.id == ImageHumanEdit.image_id)
+             .group_by(ImageHumanEdit.image_id).subquery())
+    tag_lists = (select(ImageTag.image_id, func.array_agg(ImageTag.tag_id).label("tags"))
+                 .join(frames, frames.c.id == ImageTag.image_id)
+                 .group_by(ImageTag.image_id).subquery())
+    asked = select(TaskQuestion.image_id).where(
+        TaskQuestion.image_id == frames.c.id, TaskQuestion.by_agent.is_(True), TaskQuestion.status == "open"
+    ).exists()
+    rows = db.execute(
+        select(frames.c.id, frames.c.file_name, frames.c.task_status, frames.c.agent_empty,
+               marks.c.annotations, marks.c.classes, marks.c.pending, marks.c.reviewed,
+               edits.c.image_id.label("touched"), edits.c.mine, tag_lists.c.tags, asked.label("asked"))
+        .outerjoin(marks, marks.c.image_id == frames.c.id)
+        .outerjoin(edits, edits.c.image_id == frames.c.id)
+        .outerjoin(tag_lists, tag_lists.c.image_id == frames.c.id)
+        .order_by(frames.c.file_name, frames.c.id)
+    )
+    return jsonify({"index": [
+        [str(r.id), r.file_name, r.task_status, bool(r.agent_empty), bool(r.pending), r.asked,
+         bool(r.touched or r.reviewed or r.task_status == "empty"), r.mine.isoformat() if r.mine else None,
+         r.annotations or 0, r.classes or [], [str(tag) for tag in (r.tags or [])]]
+        for r in rows
+    ]})
+
+
 @bp.get("/api/tasks/<task_id>/images")
 def task_images(task_id):
     db, task, project, user, role, err = _resolve_task(task_id)
@@ -1789,6 +1827,14 @@ def task_images(task_id):
         except (ValueError, TypeError):
             return jsonify({"error": "Размер страницы и смещение — целые числа."}), 400
         q = select(Image).where(Image.task_id == task.id)
+        editor_index = request.args.get("editor_index") == "1"
+        window_ids = request.args.get("editor_ids")
+        if window_ids is not None:
+            ids = [_uuid_or_none(value) for value in window_ids.split(",", 100)]
+            if len(ids) > 100 or None in ids or editor_index:
+                return jsonify({"error": "Окно редактора содержит до 100 идентификаторов кадров."}), 400
+            q = q.where(Image.id.in_(ids))
+            limit = min(limit, 100)
         # Один кадр — редактор перечитывает его, когда кадр поправил сосед
         if request.args.get("image"):
             q = q.where(Image.id == _uuid_or_none(request.args["image"]))
@@ -1813,6 +1859,10 @@ def task_images(task_id):
         clause = task_frames.source_clause(task.id, source)
         if clause is not None:
             q = q.where(clause)
+        if editor_index:
+            if review in ("new", "done"):
+                q = q.where(task_frames.reviewed() if review == "done" else ~task_frames.reviewed())
+            return _editor_image_index(db, q, user.id)
         review_counts = None
         if review:
             pool = q.with_only_columns(Image.id, task_frames.reviewed().label("reviewed")).subquery()
@@ -1846,7 +1896,7 @@ def task_images(task_id):
         return jsonify({
             "matched": matched,
             "review_counts": review_counts,
-            "counts": _counts(db, task.id),
+            **({"counts": _counts(db, task.id)} if window_ids is None else {}),
             "images": [
                 {
                     "id": str(img.id),
