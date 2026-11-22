@@ -14,13 +14,13 @@ import AgentMenu from "./AgentMenu";
 import type { AgentAction, AgentClear } from "./AgentMenu";
 import TagPicker from "../TagPicker";
 import VideoStrip from "../VideoStrip";
-import { fmtBytes, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
+import { fmtBytes, fmtPrecise, fmtStep, fmtTime, framesIn } from "../VideoCutModal";
 import { fits, zoneSay } from "./drop";
 import type { Dragged } from "./drop";
 import type { ReelState, SourceBlock, SourceCounts } from "./tasks";
 import { STATES, coverage, cutCounts, dayOf, etaText, filterCutVideos, leftText, reelLine, reelStates, reviewedCount, runPct, runWord, stateParts } from "./tasks";
 import { CutFramesGallery, FilterTags, FoldSource } from "./CutFrames";
-import type { OpenCutFrame } from "./CutFrames";
+import type { CutFrameActions, OpenCutFrame } from "./CutFrames";
 import { hereNames } from "../here";
 import { questionsWord } from "../questions/questions";
 import type { Here } from "../here";
@@ -250,9 +250,8 @@ function useReelStates(run?: RunView | null) {
 }
 
 function ReelDone({ s, scout }: { s?: ReelState; scout: boolean }) {
-  if (s?.kind !== "done") return null;
-  const label = scout ? "Разведан" : "Размечен агентом";
-  return <span className="tp-reel-status" role="img" aria-label={label} title={label}><Icon name={scout ? "scan" : "tick"} size={15} /></span>;
+  if (scout || s?.kind !== "done") return null;
+  return <span className="tp-reel-status" role="img" aria-label="Размечен агентом" title="Размечен агентом"><Icon name="tick" size={15} /></span>;
 }
 
 /** Ролик в прогоне агента: идёт — сколько из плана и сколько осталось, ждёт — место и когда начнётся. */
@@ -270,7 +269,7 @@ function ReelAgent({ s, scout }: { s?: ReelState; scout: boolean }) {
   const pct = s.plan ? Math.min(100, Math.floor(((s.done ?? 0) / s.plan) * 100)) : null;
   return (
     <div className="tp-reel-ag">
-      <Badge tone="var(--agent)" live>агент {scout ? "разведывает" : "размечает"}</Badge>
+      {scout ? <span>Агент разведывает</span> : <Badge tone="var(--agent)" live>агент размечает</Badge>}
       <span className="t-ell">
         {pct !== null && <><span className="ui-mono">{ru(s.done ?? 0)} / {ru(s.plan!)}</span><Sep /><span className="ui-mono">{pct} %</span><Sep /></>}
         {s.secs == null ? "считаю время" : `осталось ${etaText(s.secs)}`}
@@ -298,8 +297,8 @@ export function FramesCard({ block, look, editable, run, agent, onAnnotate, onRe
   /** У копий датасета: ссылки на датасеты и «Добрать из датасета». */
   code?: string;
   fillable?: boolean;
-  const [showFrames, setShowFrames] = useState(false);
 }) {
+  const [showFrames, setShowFrames] = useState(false);
   const files = block.kind !== "cut";
   const copies = block.kind === "dataset";
   const c = block.counts;
@@ -334,13 +333,13 @@ export function FramesCard({ block, look, editable, run, agent, onAnnotate, onRe
           ))}
         </div>
       )}
+      <Progress c={block.counts} known={block.known} look={look} />
       {block.key === "files" && block.total > 0 && <>
         <Button size="sm" variant="ghost" icon="images" aria-expanded={showFrames}
           onClick={() => setShowFrames(!showFrames)}>{showFrames ? "Скрыть кадры" : "Показать кадры"}</Button>
         {showFrames && <CutFramesGallery taskId={taskId} videos={[]} uploaded tags={tags} open total={block.total}
           revision={revision} onOpen={onFrameOpen} />}
       </>}
-      <Progress c={block.counts} known={block.known} look={look} />
       {copies && block.known && (
         <span className="t-xs t-muted">
           При сдаче: на место <b className="ui-mono">{ru((c.annotated || 0) + (c.empty || 0))}</b>
@@ -387,11 +386,12 @@ export function CutCard(props: Omit<Parameters<typeof CutGroup>[0], "cut">) {
 }
 
 function CutGroup({ block, look, taskId, code, tags, editable, fillable, run, agent, asked, onAnnotate, onReview,
-  onCut, onDelete, onVideoTags, onTagCreated, byVideo, onFrameOpen, cut }: {
+  onCut, onDelete, onVideoTags, onTagCreated, byVideo, onFrameOpen, frameActions, cut }: {
   block: SourceBlock;
   cut: boolean;
   byVideo: TaskNumbers["by_source"] | null;
   onFrameOpen: OpenCutFrame;
+  frameActions?: CutFrameActions;
   look: Look;
   taskId: string;
   code: string;
@@ -467,7 +467,7 @@ function CutGroup({ block, look, taskId, code, tags, editable, fillable, run, ag
                 deleteLabel="Удалить ролик и его кадры" onDelete={fillable ? () => onDelete(v) : undefined} />
             )}
             frames={(expanded) => <CutFramesGallery taskId={taskId} videos={all} tags={tags} videoId={v.id} total={v.frames}
-              revision={byVideo} onOpen={onFrameOpen} open={open && expanded} />}
+              revision={byVideo} onOpen={onFrameOpen} open={open && expanded} actions={frameActions} />}
             onCut={() => onCut(v)}
             onTags={(ids) => onVideoTags(v, ids)} onTagCreated={onTagCreated} />
         ))}
@@ -536,58 +536,58 @@ function ReelRow({ v, taskId, code, tags, editable, asked, agentState, agentDone
   onTags: (ids: string[]) => void;
   onTagCreated: (t: Tag) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [framesOpen, setFramesOpen] = useState(false);
+  const [panel, setPanel] = useState<"frames" | "plan" | null>(null);
   const frameId = useId();
-  const segs = v.segments.length;
+  const planId = useId();
+  const framesOpen = panel === "frames", planOpen = panel === "plan";
+  const togglePanel = (next: "frames" | "plan") => setPanel((current) => current === next ? null : next);
   return (
     <div className="tp-reel">
       <VideoStrip className="tp-poster" taskId={taskId} videoId={v.id} />
       <div className="tp-reel-n">
         <div className="tp-reel-title"><b className="t-ell" title={v.file_name}>{v.file_name}</b>{agentDone}</div>
-        <span className="t-xs t-muted">{fmtTime(v.duration_ms || 0)}<Sep />{v.width}×{v.height}<Sep />{fmtBytes(v.size_bytes)}</span>
+        <div className="tp-reel-meta t-xs t-muted">
+          <span>{fmtTime(v.duration_ms || 0)}</span><span>{v.width}×{v.height}</span><span>{fmtBytes(v.size_bytes)}</span>
+        </div>
         <Rail parts={coverage(v)} />
         <span className="tp-reel-s"><PrepareLine prepare={v.prepare} /><Asked n={asked} /></span>
       </div>
-      <div className="tp-reel-c">
-        {frames && v.frames > 0 ? <Button size="sm" variant="ghost" icon="images" iconEnd={framesOpen ? "chevU" : "chevD"}
-          aria-expanded={framesOpen} aria-controls={frameId} onClick={() => setFramesOpen((v) => !v)}>{count(v.frames, "кадр", "кадра", "кадров")}</Button>
-          : <b className="ui-mono">{v.frames ? ru(v.frames) : "—"}</b>}
-        {segs ? (
-          <button type="button" className="tp-segs" aria-expanded={open} onClick={() => setOpen((x) => !x)}>
-            {count(segs, "участок", "участка", "участков")}<Icon name="chevD" size={13} />
-          </button>
-        ) : <span className="t-xs t-faint">не нарезан</span>}
-      </div>
-      <div className="tp-reel-a">
-        <Button size="sm" icon={editable ? "cut" : "eye"} onClick={onCut}>{!editable ? "Смотреть" : segs ? "Нарезать ещё" : "Нарезать"}</Button>
-        {menu}
+      <div className="tp-reel-controls">
+        <div className="tp-reel-panels">
+          {frames && v.frames > 0 && <Button size="sm" variant={framesOpen ? "outline" : "ghost"} icon="images"
+            iconEnd={framesOpen ? "chevU" : "chevD"} aria-expanded={framesOpen} aria-controls={frameId}
+            onClick={() => togglePanel("frames")}>{count(v.frames, "кадр", "кадра", "кадров")}</Button>}
+          {v.segments.length > 0 && <Button size="sm" variant={planOpen ? "outline" : "ghost"} icon="list"
+            iconEnd={planOpen ? "chevU" : "chevD"} aria-expanded={planOpen} aria-controls={planId}
+            onClick={() => togglePanel("plan")}>План нарезки</Button>}
+        </div>
+        <div className="tp-reel-a">
+          <Button size="sm" icon={editable ? "cut" : "eye"} disabled={v.prepare?.ready === false}
+            title={v.prepare?.ready === false ? "Готовлю видео для просмотра" : undefined}
+            onClick={onCut}>{!editable ? "Смотреть" : v.segments.length ? "Нарезать ещё" : "Нарезать"}</Button>
+          {menu}
+        </div>
       </div>
       {agentState}
       <div className="tp-reel-t">
         <TagPicker code={code} all={tags} value={v.tag_ids || []} disabled={!editable} compact placeholder="таг ролика"
           onChange={onTags} onCreated={onTagCreated} />
       </div>
-      <div className={cx("tp-fold", open && "open")}>
-        <div>
-          <table className="tp-mini">
-            <thead><tr><th>участок</th><th>с — по</th><th>длина</th><th>шаг</th><th className="r">кадров</th></tr></thead>
-            <tbody>
-              {v.segments.map((s, i) => (
-                <tr key={i}>
-                  <td>{s.end_ms - s.start_ms <= 1 ? "кадр" : i + 1}</td>
-                  <td className="ui-mono">{fmtTime(s.start_ms)} — {fmtTime(s.end_ms)}</td>
-                  <td className="ui-mono">{fmtTime(Math.max(0, s.end_ms - s.start_ms))}</td>
-                  <td>{s.end_ms - s.start_ms <= 1 ? "—" : fmtStep(s.step_ms)}</td>
-                  <td className="r ui-mono">{ru(framesIn(s))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      {frames && v.frames > 0 && <div id={frameId} className={cx("tp-source-fold tp-reel-frames", framesOpen && "open")}
-        {...(!framesOpen ? { inert: "" } : {})}><div><div className="tp-reel-frame-body">{frames(framesOpen)}</div></div></div>}
+      {v.segments.length > 0 && <div id={planId} className="tp-reel-detail" hidden={!planOpen}>
+        <ul className="tp-reel-plan">
+          {v.segments.map((s, i) => (
+            <li key={i}>
+              {s.end_ms - s.start_ms <= 1 ? <>
+                <Icon name="image" size={15} />Кадр в <span className="ui-mono">{fmtPrecise(s.start_ms)}</span>
+              </> : <>
+                <Icon name="cut" size={15} />Участок <span className="ui-mono">{fmtPrecise(s.start_ms)}–{fmtPrecise(s.end_ms)}</span>
+                <span className="t-muted">{count(framesIn(s), "кадр", "кадра", "кадров")} · шаг {fmtStep(s.step_ms)}</span>
+              </>}
+            </li>
+          ))}
+        </ul>
+      </div>}
+      {frames && v.frames > 0 && <div id={frameId} className="tp-reel-detail" hidden={!framesOpen}>{frames(framesOpen)}</div>}
     </div>
   );
 }

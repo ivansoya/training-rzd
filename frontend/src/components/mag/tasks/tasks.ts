@@ -1,6 +1,6 @@
 // Логика экранов тасок без React: состояния, доли кадров, доска, источники, план закрытия.
 
-import type { StatusResult, TaskCounts, TaskDetail, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
+import type { StatusResult, TaskCounts, TaskDetail, TaskImage, TaskLight, TaskNumbers, TaskStats, TaskStatus, TaskVideoItem } from "../../../auth/api";
 import type { IconName, StackPart } from "../../../ui";
 import type { RunView } from "../../../api/agents";
 import { ago, count, plural, ru } from "../../ru";
@@ -289,6 +289,27 @@ export interface SourceBlock {
 const SUM_KEYS = ["new", "annotated", "empty", "skipped", "deleted", "accepted", "agent"] as const;
 
 export const reviewedCount = (c: SourceCounts) => c.reviewed ?? (c.annotated || 0) + (c.empty || 0);
+
+/** Личная позиция зависит от времени записи, независимо от порядка ленты. */
+export function lastPersonalEditIndex(images: Pick<TaskImage, "task_status" | "my_edited_at">[]) {
+  let latest = "";
+  let index = -1;
+  images.forEach((image, i) => {
+    if (image.task_status !== "deleted" && image.my_edited_at && image.my_edited_at > latest) {
+      latest = image.my_edited_at;
+      index = i;
+    }
+  });
+  return index;
+}
+
+export function lastReviewedIndex(images: Pick<TaskImage, "task_status" | "boxes" | "agent_empty">[]) {
+  for (let i = images.length - 1; i >= 0; i--) {
+    const image = images[i];
+    if ((image.task_status === "annotated" || image.task_status === "empty") && !image.agent_empty && !image.boxes.some((b) => b.pending)) return i;
+  }
+  return -1;
+}
 
 export function cutCounts(videos: TaskVideoItem[], by: TaskNumbers["by_source"] | null): SourceCounts {
   const out: SourceCounts = {};

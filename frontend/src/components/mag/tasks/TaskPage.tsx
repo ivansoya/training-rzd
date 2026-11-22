@@ -16,7 +16,6 @@ import { setImageTags, setVideoTags } from "../../../api/tags";
 import type { Tag } from "../../../api/tags";
 import { taskRuns } from "../../../api/agents";
 import type { RunMode, RunView } from "../../../api/agents";
-import type { Question } from "../../../api/questions";
 import { Button, Notice, Progress, Sheet, cx, hasLayer } from "../../../ui";
 import { count, plural, ru } from "../../ru";
 import AgentRunDialog, { AgentRunBar } from "../../agents/AgentRunDialog";
@@ -41,7 +40,7 @@ import { questionGo } from "./taskQuestions";
 import type { Zone } from "./drop";
 import { EventList, TaskPassport } from "./TaskPassport";
 import type { FrameState } from "./tasks";
-import { buildSources, busyText, closePlan, closeText, handoverText } from "./tasks";
+import { buildSources, busyText, closePlan, closeText, handoverText, lastPersonalEditIndex, lastReviewedIndex } from "./tasks";
 import { look } from "./useTaskBoard";
 import { openVideos, useTaskPage } from "./useTaskPage";
 import { dismissUploadError, enqueueUpload, uploading, useUpload } from "./uploads";
@@ -52,22 +51,29 @@ const framesTotal = (t: TaskDetail) => Object.values(t.sources || {}).reduce((s,
 
 const ACTIVE_RUN = ["queued", "waiting_gpu", "running"];
 
+const imageNames = new Intl.Collator("ru", { numeric: true });
 
+function firstWorkIndex(images: TaskImage[]) {
+  const first = images.findIndex((i) => i.task_status === "new");
+  return first >= 0 ? first : images.findIndex((i) => i.task_status === "skipped");
+}
 
 /** Все кадры выборки: сервер отдаёт по 200, добираем до `matched`. */
 async function allImages(taskId: string, params: TaskImageQuery): Promise<TaskImage[]> {
   const PAGE = 200;
-  const first = await getTaskImages(taskId, { ...params, limit: PAGE });
+  // В редакторе «Все» включает выброшенные кадры на их прежних местах.
+  const query: TaskImageQuery = { ...params, review: params.review === "all" ? undefined : params.review, order: "name" };
+  const first = await getTaskImages(taskId, { ...query, limit: PAGE });
   const out = [...first.images];
   while (out.length < first.matched) {
-    const next = await getTaskImages(taskId, { ...params, limit: PAGE, offset: out.length });
+    const next = await getTaskImages(taskId, { ...query, limit: PAGE, offset: out.length });
     if (!next.images.length) break;
     out.push(...next.images);
   }
-  return out;
+  return out.sort((a, b) => imageNames.compare(a.file_name, b.file_name));
 }
 
-/** К «Вопросам» паспорта: место вопроса не открыть или «Закрыть» упёрлось в открытые. */
+/** К счётчику вопросов, если место вопроса больше недоступно. */
 const toQuestions = () => document.getElementById("task-questions")?.scrollIntoView({ behavior: "smooth", block: "center" });
 
 const isTyping = (t: EventTarget | null) =>
@@ -93,14 +99,12 @@ export default function TaskPage() {
   const [confirm, confirmNode] = useConfirm();
   // Один список вопросов на страницу и оба редактора
   const qs = useQuestions(taskId, me.user.id);
-  // Текст отказа «Закрыть» из-за открытых вопросов — у такой ошибки кнопка к ним
-  const [refused, setRefused] = useState<string | null>(null);
 
   // Открытый кадр живёт в адресе (?frame=<id>): «Назад» закрывает редактор
   const [editing, setEditing] = useState<{ list: TaskImage[]; index: number } | null>(null);
   const [search, setSearch] = useSearchParams();
   const frameParam = search.get("frame");
-  // Открытый вопрос (?q=<id>) — колокольчик и строки «Вопросов»: редактор встаёт на его обсуждение
+  // Вопрос из уведомления (?q=<id>) открывает обсуждение в редакторе
   const qParam = search.get("q");
   const pushed = useRef(false);
   const setFrame = useCallback((id: string | null, replace: boolean) => {
@@ -144,7 +148,6 @@ export default function TaskPage() {
   const [setupOpen, setSetupOpen] = useState(false);
   const agentTool = useAgentTool(taskId || "");
   const [agentRun, setAgentRun] = useState<RunView | null>(null);
-  const [runLoading, setRunLoading] = useState(true);
   const [runError, setRunError] = useState(false);
   const [runRetry, setRunRetry] = useState(0);
   const here = useHere();
@@ -197,7 +200,7 @@ export default function TaskPage() {
       if (at >= 0) { setEditing({ list, index: at }); return; }
       pushed.current = false;
       setFrame(null, true);
-      // Кадра вопроса в таске нет (сдан, убран) — показываем вопрос в паспорте
+      // Кадр вопроса сдан или убран — возвращаемся к счётчику в паспорте
       if (qParam) { qs.read(qParam); toQuestions(); }
     }).catch((e) => setError((e as Error).message));
     return () => { alive = false; };
@@ -222,17 +225,6 @@ export default function TaskPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qParam, qList, taskVideos]);
 
-  /** Строка «Вопросов»: кадр — шагом истории, как обычный вход в редактор; ролик — на месте. */
-  const openQuestion = (q: Question) => {
-    setSearch((prev) => {
-      const next = new URLSearchParams(prev);
-      next.set("q", q.id);
-      if (q.image_id) next.set("frame", q.image_id);
-      return next;
-    }, { replace: !q.image_id });
-    pushed.current = !!q.image_id;
-  };
-
   // Редактор закрылся — перечитываем таску: он уже отправил последнюю правку
   const wasEditing = useRef(false);
   useEffect(() => {
@@ -244,14 +236,13 @@ export default function TaskPage() {
   useEffect(() => {
     if (!taskId) return;
     let alive = true;
-    setAgentRun(null); setRunLoading(true); setRunError(false);
+    setAgentRun(null); setRunError(false);
     taskRuns(taskId).then((ctx) => {
       if (!alive) return;
       const last = ctx.runs[0];
       if (last && (ACTIVE_RUN.includes(last.status)
-        || ((last.status === "stopped" || last.status === "error" || last.status === "done") && hiddenRun(taskId) !== last.id))) setAgentRun(last);
-    }).catch(() => { if (alive) setRunError(true); })
-      .finally(() => { if (alive) setRunLoading(false); });
+        || ((last.status === "stopped" || last.status === "error") && hiddenRun(taskId) !== last.id))) setAgentRun(last);
+    }).catch(() => { if (alive) setRunError(true); });
     return () => { alive = false; };
   }, [taskId, runRetry]);
   const onRun = useCallback((run: RunView | null) => {
@@ -273,9 +264,7 @@ export default function TaskPage() {
     setBusy(true);
     setError(null);
     try { await fn(); } catch (e) {
-      const text = (e as Error).message;
-      setError(text);
-      setRefused((e as { code?: string }).code === "open_questions" ? text : null);
+      setError((e as Error).message);
     } finally { setBusy(false); }
   }, []);
 
@@ -311,29 +300,29 @@ export default function TaskPage() {
     page.at);
   const numbersLook = look(numbers ?? undefined, page.fresh.numbers, page.at);
 
-  /** «Размечать»: все кадры таски, с первого нетронутого или отложенного. */
-  const annotateAll = useCallback(() => guard(async () => {
-    if (!taskId) return;
-    const list = await allImages(taskId, {});
+  const openTaskFrames = useCallback(() => guard(async () => {
+    if (!taskId || !task) return;
+    const cut = task.videos.filter((v) => v.mode === "cut");
+    if (cut.length > 0 && !cut.some((v) => v.frames > 0)) { showCutFrames(); return; }
+    const list = await allImages(taskId, cut.length ? { source: "videos", review: "all" } : {});
     if (!list.length) { setNotice("В таске пока нет кадров — добавьте изображения или ролик."); return; }
-    const first = list.findIndex((i) => i.task_status === "new" || i.task_status === "skipped");
-    openEditor(list, first >= 0 ? first : 0);
-  }), [guard, taskId, openEditor]);
+    const personal = lastPersonalEditIndex(list);
+    const start = personal >= 0 ? personal : cut.length || editable ? firstWorkIndex(list) : lastReviewedIndex(list);
+    openEditor(list, Math.max(0, start));
+  }), [guard, taskId, task, openEditor, editable, showCutFrames]);
 
-  const openFiltered = (params: { status?: string; source?: string }) => guard(async () => {
+  const openFiltered = (params: TaskImageQuery) => guard(async () => {
     if (!taskId) return;
     const list = await allImages(taskId, params);
     if (!list.length) return;
-    const first = list.findIndex((i) => i.task_status === "new" || i.task_status === "skipped");
-    openEditor(list, first >= 0 ? first : 0);
+    const first = params.review ? 0 : firstWorkIndex(list);
+    openEditor(list, Math.max(0, first));
   });
   const openState = (s: FrameState) => openFiltered({ status: s });
   const openCutFrame = (image: TaskImage, query: TaskImageQuery) => void guard(async () => {
     if (!taskId) return;
-    const groups = query.review ? [await allImages(taskId, query)] : await Promise.all([
-      allImages(taskId, { ...query, review: "new" }), allImages(taskId, { ...query, review: "done" }),
-    ]);
-    const list = groups.flat(), index = list.findIndex((i) => i.id === image.id);
+    const list = await allImages(taskId, query);
+    const index = list.findIndex((i) => i.id === image.id);
     if (index >= 0) openEditor(list, index);
     else { setNotice("Кадр изменил состояние. Список кадров обновлён."); await load(); }
   });
@@ -342,14 +331,14 @@ export default function TaskPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.ctrlKey || e.metaKey || e.altKey || editing || annotating || cutting || hasLayer() || isTyping(e.target)) return;
-      if (e.key === "Enter" && task && (framesTotal(task) > 0 || task.videos.some((v) => v.mode === "cut"))) {
-        e.preventDefault(); if (task.videos.some((v) => v.mode === "cut")) showCutFrames(); else void annotateAll();
+      if (e.key === "Enter" && !busy && task && (framesTotal(task) > 0 || task.videos.some((v) => v.mode === "cut"))) {
+        e.preventDefault(); void openTaskFrames();
       }
       if ((e.key === "g" || e.key === "п") && editable) { e.preventDefault(); setSetupOpen(true); }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [editing, annotating, cutting, task, editable, agentBusy, annotateAll, showCutFrames]);
+  }, [editing, annotating, cutting, task, editable, busy, openTaskFrames]);
 
   /** Смена состояния. Сдача с роликами идёт фоном: ответ — работа, её ход и итог ведёт эффект выше. */
   const send = (to: TaskStatus) => guard(async () => {
@@ -517,18 +506,16 @@ export default function TaskPage() {
       setError((e as Error).message);
       return;
     }
-    if (!plan.boxes) { setNotice("Непроверенного от агентов здесь нет."); return; }
+    if (!plan.frames) { setNotice("Непроверенного от агентов здесь нет."); return; }
     const ok = await confirm({
       title: "Очистить непроверенное агентов?",
-      desc: `${plural(plan.boxes, "Уйдёт", "Уйдут", "Уйдут")} ${count(plan.boxes, "рамка", "рамки", "рамок")} `
-        + `на ${count(plan.frames, "кадре", "кадрах", "кадрах")}. Проверенное человеком останется.`,
+      desc: `Непроверенные предложения агентов будут убраны с ${count(plan.frames, "кадра", "кадров", "кадров")}. Проверенное человеком останется.`,
       ok: "Очистить", icon: "trash", danger: true,
     });
     if (!ok) return;
     await guard(async () => {
       const res = await clearAgentUnchecked(taskId, scope);
-      setNotice(`${plural(res.boxes, "Убрана", "Убраны", "Убрано")} ${count(res.boxes, "рамка", "рамки", "рамок")} `
-        + `агентов с ${count(res.frames, "кадра", "кадров", "кадров")}.`);
+      setNotice(`Непроверенные предложения убраны с ${count(res.frames, "кадра", "кадров", "кадров")}.`);
       await load();
     });
   }
@@ -579,10 +566,16 @@ export default function TaskPage() {
     dialog: (ask) => { setAgentAsk(ask); setAgentOpen(true); },
     clear: (scope) => void clearAgents(scope),
   };
+  const frameActions = editable ? {
+    annotate: openFiltered,
+    runAgent: (source: string) => agent.dialog({ mode: "frames", sources: [source], modes: ["frames"] }),
+    busy,
+    agentBusy: agent.busy,
+  } : undefined;
   const cards = [
     ...sources.map((b) => ({ key: b.key, born: b.bornAt, node: b.kind === "cut" ? (
       <CutCard key={b.key} block={b} look={numbersLook} taskId={task.id} code={task.project.code} tags={tags} editable={editable} fillable={fillable}
-        byVideo={numbers?.by_source ?? null} onFrameOpen={openCutFrame}
+        byVideo={numbers?.by_source ?? null} onFrameOpen={openCutFrame} frameActions={frameActions}
         run={runOn(b.key, (b.videos || []).map((v) => v.id), ["frames", "scout"])} agent={agent} asked={asked}
         onAnnotate={() => openFiltered({ source: b.key })} onReview={() => review(b.key)}
         onCut={setCutting} onDelete={removeVideo} onVideoTags={saveVideoTags}
@@ -608,7 +601,9 @@ export default function TaskPage() {
       <div className="ui-ph">
         <div className="ui-ph-t"><h1>{task.name}</h1></div>
         <div className="ui-ph-a">
-          {scouted && <Button variant="ghost" icon="scan" onClick={() => setOverviewOpen(true)}>Разведка</Button>}
+          {task.videos.length > 0 && <Button variant={scouted ? "outline" : "ghost"} icon="scan"
+            className={cx(scouted && "tp-scout-ready")} title={scouted ? "Разведка готова" : "Открыть разведку"}
+            aria-label={scouted ? "Разведка готова" : "Разведка"} onClick={() => setOverviewOpen(true)}>Разведка</Button>}
           {editable && (
             <Button variant="agent" icon="bot" kbd="G" onClick={() => setSetupOpen(true)}
               title="Агент таски: кого звать из меню блоков и кнопкой G, сопоставление классов">
@@ -616,7 +611,7 @@ export default function TaskPage() {
             </Button>
           )}
           <Button variant="primary" icon={cutBlock || !editable ? "eye" : "edit"} kbd="Enter" disabled={busy || (!cutBlock && framesTotal(task) === 0)}
-            onClick={() => cutBlock ? showCutFrames() : void annotateAll()}>{cutBlock || !editable ? "Смотреть кадры" : "Размечать"}</Button>
+            onClick={() => void openTaskFrames()}>{cutBlock || !editable ? "Смотреть кадры" : "Размечать"}</Button>
         </div>
       </div>
 
@@ -633,18 +628,13 @@ export default function TaskPage() {
           <span className="t-xs t-faint">Кадры переходят в датасет. Можно уйти со страницы — сдача продолжится.</span>
         </div>
       )}
-      {error && (
-        <Notice tone="error" onClose={() => setError(null)}
-          action={error === refused && <Button size="sm" variant="outline" icon="question" onClick={toQuestions}>К вопросам</Button>}>
-          {error}
-        </Notice>
-      )}
+      {error && <Notice tone="error" onClose={() => setError(null)}>{error}</Notice>}
       {notice && <Notice tone="ok" onClose={() => setNotice(null)}>{notice}</Notice>}
-      {!agentRun && (runLoading || runError) && <div className={cx("ar-bar ar-loading", runLoading && "ui-shim")} role="status">
-        <span>{runLoading ? "Загружаем состояние работы агента…" : "Не удалось загрузить состояние агента"}</span>
-        {runError && <Button size="sm" variant="ghost" onClick={() => setRunRetry((n) => n + 1)}>Повторить</Button>}
-      </div>}
-      {agentRun && <AgentRunBar taskId={task.id} run={agentRun} onRun={onRun} onFinished={load} />}
+      {!agentRun && runError && <Notice tone="error" action={<Button size="sm" onClick={() => setRunRetry((n) => n + 1)}>Повторить</Button>}>
+        Не удалось загрузить состояние агента
+      </Notice>}
+      {agentRun && !(agentRun.mode === "scout" && agentRun.status === "done")
+        && <AgentRunBar taskId={task.id} run={agentRun} onRun={onRun} onFinished={load} />}
       {upload?.error && <Notice tone="error" onClose={() => dismissUploadError(task.id)}>{upload.error}</Notice>}
       {uploading(upload) && (
         <div className="tp-upload" role="status">
@@ -663,14 +653,14 @@ export default function TaskPage() {
         <div className={cx("tp-main", dragOn && "is-drop")}>
           {fillable && !empty && <div className="tp-add"><AddMenu onAdd={onAdd} /></div>}
           {cutBlock && <CutFramesCard taskId={task.id} counts={cutBlock.counts} known={cutBlock.known} videos={cutBlock.videos || []}
-            tags={tags} revision={numbers?.by_source} open={cutFramesOpen} onExpand={setCutFramesOpen} onOpen={openCutFrame} />}
+            tags={tags} revision={numbers?.by_source} open={cutFramesOpen} onExpand={setCutFramesOpen} onOpen={openCutFrame} actions={frameActions} />}
           {empty ? <TaskEmpty editable={fillable} dataset={task.target_dataset?.name ?? null} drag={dragOn} onAdd={onAdd} onDrop={drop} />
             : cards.map((c) => c.node)}
           {dragOn && (!empty || !fillable) && <DropVeil drag={dragOn} refusal={refusal} onAdd={onAdd} onDrop={drop} />}
         </div>
         <TaskPassport task={task} numbers={numbers} numbersLook={numbersLook} pendingFrames={pendingFrames} pendingLook={pendingLook}
           events={events} workers={workers} busy={busy || handoverActive} handing={handoverActive} questions={qs.list}
-          onQuestion={openQuestion} onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
+          onState={openState} onMove={(to) => void move(to)} onClose={() => void closeTask()}
           onAssign={(ids) => void reassign(ids)} onHistory={() => setHistory(true)} />
       </div>
 

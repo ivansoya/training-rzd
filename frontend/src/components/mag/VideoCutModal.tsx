@@ -41,7 +41,7 @@ export function fmtTime(ms: number): string {
 }
 
 // Время в панели плеера: сотые нужны, чтобы шаг в один кадр был виден.
-function fmtPrecise(ms: number): string {
+export function fmtPrecise(ms: number): string {
   const cs = Math.max(0, Math.round(ms / 10));
   const s = Math.floor(cs / 100);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}.${String(cs % 100).padStart(2, "0")}`;

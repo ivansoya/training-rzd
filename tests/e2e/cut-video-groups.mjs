@@ -12,7 +12,7 @@ const project = { id: "project", code, name: "Искра", status: "ready", crea
 const tags = [{ id: "near", name: "Ближняя камера" }, { id: "station", name: "Станция" }];
 const v1 = "11111111-1111-4111-8111-111111111111", v2 = "22222222-2222-4222-8222-222222222222", v3 = "33333333-3333-4333-8333-333333333333";
 const video = (id, name, frames, tag) => ({ id, file_name: name, mode: "cut", frames, fresh: frames, accepted: 0, tracks: 0,
-  tag_ids: [tag], segments: frames ? [{ start_ms: 0, end_ms: 60000, step_ms: 5000 }] : [],
+  tag_ids: [tag], segments: frames ? [{ start_ms: 0, end_ms: 60000, step_ms: 5000 }, { start_ms: 65320, end_ms: 65320, step_ms: 1 }] : [],
   width: 1920, height: 1080, size_bytes: 155_400_000, duration_ms: 120000, frame_count: 3000, fps: 25,
   prepare: { ready: true, busy: false, error: null }, created_at: created });
 const seedVideos = () => [video(v1, "camera_close_2026-10-24_14-00-35.mp4", 31, "near"),
@@ -20,7 +20,7 @@ const seedVideos = () => [video(v1, "camera_close_2026-10-24_14-00-35.mp4", 31, 
 let videos = seedVideos(), failImages = false, empty = false, noVideos = false, readOnly = false;
 const seedImages = () => [
   ...Array.from({ length: 31 }, (_, i) => ({ id: `a-${i}`, file_name: `close-frame-${String(i).padStart(3, "0")}.jpg`, source_video_id: v1,
-    source_time_ms: i * 5000, task_status: i < 25 ? "new" : i === 30 ? "empty" : "annotated", tag_ids: ["near"],
+    source_time_ms: i * 5000, task_status: i === 2 ? "annotated" : i < 25 || i === 26 ? "new" : i === 30 ? "empty" : "annotated", tag_ids: ["near"],
     boxes: i === 25 ? [{ id: "pending", kind: "bbox", x: 1, y: 1, w: 10, h: 10, class_index: 0, source: "model", pending: true }] : [],
     width: 1920, height: 1080, size_bytes: 100000, annotations: i === 25 ? 1 : 0, accepted: false, rev: 0 })),
   ...Array.from({ length: 4 }, (_, i) => ({ id: `b-${i}`, file_name: `side-frame-${i}.jpg`, source_video_id: v2,
@@ -84,15 +84,20 @@ try {
       data = { matched: list.length, review_counts, counts: countOf(all), images: list.slice(offset, offset + limit) };
     }
     else if (path === `/api/tasks/${taskId}/events`) data = { events: [] };
-    else if (path === `/api/tasks/${taskId}/questions`) data = { questions: [], can_ask: !readOnly };
-    else if (path === `/api/agents/tasks/${taskId}`) data = { agents: runVideos ? runAgents : [], classes: runClasses, mappings: {}, sources: {}, runs: [], videos: runVideos ?? [], tags, can_run: !readOnly, resources: { cards: [], queued: 0 } };
+    else if (path === `/api/tasks/${taskId}/questions`) data = { questions: [
+      { id: "q1", status: "open", image_id: "outside-gallery", messages: [{ text: "Скрытый текст вопроса" }] },
+      { id: "q2", status: "resolved", image_id: "outside-gallery", messages: [] },
+    ], can_ask: !readOnly };
+    else if (path === `/api/agents/tasks/${taskId}`) data = { agents: runVideos ? runAgents : [], classes: runClasses, mappings: {},
+      sources: Object.fromEntries(videos.map((v) => [v.id, countOf(all.filter((i) => i.source_video_id === v.id))])),
+      runs: [], videos: runVideos ?? [], tags, can_run: !readOnly, resources: { cards: [], queued: 0 } };
     else if (path === `/api/agents/tasks/${taskId}/runs` && request.method() === "POST") {
       started = request.postDataJSON();
       data = { id: "test-run", status: "stopped", processed: 0, total: 0, stats: {}, agent: "Искра", version: 2,
         sources: [], videos: started.videos, mode: started.mode, rate: null, error: null, queue_reason: null, created_at: created, finished_at: created };
     }
-    else if (path === `/api/agents/tasks/${taskId}/runs`) data = { runs: [] };
-    else if (path === `/api/agents/tasks/${taskId}/scouts`) data = { scouts: {} };
+    else if (path === `/api/agents/tasks/${taskId}/runs`) data = { runs: [{ id: "scout-done", mode: "scout", status: "done" }] };
+    else if (path === `/api/agents/tasks/${taskId}/scouts`) data = { scouts: { [v1]: { segments: {} } } };
     else if (path === `/api/projects/${code}/tags`) data = { tags };
     else if (path === `/api/projects/${code}/classes`) data = { classes: [] };
     else if (path.endsWith("/stream")) return route.fulfill({ contentType: "text/event-stream", body: ": test\n\n" });
@@ -116,13 +121,38 @@ try {
   await expect(gallery.getByRole("button", { name: "Показать", exact: true })).toHaveAttribute("aria-expanded", "false");
   expect(imageRequests).toHaveLength(0);
   await settle(); await page.screenshot({ path: fileURLToPath(new URL("app-overview.png", out)) });
+  await expect(page.locator("#task-questions")).toHaveText("Вопросы2");
+  await expect(page.getByText("Скрытый текст вопроса")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Разведка готова" })).toBeVisible();
+  await expect(page.locator(".ar-bar")).toHaveCount(0);
+  const later = images.find((image) => image.id === "b-3");
+  later.my_edited_at = created;
   await page.getByRole("button", { name: /Смотреть кадры/ }).click();
+  await expect(page).toHaveURL(/frame=b-3/);
+  await page.getByRole("button", { name: "Предыдущий кадр (←)", exact: true }).click();
+  await expect(page).toHaveURL(/frame=b-2/);
+  await page.getByRole("button", { name: "К таске (Esc)", exact: true }).click();
+  const discarded = images.find((image) => image.id === "b-2");
+  discarded.task_status = "deleted";
+  await page.getByRole("button", { name: /Смотреть кадры/ }).click();
+  await expect(page).toHaveURL(/frame=b-3/);
+  await expect(page.getByRole("button", { name: /С вопросами/ })).toHaveCount(0);
+  await page.getByRole("button", { name: "Предыдущий кадр (←)", exact: true }).click();
+  await expect(page).toHaveURL(/frame=b-2/);
+  await page.getByRole("button", { name: "К таске (Esc)", exact: true }).click();
+  discarded.task_status = "annotated";
+  const earlier = images.find((image) => image.id === "a-2");
+  earlier.my_edited_at = "2026-11-10T10:00:00Z";
+  await page.getByRole("button", { name: /Смотреть кадры/ }).click();
+  await expect(page).toHaveURL(/frame=a-2/);
+  await page.getByRole("button", { name: "К таске (Esc)", exact: true }).click();
+  earlier.my_edited_at = null;
+  later.my_edited_at = null;
+  await gallery.getByRole("button", { name: "Показать", exact: true }).click();
   await expect(gallery.locator(".tp-cut-tile")).toHaveCount(35);
-  await expect(gallery.getByRole("region", { name: "Размечены", exact: true })).toBeVisible();
+  await expect(gallery.locator(".tp-cut-tile").nth(2)).toHaveAccessibleName("close-frame-002.jpg, Размечен");
   await expect(gallery.getByRole("navigation", { name: "Страницы" })).toHaveCount(0);
   await expect(gallery.locator(".tp-cut-model")).toHaveCount(1);
-  const state = await gallery.locator(".tp-cut-toolbar > .ui-seg").boundingBox(), filter = await gallery.locator(".tp-cut-filters").boundingBox();
-  expect(Math.abs(state.y + state.height / 2 - filter.y - filter.height / 2)).toBeLessThan(2);
   await settle(); await page.screenshot({ path: fileURLToPath(new URL("app-gallery.png", out)) });
   await gallery.getByRole("button", { name: "Список", exact: true }).click();
   await expect(gallery.locator(".as-list .tp-cut-tile")).toHaveCount(35);
@@ -149,19 +179,40 @@ try {
   await expect(cut.locator(".tp-reel")).toHaveCount(1); await expect(uncut.locator(".tp-reel")).toHaveCount(1);
   await expect(gallery.locator(".tp-cut-tile")).toHaveCount(35);
   await cut.getByRole("button", { name: "Сбросить", exact: true }).click();
-  await cut.locator(".tp-reel").first().getByRole("button", { name: /^31 кадр/ }).click();
-  await expect(cut.locator(".tp-reel-frames .tp-cut-tile")).toHaveCount(31);
+  const firstReel = cut.locator(".tp-reel").first();
+  const plan = firstReel.getByRole("button", { name: "План нарезки" });
+  const framesButton = firstReel.getByRole("button", { name: /^31 кадр/ });
+  await plan.click();
+  await expect(firstReel.locator(".tp-reel-plan")).toBeVisible();
+  await expect(firstReel.locator(".tp-reel-plan li").last()).toHaveText(/Кадр в\s*1:05\.32/);
+  await framesButton.click();
+  await expect(plan).toHaveAttribute("aria-expanded", "false");
+  const firstReelGallery = firstReel.getByLabel("Кадры ролика", { exact: true });
+  await expect(firstReelGallery.locator(".tp-cut-tile")).toHaveCount(31);
   expect(imageRequests.some((r) => r.source === v1 && r.review === "all" && r.limit === "50")).toBe(true);
   await cut.locator(".ui-card-a").getByRole("button", { name: "Скрыть", exact: true }).click();
   await expect(cut.locator(".tp-source-fold").first()).toHaveAttribute("inert", "");
   await cut.locator(".ui-card-a").getByRole("button", { name: "Показать", exact: true }).click();
-  await expect(cut.locator(".tp-reel-frames.open")).toHaveCount(1);
-  await gallery.getByRole("button", { name: "Плитка", exact: true }).click();
-  await gallery.locator(".tp-cut-tile").first().click();
-  await expect(page.getByRole("dialog", { name: "Разметка кадров", exact: true })).toBeVisible();
+  await expect(firstReelGallery).toBeVisible();
+  await firstReelGallery.getByRole("button", { name: /^Не размечены/ }).click();
+  const annotate = firstReelGallery.getByRole("button", { name: "Размечать", exact: true });
+  await annotate.click();
   await expect(page).toHaveURL(/frame=a-0/);
-  await page.keyboard.press("ArrowRight");
+  await page.getByRole("button", { name: "К таске (Esc)", exact: true }).click();
+  runVideos = videos;
+  await firstReelGallery.getByRole("button", { name: "Запустить агента", exact: true }).click();
+  const frameRun = page.getByRole("dialog", { name: "Разметить агентом", exact: true });
+  await frameRun.getByRole("button", { name: /^Разметить 25 кадров$/ }).click();
+  expect(started.mode).toBe("frames");
+  expect(started.sources).toEqual([v1]);
+  await page.getByRole("region", { name: "Ход агента" }).getByRole("button", { name: "Скрыть", exact: true }).click();
+  runVideos = null;
+  await gallery.getByRole("button", { name: "Плитка", exact: true }).click();
+  await gallery.locator(".tp-cut-tile").nth(1).click();
+  await expect(page.getByRole("dialog", { name: "Разметка кадров", exact: true })).toBeVisible();
   await expect(page).toHaveURL(/frame=a-1/);
+  await page.getByRole("button", { name: "Следующий кадр (→)", exact: true }).click();
+  await expect(page).toHaveURL(/frame=a-2/);
   await page.getByRole("button", { name: "К таске (Esc)", exact: true }).click();
   await expect(page.getByRole("dialog", { name: "Разметка кадров", exact: true })).toHaveCount(0);
 
@@ -196,7 +247,7 @@ try {
   await uncut.getByRole("button", { name: /Дальше/ }).click();
   await expect(uncut.locator(".tp-reel")).toHaveCount(1);
   await expect(cut.locator(".tp-reel")).toHaveCount(50);
-  await page.getByRole("button", { name: /Смотреть кадры/ }).click();
+  await gallery.getByRole("button", { name: "Показать", exact: true }).click();
   await expect(gallery.locator(".tp-cut-tile")).toHaveCount(50);
   const pagingRequest = imageRequests.length;
   await gallery.getByRole("button", { name: /Дальше/ }).click();
@@ -222,7 +273,7 @@ try {
   await gallery.getByRole("button", { name: "Показать", exact: true }).click();
   await expect(gallery).toContainText("Кадры 51–100 из 107");
   await cut.locator(".tp-reel").first().getByRole("button", { name: /^107 кадров/ }).click();
-  const reelGallery = cut.locator(".tp-reel-frames.open");
+  const reelGallery = cut.locator(".tp-reel-detail:visible .tp-cut-gallery");
   await expect(reelGallery.locator(".tp-cut-tile")).toHaveCount(50);
   await reelGallery.getByRole("button", { name: "3", exact: true }).click();
   await expect(reelGallery.locator(".tp-cut-tile")).toHaveCount(7);
@@ -315,6 +366,15 @@ try {
   await runDialog.getByRole("button", { name: "Отмена", exact: true }).click();
   runVideos = null;
 
+  videos = seedVideos();
+  images = seedImages().map((frame) => ({ ...frame, task_status: "new", boxes: [] }));
+  await page.reload();
+  await expect(gallery).toContainText("35 не размечено");
+  await page.getByRole("button", { name: /Смотреть кадры/ }).click();
+  await expect(page).toHaveURL(/frame=a-0/);
+  await page.getByRole("button", { name: "К таске (Esc)", exact: true }).click();
+  await expect(page).not.toHaveURL(/frame=/);
+
   empty = true; videos = seedVideos().map((v) => ({ ...v, frames: 0, segments: [] }));
   await page.reload();
   await expect(gallery).toContainText("Нарезанных кадров пока нет");
@@ -328,8 +388,14 @@ try {
   for (const width of [1366, 1024, 390]) {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 900 }); await goto();
     await expect(gallery.getByRole("button", { name: "Показать", exact: true })).toBeVisible();
-    await page.getByRole("button", { name: /Смотреть кадры/ }).click();
+    await gallery.getByRole("button", { name: "Показать", exact: true }).click();
     await expect(gallery.locator(".tp-cut-tile")).toHaveCount(35);
+    await gallery.getByRole("button", { name: /^Не размечены/ }).click();
+    await expect(gallery.getByRole("button", { name: "Запустить агента" })).toHaveCount(0);
+    await plan.click();
+    await expect(firstReel.locator(".tp-reel-plan")).toBeVisible();
+    expect(await firstReel.evaluate((n) => n.scrollWidth <= n.clientWidth)).toBe(true);
+    if (width === 390) await firstReel.screenshot({ path: fileURLToPath(new URL("reel-plan-390.png", out)) });
     await settle();
     await gallery.evaluate((n) => n.scrollIntoView({ block: "start", behavior: "instant" }));
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(width);
@@ -342,6 +408,6 @@ try {
   if (unknown.size) console.log("Other stubbed endpoints:", [...unknown]);
 } catch (e) {
   console.error("Page errors:", errors, "Other endpoints:", [...unknown]);
-  console.error("Task cache:", await page.evaluate(() => localStorage.getItem("mag.cache.me:task:cut-task")));
-  await page.screenshot({ path: fileURLToPath(new URL("app-failure.png", out)), fullPage: true }); throw e;
+  await page.screenshot({ path: fileURLToPath(new URL("app-failure.png", out)), fullPage: true }).catch(() => {});
+  throw e;
 } finally { await browser.close(); }

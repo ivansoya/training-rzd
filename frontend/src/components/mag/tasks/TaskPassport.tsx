@@ -1,25 +1,23 @@
 // Паспорт таски справа: состояние, готовность со ссылками в редактор, смена состояния, кто и куда, классы, события.
 
-import { useState } from "react";
 import { Link } from "react-router-dom";
 import type { Question } from "../../../api/questions";
 import type { ProjectMemberInfo, TaskDetail, TaskEventItem, TaskNumbers, TaskStatus } from "../../../auth/api";
-import { Avatar, Badge, Button, Check, Icon, Ring, Swatch, cx, useTween } from "../../../ui";
+import { Avatar, Badge, Button, Icon, Ring, Swatch, cx, useTween } from "../../../ui";
 import { ago, count, plural, ru } from "../../ru";
-import Sep, { withSep } from "../../Sep";
-import { firstLine, heldPlaces, open } from "../questions/questions";
+import Sep from "../../Sep";
+import { heldPlaces } from "../questions/questions";
 import { describeTaskEvent } from "../taskEvents";
 import type { FrameState } from "./tasks";
 import { NEXT, STATES, STATUS, dayOf, decidedOf, framesOf, inDataset } from "./tasks";
 import { TeamEdit, TeamView } from "./Team";
 import type { Look } from "./useTaskBoard";
 import { openVideos } from "./useTaskPage";
-import { placeParts, repliesText } from "./taskQuestions";
 
 const NO_CLASSES: TaskNumbers["classes"] = [];
 
 export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendingLook, events, workers, busy, handing,
-  questions, onState, onMove, onClose, onAssign, onHistory, onQuestion }: {
+  questions, onState, onMove, onClose, onAssign, onHistory }: {
   task: TaskDetail;
   /** Счётчики; null — ещё в пути, на их месте заготовка той же высоты. */
   numbers: TaskNumbers | null;
@@ -38,7 +36,6 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
   onClose: () => void;
   onAssign: (ids: string[]) => void;
   onHistory: () => void;
-  onQuestion: (q: Question) => void;
 }) {
   const c = numbers?.counts;
   const classes = numbers?.classes ?? NO_CLASSES;
@@ -140,7 +137,9 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
         ) : null}
       </section>}
 
-      {!!questions?.length && <Questions list={questions} onOpen={onQuestion} />}
+      {questions && <section id="task-questions">
+        <h5 className="tp-qs-h"><Icon name="question" size={14} />Вопросы<Badge variant="secondary">{ru(questions.length)}</Badge></h5>
+      </section>}
 
       <section>
         <h5>Паспорт</h5>
@@ -188,40 +187,6 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
         </section>
       )}
     </aside>
-  );
-}
-
-/** Вопросы таски: открытые свежими сверху, решённые — по галочке, ниже и тише. */
-function Questions({ list, onOpen }: { list: Question[]; onOpen: (q: Question) => void }) {
-  const [shown, setShown] = useState(false);
-  const live = open(list);
-  const settled = list.filter((q) => q.status !== "open");
-  return (
-    <section id="task-questions">
-      <h5 className="tp-qs-h"><Icon name="question" size={14} />Вопросы{live.length > 0 && <Badge tone="var(--q)">{live.length}</Badge>}</h5>
-      {(live.length > 0 || shown) && (
-        <div className="tp-qs">
-          {[...live, ...(shown ? settled : [])].map((q) => {
-            const [name, at] = placeParts(q);
-            return (
-              <button key={q.id} type="button" className={cx("tp-q", q.status !== "open" && "done")} onClick={() => onOpen(q)}>
-                <span className="tp-q-1"><Icon name={q.video_id ? "film" : "image"} size={13} /><span className="t-ell" title={name}>{name}</span>
-                  {at && <b>{at}</b>}</span>
-                <span className="tp-q-2">
-                  {q.class && <span className="qt-cls" title={q.class.name}><i style={{ background: q.class.color ?? "var(--faint)" }} /><span className="t-ell">{q.class.name}</span></span>}
-                  {q.object_gone && <span className="qt-cls quiet">объект удалён</span>}
-                  <span className="t-ell">{firstLine(q)}</span>
-                </span>
-                <span className="tp-q-3">{withSep([q.author, repliesText(q), ago(q.last_at)])}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-      {settled.length > 0 && (
-        <Check checked={shown} onChange={setShown}>Показать решённые <span className="ui-mono t-faint">{settled.length}</span></Check>
-      )}
-    </section>
   );
 }
 
