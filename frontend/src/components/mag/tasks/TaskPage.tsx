@@ -145,17 +145,17 @@ function TaskPageBody() {
     const index = initial.findIndex((row) => row.id === image.id);
     setEditing({ list: initial, index, image, windows });
     if (indexed) return;
-    void getTaskEditorIndex(taskId, query, windows.signal).then((rows) => {
+    void getTaskEditorIndex(taskId, query, windows.signal).then(({ rows: list, videoOrder }) => {
       if (windows.signal.aborted) return;
-      const list = rows.sort(byImageName);
+      if (!videoOrder) list.sort(byImageName);
       const positions = new Map(list.map((row, i) => [row.id, i]));
       setEditing((current) => {
         if (!current || current.windows !== windows) return current;
         const at = positions.get(current.image.id);
         const next = [...list];
         if (at === undefined) {
-          next.push(summarizeFrame(current.image));
-          next.sort(byImageName);
+          next.splice(current.index, 0, summarizeFrame(current.image));
+          if (!videoOrder) next.sort(byImageName);
         } else next[at] = summarizeFrame(current.image);
         return { ...current, list: next, index: at ?? next.findIndex((row) => row.id === current.image.id) };
       });
@@ -392,8 +392,9 @@ function TaskPageBody() {
     editorLoad.current = controller;
     const query = editorQuery(params);
     try {
-      const list = (await getTaskEditorIndex(taskId, query, controller.signal)).sort(byImageName);
+      const { rows: list, videoOrder } = await getTaskEditorIndex(taskId, query, controller.signal);
       if (controller.signal.aborted) return;
+      if (!videoOrder) list.sort(byImageName);
       if (!list.length) { setNotice("В этой выборке нет кадров."); return; }
       const index = Math.max(0, pick(list));
       const start = Math.floor(index / EDITOR_PAGE) * EDITOR_PAGE;
@@ -420,7 +421,7 @@ function TaskPageBody() {
   const openFiltered = (params: TaskImageQuery) => openFromIndex(params, params.review ? () => 0 : firstWorkIndex);
   const openState = (s: FrameState) => openFiltered({ status: s });
   const openCutFrame = (image: TaskImage, query: TaskImageQuery, rows: TaskImage[]) => {
-    const list = [...rows].sort(byImageName);
+    const list = rows.some((row) => row.source_video_id) ? rows : [...rows].sort(byImageName);
     openEditor(list, image, editorQuery(query));
   };
 

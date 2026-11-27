@@ -1215,15 +1215,18 @@ type TaskEditorIndexRow = [id: string, name: string, status: TaskImage["task_sta
   pending: boolean, asked: boolean, edited: boolean, myEdit: string | null, annotations: number,
   classes: number[], tags: string[]];
 
-export async function getTaskEditorIndex(id: string, params: TaskImageQuery, signal: AbortSignal): Promise<TaskEditorImage[]> {
+export async function getTaskEditorIndex(id: string, params: TaskImageQuery, signal: AbortSignal) {
   const q = taskImageParams(params);
   q.set("editor_index", "1");
-  const { index } = await asJson<{ index: TaskEditorIndexRow[] }>(await fetch(`/api/tasks/${id}/images?${q}`, { signal }));
-  return index.map(([id, file_name, task_status, agent_empty, has_pending, agent_question, human_edited,
-    my_edited_at, annotations, class_indices, tag_ids]) => ({
+  const { index, video_order } = await asJson<{ index: TaskEditorIndexRow[]; video_order?: boolean }>(
+    await fetch(`/api/tasks/${id}/images?${q}`, { signal })
+  );
+  const rows: TaskEditorImage[] = index.map(([id, file_name, task_status, agent_empty, has_pending, agent_question,
+    human_edited, my_edited_at, annotations, class_indices, tag_ids]) => ({
     id, file_name, task_status, agent_empty, has_pending, agent_question, human_edited, my_edited_at,
     annotations, class_indices, tag_ids,
   }));
+  return { rows, videoOrder: video_order };
 }
 
 export async function getTaskEditorWindow(id: string, ids: string[], signal: AbortSignal): Promise<TaskImage[]> {

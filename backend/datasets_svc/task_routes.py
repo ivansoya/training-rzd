@@ -1776,10 +1776,23 @@ def _task_boxes(db, ids):
     return by_image
 
 
+_cut_source = aliased(TaskVideo, name="cut_source")
+
+
+def _order_task_images(query, frames):
+    # Имя ролика задаёт порядок записей камер. Внутри ролика используем
+    # время кадра, в том числе для старой нарезки без номера кадра.
+    return query.outerjoin(_cut_source, (_cut_source.id == frames.source_video_id) & (_cut_source.mode == "cut")).order_by(
+        func.coalesce(_cut_source.file_name, frames.file_name),
+        _cut_source.created_at, _cut_source.id, frames.source_time_ms, frames.source_frame_no,
+        frames.file_name, frames.id,
+    )
+
+
 def _editor_image_index(db, query, user_id):
     """Метаданные навигации и фильтров. Геометрия приходит только с окном кадров."""
-    frames = query.with_only_columns(Image.id, Image.file_name, Image.task_status,
-                                    Image.agent_empty).cte("editor_frames")
+    frames = query.with_only_columns(Image.id, Image.file_name, Image.task_status, Image.agent_empty,
+                                    Image.source_video_id, Image.source_time_ms, Image.source_frame_no).cte("editor_frames")
     marks = (select(Annotation.image_id, func.count().label("annotations"),
                     func.array_agg(func.distinct(LabelClass.class_index)).label("classes"),
                     func.bool_or(Annotation.pending).label("pending"),
@@ -1797,16 +1810,16 @@ def _editor_image_index(db, query, user_id):
     asked = select(TaskQuestion.image_id).where(
         TaskQuestion.image_id == frames.c.id, TaskQuestion.by_agent.is_(True), TaskQuestion.status == "open"
     ).exists()
-    rows = db.execute(
-        select(frames.c.id, frames.c.file_name, frames.c.task_status, frames.c.agent_empty,
-               marks.c.annotations, marks.c.classes, marks.c.pending, marks.c.reviewed,
-               edits.c.image_id.label("touched"), edits.c.mine, tag_lists.c.tags, asked.label("asked"))
-        .outerjoin(marks, marks.c.image_id == frames.c.id)
-        .outerjoin(edits, edits.c.image_id == frames.c.id)
-        .outerjoin(tag_lists, tag_lists.c.image_id == frames.c.id)
-        .order_by(frames.c.file_name, frames.c.id)
-    )
-    return jsonify({"index": [
+    query = (select(frames.c.id, frames.c.file_name, frames.c.task_status, frames.c.agent_empty,
+                    marks.c.annotations, marks.c.classes, marks.c.pending, marks.c.reviewed,
+                    edits.c.image_id.label("touched"), edits.c.mine, tag_lists.c.tags, asked.label("asked"),
+                    _cut_source.id.label("cut_video_id"))
+             .select_from(frames)
+             .outerjoin(marks, marks.c.image_id == frames.c.id)
+             .outerjoin(edits, edits.c.image_id == frames.c.id)
+             .outerjoin(tag_lists, tag_lists.c.image_id == frames.c.id))
+    rows = db.execute(_order_task_images(query, frames.c)).all()
+    return jsonify({"video_order": any(r.cut_video_id is not None for r in rows), "index": [
         [str(r.id), r.file_name, r.task_status, bool(r.agent_empty), bool(r.pending), r.asked,
          bool(r.touched or r.reviewed or r.task_status == "empty"), r.mine.isoformat() if r.mine else None,
          r.annotations or 0, r.classes or [], [str(tag) for tag in (r.tags or [])]]
@@ -1873,10 +1886,12 @@ def task_images(task_id):
                 q = q.where(task_frames.reviewed() if review == "done" else ~task_frames.reviewed())
         else:
             matched = db.execute(select(func.count()).select_from(q.subquery())).scalar_one()
-        # Галерея идёт по именам кадров независимо от состояния разметки.
-        by_name = review or request.args.get("order") == "name"
-        order = (Image.file_name, Image.id) if by_name else (QUEUE_ORDER, Image.file_name, Image.id)
-        images = db.execute(q.order_by(*order).limit(limit).offset(offset)).scalars().all()
+        # Галерея идёт по роликам и времени независимо от состояния разметки.
+        if review or request.args.get("order") == "name" or source == "videos" or isinstance(source, uuid.UUID):
+            q = _order_task_images(q, Image)
+        else:
+            q = q.order_by(QUEUE_ORDER, Image.file_name, Image.id)
+        images = db.execute(q.limit(limit).offset(offset)).scalars().all()
 
         ids = [i.id for i in images]
         by_image = _task_boxes(db, ids)

@@ -125,6 +125,39 @@ def test_editor_index_agrees_with_filtered_details(scene):
     assert pending[1:11] == ["pending.jpg", "annotated", False, True, False, False, None, 1, [0], [str(tag.id)]]
 
 
+def test_cut_frames_follow_video_names_then_time_in_gallery_and_editor(scene):
+    db, _client, task, cut, *_ = scene
+    cut.file_name = "camera_a_2026-10-24_08-00-00.mp4"
+    duplicate = TaskVideo(task_id=task.id, file_name=cut.file_name, file_path="unused", mode="cut",
+                          created_at=cut.created_at + timedelta(seconds=1))
+    later = TaskVideo(task_id=task.id, file_name="camera_a_2026-10-24_09-00-00.mp4", file_path="unused", mode="cut")
+    other = TaskVideo(task_id=task.id, file_name="camera_b_2026-10-24_07-00-00.mp4", file_path="unused", mode="cut")
+    db.add_all([other, later, duplicate]); db.flush()
+
+    def frame(video, suffix, time_ms, number=None):
+        return Image(task_id=task.id, project_id=task.project_id, source_video_id=video.id,
+                     file_name=f"{video.file_name[:-4]}_{suffix}.jpg", file_path="unused",
+                     source_time_ms=time_ms, source_frame_no=number)
+
+    first = frame(cut, "00003s", 3000)
+    second = frame(cut, "00-10.000", 10000, 250)
+    same_time = frame(cut, "00-09.999", 10000, 251)
+    duplicate_first = frame(duplicate, "00-01.000", 1000, 25)
+    later_first = frame(later, "00-00.000", 0, 0)
+    other_first = frame(other, "00-00.000", 0, 0)
+    expected = [first, second, same_time, duplicate_first, later_first, other_first]
+    db.add_all(reversed(expected)); db.commit()
+    ids = [str(row.id) for row in expected]
+
+    index = get(scene, editor_index=1).json
+    assert index["video_order"]
+    assert [row[0] for row in index["index"] if row[0] in ids] == ids
+    assert [row["id"] for row in get(scene, review="all").json["images"] if row["id"] in ids] == ids
+    assert [row["id"] for row in get(scene, source="", order="name").json["images"] if row["id"] in ids] == ids
+    assert [row["id"] for row in get(scene, source=str(cut.id), limit=3).json["images"]] == ids[:3]
+    assert not get(scene, source="files", editor_index=1).json["video_order"]
+
+
 def test_editor_window_is_capped_and_scoped_to_task(scene):
     _db, _client, _task, _cut, images, *_ = scene
     ids = [str(images[name].id) for name in ("pending", "file", "other-task")]
