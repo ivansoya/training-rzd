@@ -900,7 +900,8 @@ def _settle(db, model, rows, found, mapping):
 
 
 def _write(db, run, image, found, mapping, *, propose_empty=False):
-    empty_result = not found
+    """Находки агента на кадр. Кадр таски, на котором после записи ничего нет, —
+    предложение «пустой»: человек подтверждает его или размечает сам (`agent_empty`)."""
     db.execute(
         Annotation.__table__.delete().where(
             Annotation.image_id == image.id, Annotation.pending.is_(True),
@@ -930,9 +931,12 @@ def _write(db, run, image, found, mapping, *, propose_empty=False):
             agent_version_id=run.version_id, created_by=run.created_by,
         ))
         put += 1
+    # Пусто — и когда модель ничего не нашла, и когда все находки отсеялись (класс
+    # «не размечать», негодная фигура): иначе кадр выглядел бы нетронутым агентом.
     if put:
         image.agent_empty = False
-    elif propose_empty and image.task_status == "new" and empty_result and not rows:
+    elif propose_empty and image.task_status == "new" and db.scalar(
+            select(Annotation.id).where(Annotation.image_id == image.id).limit(1)) is None:
         image.agent_empty = True
     # Открытый у человека редактор увидит 409, а не перезапишет рамки агента молча.
     image.annotations_rev += 1
