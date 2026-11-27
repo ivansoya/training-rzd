@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { dropNoop, empty, peek, record, redo, undo } from "./editHistory";
+import { at, dropNoop, dropTransient, empty, peek, put, record, redo, undo } from "./editHistory";
+import type { ByFrame } from "./editHistory";
 
 describe("история правок кадра", () => {
   it("отмена и повтор ходят по снимкам в обе стороны", () => {
@@ -36,14 +37,45 @@ describe("история правок кадра", () => {
     expect(dropNoop(h, [2], same).past).toEqual([[1]]);
   });
 
-  it("сквозь кадры: шаг знает свой кадр — отмена ведёт туда, а не откатывает здешний", () => {
-    type Snap = { at: string; v: number };
-    let h = record(empty<Snap>(), { at: "кадр 1", v: 1 });  // «Отклонить» на кадре 1
-    h = record(h, { at: "кадр 2", v: 5 });                     // правка на кадре 2
-    expect(peek(h, "undo")?.at).toBe("кадр 2");
-    const u = undo(h, { at: "кадр 2", v: 6 })!;
-    expect(peek(u.h, "undo")?.at).toBe("кадр 1");
-    expect(peek(u.h, "redo")).toEqual({ at: "кадр 2", v: 6 });
-    expect(peek(empty<Snap>(), "undo")).toBeUndefined();
+  it("шаг закреплён за кадром: на другом кадре отменять нечего", () => {
+    let m: ByFrame<string, number> = new Map();
+    m = put(m, "кадр 1", record(at(m, "кадр 1"), 1));           // «Отклонить» на кадре 1
+    m = put(m, "кадр 2", record(at(m, "кадр 2"), 5));           // правка на кадре 2
+    const u = undo(at(m, "кадр 2"), 6)!;
+    expect(u.value).toBe(5);
+    m = put(m, "кадр 2", u.h);
+    expect(undo(at(m, "кадр 2"), 5)).toBeNull();                // кадр 1 отсюда не достать
+    expect(undo(at(m, "кадр 3"), 0)).toBeNull();
+    expect(undo(at(m, "кадр 1"), 2)!.value).toBe(1);            // а на своём кадре — пожалуйста
+    expect(peek(at(m, "кадр 2"), "redo")).toBe(6);
+    expect(peek(empty<number>(), "undo")).toBeUndefined();
+  });
+
+  it("пустая история кадра не хранится, лишние кадры забываются с самых давних", () => {
+    let m: ByFrame<number, number> = new Map();
+    for (let f = 0; f < 5; f++) m = put(m, f, record(empty<number>(), f), 3);
+    expect([...m.keys()]).toEqual([2, 3, 4]);
+    m = put(m, 2, record(at(m, 2), 9), 3);                       // тронули — стал свежим
+    m = put(m, 5, record(empty<number>(), 5), 3);
+    expect([...m.keys()]).toEqual([4, 2, 5]);
+    m = put(m, 4, empty<number>(), 3);
+    expect(m.has(4)).toBe(false);
+  });
+
+  it("брошенное выделение полуавтомата не оставляет шагов", () => {
+    type S = { boxes: string; sel: string | null };
+    const same = (a: S, b: S) => a.boxes === b.boxes;
+    const transient = (s: S) => s.sel !== null;
+    let h = record(empty<S>(), { boxes: "a", sel: null });       // правка a → b
+    h = record(h, { boxes: "b", sel: null });                    // щелчок SAM2
+    h = record(h, { boxes: "b", sel: "точка 1" });               // второй щелчок
+    const u = undo(h, { boxes: "b", sel: "точка 2" })!;          // отменили второй
+    const left = dropTransient(u.h, { boxes: "b", sel: null }, same, transient);
+    expect(left.past).toEqual([{ boxes: "a", sel: null }]);      // осталась только правка
+    expect(left.future).toEqual([]);
+    expect(dropTransient(left, { boxes: "b", sel: null }, same, transient)).toBe(left);
+    // Повтор без изменения разметки — пустой шаг; повтор настоящей правки остаётся
+    const back = { past: [], future: [{ boxes: "b", sel: null }, { boxes: "c", sel: null }] };
+    expect(dropTransient(back, { boxes: "b", sel: null }, same, transient).future).toEqual([{ boxes: "c", sel: null }]);
   });
 });

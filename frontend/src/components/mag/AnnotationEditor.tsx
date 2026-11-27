@@ -21,7 +21,6 @@ import type { MenuAction } from "../editor/ObjectMenu";
 import FilmStrip from "./FilmStrip";
 import { frameActions } from "./frameActions";
 import * as history from "./editHistory";
-import { empty, type History } from "./editHistory";
 import TagPicker from "./TagPicker";
 import { hasLayer } from "./useEscape";
 import { useAutosave } from "./useAutosave";
@@ -60,8 +59,30 @@ import type { QuestionsApi } from "./questions/useQuestions";
 import { askedObjects, atPlace, nextAsked, open as openOf } from "./questions/questions";
 import { QuestionCompose, QuestionThread } from "./questions/QuestionThread";
 
-/** Снимок истории правок: разметка кадра и сам кадр — история идёт сквозь кадры. */
-type Snap = { img: string; boxes: CanvasShape[] };
+/** Начатое полуавтоматом на кадре: точки, рамка, уточняемый объект и ещё не закреплённое выделение. */
+type AutoSnap = {
+  pts: CanvasPoint[];
+  prev: CanvasPreview | null;
+  // Уточняемый бокс и его номер: на закреплении он заменяется.
+  prompt: CanvasShape | null;
+  replacing: number | null;
+  // Рамка последнего запроса: по ней повтор шага переспросит модель, если ответ не дошёл.
+  box: CanvasShape | null;
+  tool: "box" | "polygon";
+};
+/** Снимок истории правок кадра. История у каждого кадра своя; в снимке и полуавтомат —
+ *  поставленная точка и показанное выделение тоже шаги отмены. */
+type Snap = { boxes: CanvasShape[]; auto: AutoSnap | null };
+const NO_POINTS: CanvasPoint[] = [];
+
+/** Та же разметка, хоть сервер и раздал после записи номера и авторство. */
+function sameShapes(a: CanvasShape[], b: CanvasShape[]): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  const bare = ({ id: _id, source: _source, ...s }: CanvasShape) => JSON.stringify(s);
+  return a.every((s, i) => bare(s) === bare(b[i]));
+}
+const sameSnap = (a: Snap, b: Snap) => sameShapes(a.boxes, b.boxes) && JSON.stringify(a.auto) === JSON.stringify(b.auto);
 
 /** Окно «Клавиши»: всё управление редактора кадров. */
 const KEYS: KeyGroup[] = [
@@ -78,8 +99,8 @@ const KEYS: KeyGroup[] = [
   { title: "Правка", keys: [
     ["Del / Backspace", "Удалить выбранный объект или часть; при рисовании — последнюю точку"],
     ["Ctrl+щелчок", "Выбрать несколько полигонов одного класса для объединения"],
-    ["Ctrl+Z", "Отменить правку; при рисовании контура — убрать последнюю точку"],
-    ["Ctrl+Shift+Z / Ctrl+Y", "Повторить"],
+    ["Ctrl+Z", "Отменить шаг на этом кадре: правку, точку контура или полуавтомата, выделение SAM2"],
+    ["Ctrl+Shift+Z / Ctrl+Y", "Повторить отменённое на этом кадре"],
     ["Esc", "Снять начатое по шагу, на дне — выйти из разметки"],
   ] },
   { title: "Кадр", keys: [
@@ -271,11 +292,18 @@ export default function AnnotationEditor({
   const [addTo, setAddTo] = useState<number | null>(null);
   // Полуавтомат: набор точек и ещё не закреплённая детекция.
   const [autoMode, setAutoMode] = useState<"points" | "box">("points");
-  const [autoPts, setAutoPts] = useState<CanvasPoint[]>([]);
-  const [autoPrev, setAutoPrev] = useState<CanvasPreview | null>(null);
-  const [autoPrompt, setAutoPrompt] = useState<CanvasShape | null>(null);
-  // Индекс бокса, который сейчас уточняем: на закреплении он заменяется.
-  const [replacing, setReplacing] = useState<number | null>(null);
+  // Начатое полуавтоматом — и в ref синхронно: шаг отмены снимается в обработчике
+  // жеста, до того как React отрисует поставленную точку.
+  const [sess, setSessState] = useState<AutoSnap | null>(null);
+  const sessRef = useRef(sess);
+  const setSess = useCallback((next: AutoSnap | null) => {
+    sessRef.current = next;
+    setSessState(next);
+  }, []);
+  const autoPts = sess?.pts ?? NO_POINTS;
+  const autoPrev = sess?.prev ?? null;
+  const autoPrompt = sess?.prompt ?? null;
+  const replacing = sess?.replacing ?? null;
   const [refine, setRefine] = useState<AutoRefine>({
     detail: "auto", score_min: 0.3, min_area: 64, fill_holes: true, polygon_points: 64,
   });
@@ -330,11 +358,13 @@ export default function AnnotationEditor({
   // со страницы должны видеть последнюю правку, даже если React её ещё не
   // отрисовал (протяжка шлёт правки чаще, чем кадры экрана).
   const boxesRef = useRef<CanvasShape[]>(boxes);
-  // История одна на редактор, сквозь кадры (решение 20.10.2026): «Отклонить» уводит на следующий,
-  // и случайное надо вернуть оттуда. Снимок помнит свой кадр — отмена сперва ведёт туда.
-  const hist = useRef<History<Snap>>(empty());
-  // Отмена ушла на другой кадр: откат — когда его разметка встанет (эффект после `step`).
-  const stepOnArrive = useRef<{ img: string; dir: "undo" | "redo" } | null>(null);
+  // История у каждого кадра своя (решение 27.11.2026): шаг закреплён за кадром, где его сделали,
+  // и Ctrl+Z на другом кадре его не достанет. «Отклонить» отменяют, вернувшись на тот кадр.
+  const hists = useRef<history.ByFrame<string, Snap>>(new Map());
+  // Кадр, чья разметка сейчас в `boxesRef`: при смене кадра `live` уже показывает новый.
+  const shownId = useRef<string | null>(null);
+  // Номер запроса к SAM2: ответ на отменённое, брошенное или переспрошенное не показываем.
+  const askSeq = useRef(0);
   // Следующая запись — отмена: сервер вернёт стёртое своей записью прежней версией, агентовой и «на проверке».
   const undoSave = useRef(false);
   // Жест мыши: «down» — нажали, «recorded» — снимок до жеста уже в истории.
@@ -360,8 +390,21 @@ export default function AnnotationEditor({
   // старыми до перечитывания кадра — их поймает отказ при сохранении.
   useLive("classes", loadClasses);
 
-  // Кадр сменился — берём его разметку как есть. История не сбрасывается: её снимки помнят свой кадр.
+  /** Начатое полуавтоматом бросили, не закрепив: выделения нет, и шагов к нему тоже. */
+  const dropSession = useCallback((at: string | null, boxesThere: CanvasShape[]) => {
+    askSeq.current += 1;
+    setSess(null);
+    const h = at === null ? undefined : hists.current.get(at);
+    if (at === null || !h) return;
+    const left = history.dropTransient(h, { boxes: boxesThere, auto: null },
+      (a, b) => sameShapes(a.boxes, b.boxes), (s) => s.auto !== null);
+    if (left !== h) hists.current = history.put(hists.current, at, left);
+  }, [setSess]);
+
+  // Кадр сменился — берём его разметку как есть. История прежнего кадра остаётся при нём.
   useLayoutEffect(() => {
+    dropSession(shownId.current, boxesRef.current);
+    shownId.current = image?.id ?? null;
     const next = (image?.boxes || []).map((b) => ({
       id: b.id, class_index: b.class_index, x: b.x, y: b.y, w: b.w, h: b.h,
       ...(b.pending ? { pending: true, conf: b.conf ?? null } : {}),
@@ -540,32 +583,56 @@ export default function AnnotationEditor({
     };
   }, []);
 
-  /** Правка разметки. Снимок «до» уходит в историю — один на жест мыши и по
-   *  одному на каждую правку с клавиатуры или из меню. */
+  /** Шаг отмены на показанном кадре: снимок «до» — один на жест мыши и по одному
+   *  на каждое действие с клавиатуры или из меню. */
+  const mark = useCallback(() => {
+    if (gesture.current === "recorded") return;
+    const at = shownId.current ?? "";
+    hists.current = history.put(hists.current, at,
+      history.record(history.at(hists.current, at), { boxes: boxesRef.current, auto: sessRef.current }));
+    if (gesture.current === "down") gesture.current = "recorded";
+  }, []);
+
+  /** Жест или действие кончились ничем (клик рамкой без протяжки, щелчок внутрь
+   *  выделения) — пустого шага отмены не остаётся. */
+  const dropIdle = useCallback(() => {
+    const at = shownId.current ?? "";
+    const h = history.at(hists.current, at);
+    const left = history.dropNoop(h, { boxes: boxesRef.current, auto: sessRef.current }, sameSnap);
+    if (left !== h) hists.current = history.put(hists.current, at, left);
+  }, []);
+
+  /** Действие полуавтомата — один шаг, даже если по пути закрепило прежнее выделение. */
+  const autoStep = useCallback((run: () => void) => {
+    const loose = gesture.current === "none";
+    mark();
+    if (loose) gesture.current = "recorded";
+    try {
+      run();
+    } finally {
+      if (loose) {
+        gesture.current = "none";
+        dropIdle();
+      }
+    }
+  }, [mark, dropIdle]);
+
+  /** Правка разметки. */
   const edit = useCallback((raw: CanvasShape[]) => {
     // Правка рамки агента — её проверка, как и на сервере.
     const next = settlePending(boxesRef.current, raw);
-    if (gesture.current !== "recorded") {
-      hist.current = history.record(hist.current, { img: live.current.image?.id ?? "", boxes: boxesRef.current });
-      if (gesture.current === "down") gesture.current = "recorded";
-    }
+    mark();
     // Номера скрытых держатся за место в списке — при смене числа объектов они съехали бы
     if (next.length !== boxesRef.current.length) setHidden((h) => (h.size ? new Set() : h));
     boxesRef.current = next;
     setBoxes(next);
     touch();
-  }, [touch]);
+  }, [touch, mark]);
 
-  // Жест мыши кончился. Пустой жест (клик рамкой без протяжки: рамку
-  // добавили и сразу убрали как промах) шага отмены не оставляет.
+  // Жест мыши кончился.
   useEffect(() => {
     const up = () => {
-      if (gesture.current === "recorded") {
-        hist.current = history.dropNoop(
-          hist.current, { img: live.current.image?.id ?? "", boxes: boxesRef.current },
-          (a, b) => a.img === b.img && JSON.stringify(a.boxes) === JSON.stringify(b.boxes)
-        );
-      }
+      if (gesture.current === "recorded") dropIdle();
       gesture.current = "none";
     };
     window.addEventListener("pointerup", up);
@@ -574,7 +641,7 @@ export default function AnnotationEditor({
       window.removeEventListener("pointerup", up);
       window.removeEventListener("pointercancel", up);
     };
-  }, []);
+  }, [dropIdle]);
 
   // Выбранный класс задаёт цвет новой разметки и меняет класс выделенного объекта.
   const pickClass = useCallback(
@@ -619,40 +686,6 @@ export default function AnnotationEditor({
     },
     [flush, images.length, onIndex, index]
   );
-
-  /** Отмена и повтор. Результат — обычная правка: уходит автосохранением, с пометкой «отмена».
-   *  Правка была на другом кадре — сперва туда, откат — когда его разметка встанет. */
-  const step = useCallback((dir: "undo" | "redo") => {
-    const at = live.current.image?.id ?? "";
-    const next = history.peek(hist.current, dir);
-    if (!next) return;
-    if (next.img !== at) {
-      const i = images.findIndex((im) => im.id === next.img);
-      if (i < 0) return;
-      stepOnArrive.current = { img: next.img, dir };
-      void jump(i);
-      return;
-    }
-    if (frozen) return;
-    const got = (dir === "undo" ? history.undo : history.redo)(hist.current, { img: at, boxes: boxesRef.current });
-    if (!got) return;
-    hist.current = got.h;
-    boxesRef.current = got.value.boxes;
-    setBoxes(got.value.boxes);
-    undoSave.current = true;
-    touch();
-    // Номер выбранного мог указывать на объект, которого в снимке нет.
-    setSelected(null);
-    setSelPart(null);
-  }, [frozen, touch, images, jump]);
-
-  // Отмена привела на свой кадр: его разметка встала — откатываем. Любой другой переход её снимает.
-  useEffect(() => {
-    const arrive = stepOnArrive.current;
-    if (!arrive) return;
-    stepOnArrive.current = null;
-    if (arrive.img === image?.id) step(arrive.dir);
-  }, [image?.id, reloadKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const close = useCallback(async () => {
     if (await flush()) onClose();
@@ -982,31 +1015,71 @@ export default function AnnotationEditor({
   const autoLive = autoOn && tool !== "select" && auto.state === "ready";
 
   const clearAuto = useCallback(() => {
-    setAutoPts([]);
-    setAutoPrev(null);
-    setAutoPrompt(null);
-    setReplacing(null);
-  }, []);
+    askSeq.current += 1;
+    setSess(null);
+  }, [setSess]);
 
-  // Кадр сменился — начатое выделение к нему не относится.
+  /** Поправить начатое: точки, рамку, уточняемый объект. */
+  const putSess = useCallback((patch: Partial<AutoSnap>) => {
+    setSess({
+      pts: [], prev: null, prompt: null, replacing: null, box: null,
+      tool: tool === "polygon" ? "polygon" : "box",
+      ...sessRef.current, ...patch,
+    });
+  }, [setSess, tool]);
+
+  // Кадр сменился — ошибка прошлого выделения к нему не относится; само оно снято при смене.
   const setAutoError = auto.setError;
-  useEffect(() => { clearAuto(); setAutoError(null); }, [image?.id, clearAuto, setAutoError]);
+  useEffect(() => { setAutoError(null); }, [image?.id, setAutoError]);
 
   const ask = useCallback(
     async (points: CanvasPoint[], prompt: CanvasShape | null) => {
+      const ticket = ++askSeq.current;
+      putSess({ box: prompt });
       const shape = await auto.predict(
         { points, box: prompt ? { x: prompt.x, y: prompt.y, w: prompt.w, h: prompt.h } : undefined },
         refine
       );
-      if (!shape) { setAutoPrev(null); return; }
-      setAutoPrev({
-        ...shape.box,
-        polygons: shape.polygons,
-        color: labelOf(active ?? 0).color,
+      // Пока модель думала, шаг отменили, выделение бросили или спросили снова
+      if (ticket !== askSeq.current || !sessRef.current) return;
+      putSess({
+        prev: shape ? { ...shape.box, polygons: shape.polygons, color: labelOf(active ?? 0).color } : null,
       });
     },
-    [auto, refine, labelOf, active]
+    [auto, refine, labelOf, active, putSess]
   );
+
+  /** Вернуть начатое полуавтоматом из снимка. Ответ модели в снимок не успел — спросим снова. */
+  const restoreAuto = useCallback((a: AutoSnap | null) => {
+    askSeq.current += 1;
+    setSess(a);
+    if (!a) return;
+    // Выделение без полуавтомата не закрепить и не уточнить — включаем его обратно
+    setAutoOn(true);
+    setTool((t) => (t === "select" ? a.tool : t));
+    if (!a.prev && (a.pts.length || a.box)) void ask(a.pts, a.box);
+  }, [setSess, ask]);
+
+  /** Отмена и повтор — только по истории показанного кадра. Разметка изменилась — уходит
+   *  автосохранением с пометкой «отмена»; шаг полуавтомата меняет одно выделение. */
+  const step = useCallback((dir: "undo" | "redo") => {
+    if (frozen) return;
+    const at = shownId.current ?? "";
+    const got = (dir === "undo" ? history.undo : history.redo)(
+      history.at(hists.current, at), { boxes: boxesRef.current, auto: sessRef.current });
+    if (!got) return;
+    hists.current = history.put(hists.current, at, got.h);
+    if (!sameShapes(got.value.boxes, boxesRef.current)) {
+      boxesRef.current = got.value.boxes;
+      setBoxes(got.value.boxes);
+      undoSave.current = true;
+      touch();
+      // Номер выбранного мог указывать на объект, которого в снимке нет.
+      setSelected(null);
+      setSelPart(null);
+    }
+    restoreAuto(got.value.auto);
+  }, [frozen, touch, restoreAuto]);
 
   /** Закрепление: детекция становится обычным объектом, как все остальные.
    *
@@ -1160,56 +1233,55 @@ export default function AnnotationEditor({
     [boxes, edit]
   );
 
+  /** Каждая точка полуавтомата — шаг отмены: Ctrl+Z снимает её вместе с выделением,
+   *  которое она дала, и возвращает прежнее. */
   const onAutoPoint = useCallback(
     (p: { x: number; y: number }, o: { shift: boolean; negative: boolean; onBox: number | null }) => {
       if (frozen || active === null || auto.state !== "ready") return;
-
-      if (o.negative) {
-        if (!autoPrev) return;                       // вычитать пока нечего
-        const pts = [...autoPts, { x: p.x, y: p.y, label: 0 }];
-        setAutoPts(pts);
-        ask(pts, autoPrompt);
-        return;
-      }
-
-      if (o.shift) {
-        if (autoPrev) {                              // уточняем начатое
-          const pts = [...autoPts, { x: p.x, y: p.y, label: 1 }];
-          setAutoPts(pts);
+      autoStep(() => {
+        if (o.negative) {
+          if (!autoPrev) return;                       // вычитать пока нечего
+          const pts = [...autoPts, { x: p.x, y: p.y, label: 0 }];
+          putSess({ pts });
           ask(pts, autoPrompt);
           return;
         }
-        // Подхватываем выделенный бокс — неважно, чей он: нарисован рукой,
-        // пришёл из импорта или от модели. Это та же цепочка «грубо → точно».
-        const idx = o.onBox ?? selected;
-        const base = idx !== null ? boxes[idx] : undefined;
-        if (base) {
-          const pts = [{ x: p.x, y: p.y, label: 1 }];
-          setAutoPts(pts);
-          setAutoPrompt(base);
-          setReplacing(idx);
-          ask(pts, base);
-          return;
-        }
-      }
 
-      // Обычный клик. Мимо начатой детекции — закрепляем её и идём дальше.
-      if (autoPrev) {
-        const inside =
-          p.x >= autoPrev.x && p.x <= autoPrev.x + autoPrev.w &&
-          p.y >= autoPrev.y && p.y <= autoPrev.y + autoPrev.h;
-        if (inside) return;                          // случайное попадание внутрь
-        commitAuto();
-        if (afterCommit === "select") { setTool("select"); return; }
-      }
-      const pts = [{ x: p.x, y: p.y, label: 1 }];
-      setAutoPts(pts);
-      setAutoPrompt(null);
-      setReplacing(null);
-      ask(pts, null);
+        if (o.shift) {
+          if (autoPrev) {                              // уточняем начатое
+            const pts = [...autoPts, { x: p.x, y: p.y, label: 1 }];
+            putSess({ pts });
+            ask(pts, autoPrompt);
+            return;
+          }
+          // Подхватываем выделенный бокс — неважно, чей он: нарисован рукой,
+          // пришёл из импорта или от модели. Это та же цепочка «грубо → точно».
+          const idx = o.onBox ?? selected;
+          const base = idx !== null ? boxes[idx] : undefined;
+          if (base) {
+            const pts = [{ x: p.x, y: p.y, label: 1 }];
+            putSess({ pts, prev: null, prompt: base, replacing: idx });
+            ask(pts, base);
+            return;
+          }
+        }
+
+        // Обычный клик. Мимо начатой детекции — закрепляем её и идём дальше.
+        if (autoPrev) {
+          const inside =
+            p.x >= autoPrev.x && p.x <= autoPrev.x + autoPrev.w &&
+            p.y >= autoPrev.y && p.y <= autoPrev.y + autoPrev.h;
+          if (inside) return;                          // случайное попадание внутрь
+          commitAuto();
+          if (afterCommit === "select") { setTool("select"); return; }
+        }
+        const pts = [{ x: p.x, y: p.y, label: 1 }];
+        putSess({ pts, prev: null, prompt: null, replacing: null });
+        ask(pts, null);
+      });
     },
     [frozen, active, auto.state, autoPrev, autoPts, autoPrompt, selected, boxes,
-     ask, commitAuto, afterCommit]
+     ask, commitAuto, afterCommit, autoStep, putSess]
   );
 
   /** Режим области: рамка — такая же подсказка модели, как точка. Показанное
@@ -1217,14 +1289,14 @@ export default function AnnotationEditor({
   const onAutoBox = useCallback(
     (b: { x: number; y: number; w: number; h: number }) => {
       if (frozen || active === null || auto.state !== "ready") return;
-      // Новая область поверх показанного означает «прежнее меня устроило».
-      if (autoPrev) commitAuto();
-      setAutoPts([]);
-      setAutoPrompt(null);
-      setReplacing(null);
-      ask([], { class_index: -1, ...b });
+      autoStep(() => {
+        // Новая область поверх показанного означает «прежнее меня устроило».
+        if (autoPrev) commitAuto();
+        putSess({ pts: [], prev: null, prompt: null, replacing: null });
+        ask([], { class_index: -1, ...b });
+      });
     },
-    [frozen, active, auto.state, autoPrev, commitAuto, ask]
+    [frozen, active, auto.state, autoPrev, commitAuto, ask, autoStep, putSess]
   );
 
   /** Полуавтомат перпендикулярен инструменту. Включая его из выбора, встаём
@@ -1234,8 +1306,8 @@ export default function AnnotationEditor({
       if (!v) setTool((t) => (t === "select" ? "box" : t));
       return !v;
     });
-    clearAuto();
-  }, [clearAuto]);
+    dropSession(shownId.current, boxesRef.current);
+  }, [dropSession]);
 
   /** «Присоединить следующий контур к выбранному». Разовая просьба: холст
    *  переходит в рисование, и первый же замкнутый контур ляжет в объект. */
@@ -1286,7 +1358,8 @@ export default function AnnotationEditor({
           // Esc снимает начатое по одному слою за нажатие и только на дне
           // закрывает редактор. Недорисованный контур в этот список не входит:
           // его Escape холст перехватывает раньше, пока контур существует.
-          if (autoPrev || autoPts.length) clearAuto();
+          // Сброшенное выделение Ctrl+Z возвращает
+          if (autoPrev || autoPts.length) { mark(); clearAuto(); }
           else if (addTo !== null) setAddTo(null);
           // Полуавтомат Esc не забывает: он запомнен, а не включён «сейчас».
           // Забыв его тут, мы заставили бы включать заново после каждого
@@ -1353,7 +1426,7 @@ export default function AnnotationEditor({
               edit(boxes.filter((_, i) => i !== selected));
               pick(null);
             }
-          } else if (autoPrev || autoPts.length) clearAuto();
+          } else if (autoPrev || autoPts.length) { mark(); clearAuto(); }
           break;
         default: {
           const digit = /^Digit([1-9])$/.exec(e.code);
@@ -1380,7 +1453,7 @@ export default function AnnotationEditor({
   }, [go, next, close, step, selected, selPart, splitParts, classes, tool, autoOn,
       addTo, frozen, pickTool, addContour, toggle, trash, boxes, edit, pick,
       pickClass, auto.state, pickAuto, autoPrev, autoPts, clearAuto, commitAuto, canEmpty,
-      confirmFrame, rejectFrame, goReview, runAgent, ds, emptyInDataset, dropFromDataset, goAsked, startAsk]);
+      confirmFrame, rejectFrame, goReview, runAgent, ds, emptyInDataset, dropFromDataset, goAsked, startAsk, mark]);
 
   /** Что можно сделать с объектом под правой кнопкой, кроме смены класса.
    *

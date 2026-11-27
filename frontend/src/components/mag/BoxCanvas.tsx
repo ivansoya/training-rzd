@@ -410,6 +410,27 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   boxesRef.current = boxes;
   const draftRef = useRef(draft);
   draftRef.current = draft;
+  // Точки, снятые Ctrl+Z посреди контура: повтор ставит их обратно. Ref — синхронно:
+  // зажатая клавиша шлёт повторы быстрее отрисовки.
+  const [undone, setUndone] = useState<Ring>([]);
+  const undoneRef = useRef(undone);
+  undoneRef.current = undone;
+  const setPoints = useCallback((points: Ring, taken: Ring) => {
+    draftRef.current = points;
+    undoneRef.current = taken;
+    setDraft(points);
+    setUndone(taken);
+  }, []);
+  /** Снять последнюю точку контура — её вернёт повтор. */
+  const takePoint = useCallback(() => {
+    const d = draftRef.current;
+    if (d.length) setPoints(d.slice(0, -1), [...undoneRef.current, d[d.length - 1]]);
+  }, [setPoints]);
+  /** Вернуть снятую точку. */
+  const returnPoint = useCallback(() => {
+    const u = undoneRef.current;
+    if (u.length) setPoints([...draftRef.current, u[u.length - 1]], u.slice(0, -1));
+  }, [setPoints]);
 
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -431,7 +452,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   // Сменился кадр или инструмент — недорисованный контур бросаем. Он привязан
   // к кадру, на котором его начали, и переезд на соседний сделал бы из него
   // разметку не того кадра.
-  useEffect(() => { setDraft([]); setGhost(null); }, [imageId, tool]);
+  useEffect(() => { setPoints([], []); setGhost(null); }, [imageId, tool, setPoints]);
 
   useEffect(() => { onScale?.(view.s); }, [view.s, onScale]);
 
@@ -502,10 +523,10 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   const closeDraft = useCallback(() => {
     const d = draftRef.current;
     if (!poly.canClose(d)) return;
-    setDraft([]);
+    setPoints([], []);
     setGhost(null);
     onPolygon?.(d);
-  }, [onPolygon]);
+  }, [onPolygon, setPoints]);
 
   /** Рамка и ярлык призрака ведут себя одинаково: щелчок выбирает, правая — меню. */
   const ghostHandlers = (k: number) => ({
@@ -550,10 +571,10 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
     },
     closePolygon() { closeDraft(); },
-    cancelPolygon() { setDraft([]); setGhost(null); },
-    undoPoint() { setDraft((d) => d.slice(0, -1)); },
+    cancelPolygon() { setPoints([], []); setGhost(null); },
+    undoPoint() { takePoint(); },
     drawing() { return draftRef.current.length > 0; },
-  }), [zoomAt, closeDraft]);
+  }), [zoomAt, closeDraft, setPoints, takePoint]);
 
   // Слушатель колеса — нативный и не пассивный: у React onWheel пассивный, а
   // без preventDefault браузер забирает Ctrl+колесо под свой зум страницы.
@@ -634,30 +655,40 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   // фазе перехвата и гасим событие: Escape у редактора значит «выйти», и
   // недорисованный контур обязан перехватить его раньше.
   useEffect(() => {
-    if (!draft.length) return;
+    if (!draft.length && !undone.length) return;
     function onKey(e: KeyboardEvent) {
+      const mod = (e.ctrlKey || e.metaKey) && !e.altKey;
+      const undoKey = mod && e.code === "KeyZ" && !e.shiftKey;
+      const redoKey = mod && (e.code === "KeyY" || (e.code === "KeyZ" && e.shiftKey));
+      if (!draftRef.current.length) {
+        // Все точки сняты: повтор возвращает их, отмена идёт дальше — к шагам кадра,
+        // и тогда снятые точки уже не вернуть, иначе повтор перескочил бы через неё.
+        if (redoKey) {
+          returnPoint();
+          e.preventDefault();
+          e.stopPropagation();
+        } else if (undoKey) setPoints([], []);
+        return;
+      }
       if (e.shiftKey && (e.code === "Enter" || e.code === "NumpadEnter")) {
         if (hasLayer() || isTyping(e.target)) return;
         e.preventDefault();
         e.stopPropagation();
         return;
       }
-      if (e.code === "Escape") { setDraft([]); setGhost(null); }
+      if (e.code === "Escape") { setPoints([], []); setGhost(null); }
       else if (e.code === "Enter" || e.code === "NumpadEnter") closeDraft();
-      // Ctrl+Z посреди контура убирает последнюю точку: отмена у редактора
-      // работает по готовым объектам, а недорисованный контур — ещё не объект.
-      else if (
-        e.code === "Backspace" || e.code === "Delete" ||
-        (e.code === "KeyZ" && (e.ctrlKey || e.metaKey) && !e.shiftKey)
-      ) {
-        setDraft((d) => d.slice(0, -1));
-      } else return;
+      // Каждая поставленная точка — шаг: Ctrl+Z посреди контура снимает последнюю,
+      // повтор возвращает. Шаги кадра, пока контур рисуется, не трогаем.
+      else if (e.code === "Backspace" || e.code === "Delete" || undoKey) takePoint();
+      else if (redoKey) returnPoint();
+      else return;
       e.preventDefault();
       e.stopPropagation();
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [draft.length, closeDraft]);
+  }, [draft.length, undone.length, closeDraft, setPoints, takePoint, returnPoint]);
 
   function inFrame(p: { x: number; y: number }): Point {
     return [Math.max(0, Math.min(p.x, width)), Math.max(0, Math.min(p.y, height))];
@@ -694,7 +725,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
       if (poly.canClose(draftRef.current)) closeDraft();
       return;
     }
-    setDraft((d) => [...d, p]);
+    // Новая точка обрывает повтор снятых — как новая правка в истории кадра.
+    setPoints([...draftRef.current, p], []);
   }
 
   function insertionAt(e: { clientX: number; clientY: number }) {

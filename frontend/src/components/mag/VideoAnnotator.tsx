@@ -46,7 +46,6 @@ import { useLive } from "../../live/LiveProvider";
 import type { CanvasGhost, CanvasHandle, CanvasPoint, CanvasPreview, CanvasShape } from "./BoxCanvas";
 import * as poly from "./polygon";
 import * as history from "./editHistory";
-import type { History } from "./editHistory";
 import type { Ring } from "./polygon";
 import ObjectMenu from "../editor/ObjectMenu";
 import type { MenuAction } from "../editor/ObjectMenu";
@@ -100,8 +99,8 @@ const KEYS: KeyGroup[] = [
     ["Правая по точке", "Удалить точку выбранного контура"],
     ["Del / Backspace", "Удалить выбранное, у трека — ключ; при рисовании — последнюю точку"],
     ["Ctrl+щелчок", "Выбрать несколько полигонов одного класса для объединения"],
-    ["Ctrl+Z", "Отменить правку одиночных объектов; при рисовании — убрать последнюю точку. Треки не отменяются"],
-    ["Ctrl+Shift+Z / Ctrl+Y", "Повторить"],
+    ["Ctrl+Z", "Отменить шаг на этом кадре: правку одиночных объектов, точку контура или полуавтомата, выделение SAM2. Треки не отменяются"],
+    ["Ctrl+Shift+Z / Ctrl+Y", "Повторить отменённое на этом кадре"],
   ] },
   { title: "Время", keys: [
     ["Пробел", "Играть или остановить; при показанном полуавтоматом — закрепить"],
@@ -188,6 +187,25 @@ function PrepareNote({ clip }: { clip: Clip }) {
  *  одиночная уходит полным списком кадра, трек ждёт свой id из createTrack. */
 type Local = Item | { kind: "new-single" } | { kind: "new-track"; ref: { id?: string } };
 type Sent = { frame: number; shapes: CanvasShape[]; items: Local[] };
+
+/** Начатое полуавтоматом на кадре: точки, рамка последнего запроса и ещё не закреплённое выделение. */
+type AutoSnap = {
+  pts: CanvasPoint[];
+  prev: CanvasPreview | null;
+  // По ней повтор шага переспросит модель, если её ответ в снимок не успел.
+  box: CanvasShape | null;
+  tool: "box" | "polygon" | "track";
+};
+/** Снимок истории кадра: одиночные целиком и полуавтомат — точка и выделение тоже шаги отмены. */
+type Snap = { singles: SingleWire[]; auto: AutoSnap | null };
+const NO_POINTS: CanvasPoint[] = [];
+
+/** Те же одиночные, хоть сервер и раздал после записи номера и авторство. */
+function sameSingles(a: SingleWire[], b: SingleWire[]): boolean {
+  const key = (s: SingleWire) => JSON.stringify([s.class_index, s.parts?.length ? s.parts : [s.x, s.y, s.w, s.h], !!s.pending]);
+  return a.length === b.length && a.every((s, i) => key(s) === key(b[i]));
+}
+const sameSnap = (a: Snap, b: Snap) => sameSingles(a.singles, b.singles) && JSON.stringify(a.auto) === JSON.stringify(b.auto);
 
 /**
  * Редактор размечаемого видео «Дорожки снизу».
@@ -296,8 +314,15 @@ export default function VideoAnnotator({
   const [editNote, say] = useEditNote();
   const by = useRef<string | null>(null);
 
-  const [autoPts, setAutoPts] = useState<CanvasPoint[]>([]);
-  const [autoPrev, setAutoPrev] = useState<CanvasPreview | null>(null);
+  // Начатое полуавтоматом — и в ref синхронно: шаг отмены снимается до отрисовки точки.
+  const [sess, setSessState] = useState<AutoSnap | null>(null);
+  const sessRef = useRef(sess);
+  const setSess = useCallback((next: AutoSnap | null) => {
+    sessRef.current = next;
+    setSessState(next);
+  }, []);
+  const autoPts = sess?.pts ?? NO_POINTS;
+  const autoPrev = sess?.prev ?? null;
   const [refine, setRefine] = useState<AutoRefine>({
     detail: "auto", score_min: 0.3, min_area: 64, fill_holes: true, polygon_points: 64,
   });
@@ -704,10 +729,13 @@ export default function VideoAnnotator({
     return list;
   }, []);
 
-  // --- отмена (Ctrl+Z): одиночные рамки, сквозь кадры (решения 20.10.2026) ----- #
+  // --- отмена (Ctrl+Z): одиночные рамки и полуавтомат, у каждого кадра своя (решение 27.11.2026) --- #
   // Снимок — список одиночных кадра целиком: запись кадра и так заменяет его целиком.
   // Треки, заслоны и «пустой кадр» — отдельные запросы со своими обратными; их отмена не берёт.
-  const hist = useRef<History<{ frame: number; singles: SingleWire[] }>>(history.empty());
+  // Шаг закреплён за кадром, где его сделали: Ctrl+Z на другом кадре его не достанет.
+  const hists = useRef<history.ByFrame<number, Snap>>(new Map());
+  // Действие из нескольких правок (щелчок полуавтомата закрепил прежнее) — один шаг.
+  const oneStep = useRef(false);
   /** Одиночные кадра такими, какими их видит редактор: на этом — как отправлено, на чужом — как прочитано. */
   const singlesNow = useCallback((at: number): SingleWire[] => {
     const was = sentOf(at);
@@ -716,7 +744,11 @@ export default function VideoAnnotator({
       .map((s) => ({ ...asWire(s), ...(s.pending ? { pending: true } : {}) }));
   }, [sentOf, singlesOf, asWire]);
   const remember = useCallback((at: number, before: SingleWire[]) => {
-    hist.current = history.record(hist.current, { frame: at, singles: before });
+    if (oneStep.current) return;
+    // Начатое полуавтоматом живёт на показанном кадре, у правки чужого его нет
+    const auto = at === frameNow.current ? sessRef.current : null;
+    hists.current = history.put(hists.current, at,
+      history.record(history.at(hists.current, at), { singles: before, auto }));
   }, []);
 
   const askDrop = useCallback(async (track: VideoTrack) => {
@@ -1058,23 +1090,6 @@ export default function VideoAnnotator({
     });
   }, [frozen, busy, playing, autoPrev, settle, frame, rewrite, pick, confirm, guard, putFrame]);
 
-  /** Отмена и повтор: правка была на другом кадре — туда, и кадр пишется прежним списком с пометкой «отмена»,
-   *  сервер вернёт стёртое своей записью прежней версией — агентовой и «на проверке». */
-  const undoStep = useCallback((dir: "undo" | "redo") => {
-    if (frozen) return;
-    flushDraft();
-    const next = history.peek(hist.current, dir);
-    if (!next) return;
-    const got = (dir === "undo" ? history.undo : history.redo)(hist.current, { frame: next.frame, singles: singlesNow(next.frame) });
-    if (!got) return;
-    hist.current = got.h;
-    const at = got.value.frame;
-    if (at !== frame) { stop(); setFrame(at); }
-    if (sent.current?.frame === at) sent.current = null;
-    pick(null);
-    guard(() => putFrame(at, got.value.singles, true));
-  }, [frozen, flushDraft, singlesNow, frame, stop, pick, guard, putFrame]);
-
   /** После «Принять все» и «Отклонить все» — к следующему кадру на проверке. */
   const toNextPending = useCallback(() => {
     const to = nextFrame(agentFrames.filter((f) => f !== frame), frame, 1);
@@ -1304,10 +1319,28 @@ export default function VideoAnnotator({
     code
   );
 
+  // Номер запроса к SAM2: ответ на отменённое, брошенное или переспрошенное не показываем.
+  const askSeq = useRef(0);
   const clearAuto = useCallback(() => {
-    setAutoPts([]);
-    setAutoPrev(null);
-  }, []);
+    askSeq.current += 1;
+    setSess(null);
+  }, [setSess]);
+
+  /** Поправить начатое полуавтоматом. */
+  const putSess = useCallback((patch: Partial<AutoSnap>) => {
+    setSess({ pts: [], prev: null, box: null, tool: tool === "select" ? "box" : tool, ...sessRef.current, ...patch });
+  }, [setSess, tool]);
+
+  /** Начатое бросили, не закрепив (ушли с кадра, выключили A): выделения нет, и шагов к нему тоже. */
+  const dropSession = useCallback((at: number) => {
+    if (sessRef.current) clearAuto();
+    // Воспроизведение меняет кадр десятки раз в секунду — кадры без истории не трогаем
+    const h = hists.current.get(at);
+    if (!h) return;
+    const left = history.dropTransient(h, { singles: singlesNow(at), auto: null },
+      (a, b) => sameSingles(a.singles, b.singles), (s) => s.auto !== null);
+    if (left !== h) hists.current = history.put(hists.current, at, left);
+  }, [clearAuto, singlesNow]);
 
   /** Работает ли полуавтомат прямо сейчас: в «выборе» рисовать нечем. */
   const autoLive = autoOn && tool !== "select" && auto.state === "ready";
@@ -1317,21 +1350,29 @@ export default function VideoAnnotator({
       if (!v) setTool((t) => (t === "select" ? "box" : t));
       return !v;
     });
-    clearAuto();
-  }, [clearAuto]);
+    dropSession(frameNow.current);
+  }, [dropSession]);
 
-  useEffect(() => { clearAuto(); }, [frame, clearAuto]);
+  // Ушли с кадра — начатое на нём брошено
+  const autoAt = useRef(frame);
+  useEffect(() => {
+    if (autoAt.current !== frame) dropSession(autoAt.current);
+    autoAt.current = frame;
+  }, [frame, dropSession]);
 
   const ask = useCallback(
     async (points: CanvasPoint[], prompt: CanvasShape | null) => {
+      const ticket = ++askSeq.current;
+      putSess({ box: prompt });
       const shape = await auto.predict(
         { points, box: prompt ? { x: prompt.x, y: prompt.y, w: prompt.w, h: prompt.h } : undefined },
         refine
       );
-      if (!shape) { setAutoPrev(null); return; }
-      setAutoPrev({ ...shape.box, polygons: shape.polygons, color: labelOf(active ?? 0).color });
+      // Пока модель думала, шаг отменили, выделение бросили или спросили снова
+      if (ticket !== askSeq.current || !sessRef.current) return;
+      putSess({ prev: shape ? { ...shape.box, polygons: shape.polygons, color: labelOf(active ?? 0).color } : null });
     },
-    [auto, refine, labelOf, active]
+    [auto, refine, labelOf, active, putSess]
   );
 
   const commitAuto = useCallback(() => {
@@ -1359,48 +1400,110 @@ export default function VideoAnnotator({
       }
       await load();
     });
-    clearAuto();
-  }, [autoPrev, active, currentTrack, tool, frame, guard, load, taskId, video.id, clearAuto, apply]);
+    // Ключ трека отмена не берёт — шаги выделения, закреплённого в трек, вели бы в пустоту.
+    // Внутри щелчка полуавтомата цепочку не рвём: следующий Ctrl+Z снимет новое выделение.
+    if (oneStep.current) clearAuto();
+    else dropSession(frame);
+  }, [autoPrev, active, currentTrack, tool, frame, guard, load, taskId, video.id, clearAuto, apply, dropSession]);
 
+  /** Шаг отмены перед действием на показанном кадре. */
+  const rememberHere = useCallback(() => {
+    const at = frameNow.current;
+    remember(at, singlesNow(at));
+  }, [remember, singlesNow]);
+
+  /** Действие полуавтомата — один шаг, даже если по пути закрепило прежнее выделение.
+   *  Ничего не поменялось (щелчок внутрь выделения) — шага нет. */
+  const autoStep = useCallback((run: () => void) => {
+    flushDraft();
+    rememberHere();
+    oneStep.current = true;
+    try {
+      run();
+    } finally {
+      oneStep.current = false;
+    }
+    const at = frameNow.current;
+    const h = history.at(hists.current, at);
+    const left = history.dropNoop(h, { singles: singlesNow(at), auto: sessRef.current }, sameSnap);
+    if (left !== h) hists.current = history.put(hists.current, at, left);
+  }, [flushDraft, rememberHere, singlesNow]);
+
+  /** Каждая точка полуавтомата — шаг отмены: Ctrl+Z снимает её вместе с выделением,
+   *  которое она дала, и возвращает прежнее. */
   const onAutoPoint = useCallback(
     (p: { x: number; y: number }, o: { shift: boolean; negative: boolean; onBox: number | null }) => {
       if (frozen || active === null || auto.state !== "ready") return;
-      if (o.negative) {
-        if (!autoPrev) return;
-        const pts = [...autoPts, { x: p.x, y: p.y, label: 0 }];
-        setAutoPts(pts);
+      autoStep(() => {
+        if (o.negative) {
+          if (!autoPrev) return;
+          const pts = [...autoPts, { x: p.x, y: p.y, label: 0 }];
+          putSess({ pts });
+          ask(pts, null);
+          return;
+        }
+        if (o.shift && autoPrev) {
+          const pts = [...autoPts, { x: p.x, y: p.y, label: 1 }];
+          putSess({ pts });
+          ask(pts, null);
+          return;
+        }
+        if (autoPrev) {
+          const inside =
+            p.x >= autoPrev.x && p.x <= autoPrev.x + autoPrev.w &&
+            p.y >= autoPrev.y && p.y <= autoPrev.y + autoPrev.h;
+          if (inside) return;
+          commitAuto();
+        }
+        const pts = [{ x: p.x, y: p.y, label: 1 }];
+        putSess({ pts, prev: null });
         ask(pts, null);
-        return;
-      }
-      if (o.shift && autoPrev) {
-        const pts = [...autoPts, { x: p.x, y: p.y, label: 1 }];
-        setAutoPts(pts);
-        ask(pts, null);
-        return;
-      }
-      if (autoPrev) {
-        const inside =
-          p.x >= autoPrev.x && p.x <= autoPrev.x + autoPrev.w &&
-          p.y >= autoPrev.y && p.y <= autoPrev.y + autoPrev.h;
-        if (inside) return;
-        commitAuto();
-      }
-      const pts = [{ x: p.x, y: p.y, label: 1 }];
-      setAutoPts(pts);
-      ask(pts, null);
+      });
     },
-    [frozen, active, auto.state, autoPrev, autoPts, ask, commitAuto]
+    [frozen, active, auto.state, autoPrev, autoPts, ask, commitAuto, autoStep, putSess]
   );
 
   const onAutoBox = useCallback(
     (b: { x: number; y: number; w: number; h: number }) => {
       if (frozen || active === null || auto.state !== "ready") return;
-      if (autoPrev) commitAuto();
-      setAutoPts([]);
-      ask([], { class_index: -1, ...b });
+      autoStep(() => {
+        if (autoPrev) commitAuto();
+        putSess({ pts: [], prev: null });
+        ask([], { class_index: -1, ...b });
+      });
     },
-    [frozen, active, auto.state, autoPrev, commitAuto, ask]
+    [frozen, active, auto.state, autoPrev, commitAuto, ask, autoStep, putSess]
   );
+
+  /** Вернуть начатое полуавтоматом из снимка. Ответ модели в снимок не успел — спросим снова. */
+  const restoreAuto = useCallback((a: AutoSnap | null) => {
+    askSeq.current += 1;
+    setSess(a);
+    if (!a) return;
+    // Выделение без полуавтомата не закрепить и не уточнить — включаем его обратно
+    setAutoOn(true);
+    setTool((t) => (t === "select" ? a.tool : t));
+    if (!a.prev && (a.pts.length || a.box)) void ask(a.pts, a.box);
+  }, [setSess, ask]);
+
+  /** Отмена и повтор — только по истории показанного кадра. Одиночные изменились — кадр пишется
+   *  прежним списком с пометкой «отмена», сервер вернёт стёртое своей записью прежней версией —
+   *  агентовой и «на проверке». Шаг полуавтомата меняет одно выделение. */
+  const undoStep = useCallback((dir: "undo" | "redo") => {
+    if (frozen) return;
+    flushDraft();
+    const at = frame;
+    const now: Snap = { singles: singlesNow(at), auto: sessRef.current };
+    const got = (dir === "undo" ? history.undo : history.redo)(history.at(hists.current, at), now);
+    if (!got) return;
+    hists.current = history.put(hists.current, at, got.h);
+    if (!sameSingles(got.value.singles, now.singles)) {
+      if (sent.current?.frame === at) sent.current = null;
+      pick(null);
+      guard(() => putFrame(at, got.value.singles, true));
+    }
+    restoreAuto(got.value.auto);
+  }, [frozen, flushDraft, singlesNow, frame, pick, guard, putFrame, restoreAuto]);
 
   // --- объекты ------------------------------------------------------------- #
   /** Одиночная становится треком: тот же класс и рамка, но объект живёт во времени. */
@@ -1563,7 +1666,8 @@ export default function VideoAnnotator({
       const step = e.shiftKey ? 10 : 1;
       switch (e.code) {
         case "Escape":
-          if (autoPrev || autoPts.length) clearAuto();
+          // Сброшенное выделение Ctrl+Z возвращает
+          if (autoPrev || autoPts.length) { rememberHere(); clearAuto(); }
           else if (ghostOn !== null) setGhostOn(null);
           else if (asking) setAsking(null);
           else if (tool !== "select") setTool("select");
@@ -1604,7 +1708,7 @@ export default function VideoAnnotator({
             const i = selected;
             apply((was) => was.shapes.filter((_, k) => k !== i));
             if (items[i]?.kind === "single") pick(null);
-          } else if (autoPrev || autoPts.length) clearAuto();
+          } else if (autoPrev || autoPts.length) { rememberHere(); clearAuto(); }
           break;
         default: {
           const c = digitClass(classes, e.code);
@@ -1629,7 +1733,8 @@ export default function VideoAnnotator({
     };
   }, [tool, frozen, autoPrev, autoPts, clearAuto, closeEditor, togglePlay, go, auto.state, pickAuto,
       selected, pickedTrack, pick, apply, items, classes, pickClass, commitAuto, toggleEmpty, putKey,
-      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, rejectFrame, goReview, runAgent, undoStep, goAsked, askAbout, asking]);
+      scoutAll.length, toggleScout, ghostOn, take, confirmFrame, rejectFrame, goReview, runAgent, undoStep, goAsked, askAbout, asking,
+      rememberHere]);
 
   // --- масштаб дорожек ------------------------------------------------------ #
   // Окно масштаба; null — весь ролик. Ширина дорожек — от самих дорожек (ограничение 12 px на кадр).
@@ -1676,9 +1781,11 @@ export default function VideoAnnotator({
       setDraft(null);
       pick(null);
       // Старые снимки участка вернули бы отклонённые предложения; историю остальных кадров сохраняем.
-      if (result.boxes) hist.current = {
-        past: hist.current.past.filter((s) => s.frame < range.from_frame || s.frame > range.to_frame), future: [],
-      };
+      if (result.boxes) {
+        const left = new Map(hists.current);
+        for (const f of left.keys()) if (f >= range.from_frame && f <= range.to_frame) left.delete(f);
+        hists.current = left;
+      }
       await load("all");
       setRejectRange(null);
       setNote(`Отклонено: ${count(result.boxes, "объект", "объекта", "объектов")} на ${count(result.frames, "кадре", "кадрах", "кадрах")}.`);
