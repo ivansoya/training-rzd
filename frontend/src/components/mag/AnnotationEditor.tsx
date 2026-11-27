@@ -1669,7 +1669,6 @@ export default function AnnotationEditor({
       >
         <BoxCanvas
           ref={canvas}
-          agentOf={(i) => { const b = meta.get(boxes[i]?.id ?? ""); return !!b?.agent && b.source === "model"; }}
           captionOf={agentsHere.length > 1
             ? (i) => (boxes[i]?.pending ? agentKeyOf(meta.get(boxes[i].id ?? ""))?.name : undefined) : undefined}
           imageId={image.id}

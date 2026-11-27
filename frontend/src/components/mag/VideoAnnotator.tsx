@@ -1916,7 +1916,6 @@ export default function VideoAnnotator({
           )}
           <BoxCanvas
             ref={canvas}
-            agentOf={(i) => items[i]?.kind === "single" && !!items[i].box.agent && items[i].box.source === "model"}
             captionOf={agentsHere.length > 1
               ? (i) => (boxes[i]?.pending ? singleAgent(items[i])?.name : undefined) : undefined}
             imageId={`${video.id}:${frame}`}

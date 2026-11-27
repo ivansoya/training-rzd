@@ -253,8 +253,6 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   labelOf: (classIndex: number) => { name: string; color: string };
   /** Приписка к подписи рамки через черту — агент, когда их на кадре несколько: «вагон», «YOLOE-РСМ». */
   captionOf?: (index: number) => string | undefined;
-  /** Подтверждённый объект тоже сохраняет отметку, если его разметил агент. */
-  agentOf?: (index: number) => boolean;
   /** Индексы объектов с открытым вопросом — пузырёк в правом верхнем углу (решение 29.10.2026). */
   asked?: Set<number>;
   /** Индексы объектов, которые рисуются прерывисто: объект на кадре есть, но
@@ -332,7 +330,7 @@ const BoxCanvas = forwardRef<CanvasHandle, {
   onAutoCommit?: () => void;
 }>(function BoxCanvas(
   {
-    imageId, viewKey, src, bitmap, fileName, frameNotice, width, height, boxes, labelOf, captionOf, agentOf, asked, dashed, hidden, hiddenItems,
+    imageId, viewKey, src, bitmap, fileName, frameNotice, width, height, boxes, labelOf, captionOf, asked, dashed, hidden, hiddenItems,
     labels = true, editable: canEdit = false, waiting = false, tool = "select", auto = false,
     autoMode = "points", autoPoints, autoPreview = null, activeClass = null,
     selected = null, multiSelected, selectedPart = null, splitParts = false, canMovePoly = false,
@@ -1399,7 +1397,8 @@ const BoxCanvas = forwardRef<CanvasHandle, {
                   onSelect?.(i, null);
                 }}
               >
-                {(s.pending || agentOf?.(i)) && <span title="Разметил агент"><Icon name="bot" size={12} className="mag-cv-mark" /></span>}
+                {/* Только на проверке: подтверждённый объект — уже решение человека, автор виден в панели объекта */}
+                {s.pending && <span title="Агент, на проверке"><Icon name="bot" size={12} className="mag-cv-mark" /></span>}
                 {meta.name || s.class_index}
                 {captionOf?.(i) && <span className="mag-cv-ag"><Sep />{captionOf(i)}</span>}
                 {s.pending && s.conf != null && <b className="mag-cv-conf">{fmtConf(s.conf)}</b>}
