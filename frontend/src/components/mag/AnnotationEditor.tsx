@@ -470,18 +470,25 @@ export default function AnnotationEditor({
   const askedIdx = useMemo(() => new Set(boxes.flatMap((b, i) => (b.id && askedIds.has(b.id) ? [i] : []))), [boxes, askedIds]);
   const [filterStates, setFilterStates] = useState<FrameFilterState[]>([]);
   const [filterTags, setFilterTags] = useState<string[]>([]);
-  const extraActive = filterStates.length > 0 || filterTags.length > 0;
-  const resetExtra = () => { setFilterStates([]); setFilterTags([]); };
+  // Кадры с открытым вопросом — те же, что отмечены в ленте и по Alt+[ ]. Отдельной группой:
+  // сочетается со статусом и тегами через «и» — «размеченные, где спросили».
+  const [filterAsked, setFilterAsked] = useState(false);
+  // Число — среди кадров этого редактора: он бывает открыт на части таски
+  const askedHere = useMemo(() => (askedImgs.size ? images.filter((im) => askedImgs.has(im.id)).length : 0), [images, askedImgs]);
+  const extraActive = filterStates.length > 0 || filterTags.length > 0 || filterAsked;
+  const resetExtra = () => { setFilterStates([]); setFilterTags([]); setFilterAsked(false); };
 
   const fits = useCallback((i: number) => {
     const frame = images[i];
     if (!frame || (off.size > 0 && !frameClasses(frame).some((cls) => !off.has(classKey(cls))))) return false;
     if (filterTags.length && !frame.tag_ids?.some((id) => filterTags.includes(id))) return false;
+    // Пока список вопросов не пришёл, знаем только вопросы агента из индекса кадров
+    if (filterAsked && !(qList ? askedImgs.has(frame.id) : frame.agent_question)) return false;
     if (!filterStates.length) return true;
     const agent = frame.agent_empty || hasPending(frame) || (qList ? agentAsked.has(frame.id) : frame.agent_question);
     const status = frame.task_status !== "deleted" && agent ? "agent" : frame.task_status;
     return filterStates.includes(status);
-  }, [images, off, filterStates, filterTags, qList, agentAsked]);
+  }, [images, off, filterStates, filterTags, filterAsked, qList, agentAsked, askedImgs]);
   /** Кадр в работе: подходит отбору; текущий — всегда, выпадает при уходе с него. */
   const passes = useCallback((i: number) => i === index || fits(i), [index, fits]);
   const narrowed = fltOn || extraActive;
@@ -1786,6 +1793,18 @@ export default function AnnotationEditor({
                         on ? [...prev, status] : prev.filter((s) => s !== status))}><span>{label}</span></Check>
                     </div>)}
                   </div>
+                  {questions && <>
+                    <div className="ui-pop-sep" />
+                    <div className="ui-pop-h">Вопросы</div>
+                    <div className="flt-opts" role="group" aria-label="Вопросы">
+                      <div className="flt-row">
+                        <Check checked={filterAsked} onChange={setFilterAsked}>
+                          <span className="t-ell grow">С открытыми вопросами</span>
+                          {qList && <span className="ui-count" title="кадров с открытым вопросом">{ru(askedHere)}</span>}
+                        </Check>
+                      </div>
+                    </div>
+                  </>}
                   {tags.length > 0 && <>
                     <div className="ui-pop-sep" />
                     <div className="ui-pop-h">Теги кадров</div>
@@ -1800,7 +1819,7 @@ export default function AnnotationEditor({
                 trigger={
                   <Button variant="outline" size="sm" icon="filter" iconEnd="chevD" className={cx("fe-flt", (fltOn || extraActive) && "on")}
                     aria-label={ds ? undefined : "Фильтр"}
-                    title={ds ? "Отобрать кадры по классам" : "Отобрать кадры по статусам, тегам и классам"}>
+                    title={ds ? "Отобрать кадры по классам" : "Отобрать кадры по статусам, вопросам, тегам и классам"}>
                     {ds ? "Классы" : "Фильтр"}
                     {narrowed && <span className="fr-fcount">{ds ? shownOf(fltEntries, fltOff).shown : shown.filter(fits).length}</span>}
                   </Button>

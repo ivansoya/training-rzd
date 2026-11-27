@@ -477,7 +477,7 @@
 .flt-only { display: none; }
 .flt-only.ui-btn-sm { height: 22px; padding: 0 7px; margin-right: 4px; font-size: 12px; }
 .flt-row:is(:hover, :has(:focus-visible)) .flt-only { display: inline-flex; }
-.flt-row:is(:hover, :has(:focus-visible)) .ui-count { display: none; }
+.flt-row:has(.flt-only):is(:hover, :has(:focus-visible)) .ui-count { display: none; }
 .flt-ag .ui-swatch { outline: 1px dashed color-mix(in srgb, var(--fg) 40%, transparent); outline-offset: 2px; }
 
 /* Кнопка на месте «Дорожки N»; при фильтре — «Классы ③ из 7» */
