@@ -80,6 +80,78 @@ def mask_bounds(mask):
 
 
 SAM_POLYGON_POINTS = 64
+# Доля, с которой объект перестаёт быть мелким: большая сторона — восьмая часть
+# стороны кадра. Сложность формы от размера не зависит, а лимит пропорционально
+# размеру оставлял человеку в 60 px четырёхугольник. Мелкий получает лимит самого
+# маленького среднего — не больше, чем у объекта крупнее. Точки сверх сглаживания
+# этот лимит не добавляет: простой формы хватает и меньшего.
+SMALL_SHARE = 0.25
+# Ступени растровой границы: точки ближе этого к стороне контура не нужны.
+SMOOTH_PX = 1.0
+
+
+def sam_budget(max_points, share):
+    """Сколько точек можно части SAM2 при её доле кадра ``share``."""
+    return max(4, round(max_points * max(share, SMALL_SHARE)))
+
+
+def _farthest(points, s, e):
+    """(отступ, номер) самой далёкой от отрезка s→e точки кольца между ними."""
+    import numpy as np
+
+    n = len(points)
+    between = np.arange(s + 1, s + (e - s) % n) % n
+    if not len(between):
+        return None
+    a, along = points[s], points[e] - points[s]
+    offset = points[between] - a
+    length = float(along @ along)
+    if length:
+        offset = offset - np.clip(offset @ along / length, 0.0, 1.0)[:, None] * along
+    dist = np.hypot(offset[:, 0], offset[:, 1])
+    k = int(dist.argmax())
+    return float(dist[k]), int(between[k])
+
+
+def _fill_sam_budget(contour, budget):
+    """Мелкая часть: самые значимые точки границы, пока их не станет ``budget``
+    или пока граница не ляжет в ``SMOOTH_PX``.
+
+    Один допуск на всё кольцо (``_limit_sam_contour``) у мелкой сложной формы
+    перескакивал с двух десятков точек сразу на четыре: зубцы одного размера
+    значимы одинаково и уходят все вместе. Здесь точки ставятся по одной — та,
+    что дальше всех от уже проведённых сторон, — и лимит расходуется целиком.
+    """
+    import heapq
+
+    import cv2
+    import numpy as np
+
+    smooth = cv2.approxPolyDP(contour, SMOOTH_PX, True)
+    if len(smooth) <= budget and cv2.contourArea(smooth) > 0:
+        return smooth
+    points = contour.reshape(-1, 2).astype(np.float64)
+    first = int(np.argmax(((points - points.mean(axis=0)) ** 2).sum(axis=1)))
+    second = int(np.argmax(((points - points[first]) ** 2).sum(axis=1)))
+    chosen = {first, second}
+    queue = []
+
+    def plan(s, e):
+        got = _farthest(points, s, e)
+        if got and got[0] > SMOOTH_PX:
+            heapq.heappush(queue, (-got[0], s, e, got[1]))
+
+    plan(first, second)
+    plan(second, first)
+    while queue and len(chosen) < budget:
+        _, s, e, k = heapq.heappop(queue)
+        chosen.add(k)
+        plan(s, k)
+        plan(k, e)
+    ring = points[sorted(chosen)].astype(np.int32).reshape(-1, 1, 2)
+    if len(ring) >= 3 and cv2.contourArea(ring) > 0:
+        return ring
+    return _limit_sam_contour(contour, budget)
 
 
 def _limit_sam_contour(contour, budget):
@@ -150,8 +222,8 @@ def polygons_from_mask(mask, max_points=0, *, adaptive=False):
             # С половины кадра по любой стороне действует полный лимит.
             # Длинный тонкий объект при этом не приравниваем к мелкой точке.
             share = min(1.0, 2 * max(width / frame_w, height / frame_h))
-            budget = max(4, round(max_points * share))
-            contour = _limit_sam_contour(contour, budget)
+            limit = _fill_sam_budget if share < SMALL_SHARE else _limit_sam_contour
+            contour = limit(contour, sam_budget(max_points, share))
         elif max_points and len(contour) > max_points:
             # Подбираем допуск, пока точек не станет достаточно мало.
             perimeter = cv2.arcLength(contour, True)

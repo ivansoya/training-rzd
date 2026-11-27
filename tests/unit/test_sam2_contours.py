@@ -52,3 +52,47 @@ class Sam2ContoursTest(unittest.TestCase):
                 self.assertGreater(cv2.contourArea(np.array(parts_low[0], dtype=np.int32)), 0)
         if len(counts) == 2:
             self.assertLess(*counts)
+
+    @staticmethod
+    def _star(radius, cx=960, cy=540, size=(1080, 1920)):
+        mask = np.zeros(size, dtype=np.uint8)
+        angles = np.arange(24) * (2 * np.pi / 24)
+        radii = radius * np.tile([1.0, 0.55], 12)
+        points = np.array([cx, cy]) + np.column_stack([np.cos(angles), np.sin(angles)]) * radii[:, None]
+        cv2.fillPoly(mask, [points.round().astype(np.int32)], 1)
+        return mask
+
+    def test_small_complex_part_keeps_its_shape(self):
+        mask = self._star(30)                       # 60 px на 1080p: прежде 4 точки, IoU 0,73
+        part, = contours.polygons_from_mask(mask, 64, adaptive=True)
+        self.assertEqual(len(part), 16)
+        drawn = np.zeros_like(mask)
+        cv2.fillPoly(drawn, [np.array(part, dtype=np.int32)], 1)
+        union = np.logical_or(drawn, mask).sum()
+        self.assertGreater(np.logical_and(drawn, mask).sum() / union, 0.8)
+
+    def test_small_simple_part_stays_simple(self):
+        mask = np.zeros((1080, 1920), dtype=np.uint8)
+        mask[500:530, 900:940] = 1
+        part, = contours.polygons_from_mask(mask, 64, adaptive=True)
+        self.assertEqual(len(part), 4)
+
+    def test_small_floor_follows_detail_factor(self):
+        mask = self._star(30)
+        low, = contours.polygons_from_mask(mask, 8, adaptive=True)
+        high, = contours.polygons_from_mask(mask, 128, adaptive=True)
+        self.assertLessEqual(len(low), 4)
+        self.assertGreater(len(high), 16)
+        self.assertLessEqual(len(high), 32)
+
+    def test_medium_and_large_parts_keep_previous_limit(self):
+        for radius in (80, 135, 400):
+            with self.subTest(radius=radius):
+                mask = self._star(radius)
+                found, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                _, _, w, h = cv2.boundingRect(found[0])
+                share = min(1.0, 2 * max(w / 1920, h / 1080))
+                self.assertGreaterEqual(share, contours.SMALL_SHARE)
+                before = contours._limit_sam_contour(found[0], max(4, round(64 * share)))
+                part, = contours.polygons_from_mask(mask, 64, adaptive=True)
+                self.assertEqual(part, [[int(p[0][0]), int(p[0][1])] for p in before])
