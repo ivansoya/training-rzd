@@ -105,18 +105,18 @@ def test_массового_принятия_больше_нет(api, db, task, 
     assert frame(api, task, image["id"])["task_status"] == "new"
 
 
-def test_закрытие_таски_снимает_непроверенное_с_принятых_кадров(api, db, task, image, label_class):
+def test_закрытие_таски_блокируется_непроверенным_на_принятых_кадрах(api, db, task, image, label_class):
     mine = {"class_index": label_class["class_index"], "x": 200, "y": 20, "w": 50, "h": 50}
     save(api, image["id"], [mine])
     assert api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "done"}).json()["accepted"] == 1
     # Агента позвали на уже принятый кадр — его непроверенное в данные не уходит
     agent_box(db, image["id"], label_class)
     closed = api.post(f"{BASE_URL}/api/tasks/{task['id']}/status", json={"status": "closed"})
-    assert closed.status_code == 200, closed.text
-    assert closed.json()["removed_unchecked"] == 1
+    assert closed.status_code == 409, closed.text
+    assert closed.json()["code"] == "remaining_frames"
     with db.cursor() as cur:
-        cur.execute("SELECT pending FROM annotations WHERE image_id = %s", (image["id"],))
-        assert [r[0] for r in cur.fetchall()] == [False]
+        cur.execute("SELECT pending FROM annotations WHERE image_id = %s ORDER BY pending", (image["id"],))
+        assert [r[0] for r in cur.fetchall()] == [False, True]
 
 
 # --- ролик ---------------------------------------------------------------- #

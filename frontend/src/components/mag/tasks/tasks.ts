@@ -230,11 +230,12 @@ export function closePlan(c: TaskCounts, videos: number) {
 /** Итог сдачи и закрытия одной строкой: что ушло, что обновилось, что осталось ждать. */
 export function handoverText(r: StatusResult): string {
   const waiting = (r.unchecked || 0) + (r.waiting || 0);
+  const remaining = r.remaining?.not_exported ?? 0;
   return [
     r.accepted ? `В датасет${r.dataset ? ` «${r.dataset}»` : ""} ушло ${count(r.accepted, "кадр", "кадра", "кадров")}.` : "",
     r.updated || r.removed ? `Кадры роликов в датасете: обновлено ${ru(r.updated || 0)}${r.removed ? `, убрано ${ru(r.removed)}` : ""}.` : "",
     r.kept_edited ? `${count(r.kept_edited, "кадр правили", "кадра правили", "кадров правили")} в датасете — ${plural(r.kept_edited, "оставлен", "оставлены", "оставлены")} как есть.` : "",
-    waiting ? `${count(waiting, "кадр ждёт", "кадра ждут", "кадров ждут")} проверки агента — в датасет не ${plural(waiting, "ушёл", "ушли", "ушли")}.` : "",
+    remaining ? `${count(remaining, "кадр остался", "кадра остались", "кадров остались")} в таске вне датасета.` : waiting ? `${count(waiting, "кадр ждёт", "кадра ждут", "кадров ждут")} проверки агента — в датасет не ${plural(waiting, "ушёл", "ушли", "ушли")}.` : "",
     r.removed_images ? `${plural(r.removed_images, "Удалён", "Удалено", "Удалено")} ${count(r.removed_images, "черновой кадр", "черновых кадра", "черновых кадров")}.` : "",
     ...copiesText(r.copies),
   ].filter(Boolean).join(" ") || "Размеченных кадров пока нет — принимать нечего.";

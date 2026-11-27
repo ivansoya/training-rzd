@@ -1004,8 +1004,17 @@ export interface TaskDetail extends Omit<TaskSummary, "counts"> {
 }
 
 /** Счётчики страницы таски: паспорт, блоки кадров, классы. */
+export interface TaskRemaining {
+  total: number;
+  not_exported: number;
+  skipped: number;
+  review: number;
+  questions: number;
+}
+
 export interface TaskNumbers {
   counts: TaskCounts;
+  remaining?: TaskRemaining;
   from_files: number;
   /** Разбивка кадров по источникам: ключ — «files» или идентификатор ролика.
    *  Считается на сервере, потому что клиент видит лишь первую страницу. */
@@ -1145,6 +1154,7 @@ export async function getVideoPending(taskId: string, videoId: string): Promise<
  *  а итог (те же поля плюс счёт роликов) — в результате работы. */
 export interface StatusResult {
   job_id?: string;
+  remaining?: TaskRemaining;
   accepted?: number;
   dataset?: string;
   removed_images?: number;
@@ -1163,6 +1173,10 @@ export interface StatusResult {
 
 export async function setTaskStatus(id: string, status: TaskStatus): Promise<StatusResult> {
   return asJson(await post(`tasks/${id}/status`, { status }));
+}
+
+export async function transferTaskCut(id: string, name: string, videoIds: string[]): Promise<{ task_id: string }> {
+  return asJson(await post(`tasks/${id}/cut-transfer`, { name, video_ids: videoIds }));
 }
 
 export async function assignTask(id: string, assignees: string[]): Promise<TaskSummary> {

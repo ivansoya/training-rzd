@@ -59,6 +59,10 @@ export function describeTaskEvent(kind: string, payload: Record<string, unknown>
           <b>{count(n("frames"), "кадр", "кадра", "кадров")}</b> из {p.file}, участков: {p.segments}
         </>
       );
+    case "cut_transferred":
+    case "cut_received":
+      return <>{kind === "cut_transferred" ? "Перенесено в таску" : "Получено из таски"} <b>«{p.task_name}»</b>
+        {` · ${count(n("videos"), "ролик", "ролика", "роликов")}, ${count(n("frames"), "кадр", "кадра", "кадров")}`}</>;
     case "videos_handed":
       return (
         <>

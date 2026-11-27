@@ -58,6 +58,7 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
   const hasWork = Object.values(task.sources || {}).some((s) => s.frames > 0) || openVideos(task).length > 0;
   const zone = (l: Look) => cx(l.stale && "tp-stale", l.loading && "ui-shim");
   const held = heldPlaces(questions ?? []);
+  const remaining = numbers?.remaining;
 
   return (
     <aside className="ui-card tp-pass" aria-label="Паспорт таски">
@@ -117,9 +118,11 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
           <>
             <Button variant="primary" icon="tick" className="tp-wide" disabled={busy} onClick={() => onMove("done")}>Готово</Button>
             <span className="t-xs t-faint">
-              {toAccept === null ? <i className="ui-sk pill" style={{ width: 80 }} />
-                : toAccept ? `${count(toAccept, "кадр уйдёт", "кадра уйдут", "кадров уйдут")}` : "Новых кадров не уйдёт"} в датасет
-              {task.target_dataset ? ` «${task.target_dataset.name}»` : ""}. Нетронутые и отложенные останутся в таске.
+              {remaining?.total ? <>Готовые кадры уйдут в датасет{task.target_dataset ? ` «${task.target_dataset.name}»` : ""}.
+                Вопросы, отложенные кадры и разметка на проверке останутся в таске.</>
+                : <>{toAccept === null ? <i className="ui-sk pill" style={{ width: 80 }} />
+                  : toAccept ? count(toAccept, "кадр уйдёт", "кадра уйдут", "кадров уйдут") : "Новых кадров не уйдёт"} в датасет
+                  {task.target_dataset ? ` «${task.target_dataset.name}»` : ""}. Нетронутые кадры останутся в таске.</>}
             </span>
             {held > 0 && (
               <span className="t-xs tp-held"><Icon name="question" size={12} />
@@ -135,6 +138,20 @@ export function TaskPassport({ task, numbers, numbersLook, pendingFrames, pendin
               className="tp-wide" disabled={busy} onClick={() => onMove(next.to)}>{next.label}</Button>
           </>
         ) : null}
+      </section>}
+
+      {task.status === "done" && remaining && remaining.total > 0 && <section>
+        <h5>Остались в таске</h5>
+        <span className="t-sm">{count(remaining.total, "кадр требует", "кадра требуют", "кадров требуют")} работы.</span>
+        {remaining.not_exported > 0 && <span className="t-xs t-muted">
+          {count(remaining.not_exported, "кадр не ушёл", "кадра не ушли", "кадров не ушли")} в датасет.
+        </span>}
+        {remaining.questions > 0 && <a className="t-sm" href="#task-questions">С открытыми вопросами · {ru(remaining.questions)}</a>}
+        {remaining.skipped > 0 && <Button size="sm" variant="ghost" onClick={() => onState("skipped")}>Отложено · {ru(remaining.skipped)}</Button>}
+        {remaining.review > 0 && (c?.agent
+          ? <Button size="sm" variant="ghost" onClick={() => onState("agent")}>На проверке · {ru(remaining.review)}</Button>
+          : <span className="t-sm">На проверке · {ru(remaining.review)}</span>)}
+        <span className="t-xs t-muted">Чтобы закрыть таску, верните её в работу и разберите эти кадры.</span>
       </section>}
 
       {questions && <section id="task-questions">

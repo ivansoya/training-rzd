@@ -2,6 +2,9 @@
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import pytest
 
@@ -11,9 +14,10 @@ if not url:
 assert os.environ.get("DATABASE_URL") == url
 
 from flask import Flask
+from common import config
 from common.auth import hash_token
 from common.db import Base, SessionLocal, engine
-from common.models import Annotation, AuthSession, Image, ImageTag, LabelClass, Project, ProjectMember, Tag, Task, TaskVideo, User
+from common.models import Annotation, AuthSession, Image, ImageTag, LabelClass, Project, ProjectMember, Tag, Task, TaskQuestion, TaskVideo, User, VideoAnnotation
 from datasets_svc.task_routes import bp
 from datasets_svc.question_routes import bp as questions_bp
 
@@ -232,3 +236,96 @@ def test_без_прав_нет_доступа_к_кадрам(scene):
     _db, client, task, *_rest = scene
     client.delete_cookie("session")
     assert client.get(f"/api/tasks/{task.id}/images", query_string={"source": "videos", "review": "new"}).status_code == 401
+
+
+
+def test_transfer_cut_moves_video_frames_questions_and_files(scene):
+    db, client, task, cut, images, tag, *_ = scene
+    task.status = "queued"
+    task.target_dataset_name = "Общий датасет"
+    held = TaskQuestion(task_id=task.id, image_id=images["done"].id, place="done.jpg")
+    db.add(held)
+    db.commit()
+    other = db.query(TaskVideo).filter_by(task_id=task.id, mode="annotate").one()
+    path = f"/api/tasks/{task.id}/cut-transfer"
+    payload = {"name": "Часть перегона", "video_ids": [str(cut.id)]}
+    assert client.post(path, json={**payload, "video_ids": [str(other.id)]}).status_code == 409
+    moved = [row for row in images.values() if row.source_video_id == cut.id]
+    with (TemporaryDirectory() as tmp, patch.object(config, "DATA_DIR", tmp),
+          patch.object(config, "PROJECTS_DIR", str(Path(tmp) / "projects"))):
+        source = Path(config.image_base_dir(task.project_id, task.id))
+        for row in moved:
+            full = source / "images" / f"{row.id}.jpg"
+            thumb = source / "thumbs" / full.name
+            full.parent.mkdir(parents=True, exist_ok=True)
+            thumb.parent.mkdir(parents=True, exist_ok=True)
+            full.write_bytes(b"frame")
+            thumb.write_bytes(b"thumb")
+            row.file_path = str(full.relative_to(tmp))
+        db.commit()
+        full.unlink()
+        assert client.post(path, json=payload).status_code == 500
+        db.expire_all()
+        assert task.target_dataset_id is None and cut.task_id == task.id
+        assert thumb.read_bytes() == b"thumb"
+        full.write_bytes(b"frame")
+        response = client.post(path, json=payload)
+        assert response.status_code == 201, response.text
+        child_id = uuid.UUID(response.json["task_id"])
+        db.expire_all()
+        child = db.get(Task, child_id)
+        assert child.name == payload["name"] and child.status == "queued"
+        assert child.target_dataset_id == task.target_dataset_id is not None
+        assert cut.task_id == child.id and other.task_id == task.id
+        assert held.task_id == child.id and held.image_id == images["done"].id
+        for row in moved:
+            assert row.task_id == child.id and row.source_video_id == cut.id
+            assert (Path(tmp) / row.file_path).read_bytes() == b"frame"
+            assert not (source / "images" / f"{row.id}.jpg").exists()
+        assert images["done"].file_name == "done.jpg"
+        assert db.query(ImageTag).filter_by(image_id=images["done"].id, tag_id=tag.id).count() == 1
+        assert client.post(path, json=payload).status_code == 409
+
+
+@pytest.mark.parametrize("status", ["in_progress", "updating"])
+def test_done_keeps_unresolved_frames_and_cannot_close(scene, status):
+    db, client, task, _cut, images, *_ = scene
+    task.status = status
+    db.delete(db.query(TaskVideo).filter_by(task_id=task.id, mode="annotate").one())
+    db.commit()
+    path = f"/api/tasks/{task.id}"
+    closed = client.post(f"{path}/status", json={"status": "closed"})
+    assert closed.status_code == 409 and closed.json["code"] == "remaining_frames"
+    assert closed.json["remaining"]["skipped"] == closed.json["remaining"]["review"] == 1
+    for key in ("done", "skipped"):
+        db.add(TaskQuestion(task_id=task.id, image_id=images[key].id, place=f"{key}.jpg"))
+    db.commit()
+    response = client.post(f"{path}/status", json={"status": "done"})
+    assert response.status_code == 200 and response.json["accepted"] == 1, response.text
+    db.expire_all()
+    assert task.status == "done" and images["empty"].dataset_id is not None
+    assert all(images[key].dataset_id is None for key in ("done", "skipped", "pending"))
+    remaining = client.get(f"{path}/counts").json["remaining"]
+    assert remaining == response.json["remaining"] == {"total": 3, "not_exported": 3, "questions": 2, "skipped": 1, "review": 1}
+    assert client.post(f"{path}/status", json={"status": "closed"}).status_code == 409
+    db.expire_all()
+    assert task.status == "done" and images["skipped"].task_status == "skipped"
+
+
+
+def test_done_counts_pending_video_annotation_on_existing_image(scene):
+    db, client, task, _cut, images, *_ = scene
+    task.status = "done"
+    image = images["video-annotation"]
+    image.source_frame_no = 7
+    images["skipped"].task_status = "new"
+    annotation = db.query(Annotation).filter_by(image_id=images["pending"].id).one()
+    annotation.pending = False
+    db.add(VideoAnnotation(video_id=image.source_video_id, frame_no=7, class_id=annotation.class_id,
+                           ann_type="bbox", geometry=annotation.geometry, source="model", pending=True))
+    db.commit()
+    path = f"/api/tasks/{task.id}"
+    assert client.get(f"{path}/counts").json["remaining"]["review"] == 1
+    response = client.post(f"{path}/status", json={"status": "closed"})
+    assert response.status_code == 409 and response.json["code"] == "remaining_frames"
+    assert response.json["remaining"]["total"] == 1

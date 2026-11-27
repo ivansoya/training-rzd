@@ -109,6 +109,8 @@ describe("итог сдачи", () => {
     // Повторная сдача без новых кадров — не «принимать нечего»: обновления тоже итог
     expect(handoverText({ accepted: 0, updated: 3 })).toBe("Кадры роликов в датасете: обновлено 3.");
     expect(handoverText({ accepted: 0 })).toBe("Размеченных кадров пока нет — принимать нечего.");
+    expect(handoverText({ accepted: 0, remaining: { total: 3, not_exported: 2, skipped: 1, review: 1, questions: 1 } }))
+      .toBe("2 кадра остались в таске вне датасета.");
     expect(handoverText({ accepted: 2, removed_images: 5, removed_videos: 1 }))
       .toBe("В датасет ушло 2 кадра. Удалено 5 черновых кадров.");
     expect(handoverText({ accepted: 0, copies: { placed: 4, removed: 1, edited: 2, waiting: 1 } }))

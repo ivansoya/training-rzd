@@ -11,14 +11,14 @@ import type { SourceCounts } from "./tasks";
 
 export type OpenCutFrame = (image: TaskImage, query: TaskImageQuery, rows: TaskImage[]) => void;
 
-export function FoldSource({ title, desc, open, onOpen, children, className, id }: {
+export function FoldSource({ title, desc, open, onOpen, children, className, id, transferAction }: {
   title: ReactNode; desc?: ReactNode; open: boolean; onOpen: (open: boolean) => void;
-  children: ReactNode; className?: string; id?: string;
+  children: ReactNode; className?: string; id?: string; transferAction?: ReactNode;
 }) {
   const bodyId = useId();
   return <Card id={id} className={cx("tp-src tp-fold-source", !open && "is-closed", className)} title={title} desc={desc}
-    actions={<Button size="sm" variant="ghost" iconEnd={open ? "chevU" : "chevD"} aria-expanded={open}
-      aria-controls={bodyId} onClick={() => onOpen(!open)}>{open ? "Скрыть" : "Показать"}</Button>}>
+    actions={<>{transferAction}<Button size="sm" variant="ghost" iconEnd={open ? "chevU" : "chevD"} aria-expanded={open}
+      aria-controls={bodyId} onClick={() => onOpen(!open)}>{open ? "Скрыть" : "Показать"}</Button></>}>
     <div id={bodyId} className={cx("tp-source-fold", open && "open")} {...(!open ? { inert: "" } : {})}>
       <div><div className="tp-source-body">{children}</div></div>
     </div>
@@ -154,12 +154,12 @@ export function CutFramesGallery({ taskId, videos, tags, videoId, uploaded = fal
   </div>;
 }
 
-export function CutFramesCard({ counts, known, videos, open, onExpand, ...gallery }: {
+export function CutFramesCard({ counts, known, videos, open, onExpand, transferAction, ...gallery }: {
   counts: SourceCounts; known: boolean; videos: TaskVideoItem[]; open: boolean; onExpand: (open: boolean) => void;
-  taskId: string; tags: Tag[]; revision: unknown; onOpen: OpenCutFrame; actions?: CutFrameActions;
+  taskId: string; tags: Tag[]; revision: unknown; onOpen: OpenCutFrame; actions?: CutFrameActions; transferAction?: ReactNode;
 }) {
   const total = videos.reduce((n, v) => n + v.frames, 0), done = counts.reviewed ?? (counts.annotated || 0) + (counts.empty || 0);
-  return <FoldSource id="task-cut-frames" className={cx("tp-all-cut-frames", total === 0 && "is-empty")}
+  return <FoldSource transferAction={transferAction} id="task-cut-frames" className={cx("tp-all-cut-frames", total === 0 && "is-empty")}
     open={open} onOpen={onExpand} title={<><Icon name="images" />{total ? "Все нарезанные кадры" : "Нарезанных кадров пока нет"}<Badge variant="secondary">{ru(total)}</Badge></>}
     desc={!total ? "Видео ожидают нарезки" : known ? <><span className="tp-summary-done">{ru(done)} размечено</span><span className="tp-cut-sep">·</span>
       {ru(Math.max(0, total - done))} не размечено<span className="tp-cut-sep">·</span>{count(videos.filter((v) => v.frames > 0).length, "ролик", "ролика", "роликов")}</> : "Считаю состояние разметки…"}>

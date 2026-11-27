@@ -1,3 +1,4 @@
+import { CutTransfer } from "./CutTransfer";
 // Страница таски: источники слева, паспорт справа; «Запустить агента» и «Размечать» в шапке.
 
 import { createContext, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -475,6 +476,11 @@ function TaskPageBody() {
       setError((e as Error).message);
       return;
     }
+    const remaining = fresh.remaining;
+    if (remaining?.total || open.some((row) => (row.unchecked ?? 0) > 0)) {
+      setError("Закрыть нельзя. Разберите открытые вопросы, отложенные кадры и разметку на проверке.");
+      return;
+    }
     const fromVideos = open.reduce((s, v) => s + (v.frames || 0), 0);
     const plan = closePlan(fresh.counts, task.videos.length);
     const ok = await confirm({
@@ -759,7 +765,9 @@ function TaskPageBody() {
             <Button variant="ghost" onClick={() => folderRef.current?.click()}>Загрузить папку изображений</Button>
             {!empty && <AddMenu onAdd={onAdd} />}
           </div>}
-          {cutBlock && <CutFramesCard taskId={task.id} counts={cutBlock.counts} known={cutBlock.known} videos={cutBlock.videos || []}
+          {cutBlock && <CutFramesCard transferAction={task.status === "queued" && fillable &&
+            <CutTransfer key={task.id} task={task} tags={tags} onTransfer={(id) => navigate(`/projects/${task.project.code}/tasks/${id}`)} />}
+            taskId={task.id} counts={cutBlock.counts} known={cutBlock.known} videos={cutBlock.videos || []}
             tags={tags} revision={numbers?.by_source} open={cutFramesOpen} onExpand={setCutFramesOpen} onOpen={openCutFrame} actions={frameActions} />}
           {empty ? <TaskEmpty editable={fillable} dataset={task.target_dataset?.name ?? null} drag={dragOn} onAdd={onAdd} onDrop={drop} />
             : cards.map((c) => c.node)}

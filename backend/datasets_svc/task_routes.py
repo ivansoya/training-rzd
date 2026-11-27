@@ -685,7 +685,7 @@ def task_counts(task_id):
     if err:
         return err
     try:
-        data = {"counts": _counts(db, task.id)}
+        data = {"counts": _counts(db, task.id), "remaining": _remaining_frames(db, task)}
         data["from_files"] = db.execute(
             select(func.count(Image.id)).where(
                 Image.task_id == task.id, task_frames.source_clause(task.id, "files"),
@@ -846,6 +846,112 @@ def _target_dataset(db, task, user):
     return ds
 
 
+def _lock_task(db, task_id):
+    return db.execute(select(Task).where(Task.id == task_id).with_for_update()
+                      .execution_options(populate_existing=True)).scalar_one()
+
+
+def _link_frame(source, destination):
+    os.makedirs(os.path.dirname(destination), exist_ok=True)
+    try:
+        os.link(source, destination)
+    except OSError:
+        shutil.copy2(source, destination)
+
+
+@bp.post("/api/tasks/<task_id>/cut-transfer")
+def transfer_cut(task_id):
+    db, task, project, user, role, err = _resolve_task(task_id, "editor")
+    if err:
+        return err
+    slots = []
+    destination = None
+    try:
+        task = _lock_task(db, task.id)
+        denied = _refusal(task, user, role, "fill")
+        if denied:
+            return denied
+        if task.status != "queued":
+            return jsonify({"error": "Перенести нарезку можно из таски «На очереди»."}), 409
+        blocked = _handing(task) or _agent_running(db, task)
+        if blocked:
+            return blocked
+        body = json_body()
+        raw_name = body.get("name")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        if not name or len(name) > NAME_MAX:
+            return jsonify({"error": f"Введите название новой таски длиной до {NAME_MAX} знаков."}), 400
+        ids = body.get("video_ids")
+        selected = {_uuid_or_none(value) for value in ids} if isinstance(ids, list) else set()
+        if not selected or None in selected:
+            return jsonify({"error": "Выберите ролики для переноса."}), 400
+        videos = db.scalars(select(TaskVideo).where(
+            TaskVideo.id.in_(selected), TaskVideo.task_id == task.id, TaskVideo.mode == "cut",
+        ).order_by(TaskVideo.id)).all()
+        if len(videos) != len(selected):
+            return jsonify({"error": "Выберите ролики на нарезку из этой таски."}), 409
+        for video in videos:
+            if video_busy.take(video.id, "transfer") is None:
+                return video_busy.refusal(video.id)
+            slots.append(video.id)
+        images = db.scalars(select(Image).where(
+            Image.task_id == task.id, Image.source_video_id.in_(selected),
+        )).all()
+        active = [image for image in images if image.task_status != "deleted"]
+        if {image.source_video_id for image in active} != selected:
+            return jsonify({"error": "У каждого выбранного ролика должны быть нарезанные кадры."}), 409
+
+        dataset = _target_dataset(db, task, user)
+        child = Task(project_id=project.id, name=name, status="queued", created_by=user.id,
+                     target_dataset_id=dataset.id)
+        db.add(child)
+        db.flush()
+        source = config.image_base_dir(project.id, task.id)
+        destination = config.image_base_dir(project.id, child.id)
+        for image in images:
+            filename = f"{image.id}.jpg"
+            original = os.path.join(config.DATA_DIR, image.file_path)
+            full = os.path.join(destination, "images", filename)
+            _link_frame(original, full)
+            for size in ("thumbs", "preview"):
+                variant = os.path.join(source, size, filename)
+                if os.path.isfile(variant):
+                    _link_frame(variant, os.path.join(destination, size, filename))
+            image.file_path = os.path.relpath(full, config.DATA_DIR)
+            image.task_id = child.id
+        for video in videos:
+            # Оригинал и его индекс остаются по тем же путям на томе.
+            video.task_id = child.id
+        db.flush()
+        db.execute(TaskQuestion.__table__.update().where(
+            TaskQuestion.task_id == task.id,
+            (TaskQuestion.video_id.in_(selected)) | (TaskQuestion.image_id.in_(
+                select(Image.id).where(Image.task_id == child.id, Image.source_video_id.in_(selected)),
+            )),
+        ).values(task_id=child.id))
+        _log(db, task, user, "cut_transferred", task_name=child.name, frames=len(active), videos=len(videos))
+        _log(db, child, user, "cut_received", task_name=task.name, frames=len(active), videos=len(videos))
+        db.commit()
+        destination = None
+        for image in images:
+            try:
+                _drop_files(source, image.id)
+            except OSError:
+                continue
+        _ping(db, task.id, project.id, user)
+        _ping(db, child.id, project.id, user, s="queued")
+        return jsonify({"task_id": str(child.id), "frames": len(active), "videos": len(videos)}), 201
+    except OSError as exc:
+        db.rollback()
+        return jsonify({"error": public_error(exc, "Не удалось перенести файлы нарезки.")}), 500
+    finally:
+        if destination is not None:
+            shutil.rmtree(destination, ignore_errors=True)
+        for video_id in slots:
+            video_busy.release(video_id)
+        db.close()
+
+
 @bp.post("/api/tasks/<task_id>/status")
 def set_status(task_id):
     db, task, project, user, role, err = _resolve_task(task_id, "editor")
@@ -853,10 +959,7 @@ def set_status(task_id):
         return err
     try:
         # Таска под замком: два «Готово» разом создавали два датасета или падали 500.
-        task = db.execute(
-            select(Task).where(Task.id == task.id).with_for_update()
-            .execution_options(populate_existing=True)
-        ).scalar_one()
+        task = _lock_task(db, task.id)
         target = json_body().get("status")
         if target not in ALLOWED:
             return jsonify({"error": "Неизвестное состояние."}), 400
@@ -888,6 +991,7 @@ def set_status(task_id):
         result, dropped = {}, []
         if target == "done":
             result = _accept(db, task, user)
+            result["remaining"] = _remaining_frames(db, task)
         elif target == "closed":
             result = _close(db, task, user)
         elif task_rights.joins_on_take(task.status, target, team):
@@ -926,6 +1030,8 @@ def _start_handover(db, task, project, user, target, videos):
                     if bad else row["error"])
             return jsonify({"error": f"Ролик «{video.file_name}», {what}", "code": "video_plan",
                             "video_id": str(video.id)}), 409
+        if target == "closed" and row and row["unchecked"]:
+            return _remaining_refusal({"skipped": 0, "review": row["unchecked"], "questions": 0})
         total += row["frames"] if row else 0
 
     key = video_busy.task_key(task.id)
@@ -970,7 +1076,14 @@ def _run_handover(job_id, task_id, target, user_id, video_ids):
             for k in HANDOVER_SUMS:
                 sums[k] += got[k]
         _log(db, task, user, "videos_handed", **sums)
+        if target == "closed":
+            remaining = _remaining_frames(db, task)
+            if remaining["total"] or _open_questions(db, task):
+                raise videolib.VideoError(_remaining_text(remaining) if remaining["total"]
+                                          else "Закрыть нельзя: в таске есть открытые вопросы.")
         result = _accept(db, task, user) if target == "done" else _close(db, task, user)
+        if target == "done":
+            result["remaining"] = _remaining_frames(db, task)
         task.status = target
         db.commit()
         made = []
@@ -996,6 +1109,17 @@ def _run_handover(job_id, task_id, target, user_id, video_ids):
         db.close()
 
 
+def _review_pending():
+    # При повторной сдаче непроверенное может остаться в ролике, пока ранее
+    # принятый JPEG сохраняет старую разметку.
+    video = select(VideoAnnotation.id).where(
+        VideoAnnotation.video_id == Image.source_video_id,
+        VideoAnnotation.frame_no == Image.source_frame_no,
+        VideoAnnotation.track_id.is_(None), VideoAnnotation.pending.is_(True),
+    ).exists()
+    return task_frames.has_pending() | video
+
+
 def _accept(db, task, user):
     """Размеченные и фоновые кадры уходят в датасет; остальные ждут.
 
@@ -1008,7 +1132,7 @@ def _accept(db, task, user):
             Image.task_status.in_(ACCEPTABLE),
             Image.dataset_id.is_(None),
             Image.origin_image_id.is_(None),
-            ~task_frames.has_pending(),
+            ~_review_pending(),
             ~questions.holds(),
         )
     ).scalars().all()
@@ -1160,27 +1284,53 @@ def _open_questions(db, task):
     return None
 
 
+def _remaining_frames(db, task):
+    skipped = Image.task_status == "skipped"
+    review = _review_pending()
+    held = questions.holds()
+    remaining = skipped | review | held
+    row = db.execute(select(
+        func.count().filter(remaining).label("total"),
+        func.count().filter(remaining, Image.dataset_id.is_(None)).label("not_exported"),
+        func.count().filter(skipped).label("skipped"),
+        func.count().filter(review).label("review"),
+        func.count().filter(held).label("questions"),
+    ).where(Image.task_id == task.id, Image.task_status != "deleted")).one()
+    return dict(row._mapping)
+
+
+def _remaining_text(remaining):
+    reasons = [f"{label} — {remaining[key]}" for key, label in (
+        ("questions", "с открытыми вопросами"), ("skipped", "отложено"), ("review", "на проверке"),
+    ) if remaining[key]]
+    return f"Закрыть нельзя. В таске остались кадры: {', '.join(reasons)}."
+
+
+def _remaining_refusal(remaining):
+    return jsonify({"error": _remaining_text(remaining), "code": "remaining_frames", "remaining": remaining}), 409
+
+
 def _close_blockers(db, task):
-    """409, если закрытие оборвало бы работу; иначе None. Разметку роликов закрытие
-    из работы сперва сдаёт (`_start_handover`) и только потом удаляет ролики."""
-    return _video_busy(db, task) or _agent_running(db, task) or _open_questions(db, task)
+    """Закрытие возможно после разбора вопросов, отложенных кадров и проверки агента."""
+    blocked = _video_busy(db, task) or _agent_running(db, task) or _open_questions(db, task)
+    if blocked:
+        return blocked
+    remaining = _remaining_frames(db, task)
+    # В уже сданном ролике новый результат агента мог остаться только в видеоразметке.
+    if task.status == "done" and not remaining["review"]:
+        unchecked = sum(row["unchecked"] for row in materialize.pending_summary(db, task))
+        if unchecked:
+            remaining["review"] = unchecked
+    return _remaining_refusal(remaining) if remaining["total"] or remaining["review"] else None
 
 
 def _close(db, task, user):
     """Закрытие доводит «Готово» до конца: размеченные и фоновые кадры уходят
-    в датасет, а убирается только черновое — нетронутые, отложенные и
+    в датасет, а убирается только черновое — нетронутые и
     забракованные кадры и исходники видео. Раньше удалялось всё без датасета,
     и кадр, размеченный после «Готово», пропадал вместе с разметкой."""
     accepted = _accept(db, task, user)
     db.flush()
-    # Агента звали и на уже принятые кадры: его непроверенное с ними не уходит.
-    unchecked = db.execute(
-        Annotation.__table__.delete().where(
-            Annotation.pending.is_(True),
-            Annotation.image_id.in_(select(Image.id).where(
-                Image.task_id == task.id, Image.dataset_id.isnot(None))),
-        )
-    ).rowcount
     drafts = db.execute(
         select(Image).where(Image.task_id == task.id, Image.dataset_id.is_(None))
     ).scalars().all()
@@ -1203,19 +1353,15 @@ def _close(db, task, user):
         _drop_video_files(path)
         video_index.forget(v.id)
         db.delete(v)
-    _log(db, task, user, "closed", removed_images=removed, removed_videos=len(videos),
-         removed_unchecked=unchecked)
-    return {**accepted, "removed_images": removed, "removed_videos": len(videos),
-            "removed_unchecked": unchecked}
+    _log(db, task, user, "closed", removed_images=removed, removed_videos=len(videos))
+    return {**accepted, "removed_images": removed, "removed_videos": len(videos), "removed_unchecked": 0}
 
 
 # --------------------------------------------------------------------------- #
 # Кадры таски
 # --------------------------------------------------------------------------- #
-def _strip_path(task, video_id):
-    return os.path.join(
-        config.task_video_dir(task.project_id, task.id), f"{video_id}_strip.jpg"
-    )
+def _strip_path(video):
+    return os.path.join(config.DATA_DIR, os.path.dirname(video.file_path), f"{video.id}_strip.jpg")
 
 
 @bp.get("/api/tasks/<task_id>/videos/<video_id>/strip")
@@ -1229,7 +1375,7 @@ def video_strip(task_id, video_id):
         row = db.get(TaskVideo, vid) if vid else None
         if row is None or row.task_id != task.id:
             return jsonify({"error": "Видео не найдено."}), 404
-        path = _strip_path(task, row.id)
+        path = _strip_path(row)
         if not os.path.exists(path):
             # Клеить ленту здесь нельзя. На двадцатиминутном ролике это два
             # десятка перемоток по исходнику — секунды в потоке, который в это
@@ -1294,6 +1440,7 @@ def delete_video(task_id, video_id):
     if err:
         return err
     try:
+        task = _lock_task(db, task.id)
         denied = _refusal(task, user, role, "fill")
         if denied:
             return denied
@@ -1708,6 +1855,7 @@ def cut_video(task_id, video_id):
     if err:
         return err
     try:
+        task = _lock_task(db, task.id)
         denied = _refusal(task, user, role, "fill")
         if denied:
             return denied

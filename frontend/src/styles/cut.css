@@ -176,3 +176,26 @@
 .vc-menu-row { display: flex; align-items: center; gap: 8px; padding: 4px 8px; }
 .vc-menu-row .ui-input { width: 72px; height: 28px; }
 .vc .ui-dialog-bare { border-top: 1px solid var(--border); }
+
+.transfer-form { display: grid; gap: 20px; min-width: 0; }
+.transfer-videos { border: 1px solid var(--border); border-radius: var(--r-md); min-width: 0; }
+.transfer-videos-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.transfer-videos-list { max-height: min(272px, 34dvh); overflow: auto; }
+.transfer-video { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px 14px; padding: 12px; }
+.transfer-video + .transfer-video { border-top: 1px solid var(--border); }
+.transfer-video .ui-check-l, .transfer-video .ui-check-l > span { min-width: 0; }
+.transfer-video-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px/1.4 var(--mono); }
+.transfer-video-count { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.transfer-video-tags { grid-column: 1 / -1; padding-left: 26px; display: flex; align-items: center; gap: 6px; }
+.transfer-summary { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-md); padding: 12px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 6px 12px; }
+.transfer-summary > div { display: flex; align-items: center; gap: 7px; }
+.transfer-summary > div svg { flex: 0 0 auto; color: var(--muted-fg); }
+.transfer-summary > strong { white-space: nowrap; }
+.transfer-summary > span { grid-column: 1 / -1; }
+@media (max-width: 560px) {
+  .transfer-summary { grid-template-columns: 1fr; }
+  .transfer-video { gap: 4px 8px; }
+  .transfer-video-name { white-space: normal; overflow-wrap: anywhere; }
+  #task-cut-frames:has(.tp-transfer-button) .ui-card-h { display: grid; align-items: start; gap: 10px; }
+  #task-cut-frames:has(.tp-transfer-button) .ui-card-a { flex-wrap: wrap; justify-content: flex-start; }
+}
