@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createClass, deleteClass, getClassUsage, moveClass, updateClass } from "../../../auth/api";
-import type { ClassUsage, LabelClass, SuperclassItem } from "../../../auth/api";
+import type { ClassTagItem, ClassUsage, LabelClass, SuperclassItem } from "../../../auth/api";
 import {
   Button, CLASS_COLORS, Card, Check, ColorPicker, Field, Input, Kbd, Meta, Notice, Pill, Radio, Select, Swatch,
 } from "../../../ui";
 import { count, plural } from "../../ru";
 import { withSep } from "../../Sep";
-import { hotkey, indexLabel } from "./classes";
+import TagPicker, { TagChips } from "../TagPicker";
+import { hotkey, indexLabel, sameTagNames } from "./classes";
 import { useAction } from "./useAction";
 
 /** Свободный цвет палитры — чтобы новый класс не слился с соседями. */
@@ -16,12 +17,16 @@ function freeColor(classes: LabelClass[]): string {
 }
 
 /** Правка класса справа от таблицы. cls = null — новый класс. */
-export function ClassPanel({ code, cls, classes, superclasses, initialGroup, canEdit, canManage, onClose, onSaved, onDeleted }: {
+export function ClassPanel({ code, cls, classes, superclasses, classTags, initialGroup, initialTag, canEdit, canManage, onClose, onSaved, onDeleted }: {
   code: string;
   cls: LabelClass | null;
   classes: LabelClass[];
   superclasses: SuperclassItem[];
+  /** Справочник тагов классов проекта. */
+  classTags: ClassTagItem[];
   initialGroup: string | null;
+  /** Таг из отбора таблицы — новый класс получает его сразу. */
+  initialTag: string | null;
   canEdit: boolean;
   canManage: boolean;
   onClose: () => void;
@@ -31,15 +36,28 @@ export function ClassPanel({ code, cls, classes, superclasses, initialGroup, can
   const [name, setName] = useState(cls?.name ?? "");
   const [color, setColor] = useState(cls?.color ?? freeColor(classes));
   const [group, setGroup] = useState(cls ? cls.superclass_id ?? "none" : initialGroup ?? "none");
+  // Таги — по именам: новый таг заводится в справочнике при сохранении класса, а не по ходу набора
+  const [tags, setTags] = useState<string[]>(() => cls
+    ? (cls.tags ?? []).map((t) => t.name)
+    : classTags.filter((t) => t.id === initialTag).map((t) => t.name));
+  const [fresh, setFresh] = useState<string[]>([]);
   const [deleting, setDeleting] = useState(false);
   const { busy, error, run } = useAction();
 
   const key = cls ? hotkey(classes, cls.id) : classes.length < 9 ? classes.length + 1 : null;
-  const dirty = !cls || name.trim() !== cls.name || color !== cls.color || group !== (cls.superclass_id ?? "none");
+  const was = (cls?.tags ?? []).map((t) => t.name);
+  const dirty = !cls || name.trim() !== cls.name || color !== cls.color || group !== (cls.superclass_id ?? "none")
+    || !sameTagNames(tags, was);
+  // Для выбора таг — это его имя: так и новый, ещё не записанный, стоит в одном ряду со старыми
+  const tagOptions = useMemo(() => [
+    ...classTags.map((t) => ({ id: t.name, name: t.name, images: t.classes })),
+    ...fresh.filter((n) => !classTags.some((t) => t.name.toLocaleLowerCase("ru") === n.toLocaleLowerCase("ru")))
+      .map((n) => ({ id: n, name: n })),
+  ], [classTags, fresh]);
 
   const save = () => {
     if (!name.trim() || !dirty || busy) return;
-    const body = { name: name.trim(), color, superclass_id: group === "none" ? null : group };
+    const body = { name: name.trim(), color, superclass_id: group === "none" ? null : group, tags };
     void run(async () => onSaved(cls ? await updateClass(code, cls.id, body) : await createClass(code, body)));
   };
 
@@ -54,6 +72,7 @@ export function ClassPanel({ code, cls, classes, superclasses, initialGroup, can
         <Meta items={[
           ["Цвет", <span className="row"><Swatch color={cls.color} /><span className="ui-mono">{cls.color}</span></span>],
           ["Группа", cls.superclass_name ?? "Без группы"],
+          ["Таги", cls.tags?.length ? <TagChips all={cls.tags} value={cls.tags.map((t) => t.id)} /> : "нет"],
           ["Клавиша", key ? <Kbd>{key}</Kbd> : "нет"],
         ]} />
       ) : (
@@ -66,6 +85,11 @@ export function ClassPanel({ code, cls, classes, superclasses, initialGroup, can
           <Field label="Группа">
             {(id) => <Select id={id} full value={group} onChange={setGroup} disabled={deleting}
               options={[{ value: "none", label: "Без группы" }, ...superclasses.map((s) => ({ value: s.id, label: s.name }))]} />}
+          </Field>
+          <Field label="Таги" hint="Необязательны. По ним классы потом отделяют друг от друга; группа у класса одна, тагов — сколько нужно">
+            {() => <TagPicker code={code} all={tagOptions} value={tags} onChange={setTags} disabled={deleting}
+              create={(n) => ({ id: n, name: n })} onCreated={(t) => setFresh((f) => [...f, t.name])}
+              emptyText="Тагов классов пока нет — наберите название, чтобы завести." />}
           </Field>
           <Field label="Горячая клавиша в редакторе">
             {() => key ? (

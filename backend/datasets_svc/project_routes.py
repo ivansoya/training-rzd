@@ -24,11 +24,13 @@ from common.db import SessionLocal
 from common.models import (
     AgentRun,
     Annotation,
+    ClassTag,
     DataprepJob,
     Dataset,
     Image,
     ImageTag,
     LabelClass,
+    LabelClassTag,
     Project,
     Superclass,
     Tag,
@@ -1580,7 +1582,7 @@ def _serve(image_id, kind):
 # менять его задним числом значит рассогласовать проект с уже обученными
 # моделями. Порядок для экспорта задаётся при выгрузке (блок 4).
 # --------------------------------------------------------------------------- #
-def _class_json(row, annotations, superclass):
+def _class_json(row, annotations, superclass, class_tags=()):
     return {
         "id": str(row.id),
         "class_index": row.class_index,
@@ -1588,8 +1590,73 @@ def _class_json(row, annotations, superclass):
         "color": row.color,
         "superclass_id": str(row.superclass_id) if row.superclass_id else None,
         "superclass_name": superclass.name if superclass is not None else None,
+        "tags": [{"id": str(t.id), "name": t.name} for t in class_tags],
         "annotations": annotations,
     }
+
+
+# Таги классов — свой справочник (решение 27.11.2026), не таги кадров.
+CLASS_TAG_MAX = 64
+CLASS_TAGS_PER_CLASS = 32
+
+
+def _tags_by_class(db, class_ids):
+    """class_id -> таги по имени. Тагов у класса может не быть вовсе."""
+    out = {}
+    if not class_ids:
+        return out
+    for cid, t in db.execute(
+        select(LabelClassTag.class_id, ClassTag)
+        .join(ClassTag, ClassTag.id == LabelClassTag.tag_id)
+        .where(LabelClassTag.class_id.in_(class_ids))
+        .order_by(func.lower(ClassTag.name))
+    ).all():
+        out.setdefault(cid, []).append(t)
+    return out
+
+
+def _tag_names(data):
+    """Имена тагов из тела без пустых и повторов без учёта регистра; строка ошибки — отказ."""
+    raw = data.get("tags")
+    if not isinstance(raw, list):
+        return None, "Таги класса — список названий."
+    names, seen = [], set()
+    for item in raw:
+        if not isinstance(item, str):
+            return None, "Таги класса — список названий."
+        name = " ".join(item.split())
+        if not name or name.lower() in seen:
+            continue
+        if len(name) > CLASS_TAG_MAX:
+            return None, f"Название тага длиннее {CLASS_TAG_MAX} символов."
+        seen.add(name.lower())
+        names.append(name)
+    if len(names) > CLASS_TAGS_PER_CLASS:
+        return None, f"У класса не больше {CLASS_TAGS_PER_CLASS} тагов."
+    return names, None
+
+
+def _set_class_tags(db, project, row, names, user):
+    """Таги класса — ровно эти имена: найденные без учёта регистра или новые в справочнике."""
+    known = {
+        t.name.lower(): t for t in db.execute(
+            select(ClassTag).where(ClassTag.project_id == project.id,
+                                   func.lower(ClassTag.name).in_([n.lower() for n in names] or [""]))
+        ).scalars()
+    }
+    wanted = []
+    for name in names:
+        tag = known.get(name.lower())
+        if tag is None:
+            tag = ClassTag(project_id=project.id, name=name, created_by=user.id)
+            db.add(tag)
+            known[name.lower()] = tag
+        wanted.append(tag)
+    db.flush()
+    db.execute(LabelClassTag.__table__.delete().where(LabelClassTag.class_id == row.id))
+    for tag in wanted:
+        db.add(LabelClassTag(class_id=row.id, tag_id=tag.id))
+    return sorted(wanted, key=lambda t: t.name.lower())
 
 
 # classes.name и superclasses.name — varchar(128). Длинное имя без проверки
@@ -1671,10 +1738,21 @@ def list_classes(code):
                 return {}
             return spread.get(r.id, {"images": 0, "split": {"train": 0, "val": 0, "other": 0}})
 
+        tagged = _tags_by_class(db, [r.id for r in rows])
+        class_tags = db.execute(
+            select(ClassTag).where(ClassTag.project_id == project.id).order_by(func.lower(ClassTag.name))
+        ).scalars().all()
         return jsonify({
             "classes": [
-                {**_class_json(r, counts.get(r.id, 0), by_id.get(r.superclass_id)), **extra(r)}
+                {**_class_json(r, counts.get(r.id, 0), by_id.get(r.superclass_id), tagged.get(r.id, ())),
+                 **extra(r)}
                 for r in rows
+            ],
+            # Справочник целиком: таг без классов виден, его можно убрать или раздать снова
+            "class_tags": [
+                {"id": str(t.id), "name": t.name,
+                 "classes": sum(1 for r in rows if any(x.id == t.id for x in tagged.get(r.id, ())))}
+                for t in class_tags
             ],
             "superclasses": [
                 {
@@ -1711,12 +1789,15 @@ def create_class(code):
             return jsonify({"error": "Укажите название класса."}), 400
         if _long_name(name):
             return _long_name(name)
+        names, bad = _tag_names(data) if "tags" in data else ([], None)
+        if bad:
+            return jsonify({"error": bad}), 400
         # Дубль по имени неразличим в списках и в data.yaml; отдаём существующий.
         taken = _name_taken(db, LabelClass, project.id, name)
         if taken is not None:
             sc = db.get(Superclass, taken.superclass_id) if taken.superclass_id else None
             return jsonify({"error": f"Класс «{taken.name}» уже есть.", "code": "name_taken",
-                            "class": _class_json(taken, 0, sc)}), 409
+                            "class": _class_json(taken, 0, sc, _tags_by_class(db, [taken.id]).get(taken.id, ()))}), 409
         # Номер выдаём сами и НИКОГДА не переиспользуем освободившийся:
         # `class_index` уходит в мету выгрузки, и «3 = Шпала» из прошлого
         # экспорта не должно однажды означать «3 = Опора». Дырки в нумерации
@@ -1733,21 +1814,28 @@ def create_class(code):
         ).scalar_one() - 1
         superclass_id = _superclass_arg(db, project, data)
 
+        user = current_user(db)
         row = LabelClass(
             project_id=project.id,
             superclass_id=superclass_id,
             class_index=class_index,
             name=name,
             color=color or PALETTE[class_index % len(PALETTE)],
-            created_by=current_user(db).id,
+            created_by=user.id,
         )
         db.add(row)
-        db.commit()
+        db.flush()
+        class_tags = _set_class_tags(db, project, row, names, user) if names else []
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return jsonify({"error": "Этот таг только что завели в соседнем окне — сохраните ещё раз."}), 409
         # Открытые редакторы держат список классов в памяти и адресуют боксы
         # номером класса: без этого нового класса там не будет до перезагрузки.
         live.notify(db, "classes", project.id, project.id)
         sc = db.get(Superclass, superclass_id) if superclass_id else None
-        return jsonify(_class_json(row, 0, sc)), 201
+        return jsonify(_class_json(row, 0, sc, class_tags)), 201
     finally:
         db.close()
 
@@ -1789,14 +1877,24 @@ def update_class(code, class_id):
             row.color = color
         if "superclass_id" in data:
             row.superclass_id = _superclass_arg(db, project, data)
-        db.commit()
+        if "tags" in data:
+            names, bad = _tag_names(data)
+            if bad:
+                db.rollback()
+                return jsonify({"error": bad}), 400
+            _set_class_tags(db, project, row, names, current_user(db))
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            return jsonify({"error": "Этот таг только что завели в соседнем окне — сохраните ещё раз."}), 409
         live.notify(db, "classes", project.id, project.id)
         count = db.execute(
             select(func.count()).select_from(Annotation)
             .where(Annotation.class_id == row.id)
         ).scalar_one()
         sc = db.get(Superclass, row.superclass_id) if row.superclass_id else None
-        return jsonify(_class_json(row, count, sc))
+        return jsonify(_class_json(row, count, sc, _tags_by_class(db, [row.id]).get(row.id, ())))
     finally:
         db.close()
 
@@ -2223,6 +2321,51 @@ def delete_tag(code, tag_id):
         db.delete(row)
         db.commit()
         return jsonify({"ok": True, **used})
+    finally:
+        db.close()
+
+
+@bp.patch("/api/projects/<code>/class-tags/<tag_id>")
+def rename_class_tag(code, tag_id):
+    db, project, err = _resolve(code, "editor")
+    if err:
+        return err
+    try:
+        row = _get_by_uuid(db, ClassTag, tag_id)
+        if row is None or row.project_id != project.id:
+            return jsonify({"error": "Таг классов не найден."}), 404
+        name = " ".join(str_field(json_body(), "name", max_len=4096).split())
+        if not name:
+            return jsonify({"error": "Укажите название тага."}), 400
+        if len(name) > CLASS_TAG_MAX:
+            return jsonify({"error": f"Название тага длиннее {CLASS_TAG_MAX} символов."}), 400
+        if _name_taken(db, ClassTag, project.id, name, exclude=row.id):
+            return jsonify({"error": "Таг классов с таким названием уже есть."}), 409
+        row.name = name
+        db.commit()
+        live.notify(db, "classes", project.id, project.id)
+        return jsonify({"id": str(row.id), "name": row.name})
+    finally:
+        db.close()
+
+
+@bp.delete("/api/projects/<code>/class-tags/<tag_id>")
+def delete_class_tag(code, tag_id):
+    db, project, err = _resolve(code, "editor")
+    if err:
+        return err
+    try:
+        row = _get_by_uuid(db, ClassTag, tag_id)
+        if row is None or row.project_id != project.id:
+            return jsonify({"error": "Таг классов не найден."}), 404
+        # Классы и разметка целы: CASCADE уносит только связи с тагом.
+        freed = db.execute(
+            select(func.count()).select_from(LabelClassTag).where(LabelClassTag.tag_id == row.id)
+        ).scalar_one()
+        db.delete(row)
+        db.commit()
+        live.notify(db, "classes", project.id, project.id)
+        return jsonify({"ok": True, "classes_untagged": freed})
     finally:
         db.close()
 

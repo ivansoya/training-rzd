@@ -23,13 +23,24 @@ export function hotkey(classes: LabelClass[], id: string): number | null {
 
 export const indexLabel = (i: number) => `#${String(i).padStart(2, "0")}`;
 
-/** Поиск по имени, номеру и группе плюс отбор по группе. */
-export function matchClasses(classes: LabelClass[], query: string, group: GroupFilter): LabelClass[] {
+/** Отбор по тагу классов: все, без тагов или id тага. */
+export type TagFilter = "all" | "none" | string;
+
+/** Поиск по имени, номеру, группе и тагам плюс отбор по группе и тагу. */
+export function matchClasses(classes: LabelClass[], query: string, group: GroupFilter, tag: TagFilter = "all"): LabelClass[] {
   const q = query.trim().toLocaleLowerCase("ru");
   return classes.filter((c) => {
     if (group === "none" ? c.superclass_id : group !== "all" && c.superclass_id !== group) return false;
+    const tags = c.tags ?? [];
+    if (tag === "none" ? tags.length : tag !== "all" && !tags.some((t) => t.id === tag)) return false;
     if (!q) return true;
-    const hay = [c.name, String(c.class_index), indexLabel(c.class_index), c.superclass_name ?? "без группы"];
+    const hay = [c.name, String(c.class_index), indexLabel(c.class_index), c.superclass_name ?? "без группы", ...tags.map((t) => t.name)];
     return hay.join(" ").toLocaleLowerCase("ru").includes(q);
   });
+}
+
+/** Одни ли это таги — без учёта регистра и порядка. */
+export function sameTagNames(a: string[], b: string[]): boolean {
+  const key = (list: string[]) => list.map((n) => n.toLocaleLowerCase("ru")).sort().join("\n");
+  return key(a) === key(b);
 }

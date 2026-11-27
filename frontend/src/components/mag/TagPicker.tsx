@@ -24,6 +24,8 @@ export default function TagPicker({
   disabled,
   compact,
   placeholder = "добавить таг",
+  create: make = (name) => createTag(code, name),
+  emptyText = "В проекте пока нет тагов.",
 }: {
   /** Код проекта — нужен, чтобы завести таг на месте. */
   code: string;
@@ -37,6 +39,9 @@ export default function TagPicker({
   disabled?: boolean;
   compact?: boolean;
   placeholder?: string;
+  /** Как завести таг. По умолчанию — в справочнике тагов кадров; у классов свой справочник. */
+  create?: (name: string) => Promise<Tag> | Tag;
+  emptyText?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -80,7 +85,7 @@ export default function TagPicker({
     setBusy(true);
     setError(null);
     try {
-      const tag = await createTag(code, name);
+      const tag = await make(name);
       onCreated?.(tag);
       if (!value.includes(tag.id)) onChange([...value, tag.id]);
       setQuery("");
@@ -158,7 +163,7 @@ export default function TagPicker({
               </button>
             ))}
             {!offer.length && !needle && (
-              <span className="tagp-empty">В проекте пока нет тагов.</span>
+              <span className="tagp-empty">{emptyText}</span>
             )}
             {needle && !exact && (
               <button

@@ -642,6 +642,8 @@ export interface LabelClass {
   color: string;
   superclass_id: string | null;
   superclass_name: string | null;
+  // Таги класса — свой справочник, не таги кадров. Тагов может не быть вовсе
+  tags?: { id: string; name: string }[];
   annotations: number;
   // Только у списка без ?dataset=: кадры и боксы по сплитам среди кадров датасетов
   images?: number;
@@ -655,9 +657,17 @@ export interface SuperclassItem {
   classes: number;
 }
 
+/** Таг классов в справочнике проекта; `classes` — у скольких классов стоит. */
+export interface ClassTagItem {
+  id: string;
+  name: string;
+  classes: number;
+}
+
 export interface ClassesInfo {
   classes: LabelClass[];
   superclasses: SuperclassItem[];
+  class_tags?: ClassTagItem[];
   can_edit: boolean;
   // Судьба класса — только админу: удаление и перенос разметки необратимы и
   // трогают работу всех разметчиков разом.
@@ -670,7 +680,7 @@ export async function getClasses(code: string): Promise<ClassesInfo> {
 
 export async function createClass(
   code: string,
-  body: { name: string; color?: string; superclass_id?: string | null }
+  body: { name: string; color?: string; superclass_id?: string | null; tags?: string[] }
 ): Promise<LabelClass> {
   return asJson(await post(`projects/${encodeURIComponent(code)}/classes`, body));
 }
@@ -689,7 +699,8 @@ export async function ensureClass(code: string, name: string): Promise<LabelClas
 export async function updateClass(
   code: string,
   id: string,
-  patch: { name?: string; color?: string; superclass_id?: string | null }
+  /** `tags` — имена: таги класса станут ровно такими, новых сервер заведёт в справочнике. */
+  patch: { name?: string; color?: string; superclass_id?: string | null; tags?: string[] }
 ): Promise<LabelClass> {
   return asJson(
     await fetch(`/api/projects/${encodeURIComponent(code)}/classes/${id}`, {
@@ -697,6 +708,23 @@ export async function updateClass(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(patch),
     })
+  );
+}
+
+export async function renameClassTag(code: string, id: string, name: string): Promise<{ id: string; name: string }> {
+  return asJson(
+    await fetch(`/api/projects/${encodeURIComponent(code)}/class-tags/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    })
+  );
+}
+
+/** Классы и разметка целы — таг снимается со всех классов. */
+export async function deleteClassTag(code: string, id: string): Promise<{ classes_untagged: number }> {
+  return asJson(
+    await fetch(`/api/projects/${encodeURIComponent(code)}/class-tags/${id}`, { method: "DELETE" })
   );
 }
 

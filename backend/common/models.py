@@ -424,6 +424,42 @@ class LabelClass(Base, AuditMixin):
     color: Mapped[str] = mapped_column(sa.String(7), nullable=False)
 
 
+class ClassTag(Base, AuditMixin):
+    """Таг класса: «подвижной состав», «люди», «мусор».
+
+    Отдельный справочник, а не таги кадров (решение 27.11.2026): таг кадра —
+    условия съёмки, таг класса — по какому признаку классы потом отделяют друг
+    от друга. Смешай их — и «ночь» появилась бы в выборе у класса, а «люди» —
+    у ролика. Группа (суперкласс) у класса одна, тагов — сколько угодно или ни
+    одного.
+    """
+
+    __tablename__ = "class_tags"
+    __table_args__ = (
+        sa.UniqueConstraint("project_id", "name", name="uq_class_tag_name"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(sa.Uuid, primary_key=True, default=_uuid)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(sa.String(64), nullable=False)
+
+
+class LabelClassTag(Base):
+    """Таг на классе. Удаление класса или тага уносит только эту связь."""
+
+    __tablename__ = "label_class_tags"
+    __table_args__ = (sa.Index("ix_label_class_tags_tag", "tag_id"),)
+
+    class_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("classes.id", ondelete="CASCADE"), primary_key=True
+    )
+    tag_id: Mapped[uuid.UUID] = mapped_column(
+        sa.Uuid, sa.ForeignKey("class_tags.id", ondelete="CASCADE"), primary_key=True
+    )
+
+
 class Annotation(Base, AuditMixin):
     __tablename__ = "annotations"
     __table_args__ = (

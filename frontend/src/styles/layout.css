@@ -419,6 +419,10 @@ a.pcard:hover { border-color: var(--input); }
 .cls-gopt > .ui-opt { flex: 1; min-width: 0; }
 .cls-gname { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .cls-gname .ui-count { margin-left: auto; }
+/* Таги класса в строке — одной линией: строка таблицы не должна расти от числа тагов */
+.cls-tags { flex-wrap: nowrap; gap: 4px; }
+.cls-tags .tagp-chip { white-space: nowrap; max-width: 16ch; overflow: hidden; text-overflow: ellipsis; display: inline-block; }
+.cls-thint { margin: 0; padding: 6px 10px 4px; }
 
 /* ---------- участники ---------- */
 .mem-card > .ui-card-b { padding: 0; }

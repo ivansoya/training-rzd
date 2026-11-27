@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LabelClass } from "../../../auth/api";
-import { hotkey, indexLabel, matchClasses, valShare } from "./classes";
+import { hotkey, indexLabel, matchClasses, sameTagNames, valShare } from "./classes";
 
 const cls = (i: number, name: string, sc: string | null = null, split?: LabelClass["split"]): LabelClass => ({
   id: `c${i}`, class_index: i, name, color: "#0090ff", superclass_id: sc,
@@ -30,5 +30,22 @@ describe("классы", () => {
     expect(matchClasses(list, "", "none").map((c) => c.name)).toEqual(["Опора"]);
     expect(matchClasses(list, "", "g2").map((c) => c.name)).toEqual(["Шпала"]);
     expect(indexLabel(5)).toBe("#05");
+  });
+
+  it("таги есть не у всех классов: отбор по тагу, без тагов и поиск по имени тага", () => {
+    const people = { id: "t1", name: "Люди" };
+    const moving = { id: "t2", name: "Подвижные" };
+    const list = [
+      { ...cls(0, "Человек"), tags: [people, moving] },
+      { ...cls(1, "Вагон", "g1"), tags: [moving] },
+      cls(2, "Опора"),
+      { ...cls(3, "Шпала"), tags: [] },
+    ];
+    expect(matchClasses(list, "", "all", "t2").map((c) => c.name)).toEqual(["Человек", "Вагон"]);
+    expect(matchClasses(list, "", "all", "none").map((c) => c.name)).toEqual(["Опора", "Шпала"]);
+    expect(matchClasses(list, "", "g1", "t1")).toEqual([]);
+    expect(matchClasses(list, "люди", "all").map((c) => c.name)).toEqual(["Человек"]);
+    expect(sameTagNames(["Люди", "подвижные"], ["Подвижные", "люди"])).toBe(true);
+    expect(sameTagNames(["Люди"], ["Люди", "Транспорт"])).toBe(false);
   });
 });
