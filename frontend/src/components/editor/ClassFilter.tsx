@@ -63,16 +63,26 @@ export function ClassFilter({ trigger, title, classes, agent = [], unit, agentUn
         onClick={() => onChange(new Set(all.map((x) => x.key).filter((k) => k !== e.key)))}>только</Button>
     </div>
   );
+  // Все отмечены — снять разом; иначе вернуть все. Сам список остаётся открытым.
+  const allOn = all.every((e) => !off.has(e.key));
+  const bulk = all.length > 0 && (
+    <Button variant="ghost" size="sm" title={allOn ? "Снять все классы" : "Отметить все классы"}
+      onClick={() => onChange(allOn ? new Set(all.map((e) => e.key)) : new Set())}>
+      {allOn ? "Исключить все" : "Добавить все"}
+    </Button>
+  );
   return (
     <Popover width={290} side={side} className={extra ? "flt-pop flt-pop-extended" : "flt-pop"} trigger={trigger}>
       <div className="ui-pop-h">
         <span>{title}</span>
-        <Button variant="ghost" size="sm" disabled={!extra?.active && all.every((e) => !off.has(e.key))}
-          onClick={() => { onChange(new Set()); extra?.reset(); }}>{extra ? "Сбросить" : "Все"}</Button>
+        {extra ? (
+          <Button variant="ghost" size="sm" disabled={!extra.active && allOn}
+            onClick={() => { onChange(new Set()); extra.reset(); }}>Сбросить</Button>
+        ) : bulk}
       </div>
       {extra?.content}
-      {extra && classes.length > 0 && <><div className="ui-pop-sep" /><div className="ui-pop-h">Классы</div></>}
-      <div className="flt-opts">{classes.map((e) => row(e, unit))}</div>
+      {extra && classes.length > 0 && <><div className="ui-pop-sep" /><div className="ui-pop-h"><span>Классы</span>{bulk}</div></>}
+      <div className="flt-opts" role="group" aria-label="Классы">{classes.map((e) => row(e, unit))}</div>
       {agent.length > 0 && (
         <>
           <div className="ui-pop-sep" />

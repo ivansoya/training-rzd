@@ -79,12 +79,17 @@ export function Popover({ trigger, children, align = "start", side, width, open:
   const open = openProp ?? own;
   const set = (v: boolean) => { setOwn(v); onOpenChange?.(v); };
   const content = useRef<HTMLDivElement>(null);
+  const anchor = useRef<HTMLButtonElement>(null);
   // Верхний слой стопки Esc: закрывается он, а не окно под ним
   useEscape(() => set(false), open);
   useEffect(() => {
     if (!open) return;
+    // Закрывает прокрутка, которая сдвигает кнопку. Соседний список (лента кадров перематывается
+    // к текущему после смены фильтра) панель не трогает.
     const onScroll = (e: Event) => {
-      if (content.current && e.target instanceof Node && content.current.contains(e.target)) return;
+      const at = e.target;
+      if (content.current && at instanceof Node && content.current.contains(at)) return;
+      if (at instanceof Node && at !== document && anchor.current && !at.contains(anchor.current)) return;
       set(false);
     };
     window.addEventListener("scroll", onScroll, true);
@@ -92,7 +97,7 @@ export function Popover({ trigger, children, align = "start", side, width, open:
   }, [open]); // слушатель вешается на открытие, а не на каждый рендер
   return (
     <RP.Root open={open} onOpenChange={set}>
-      <RP.Trigger asChild>{trigger}</RP.Trigger>
+      <RP.Trigger asChild ref={anchor}>{trigger}</RP.Trigger>
       <RP.Portal>
         <RP.Content ref={content} align={align} side={side} sideOffset={6} collisionPadding={8}
           className={cx("ui-pop", className)} style={width ? { width } : undefined}
